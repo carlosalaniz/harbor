@@ -1,0 +1,26 @@
+# dependencies / build
+node_modules/
+dist/
+web/dist/
+release/
+coverage/
+*.tsbuildinfo
+
+# local state, secrets, logs (never committed)
+.env*
+!.env.example
+.vm.local.json
+.vm-known_hosts
+*.log
+.harbor-dev/
+state/
+tmp/
+test-results/
+playwright-report/
+.vagrant/
+evidence/raw/
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
