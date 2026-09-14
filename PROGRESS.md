@@ -36,19 +36,29 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: expired plan, stale port claim, occupied external port untouched, readiness timeout, client disconnect, idempotency (tests/integration/install.test.ts)
 - [ ] **Live checkpoint on the VM** (install Excalidraw, draw, export) — after Phase 4 bootstrap exists (needs Docker on the VM, which bootstrap installs)
 
-### Phase 2 — two apps + minimal UI 🔄
+### Phase 2 — two apps + minimal UI ✅ (2026-09-14)
 - [x] BentoPDF package with real digest `ghcr.io/alam00000/bentopdf-simple@sha256:3d62b8f8…` (v2.8.8)
-- [x] start/stop/remove/reinstall implemented generically (smoke-tested via CLI with fake adapter)
-- [ ] Coexistence/ownership/restart-recovery integration tests
-- [ ] React UI (login, Installed, Available, System, Platform tools)
-- [ ] OpenAPI document generated from route schemas
+- [x] start/stop/remove/reinstall generic; coexistence, second instance, sentinel non-interference, restart→needs_action, Docker-down tests (tests/integration/lifecycle.test.ts)
+- [x] Auth/request-control tests (tests/integration/auth.test.ts)
+- [x] React UI (login, Installed, Available, System, Platform tools; in-memory token; strict CSP) + 7 Playwright e2e tests
+- [x] OpenAPI generated from route schemas (docs/openapi.json) and tested
+- [x] Live checkpoint (dev loop, authorized Docker Desktop): real install/stop/start/remove/reinstall of Excalidraw + BentoPDF coexistence (tests/integration/live-docker.test.ts)
 
-### Phase 3 — n8n + PostgreSQL ⏳
-- Digests resolved (see DECISIONS): n8n 2.38.7 (= `stable` tag) `sha256:a8c95f75…`, postgres 16.15 `sha256:f1c3376c…`
-- [ ] package files, secrets/volume tests, reinstall retention tests
+### Phase 3 — n8n + PostgreSQL ✅ (2026-09-14)
+- [x] Package with real digests: n8n 2.38.7 (= `stable` tag) `sha256:a8c95f75…`, postgres 16.15 `sha256:f1c3376c…`; telemetry disabled
+- [x] Generic volumes/secrets/configuration engine proven with a synthetic stateful package (same values across bindings, different across instances, no leakage, DATA_MISSING/SECRET_MISSING block without replacement, retention across stop/start/remove/reinstall)
+- [x] Live on the VM: n8n installed, readiness via /healthz/readiness, owner created in the browser, credential + workflow via REST, credentialed execution succeeded against a fixture endpoint
 
-### Phase 4 — bootstrap + tools ⏳
-### Phase 5 — full demo + report ⏳
+### Phase 4 — bootstrap + tools ✅ (2026-09-14)
+- [x] Release archive (`pnpm package`): bundled Node 24.12.0 (checksum-verified), hoisted prod deps, shipped better-sqlite3 linux-x64 prebuild, launchers, SHA256SUMS
+- [x] Root bootstrap: host checks, approved Docker install, /opt /etc /var/lib layout, `harbor` user in docker group, explicit state init, hidden/stdin enrollment, hardened systemd unit, idempotent re-run, conflict detection
+- [x] Cockpit (loopback socket drop-in or bind existing) and Portainer CE 2.39.7 (loopback HTTPS, retained volume) recipes; tools bind/unbind API + CLI; Portainer admin check
+- [x] Live on the VM: bootstrap from the archive on a fresh Ubuntu 24.04 x86-64 host installed Docker 29.8.0 / Compose 5.5.1, Harbor, Cockpit (127.0.0.1:9090) and Portainer (127.0.0.1:9443); all listeners loopback-only
+
+### Phase 5 — full demo + report 🔄
+- [x] `pnpm test:vm` runner (scripts/vm/run-vm-tests.mjs): A01–A16 with evidence directory, DigitalOcean or Vagrant target, fresh rebuild, reboot via cloud API, browser steps (Excalidraw export, BentoPDF merge, n8n owner/workflow, Cockpit login, Portainer onboarding)
+- [ ] Full `--fresh` run recorded in docs/VERIFICATION.md
+- [ ] Final docs review, context-only architecture check (plan §11), handoff
 
 ## Test results (latest local run)
 
@@ -56,12 +66,15 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 40 passed |
-| `pnpm test:integration` (fake adapter) | 9 passed |
-| CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — all exit codes as documented |
+| `pnpm test` (unit) | 41 passed |
+| `pnpm test:integration` (fake adapter) | 34 passed (install, lifecycle, auth, tools) |
+| `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 7 passed |
+| CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
+| Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) |
 
 ## Blockers
-None. Live evidence pending until bootstrap (Phase 4) can install Docker on the designated VM.
+None.
 
 ## Exact next step
-Phase 2 tests (coexistence, second instance, stop/remove non-interference with a sentinel, daemon restart → needs_action, Docker unavailable → unavailable/unknown), then the React UI.
+Run `pnpm test:vm -- --fresh` to completion, fix any failures, record the run in docs/VERIFICATION.md, set package qualification to `passed` with the recorded versions, final review and handoff.
