@@ -92,7 +92,7 @@ class DigitalOceanTarget extends SshTarget {
   constructor() {
     const state = JSON.parse(readFileSync(path.join(ROOT, '.vm.local.json'), 'utf8'));
     const key = process.env.HARBOR_VM_SSH_KEY ?? path.join(homedir(), '.ssh', 'harbor-test-vm_ed25519');
-    super(`digitalocean droplet ${state.dropletId} (${state.ip})`, ['ssh', '-i', key, '-o', `UserKnownHostsFile=${path.join(ROOT, '.vm-known_hosts')}`, '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=15', '-o', 'ConnectTimeout=15', `root@${state.ip}`], state.ip);
+    super(`digitalocean droplet ${state.dropletId}`, ['ssh', '-i', key, '-o', `UserKnownHostsFile=${path.join(ROOT, '.vm-known_hosts')}`, '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=15', '-o', 'ConnectTimeout=15', `root@${state.ip}`], state.ip);
     this.state = state;
   }
   scp(local, remote) {

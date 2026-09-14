@@ -1,6 +1,6 @@
 # Live VM run vm-2026-09-14T18-40-00
 
-- Target: digitalocean droplet 600403086 (143.198.73.104) ({"kind":"digitalocean","dropletId":600403086,"size":"s-4vcpu-8gb","image":"ubuntu-24-04-x64","region":"sfo3"})
+- Target: digitalocean droplet 600403086 ({"kind":"digitalocean","dropletId":600403086,"size":"s-4vcpu-8gb","image":"ubuntu-24-04-x64","region":"sfo3"})
 - Archive: harbor-0.1.0-linux-x64.tar.gz
 - Fresh VM: true · reboot test: true
 - Versions: {"ubuntu":"Ubuntu 24.04.4 LTS","arch":"x86_64","systemd":"systemd 255 (255.4-1ubuntu8.16)","docker":"29.8.0","compose":"5.5.1","node":"v24.12.0","harbor":"0.1.0"}
