@@ -46,6 +46,23 @@ class SshTarget {
     if (r.code !== 0) throw new Error(`ssh command failed (exit ${r.code}): ${command}\n${r.stderr.slice(-2000)}\n${r.stdout.slice(-2000)}`);
     return r.stdout;
   }
+  // For idempotent long-running steps (apt installs): survive an SSH connection loss (exit 255)
+  // by waiting for SSH to come back and running the command again, a bounded number of times.
+  async sshRetry(command, opts = {}, attempts = 3) {
+    let last;
+    for (let i = 0; i < attempts; i++) {
+      last = this.ssh(command, opts);
+      if (last.code === 0) return last.stdout;
+      if (last.code !== 255) break;
+      await this.waitSsh();
+    }
+    throw new Error(`ssh command failed (exit ${last.code}) after ${attempts} attempt(s): ${command}\n${last.stderr.slice(-2000)}\n${last.stdout.slice(-2000)}`);
+  }
+  // Fresh cloud images run cloud-init on first boot; wait for it so later apt/systemd steps are not disrupted.
+  async waitCloudInit(timeoutMs = 10 * 60_000) {
+    const r = this.ssh('command -v cloud-init >/dev/null && cloud-init status --wait --long 2>&1 | tail -3 || echo no-cloud-init', { timeoutMs });
+    return r.stdout.trim();
+  }
   // Open `ssh -N -L p:127.0.0.1:p` tunnels for the given ports; returns a closer.
   tunnel(ports) {
     const args = [...this.sshBase.slice(1, -1), '-N', ...ports.flatMap((p) => ['-L', `${p}:127.0.0.1:${p}`]), this.sshBase[this.sshBase.length - 1]];
@@ -90,6 +107,7 @@ class DigitalOceanTarget extends SshTarget {
   }
   async rebuildFresh() {
     this.controller(['rebuild']);
+    await this.waitCloudInit();
   }
   async reboot() {
     this.controller(['reboot']); // hard power cycle via the cloud API, waits for SSH
