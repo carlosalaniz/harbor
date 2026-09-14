@@ -1,4 +1,4 @@
-import { chownSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chownSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { loadConfig, normalizeConfig, type DaemonConfig } from '../config.js';
 import { HarborError } from '../errors.js';
@@ -99,8 +99,15 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
   }
   if (path.resolve(opts.releaseDir) !== PRODUCT.paths.opt) {
     mkdirSync(PRODUCT.paths.opt, { recursive: true, mode: 0o755 });
+    // Release files are replaced wholesale (state lives in /var/lib/harbor, config in /etc/harbor).
+    // Remove each previous entry first: copying over an existing tree with symlinks (node_modules/.bin) fails.
     for (const entry of readdirSync(opts.releaseDir)) {
-      cpSync(path.join(opts.releaseDir, entry), path.join(PRODUCT.paths.opt, entry), { recursive: true, force: true, preserveTimestamps: true });
+      const dest = path.join(PRODUCT.paths.opt, entry);
+      rmSync(dest, { recursive: true, force: true });
+      cpSync(path.join(opts.releaseDir, entry), dest, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    }
+    for (const stale of readdirSync(PRODUCT.paths.opt)) {
+      if (!existsSync(path.join(opts.releaseDir, stale))) rmSync(path.join(PRODUCT.paths.opt, stale), { recursive: true, force: true });
     }
     log(`installed release ${release.version} to ${PRODUCT.paths.opt}`);
   } else {
