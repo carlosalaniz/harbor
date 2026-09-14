@@ -500,7 +500,9 @@ const A12 = step('A12', 'Remove/reinstall the exact n8n instance preserves workf
   if (rm2.state !== 'succeeded') throw new Error('remove n8n-2 failed');
   const vol2 = `hb_${n2.id.replace(/-/g, '')}_database`;
   ssh(`docker volume rm ${vol2}`);
-  const blocked = cliOk(target, ['reinstall', n2.id, '--yes'], { timeoutMs: 600_000 });
+  const blockedRun = cli(target, ['reinstall', n2.id, '--yes'], { timeoutMs: 600_000 });
+  const blocked = blockedRun.json; // expected: exit 3 (action required) with the operation document
+  if (!blocked || blockedRun.code !== 3) throw new Error(`expected exit 3 with an operation document, got exit ${blockedRun.code}: ${blockedRun.stdout.slice(-400)}`);
   const volExistsAfter = ssh(`docker volume ls --format {{.Name}} | grep -c '^${vol2}$' || true`).trim();
   if (blocked.state !== 'needs_action' || blocked.error?.code !== 'DATA_MISSING' || volExistsAfter !== '0') throw new Error(`expected DATA_MISSING with no replacement, got ${blocked.state} ${blocked.error?.code} volExists=${volExistsAfter}`);
   const n2After = byName('n8n-2');
@@ -625,17 +627,31 @@ const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboa
   await page.screenshot({ path: path.join(ev.dir, 'A14-cockpit-after-login.png') });
   const cockpitTitle = await page.title();
   const cockpitLoggedIn = !(await page.locator('#login-button').isVisible().catch(() => false));
-  // Portainer first-run admin
-  await page.goto(portainerHref, { waitUntil: 'networkidle', timeout: 60_000 });
-  await sleep(2000);
+  // Portainer first-run admin. Portainer locks itself 5 minutes after start and requires the one-time
+  // setup token from its container log (documented recovery: restart the container -> new window + token).
   let portainerOnboarded = false;
-  if (await page.locator('#username').isVisible().catch(() => false)) {
+  let setupTokenUsed = false;
+  const adminBefore = ssh('curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:9443/api/users/admin/check || true').trim();
+  if (adminBefore !== '204') {
+    ssh('docker restart hb_platform_portainer-portainer-1 >/dev/null');
+    await waitFor(() => (ssh('curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:9443/api/users/admin/check || true').trim() === '404' ? true : null), { timeoutMs: 60_000, intervalMs: 2000, what: 'portainer up after restart' });
+    const token = ssh("docker logs hb_platform_portainer-portainer-1 2>&1 | grep -oE 'setup_token=.*' | tail -1").replace(/\x1b\[[0-9;]*m/g, '').replace(/^setup_token=/, '').trim();
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new Error(`could not read Portainer setup token from its log (got ${JSON.stringify(token.slice(0, 40))})`);
+    await page.goto(portainerHref, { waitUntil: 'networkidle', timeout: 60_000 });
+    await page.locator('#username').waitFor({ timeout: 30_000 });
     await page.fill('#username', PORTAINER_ADMIN.username);
     await page.fill('#password', PORTAINER_ADMIN.password);
     await page.fill('#confirm_password', PORTAINER_ADMIN.password);
+    if (await page.locator('#setup_token').isVisible().catch(() => false)) {
+      await page.fill('#setup_token', token);
+      setupTokenUsed = true;
+    }
     await page.getByRole('button', { name: /Create user/i }).click();
     await sleep(4000);
     portainerOnboarded = true;
+  } else {
+    await page.goto(portainerHref, { waitUntil: 'networkidle', timeout: 60_000 });
+    await sleep(2000);
   }
   await page.screenshot({ path: path.join(ev.dir, 'A14-portainer-after-onboarding.png') });
   await ctx.close();
@@ -647,8 +663,8 @@ const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboa
   const bindManaged = cli(target, ['tools', 'bind', 'portainer', '--url', 'https://localhost:9443/']);
   const listeners = ssh("ss -ltnp | awk 'NR>1{print $4}' | grep -E ':(9090|9443)$' | sort").trim().split('\n');
   return {
-    details: { toolsBefore: tools, toolsAfter, cockpit: { listen: cockpitListen, title: cockpitTitle, loggedIn: cockpitLoggedIn, mode: cockpit.mode }, portainer: { onboardedNow: portainerOnboarded, adminCheckHttp: adminCheck }, listeners, bindManagedRejected: bindManaged.json?.error?.code },
-    notes: [`Cockpit ${cockpit.mode} (${cockpit.mode === 'external' ? 'pre-installed fixture bound without reconfiguring its listener' : 'installed by bootstrap, loopback listener'}): login with an OS account ${cockpitLoggedIn ? 'succeeded' : 'NOT confirmed'}`, `Portainer managed: first-run admin ${portainerOnboarded ? 'created in its own form' : 'already existed'}; card moved from setup_required to installed (admin check HTTP ${adminCheck})`, 'tools absent before --with-tools were shown as not_installed with no fake link (A01 evidence)', `binding a managed tool is rejected (${bindManaged.json?.error?.code})`],
+    details: { toolsBefore: tools, toolsAfter, cockpit: { listen: cockpitListen, title: cockpitTitle, loggedIn: cockpitLoggedIn, mode: cockpit.mode }, portainer: { stateBefore: portainer.installationState, adminCheckBefore: adminBefore, onboardedNow: portainerOnboarded, setupTokenUsed, adminCheckHttp: adminCheck }, listeners, bindManagedRejected: bindManaged.json?.error?.code },
+    notes: [`Cockpit ${cockpit.mode} (${cockpit.mode === 'external' ? 'pre-installed fixture bound without reconfiguring its listener' : 'installed by bootstrap, loopback listener'}): login with an OS account ${cockpitLoggedIn ? 'succeeded' : 'NOT confirmed'}`, `Portainer managed: card showed ${portainer.installationState} before; first-run admin ${portainerOnboarded ? `created in its own form${setupTokenUsed ? ' with the setup token from the container log' : ''}` : 'already existed'}; card now installed (admin check HTTP ${adminCheck})`, 'tools absent before --with-tools were shown as not_installed with no fake link (A01 evidence)', `binding a managed tool is rejected (${bindManaged.json?.error?.code})`],
     status: cockpitLoggedIn ? 'pass' : 'fail',
   };
 });

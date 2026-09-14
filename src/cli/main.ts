@@ -116,8 +116,13 @@ async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: bool
   }
   const op = await waitOperation(api, submitted.operationId, true);
   out(op, () => operationSummary(op));
-  if (op.state !== 'succeeded') throw new HarborError((op.error?.code as HarborError['code']) ?? 'OPERATION_FAILED', op.error?.message ?? `${op.kind} ${op.state}`, { nextAction: op.error?.nextAction ?? '', operationId: op.id });
+  if (op.state !== 'succeeded') {
+    // The operation (with its error) was already printed; exit with the error's category without a second document.
+    alreadyReported = true;
+    throw new HarborError((op.error?.code as HarborError['code']) ?? 'OPERATION_FAILED', op.error?.message ?? `${op.kind} ${op.state}`, { nextAction: op.error?.nextAction ?? '', operationId: op.id });
+  }
 }
+let alreadyReported = false;
 
 // ---------------- commands
 
@@ -426,6 +431,7 @@ export async function runCli(argv: string[]): Promise<number> {
     return Number(process.exitCode ?? 0);
   } catch (e) {
     if (e instanceof HarborError) {
+      if (alreadyReported) return e.exitCode;
       if (globals().json) process.stdout.write(JSON.stringify(e.toBody(), null, 2) + '\n');
       else {
         process.stderr.write(`error ${e.code}: ${e.message}\n`);

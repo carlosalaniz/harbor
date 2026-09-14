@@ -79,7 +79,7 @@ export function portainerPreview(existing: boolean): string[] {
         `docker volume create ${platformProjectNameFor('portainer')}_data (labelled platform resource, retained)`,
         `compose project ${platformProjectNameFor('portainer')}: ${PORTAINER_IMAGE.reference} (${PORTAINER_IMAGE.tag}), HTTPS on 127.0.0.1:${PORTAINER_PORT} only, agent/edge ports not published`,
         'mounts /var/run/docker.sock: Portainer gets full Docker (root-equivalent) authority — this is disclosed, not hidden',
-        `record https://localhost:${PORTAINER_PORT}/ ; create the Portainer admin in its own first-run form within 5 minutes`,
+        `record https://localhost:${PORTAINER_PORT}/ ; create the Portainer admin in its own first-run form within 5 minutes using the setup token from its container log`,
       ];
 }
 
@@ -137,7 +137,7 @@ export async function setupPortainer(log: (m: string) => void, installationId: s
     installationState: 'setup_required',
     availability: 'unknown',
     observedAt: now,
-    note: `Portainer CE ${PORTAINER_IMAGE.tag} with Docker socket access (root-equivalent). Create its admin user in its own first-run form; if the 5-minute window expires, run: docker restart ${containers[0]?.name ?? `${project}-portainer-1`}. Self-signed certificate.`,
+    note: `Portainer CE ${PORTAINER_IMAGE.tag} with Docker socket access (root-equivalent). First run: create the admin in Portainer's own form within 5 minutes of start; it asks for the one-time setup token printed in the container log (sudo docker logs ${containers[0]?.name ?? `${project}-portainer-1`} 2>&1 | grep setup_token). If the window expired, run: sudo docker restart ${containers[0]?.name ?? `${project}-portainer-1`} (prints a new token). Self-signed certificate.`,
     resources: { project, volume: volumeName, containers: containers.map((c) => ({ id: c.id, name: c.name })), image: PORTAINER_IMAGE.reference },
   };
 }

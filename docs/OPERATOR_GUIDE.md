@@ -137,8 +137,10 @@ intentionally stopped instances stay stopped. Harbor re-observes and reports act
 - **Portainer CE** (Docker console): Compose project `hb_platform_portainer`, HTTPS on
   `127.0.0.1:9443` only, data volume `hb_platform_portainer_data` (retained), Docker socket mounted
   (full Docker authority: disclosed, not hidden). Create the Portainer admin in its first-run form
-  within 5 minutes of start; if that window expires: `sudo docker restart hb_platform_portainer-portainer-1`.
-  The tools card shows `setup_required` until the admin exists.
+  within 5 minutes of start. Portainer 2.39 asks for a one-time **setup token** that it prints to its
+  container log: `sudo docker logs hb_platform_portainer-portainer-1 2>&1 | grep setup_token`. If the
+  5-minute window expires the instance locks itself; `sudo docker restart hb_platform_portainer-portainer-1`
+  re-opens it and prints a new token. The tools card shows `setup_required` until the admin exists.
 - Both cards report installed/not_installed/setup_required/unknown and reachable/unreachable/unknown
   with observation times. "Reachable" means the login page answers, nothing more.
 - Bind existing tools: `harbor tools bind portainer --url https://localhost:9443/` (loopback URLs only).
@@ -158,7 +160,7 @@ intentionally stopped instances stay stopped. Harbor re-observes and reports act
 | `DOCKER_UNAVAILABLE` (503) | `systemctl status docker`. |
 | Login 429 | Rate limited after repeated failures; wait ten minutes. |
 | UI says "session ended" after reload | Expected: tokens live in memory only. Log in again; running operations continue. |
-| Portainer login page loads but no admin form | The 5-minute window expired; restart its container (above). |
+| Portainer login page loads but no admin form, or the form refuses to submit | The 5-minute window expired (restart its container, above) or the setup token is missing (read it from the container log). |
 
 ## 8. Trust boundary and limits (read this)
 
