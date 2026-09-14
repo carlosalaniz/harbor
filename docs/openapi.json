@@ -294,6 +294,71 @@
         }
       }
     },
+    "/v1/platform-tools/{id}": {
+      "put": {
+        "description": "Bind an already installed tool by its loopback URL without taking ownership.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "browserUrl"
+                ],
+                "properties": {
+                  "browserUrl": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "enum": [
+                "cockpit",
+                "portainer"
+              ]
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "description": "Remove an external tool binding.",
+        "parameters": [
+          {
+            "schema": {
+              "enum": [
+                "cockpit",
+                "portainer"
+              ]
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/plans": {
       "post": {
         "description": "Create an immutable plan. Install: {kind, packageId, name?}. Others: {kind, instanceId}.",

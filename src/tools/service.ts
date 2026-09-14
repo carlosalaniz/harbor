@@ -4,6 +4,7 @@ import type { PlatformToolDto } from '../contracts/api.js';
 import type { Repo, PlatformToolRow } from '../state/repo.js';
 import type { Clock } from '../util.js';
 import { rfc3339 } from '../util.js';
+import { HarborError } from '../errors.js';
 
 export const TOOL_NAMES: Record<string, string> = { cockpit: 'Cockpit', portainer: 'Portainer' };
 export const TOOL_IDS = ['cockpit', 'portainer'] as const;
@@ -32,17 +33,58 @@ export class PlatformToolsService {
         continue;
       }
       let availability: PlatformToolDto['availability'] = 'unknown';
+      let installationState = row.installationState;
       let note = row.note;
       if (row.browserUrl) {
         const r = await this.probe(row.browserUrl);
         availability = r.reachable ? 'reachable' : 'unreachable';
         if (r.note) note = note ? `${note} ${r.note}` : r.note;
-        this.repo.upsertPlatformTool({ ...row, availability, observedAt: rfc3339(this.clock.now()) });
+        if (id === 'portainer' && r.reachable) {
+          // Portainer reports whether its first admin exists; that decides setup_required vs installed.
+          const admin = await this.probe(new URL('/api/users/admin/check', row.browserUrl).toString());
+          installationState = admin.reachable && /HTTP 20\d/.test(admin.note ?? '') ? 'installed' : /HTTP 404/.test(admin.note ?? '') ? 'setup_required' : installationState;
+        }
+        this.repo.upsertPlatformTool({ ...row, availability, installationState, observedAt: rfc3339(this.clock.now()) });
       }
-      items.push(this.dto({ ...row, availability, note, observedAt: rfc3339(this.clock.now()) }));
+      items.push(this.dto({ ...row, availability, installationState, note, observedAt: rfc3339(this.clock.now()) }));
     }
     this.cache = { at: nowMs, items };
     return items;
+  }
+
+  // Explicit binding to an already installed tool: recorded, never reconfigured or owned.
+  bind(id: string, browserUrl: string): void {
+    if (!(TOOL_IDS as readonly string[]).includes(id)) throw new HarborError('NOT_FOUND', `unknown platform tool ${id}`);
+    let u: URL;
+    try {
+      u = new URL(browserUrl);
+    } catch {
+      throw new HarborError('INVALID_REQUEST', 'browserUrl must be a valid URL');
+    }
+    if ((u.hostname !== 'localhost' && u.hostname !== '127.0.0.1') || !['http:', 'https:'].includes(u.protocol)) {
+      throw new HarborError('INVALID_REQUEST', 'tool URLs must be http(s) on localhost/127.0.0.1 (loopback only)');
+    }
+    const existing = this.repo.platformTool(id);
+    if (existing?.mode === 'managed') throw new HarborError('INVALID_STATE', `${id} is managed by Harbor bootstrap; unbinding is not supported for managed tools`);
+    this.repo.upsertPlatformTool({
+      id,
+      mode: 'external',
+      browserUrl: u.toString(),
+      installationState: 'installed',
+      availability: 'unknown',
+      observedAt: null,
+      note: `Bound to an existing ${TOOL_NAMES[id]} installation without taking ownership; Harbor does not manage or reconfigure it.`,
+      resources: null,
+    });
+    this.cache = null;
+  }
+
+  unbind(id: string): void {
+    const existing = this.repo.platformTool(id);
+    if (!existing) throw new HarborError('NOT_FOUND', `no binding for ${id}`);
+    if (existing.mode === 'managed') throw new HarborError('INVALID_STATE', `${id} is managed by Harbor bootstrap and cannot be unbound here`);
+    this.repo.upsertPlatformTool({ id, mode: 'absent', browserUrl: null, installationState: 'not_installed', availability: 'unknown', observedAt: null, note: 'Binding removed.', resources: null });
+    this.cache = null;
   }
 
   private dto(t: PlatformToolRow): PlatformToolDto {

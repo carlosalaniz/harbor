@@ -1,0 +1,5 @@
+#!/bin/sh
+# Harbor CLI launcher: finds the bundled Node runtime next to this script. No product logic here.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$here/node/bin/node" "$here/dist/cli/main.js" "$@"

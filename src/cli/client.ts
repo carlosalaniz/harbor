@@ -80,8 +80,8 @@ export class ApiClient {
   get<T>(url: string): Promise<T> {
     return this.call<T>('GET', url).then((r) => r.body);
   }
-  post<T>(url: string, body: unknown, headers: Record<string, string> = {}): Promise<T> {
-    return this.call<T>('POST', url, body, headers).then((r) => r.body);
+  post<T>(url: string, body: unknown, headers: Record<string, string> = {}, method: 'POST' | 'PUT' = 'POST'): Promise<T> {
+    return this.call<T>(method, url, body, headers).then((r) => r.body);
   }
   delete(url: string): Promise<void> {
     return this.call<void>('DELETE', url).then(() => undefined);

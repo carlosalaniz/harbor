@@ -1,0 +1,5 @@
+#!/bin/sh
+# Harbor daemon launcher (used by harbor.service). No product logic here.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$here/node/bin/node" "$here/dist/daemon.js" "$@"

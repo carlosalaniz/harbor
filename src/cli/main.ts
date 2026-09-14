@@ -7,6 +7,8 @@ import { PRODUCT } from '../naming.js';
 import { enrollAdministrator, initState } from '../maintenance.js';
 import { productVersion } from '../daemon.js';
 import { ApiClient, clearCliState, readCliState, writeCliState } from './client.js';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { confirm, promptHidden, promptVisible, readStdinAll } from './prompt.js';
 
 interface Globals {
@@ -264,12 +266,26 @@ program
     if (opts.follow && op.state !== 'succeeded') process.exitCode = op.state === 'failed' ? 1 : 3;
   });
 
-program
-  .command('tools')
-  .description('show Cockpit/Portainer state and links')
-  .action(async () => {
-    const { items } = await client().get<{ items: PlatformToolDto[] }>('/v1/platform-tools');
-    out(items, () => table([['TOOL', 'INSTALLED', 'REACHABLE', 'URL', 'OBSERVED', 'NOTE'], ...items.map((t) => [t.name, t.installationState, t.availability, t.browserUrl ?? '-', t.observedAt ?? '-', t.note ?? ''])]));
+const toolsTable = (items: PlatformToolDto[]) => table([['TOOL', 'MODE', 'INSTALLED', 'REACHABLE', 'URL', 'OBSERVED', 'NOTE'], ...items.map((t) => [t.name, t.mode, t.installationState, t.availability, t.browserUrl ?? '-', t.observedAt ?? '-', t.note ?? ''])]);
+const tools = program.command('tools').description('show Cockpit/Portainer state and links; `tools bind|unbind` manage bindings to existing installations');
+tools.action(async () => {
+  const { items } = await client().get<{ items: PlatformToolDto[] }>('/v1/platform-tools');
+  out(items, () => toolsTable(items));
+});
+tools
+  .command('bind <tool>')
+  .description('record an already installed cockpit|portainer by its loopback URL (no ownership taken)')
+  .requiredOption('--url <url>', 'e.g. https://localhost:9090/')
+  .action(async (tool: string, opts: { url: string }) => {
+    const { items } = await client().post<{ items: PlatformToolDto[] }>(`/v1/platform-tools/${tool}`, { browserUrl: opts.url }, {}, 'PUT');
+    out(items, () => toolsTable(items));
+  });
+tools
+  .command('unbind <tool>')
+  .description('remove an external binding')
+  .action(async (tool: string) => {
+    await client().delete(`/v1/platform-tools/${tool}`);
+    out({ unbound: tool }, () => `Removed binding for ${tool}.`);
   });
 
 program
@@ -299,6 +315,74 @@ program
       return lines.join('\n');
     });
     if (!live) process.exitCode = 4;
+  });
+
+// ---------------- bootstrap (root, Linux host)
+
+program
+  .command('bootstrap')
+  .description('install or update Harbor on this Ubuntu 24.04 x86-64 host (run as root from the extracted release)')
+  .option('--yes', 'approve all previewed steps non-interactively', false)
+  .option('--with-tools', 'also set up Cockpit and Portainer (each separately approved)', false)
+  .option('--install-docker', 'approve installing Docker Engine + Compose from download.docker.com if absent', false)
+  .option('--port <n>', 'management port (default 18000; only for a fresh installation)', (v) => Number(v), PRODUCT.defaults.managementPort)
+  .option('--admin-username <name>', 'administrator username for a fresh installation (default admin)')
+  .option('--password-stdin', 'read the administrator password from stdin (protected pipe only)')
+  .option('--bind-cockpit <url>', 'record an existing Cockpit at this loopback URL instead of installing it')
+  .option('--bind-portainer <url>', 'record an existing Portainer at this loopback URL instead of installing it')
+  .option('--release-dir <dir>', 'extracted release directory (default: the one containing this CLI)')
+  .action(async (opts: { yes: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; releaseDir?: string }) => {
+    const { bootstrap, accessInstructions } = await import('../bootstrap/bootstrap.js');
+    const releaseDir = opts.releaseDir ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const log = (m: string) => process.stderr.write(`[bootstrap] ${m}\n`);
+    const confirmStep = async (question: string, preview: string[]) => {
+      process.stderr.write(`\n${question}\n${preview.map((p) => `  - ${p}`).join('\n')}\n`);
+      if (opts.yes) {
+        process.stderr.write('  (approved with --yes)\n');
+        return true;
+      }
+      return confirm('Proceed?');
+    };
+    let passwordProvider: (() => Promise<string>) | null = null;
+    if (opts.passwordStdin) passwordProvider = () => readStdinAll();
+    else if (process.stdin.isTTY) {
+      passwordProvider = async () => {
+        const p1 = await promptHidden('Administrator password (min 12 chars): ');
+        const p2 = await promptHidden('Repeat password: ');
+        if (p1 !== p2) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
+        return p1;
+      };
+    }
+    const result = await bootstrap({
+      releaseDir,
+      yes: opts.yes,
+      withTools: opts.withTools,
+      installDocker: opts.installDocker,
+      port: opts.port,
+      adminUsername: opts.adminUsername ?? null,
+      passwordProvider,
+      bindCockpit: opts.bindCockpit ?? null,
+      bindPortainer: opts.bindPortainer ?? null,
+      log,
+      confirm: confirmStep,
+    });
+    const toolPorts = result.tools.map((t) => (t.browserUrl ? Number(new URL(t.browserUrl).port || (t.browserUrl.startsWith('https') ? 443 : 80)) : 0)).filter(Boolean);
+    const summary = {
+      managementUrl: result.managementUrl,
+      installationId: result.installationId,
+      adminCreated: result.adminCreated,
+      versions: result.versions,
+      tools: result.tools.map((t) => ({ id: t.id, mode: t.mode, browserUrl: t.browserUrl, installationState: t.installationState, note: t.note })),
+    };
+    out(summary, () =>
+      [
+        `Harbor ${result.versions.harbor} installed (node ${result.versions.node}, docker ${result.versions.docker ?? '?'}, compose ${result.versions.compose ?? '?'}).`,
+        `Installation ${result.installationId}; administrator ${result.adminCreated ? 'enrolled' : 'kept'}.`,
+        ...result.tools.map((t) => `${t.id}: ${t.mode} ${t.installationState} ${t.browserUrl ?? ''}\n    ${t.note ?? ''}`),
+        '',
+        ...accessInstructions(Number(new URL(result.managementUrl).port), toolPorts, [PRODUCT.defaults.appPortRange.from, PRODUCT.defaults.appPortRange.from + 1, PRODUCT.defaults.appPortRange.from + 2]),
+      ].join('\n'),
+    );
   });
 
 // ---------------- local maintenance (direct state access, no HTTP)

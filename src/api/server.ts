@@ -165,6 +165,29 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.get('/v1/plans/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.plan((req.params as { id: string }).id));
   app.get('/v1/operations/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.operation((req.params as { id: string }).id));
   app.get('/v1/platform-tools', { preHandler: requireAuth, schema: { description: 'Cockpit/Portainer state and real links.' } }, async () => ({ items: await tools.list() }));
+  app.put(
+    '/v1/platform-tools/:id',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Bind an already installed tool by its loopback URL without taking ownership.',
+        params: { type: 'object', properties: { id: { enum: ['cockpit', 'portainer'] } }, required: ['id'] },
+        body: { type: 'object', additionalProperties: false, required: ['browserUrl'], properties: { browserUrl: { type: 'string', minLength: 8, maxLength: 256 } } },
+      },
+    },
+    async (req) => {
+      tools.bind((req.params as { id: string }).id, (req.body as { browserUrl: string }).browserUrl);
+      return { items: await tools.list() };
+    },
+  );
+  app.delete(
+    '/v1/platform-tools/:id',
+    { preHandler: requireAuth, schema: { description: 'Remove an external tool binding.', params: { type: 'object', properties: { id: { enum: ['cockpit', 'portainer'] } }, required: ['id'] } } },
+    async (req, reply) => {
+      tools.unbind((req.params as { id: string }).id);
+      return reply.status(204).send();
+    },
+  );
 
   // --- plans & operations
   app.post(
