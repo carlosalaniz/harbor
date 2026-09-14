@@ -23,6 +23,8 @@ services:
       GENERIC_TIMEZONE: UTC
       TZ: UTC
       N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
     depends_on:
       postgres: {condition: service_healthy}
     volumes:

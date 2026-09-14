@@ -23,6 +23,11 @@ one Compose project on a private bridge network; only n8n's HTTP port is publish
 - n8n uses a secure session cookie; open it at `http://localhost:<port>/` (a secure browser
   context). Do not disable `N8N_SECURE_COOKIE` to reach it over a LAN IP; that exposure is unsupported.
 
+## Telemetry
+
+`N8N_DIAGNOSTICS_ENABLED=false` and `N8N_VERSION_NOTIFICATIONS_ENABLED=false` are set so a local
+installation does not send usage telemetry or poll for version notices. Everything else is upstream default.
+
 ## Version notes
 
 - n8n 2.x ships task runners enabled by default in internal mode (the runner runs inside the

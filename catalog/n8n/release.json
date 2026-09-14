@@ -9,10 +9,10 @@
       "sha256": "522edd7c769de6b5d8d35518a8552907782a37ee8e7c6217c16f71300204dbe9"
     },
     "compose.yaml": {
-      "sha256": "de579edd63e4c141a70b9dd9c846dd01ef5b425c5766fd029fd97ab6a308352e"
+      "sha256": "6fd2bb82776ee2ac89ecb162fba9d0f38a185fccf8865900bb7bfedde7f96973"
     },
     "README.md": {
-      "sha256": "a3488f5bb979014f7e156fa4a0f5ca761b5cbfaf9a771b3f9103d27a296beeb1"
+      "sha256": "1f7c11c451cf693b0daa8128e8ca116794b2b5a356bd4d47becb9d2aa4528022"
     }
   },
   "images": {
