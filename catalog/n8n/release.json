@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "n8n",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "522edd7c769de6b5d8d35518a8552907782a37ee8e7c6217c16f71300204dbe9"
+    },
+    "compose.yaml": {
+      "sha256": "de579edd63e4c141a70b9dd9c846dd01ef5b425c5766fd029fd97ab6a308352e"
+    },
+    "README.md": {
+      "sha256": "a3488f5bb979014f7e156fa4a0f5ca761b5cbfaf9a771b3f9103d27a296beeb1"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "n8nio/n8n@sha256:a8c95f75c6fdf65f5f2b7a7b354744eaa1c62bb911b5c00af6499c3f38e4cd32",
+      "repository": "n8nio/n8n",
+      "tag": "2.38.7",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:ed31254f79d45ad1f565f3e9cca17c1b3a1710498c608ea856c2f69a2b443dcc",
+      "appVersion": "2.38.7",
+      "imageCreated": "2026-09-11T07:47:29Z",
+      "source": "https://github.com/n8n-io/n8n"
+    },
+    "postgres": {
+      "reference": "postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
+      "repository": "postgres",
+      "tag": "16.15",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:485935f94cc7165afa896978809c37b592dc07f0a37d2c8f645f12412d0212c8",
+      "appVersion": "16.15",
+      "imageCreated": "2026-08-25T00:42:01Z",
+      "source": "https://hub.docker.com/_/postgres"
+    }
+  },
+  "qualification": {
+    "status": "pending",
+    "date": "2026-09-14",
+    "notes": [
+      "Digests resolved 2026-09-14 via registry API (scripts/registry.mjs). n8n tag 2.38.7 == upstream `stable` tag at that time.",
+      "postgres image config declares VOLUME /var/lib/postgresql/data (claimed as storage `database`); n8n image declares no volumes, ExposedPorts 5678/tcp, User node.",
+      "n8n 2.x task runners: internal mode inside the web container; no sidecar. External runners not qualified."
+    ]
+  }
+}

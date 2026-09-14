@@ -1,0 +1,58 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: n8n
+  name: n8n
+  description: Workflow automation with a private PostgreSQL database
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+    postgres: infrastructure
+endpoints:
+  web:
+    service: web
+    containerPort: 5678
+    scheme: http
+    exposure: direct
+    browserContext: secure
+health:
+  endpoint: web
+  path: /healthz/readiness
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 180
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: Complete n8n owner setup and run a test workflow.
+storage:
+  - id: database
+    composeVolume: database
+    purpose: PostgreSQL database
+    retention: retain
+  - id: app-state
+    composeVolume: app-state
+    purpose: n8n local application state
+    retention: retain
+secrets:
+  - id: database-password
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: postgres, environment: POSTGRES_PASSWORD}
+      - {service: web, environment: DB_POSTGRESDB_PASSWORD}
+  - id: encryption-key
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: web, environment: N8N_ENCRYPTION_KEY}
+configuration:
+  - {service: web, environment: N8N_EDITOR_BASE_URL, endpoint: web}
+  - {service: web, environment: WEBHOOK_URL, endpoint: web}

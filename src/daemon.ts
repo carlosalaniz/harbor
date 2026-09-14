@@ -70,18 +70,20 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
 
     let docker: DockerAdapter;
     let compose: ComposeRunner;
+    let ownedFake: FakeDocker | null = null;
     if (overrides.docker && overrides.compose) {
       docker = overrides.docker;
       compose = overrides.compose;
     } else if (config.docker.mode === 'fake') {
       const fake = new FakeDocker(clock);
+      ownedFake = fake;
       docker = overrides.docker ?? fake;
       compose = overrides.compose ?? fake;
     } else {
       const bin = findDockerBinary();
       if (!bin) throw new HarborError('DOCKER_UNAVAILABLE', 'docker CLI not found in /usr/bin, /usr/local/bin or /opt/homebrew/bin');
       docker = overrides.docker ?? new DockerodeAdapter(config.docker.socketPath);
-      compose = overrides.compose ?? new ComposeCli({ dockerBinary: bin, socketPath: config.docker.socketPath, configDir: path.join(config.stateDir, 'docker-config') });
+      compose = overrides.compose ?? new ComposeCli({ dockerBinary: bin, socketPath: config.docker.socketPath, configDir: path.join(config.stateDir, 'docker-config'), pluginDirs: config.docker.cliPluginDirs });
     }
 
     const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion() };
@@ -110,7 +112,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       const graceful = runner.shutdown();
       await Promise.race([graceful, new Promise((r) => setTimeout(r, 20_000))]);
       await app.close();
-      if (docker instanceof FakeDocker) await docker.shutdown();
+      if (ownedFake) await ownedFake.shutdown();
       db.close();
       lock?.release();
       log.info('daemon stopped');

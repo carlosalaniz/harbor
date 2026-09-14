@@ -10,6 +10,7 @@ import { enrollAdministrator, initState } from './maintenance.js';
 import { openState } from './state/db.js';
 import { Repo } from './state/repo.js';
 import { systemClock } from './util.js';
+import { homedir } from 'node:os';
 
 const root = path.resolve(process.env['HARBOR_DEV_ROOT'] ?? '.harbor-dev');
 mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -22,9 +23,9 @@ const config = normalizeConfig(
     catalogDir: path.resolve('catalog'),
     uiDir: existsSync(path.resolve('web/dist/index.html')) ? path.resolve('web/dist') : null,
     listen: { host: '127.0.0.1', port },
-    docker: socket ? { mode: 'socket', socketPath: socket } : { mode: 'fake' },
+    docker: socket ? { mode: 'socket', socketPath: socket, cliPluginDirs: [path.join(homedir(), '.docker', 'cli-plugins')].filter((d) => existsSync(d)) } : { mode: 'fake' },
     appPortRange: { from: Number(process.env['HARBOR_DEV_PORT_FROM'] ?? 18080), to: Number(process.env['HARBOR_DEV_PORT_TO'] ?? 18999) },
-    logLevel: 'info',
+    logLevel: (process.env['HARBOR_DEV_LOG_LEVEL'] as 'debug' | 'info' | 'warn' | 'error' | undefined) ?? 'info',
   },
   root,
 );

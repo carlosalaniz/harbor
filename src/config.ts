@@ -6,7 +6,7 @@ import { HarborError } from './errors.js';
 
 export type DockerConfig =
   | { mode: 'fake' }
-  | { mode: 'socket'; socketPath: string };
+  | { mode: 'socket'; socketPath: string; cliPluginDirs: string[] };
 
 export interface DaemonConfig {
   stateDir: string;
@@ -38,7 +38,7 @@ const CONFIG_SCHEMA = {
     docker: {
       oneOf: [
         { type: 'object', additionalProperties: false, required: ['mode'], properties: { mode: { const: 'fake' } } },
-        { type: 'object', additionalProperties: false, required: ['mode', 'socketPath'], properties: { mode: { const: 'socket' }, socketPath: { type: 'string', minLength: 1 } } },
+        { type: 'object', additionalProperties: false, required: ['mode', 'socketPath'], properties: { mode: { const: 'socket' }, socketPath: { type: 'string', minLength: 1 }, cliPluginDirs: { type: 'array', items: { type: 'string', minLength: 1 }, maxItems: 8 } } },
       ],
     },
     appPortRange: {
@@ -89,7 +89,7 @@ export function normalizeConfig(raw: unknown, baseDir: string): DaemonConfig {
     catalogDir: abs(raw.catalogDir),
     uiDir: raw.uiDir ? abs(raw.uiDir) : null,
     listen: { host: '127.0.0.1', port: raw.listen?.port ?? CONFIG_DEFAULTS.listen.port },
-    docker: raw.docker.mode === 'socket' ? { mode: 'socket', socketPath: raw.docker.socketPath } : { mode: 'fake' },
+    docker: raw.docker.mode === 'socket' ? { mode: 'socket', socketPath: raw.docker.socketPath, cliPluginDirs: (raw.docker as { cliPluginDirs?: string[] }).cliPluginDirs ?? [] } : { mode: 'fake' },
     appPortRange: raw.appPortRange ?? { ...CONFIG_DEFAULTS.appPortRange },
     imagePullTimeoutMs: raw.imagePullTimeoutMs ?? CONFIG_DEFAULTS.imagePullTimeoutMs,
     startTimeoutMs: raw.startTimeoutMs ?? CONFIG_DEFAULTS.startTimeoutMs,

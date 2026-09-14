@@ -11,6 +11,15 @@ import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
 
+// Thrown when the daemon is shutting down while an operation waits. The operation is left in
+// its in-flight state on purpose; the next daemon start marks it needs_action without replay.
+export class InterruptedError extends Error {
+  constructor() {
+    super('daemon shutting down');
+    this.name = 'InterruptedError';
+  }
+}
+
 // One mutation at a time. Phase intent is persisted before side effects; created IDs after.
 export class OperationRunner {
   private running = false;
@@ -86,6 +95,7 @@ export class OperationRunner {
     }
     const secretValues: string[] = [];
     try {
+      if (this.stopping) throw new InterruptedError();
       switch (op.kind) {
         case 'install': await this.install(op, plan, inst, secretValues); break;
         case 'reinstall': await this.reinstall(op, plan, inst, secretValues); break;
@@ -100,15 +110,18 @@ export class OperationRunner {
         repo.addEvent({ operationId: op.id, instanceId: inst.id, phase: 'succeeded', message: `${op.kind} succeeded` });
       });
     } catch (e) {
+      if (e instanceof InterruptedError) {
+        this.ctx.log.warn(`${op.kind} interrupted by shutdown; left in state ${repo.operation(op.id)?.state} for recovery`, { operationId: op.id });
+        return;
+      }
       const { code, message, nextAction, state } = classify(e, secretValues);
       this.ctx.log.warn(`${op.kind} ${state}: ${message}`, { operationId: op.id, instanceId: inst.id, code });
       repo.transaction(() => {
         repo.finishOperation(op.id, state, { errorCode: code, errorMessage: message, nextAction });
-        const failedInstall = op.kind === 'install' || op.kind === 'reinstall';
         repo.updateInstance(inst.id, {
           activeOperationId: null,
           lastOperationId: op.id,
-          installState: state === 'needs_action' ? 'needs_action' : failedInstall ? 'failed' : 'needs_action',
+          installState: installStateAfterFailure(op.kind, repo.resources(inst.id).some((r) => r.kind === 'container')),
           readiness: 'unknown',
         });
         repo.bumpGeneration(inst.id);
@@ -236,7 +249,9 @@ export class OperationRunner {
           this.event(op, 'checking', `readiness attempt ${attempt}: ${r.status ?? r.error}`);
         }
       },
+      () => this.stopping,
     );
+    if (this.stopping && !result.ok) throw new InterruptedError();
     if (!result.ok) {
       repo.updateInstance(inst.id, { readiness: 'unhealthy', observedAt: repo.now() });
       throw new HarborError('READINESS_TIMEOUT', `readiness check did not pass within ${health.deadlineSeconds}s (last: ${result.last.status ?? result.last.error}); containers were kept for inspection`);
@@ -410,6 +425,15 @@ export class OperationRunner {
     this.event(op, 'removing', kept.length ? `retained volume(s): ${kept.join(', ')}` : 'no volumes to retain');
     repo.updateInstance(inst.id, { installState: 'retained', desired: 'retained', runtime: 'stopped', readiness: 'unknown', observedAt: repo.now() });
   }
+}
+
+// install: failed (Remove cleans up; never eligible for reinstall unless it once succeeded).
+// reinstall: back to retained when nothing was created, so the operator can fix data and retry;
+//            failed once containers exist. start/stop/remove: needs_action (inspect, then stop/remove).
+function installStateAfterFailure(kind: OperationRow['kind'], hasContainers: boolean): 'failed' | 'needs_action' | 'retained' {
+  if (kind === 'install') return 'failed';
+  if (kind === 'reinstall') return hasContainers ? 'failed' : 'retained';
+  return 'needs_action';
 }
 
 function classify(e: unknown, secrets: string[]): { code: ErrorCode; message: string; nextAction: string; state: 'failed' | 'needs_action' } {

@@ -55,7 +55,7 @@ export class Api {
   ) {}
 
   async raw(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
-    const h: Record<string, string> = { ...headers };
+    const h: Record<string, string> = { connection: 'close', ...headers };
     if (this.token && !('authorization' in h)) h['authorization'] = `Bearer ${this.token}`;
     if (body !== undefined && !('content-type' in h)) h['content-type'] = 'application/json';
     return fetch(`${this.baseUrl}${url}`, { method, headers: h, ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }) });
@@ -156,6 +156,7 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     },
     async close() {
       await daemon.close();
+      await fake.shutdown();
       rmSync(root, { recursive: true, force: true });
     },
   };

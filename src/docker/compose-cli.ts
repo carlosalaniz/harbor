@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner } from './adapter.js';
 
@@ -8,7 +8,10 @@ const MAX_OUTPUT = 256 * 1024;
 export interface ComposeCliOptions {
   dockerBinary: string; // absolute path, e.g. /usr/bin/docker
   socketPath: string;
-  configDir: string; // private, empty DOCKER_CONFIG so no ambient contexts/credentials apply
+  configDir: string; // private DOCKER_CONFIG so no ambient contexts/credentials apply
+  // Extra CLI plugin directories (e.g. ~/.docker/cli-plugins on Docker Desktop). Ubuntu's
+  // docker-compose-plugin installs system-wide and needs nothing here.
+  pluginDirs?: string[];
 }
 
 // Spawns `docker compose` with an argument array, fixed cwd, explicit scrubbed environment,
@@ -18,6 +21,8 @@ export class ComposeCli implements ComposeRunner {
 
   constructor(private readonly opts: ComposeCliOptions) {
     mkdirSync(opts.configDir, { recursive: true, mode: 0o700 });
+    // The private config holds nothing but the explicit plugin search path: no contexts, no credentials.
+    writeFileSync(path.join(opts.configDir, 'config.json'), JSON.stringify({ cliPluginsExtraDirs: opts.pluginDirs ?? [] }), { mode: 0o600 });
     this.description = `${opts.dockerBinary} compose (unix://${opts.socketPath})`;
   }
 

@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_DB: n8n
+    healthcheck:
+      test: [CMD, pg_isready, -U, n8n, -d, n8n]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - {type: volume, source: database, target: /var/lib/postgresql/data}
+  web:
+    image: n8nio/n8n@sha256:a8c95f75c6fdf65f5f2b7a7b354744eaa1c62bb911b5c00af6499c3f38e4cd32
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_SCHEMA: public
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    depends_on:
+      postgres: {condition: service_healthy}
+    volumes:
+      - {type: volume, source: app-state, target: /home/node/.n8n}
+volumes:
+  database: {}
+  app-state: {}

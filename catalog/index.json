@@ -8,6 +8,10 @@
     "excalidraw": {
       "revision": "1",
       "dir": "excalidraw"
+    },
+    "n8n": {
+      "revision": "1",
+      "dir": "n8n"
     }
   }
 }
