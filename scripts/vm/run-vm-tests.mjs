@@ -635,7 +635,7 @@ const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboa
   if (adminBefore !== '204') {
     ssh('docker restart hb_platform_portainer-portainer-1 >/dev/null');
     await waitFor(() => (ssh('curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:9443/api/users/admin/check || true').trim() === '404' ? true : null), { timeoutMs: 60_000, intervalMs: 2000, what: 'portainer up after restart' });
-    const token = ssh("docker logs hb_platform_portainer-portainer-1 2>&1 | grep -oE 'setup_token=.*' | tail -1").replace(/\x1b\[[0-9;]*m/g, '').replace(/^setup_token=/, '').trim();
+    const token = ssh("docker logs hb_platform_portainer-portainer-1 2>&1 | grep -oE 'setup_token=.*' | tail -1").replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'), '').replace(/^setup_token=/, '').trim();
     if (!/^[a-f0-9]{64}$/.test(token)) throw new Error(`could not read Portainer setup token from its log (got ${JSON.stringify(token.slice(0, 40))})`);
     await page.goto(portainerHref, { waitUntil: 'networkidle', timeout: 60_000 });
     await page.locator('#username').waitFor({ timeout: 30_000 });
