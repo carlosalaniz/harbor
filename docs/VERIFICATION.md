@@ -81,3 +81,13 @@ Evidence files: `A02-ui-catalog.png`, `A03-bentopdf-merge.png`, `A03-bentopdf-me
 - Cockpit is exercised in two ways: the recorded `--fresh` run binds a **pre-installed** Cockpit (fixture) without reconfiguring it; the managed install path (apt install + loopback socket drop-in) ran in the manual checkpoint (`docs/evidence/manual-2026-09-14/bootstrap-1.log`).
 - The archive is reproducible modulo file modification times.
 - No real personal accounts or production credentials were used: all logins are synthetic fixtures created for the run.
+
+## 6. Archive provenance
+
+The acceptance run above executed the archive built from commit `1b7864c` (before the qualification
+stamp existed). The delivered archive `release/harbor-0.1.0-linux-x64.tar.gz`
+(sha256 `24723e63626d7354788994ce48d557b054cbeca21f37d992f1a946e9960a2f43`, commit `1b7864c` recorded in
+its `release.json`) differs from the tested one only in the three packages' `release.json`
+`qualification` blocks (`pending` → `passed` with the recorded versions). No code, dependency, Node
+runtime or catalog manifest/Compose bytes changed; `pnpm catalog:verify` confirms the file hashes.
+Rebuild it at any time with `pnpm package`.
