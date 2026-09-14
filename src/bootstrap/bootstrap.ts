@@ -98,17 +98,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     await execOk('/usr/bin/systemctl', ['stop', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
   }
   if (path.resolve(opts.releaseDir) !== PRODUCT.paths.opt) {
-    mkdirSync(PRODUCT.paths.opt, { recursive: true, mode: 0o755 });
-    // Release files are replaced wholesale (state lives in /var/lib/harbor, config in /etc/harbor).
-    // Remove each previous entry first: copying over an existing tree with symlinks (node_modules/.bin) fails.
-    for (const entry of readdirSync(opts.releaseDir)) {
-      const dest = path.join(PRODUCT.paths.opt, entry);
-      rmSync(dest, { recursive: true, force: true });
-      cpSync(path.join(opts.releaseDir, entry), dest, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-    }
-    for (const stale of readdirSync(PRODUCT.paths.opt)) {
-      if (!existsSync(path.join(opts.releaseDir, stale))) rmSync(path.join(PRODUCT.paths.opt, stale), { recursive: true, force: true });
-    }
+    replaceReleaseFiles(opts.releaseDir, PRODUCT.paths.opt);
     log(`installed release ${release.version} to ${PRODUCT.paths.opt}`);
   } else {
     log(`release already at ${PRODUCT.paths.opt}`);
@@ -223,6 +213,21 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
 
   const nodeVersion = (await exec(`${PRODUCT.paths.opt}/node/bin/node`, ['--version'], { timeoutMs: 10_000 })).stdout.trim();
   return { facts, installationId, adminCreated, managementUrl, tools, versions: { harbor: release.version, node: nodeVersion, docker: facts.docker.version, compose: facts.docker.composeVersion } };
+}
+
+// Release files are replaced wholesale (state lives in /var/lib/harbor, config in /etc/harbor).
+// Remove each previous entry first: copying over an existing tree with symlinks (node_modules/.bin) fails.
+// Entries that no longer exist in the new release are removed too.
+export function replaceReleaseFiles(releaseDir: string, targetDir: string): void {
+  mkdirSync(targetDir, { recursive: true, mode: 0o755 });
+  for (const entry of readdirSync(releaseDir)) {
+    const dest = path.join(targetDir, entry);
+    rmSync(dest, { recursive: true, force: true });
+    cpSync(path.join(releaseDir, entry), dest, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+  }
+  for (const stale of readdirSync(targetDir)) {
+    if (!existsSync(path.join(releaseDir, stale))) rmSync(path.join(targetDir, stale), { recursive: true, force: true });
+  }
 }
 
 function readReleaseManifest(releaseDir: string): { version: string } {
