@@ -1,0 +1,362 @@
+import { Command, Option } from 'commander';
+import { randomUUID } from 'node:crypto';
+import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto } from '../contracts/api.js';
+import { loadConfig } from '../config.js';
+import { HarborError } from '../errors.js';
+import { PRODUCT } from '../naming.js';
+import { enrollAdministrator, initState } from '../maintenance.js';
+import { productVersion } from '../daemon.js';
+import { ApiClient, clearCliState, readCliState, writeCliState } from './client.js';
+import { confirm, promptHidden, promptVisible, readStdinAll } from './prompt.js';
+
+interface Globals {
+  url: string;
+  json: boolean;
+}
+
+const program = new Command();
+program
+  .name(PRODUCT.cliName)
+  .description(`${PRODUCT.displayName} — local self-hosted application manager (preview)`)
+  .version(productVersion())
+  .option('--url <url>', 'daemon URL', process.env['HARBOR_URL'] ?? readCliState()?.url ?? `http://localhost:${PRODUCT.defaults.managementPort}`)
+  .option('--json', 'machine-readable output', false)
+  .showHelpAfterError();
+
+function globals(): Globals {
+  return program.opts<Globals>();
+}
+
+function client(requireToken = true): ApiClient {
+  const g = globals();
+  const state = readCliState();
+  const token = state && state.url === g.url ? (state.token ?? null) : null;
+  if (requireToken && !token) throw new HarborError('UNAUTHENTICATED', 'not logged in', { nextAction: `Run \`${PRODUCT.cliName} login\`.` });
+  return new ApiClient(g.url, token);
+}
+
+function out(value: unknown, human: () => string): void {
+  if (globals().json) process.stdout.write(JSON.stringify(value, null, 2) + '\n');
+  else process.stdout.write(human() + '\n');
+}
+
+function table(rows: string[][]): string {
+  const widths: number[] = [];
+  for (const r of rows) r.forEach((c, i) => (widths[i] = Math.max(widths[i] ?? 0, c.length)));
+  return rows.map((r) => r.map((c, i) => c.padEnd(widths[i] ?? 0)).join('  ').trimEnd()).join('\n');
+}
+
+async function resolveInstance(api: ApiClient, ref: string): Promise<InstanceSummary> {
+  const { items } = await api.get<{ items: InstanceSummary[] }>('/v1/instances');
+  const byId = items.find((i) => i.id === ref);
+  if (byId) return byId;
+  const byName = items.filter((i) => i.name === ref);
+  if (byName.length === 1) return byName[0]!;
+  if (byName.length > 1) throw new HarborError('INVALID_REQUEST', `name ${ref} is ambiguous`);
+  throw new HarborError('NOT_FOUND', `no instance named ${ref}`, { nextAction: `Run \`${PRODUCT.cliName} list\`.` });
+}
+
+function planSummary(p: PlanDto): string {
+  const lines = [`Plan ${p.id} (${p.kind}) for "${p.name}" [${p.packageId} rev ${p.revision}] — expires ${p.expiresAt}`];
+  for (const c of p.changes) lines.push(`  - ${c}`);
+  if (p.endpoints.length) lines.push('  Endpoints: ' + p.endpoints.map((e) => `${e.id}=${e.browserUrl}`).join(', '));
+  if (p.storage.length) lines.push('  Storage:   ' + p.storage.map((s) => `${s.volumeName} (${s.state})`).join(', '));
+  if (p.secrets.length) lines.push('  Secrets:   ' + p.secrets.map((s) => `${s.id} (${s.state})`).join(', '));
+  for (const w of p.warnings) lines.push(`  ! ${w}`);
+  return lines.join('\n');
+}
+
+function operationSummary(o: OperationDto): string {
+  const lines = [`Operation ${o.id}: ${o.kind} ${o.state} (${o.phase})`];
+  if (o.error) lines.push(`  ${o.error.code}: ${o.error.message}`, `  Next: ${o.error.nextAction}`);
+  for (const e of o.events.slice(-12)) lines.push(`  ${e.at} ${e.phase.padEnd(12)} ${e.message}`);
+  return lines.join('\n');
+}
+
+async function waitOperation(api: ApiClient, id: string, follow: boolean): Promise<OperationDto> {
+  let lastCursor = '';
+  while (true) {
+    const op = await api.get<OperationDto>(`/v1/operations/${id}`);
+    if (follow && !globals().json) {
+      for (const e of op.events) {
+        if (e.cursor > lastCursor || (e.cursor.length > lastCursor.length)) {
+          if (Number(e.cursor) > Number(lastCursor || '0')) process.stderr.write(`  ${e.phase.padEnd(12)} ${e.message}\n`);
+        }
+      }
+      if (op.events.length) lastCursor = op.events[op.events.length - 1]!.cursor;
+    }
+    if (op.state === 'succeeded' || op.state === 'failed' || op.state === 'needs_action') return op;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string }): Promise<void> {
+  if (!globals().json) process.stderr.write(planSummary(plan) + '\n');
+  if (!opts.yes) {
+    const ok = await confirm('Apply this plan?');
+    if (!ok) throw new HarborError('INVALID_REQUEST', 'plan not approved', { nextAction: 'Re-run with --yes to approve non-interactively.' });
+  }
+  const key = opts.idempotencyKey ?? `cli-${randomUUID()}`;
+  let submitted: { operationId: string; created: boolean } | null = null;
+  for (let attempt = 0; attempt < 3 && !submitted; attempt++) {
+    try {
+      submitted = await api.post<{ operationId: string; created: boolean }>('/v1/operations', { planId: plan.id }, { 'idempotency-key': key });
+    } catch (e) {
+      // Transport failures retry with the same key; API errors do not.
+      if (HarborError.is(e, 'STATE_UNAVAILABLE') && attempt < 2) continue;
+      throw e;
+    }
+  }
+  if (!submitted) throw new HarborError('STATE_UNAVAILABLE', 'submission failed');
+  if (opts.wait === false) {
+    out({ operationId: submitted.operationId, planId: plan.id, submitted: true }, () => `Submitted operation ${submitted!.operationId} (not waiting). Check with: ${PRODUCT.cliName} operation ${submitted!.operationId}`);
+    return;
+  }
+  const op = await waitOperation(api, submitted.operationId, true);
+  out(op, () => operationSummary(op));
+  if (op.state !== 'succeeded') throw new HarborError((op.error?.code as HarborError['code']) ?? 'OPERATION_FAILED', op.error?.message ?? `${op.kind} ${op.state}`, { nextAction: op.error?.nextAction ?? '', operationId: op.id });
+}
+
+// ---------------- commands
+
+program
+  .command('login')
+  .description('log in to the local daemon (password prompted without echo)')
+  .option('--username <name>')
+  .option('--password-stdin', 'read the password from stdin (protected automation pipe only)')
+  .action(async (opts: { username?: string; passwordStdin?: boolean }) => {
+    const api = client(false);
+    const username = opts.username ?? (await promptVisible('Username: '));
+    const password = opts.passwordStdin ? await readStdinAll() : await promptHidden('Password: ');
+    const session = await api.post<{ token: string; expiresAt: string }>('/v1/sessions', { username, password });
+    writeCliState({ url: api.baseUrl, token: session.token, expiresAt: session.expiresAt });
+    out({ loggedIn: true, expiresAt: session.expiresAt }, () => `Logged in to ${api.baseUrl} (session expires ${session.expiresAt}).`);
+  });
+
+program
+  .command('logout')
+  .description('revoke the current session and delete the stored token')
+  .action(async () => {
+    const api = client(false);
+    if (api.token) {
+      try {
+        await api.delete('/v1/sessions/current');
+      } catch {
+        /* token already invalid */
+      }
+    }
+    clearCliState();
+    out({ loggedOut: true }, () => 'Logged out.');
+  });
+
+program
+  .command('catalog')
+  .description('list bundled packages')
+  .action(async () => {
+    const { items } = await client().get<{ items: CatalogItemDto[] }>('/v1/catalog');
+    out(items, () => table([['ID', 'NAME', 'REV', 'AVAILABILITY', 'QUALIFICATION', 'DESCRIPTION'], ...items.map((i) => [i.id, i.name, i.revision, i.availability + (i.reason ? ` (${i.reason})` : ''), i.qualification, i.description])]));
+  });
+
+program
+  .command('list')
+  .description('list instances including retained records')
+  .action(async () => {
+    const { items } = await client().get<{ items: InstanceSummary[] }>('/v1/instances');
+    out(items, () =>
+      items.length
+        ? table([['NAME', 'PACKAGE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'URL', 'ID'], ...items.map((i) => [i.name, `${i.packageId}@${i.revision}`, i.installState, i.desired, i.runtime, i.readiness, i.endpoints.find((e) => e.id === i.primaryEndpoint)?.browserUrl ?? '-', i.id])])
+        : 'No instances.',
+    );
+  });
+
+program
+  .command('inspect <instance>')
+  .description('show one instance (by name or UUID) with resources, events and setup guidance')
+  .action(async (ref: string) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const d = await api.get<InstanceDetail>(`/v1/instances/${inst.id}`);
+    out(d, () => {
+      const lines = [
+        `${d.name}  (${d.packageName} ${d.packageId}@${d.revision})  id ${d.id}`,
+        `  install ${d.installState}  desired ${d.desired}  runtime ${d.runtime}  readiness ${d.readiness}  observed ${d.observedAt ?? '-'}`,
+        ...d.endpoints.map((e) => `  endpoint ${e.id}: ${e.browserUrl} (container port ${e.containerPort})`),
+        ...(d.setup ? [`  setup: ${d.setup.instructions} -> ${d.setup.browserUrl}`] : []),
+        ...(d.lastError ? [`  last error ${d.lastError.code}: ${d.lastError.message}`, `  next: ${d.lastError.nextAction}`] : []),
+        '  resources:',
+        ...d.resources.map((r) => `    ${r.kind.padEnd(9)} ${r.role.padEnd(12)} ${r.name} ${r.present === null ? '(unknown)' : r.present ? '' : '(absent)'}`),
+        '  recent events:',
+        ...d.events.slice(-10).map((e) => `    ${e.at} ${e.phase.padEnd(12)} ${e.message}`),
+      ];
+      return lines.join('\n');
+    });
+  });
+
+program
+  .command('plan <kind> [target]')
+  .description('create a plan without applying it: plan install <package> [--name n] | plan start|stop|remove|reinstall <instance>')
+  .option('--name <slug>', 'instance name for install')
+  .action(async (kind: string, target: string | undefined, opts: { name?: string }) => {
+    const api = client();
+    const plan = await createPlan(api, kind, target, opts.name);
+    out(plan, () => planSummary(plan) + `\nApply with: ${PRODUCT.cliName} apply ${plan.id} --idempotency-key <key>`);
+  });
+
+async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string): Promise<PlanDto> {
+  if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
+  if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}) });
+  if (!['start', 'stop', 'remove', 'reinstall'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  const inst = await resolveInstance(api, target);
+  return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id });
+}
+
+program
+  .command('apply <plan-id>')
+  .description('submit an existing plan by ID')
+  .requiredOption('--idempotency-key <key>', 'client-chosen key (8-128 chars) reused on retries')
+  .option('--no-wait', 'return after submission')
+  .option('--yes', 'approve without prompting', false)
+  .action(async (planId: string, opts: { idempotencyKey: string; wait: boolean; yes: boolean }) => {
+    const api = client();
+    const plan = await api.get<PlanDto>(`/v1/plans/${planId}`);
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, idempotencyKey: opts.idempotencyKey });
+  });
+
+program
+  .command('install <package>')
+  .description('plan and install a package (shows the plan and asks for confirmation)')
+  .option('--name <slug>', 'instance name')
+  .option('--yes', 'approve the shown plan non-interactively', false)
+  .option('--no-wait', 'return the operation ID instead of waiting')
+  .action(async (pkg: string, opts: { name?: string; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const plan = await createPlan(api, 'install', pkg, opts.name);
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+
+for (const kind of ['start', 'stop', 'remove', 'reinstall'] as const) {
+  program
+    .command(`${kind} <instance>`)
+    .description(
+      kind === 'remove'
+        ? 'stop and delete containers; retain data volumes, secrets, name and ports'
+        : kind === 'reinstall'
+          ? 'reinstall the exact stored release into a removed (retained) instance'
+          : `${kind} an installed instance`,
+    )
+    .option('--yes', 'approve without prompting', false)
+    .option('--no-wait', 'return after submission')
+    .action(async (ref: string, opts: { yes: boolean; wait: boolean }) => {
+      const api = client();
+      const plan = await createPlan(api, kind, ref);
+      await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+    });
+}
+
+program
+  .command('operation <id>')
+  .description('show an operation; --follow waits for completion')
+  .option('--follow', 'poll until the operation finishes', false)
+  .action(async (id: string, opts: { follow: boolean }) => {
+    const api = client();
+    const op = opts.follow ? await waitOperation(api, id, true) : await api.get<OperationDto>(`/v1/operations/${id}`);
+    out(op, () => operationSummary(op));
+    if (opts.follow && op.state !== 'succeeded') process.exitCode = op.state === 'failed' ? 1 : 3;
+  });
+
+program
+  .command('tools')
+  .description('show Cockpit/Portainer state and links')
+  .action(async () => {
+    const { items } = await client().get<{ items: PlatformToolDto[] }>('/v1/platform-tools');
+    out(items, () => table([['TOOL', 'INSTALLED', 'REACHABLE', 'URL', 'OBSERVED', 'NOTE'], ...items.map((t) => [t.name, t.installationState, t.availability, t.browserUrl ?? '-', t.observedAt ?? '-', t.note ?? ''])]));
+  });
+
+program
+  .command('doctor')
+  .description('check daemon liveness and system status')
+  .action(async () => {
+    const api = client(false);
+    const live = await api.healthz();
+    let system: SystemDto | null = null;
+    let authError: string | null = null;
+    if (live && api.token) {
+      try {
+        system = await api.get<SystemDto>('/v1/system');
+      } catch (e) {
+        authError = (e as Error).message;
+      }
+    }
+    out({ url: api.baseUrl, live, loggedIn: Boolean(api.token), system, authError }, () => {
+      const lines = [`Daemon ${api.baseUrl}: ${live ? 'live' : 'NOT REACHABLE'}`];
+      if (!api.token) lines.push('Not logged in.');
+      if (authError) lines.push(`Session check failed: ${authError} (run login)`);
+      if (system) {
+        lines.push(`Version ${system.version} profile ${system.profile}, installation ${system.installationId}`);
+        lines.push(`Docker: ${system.docker.available ? `available (${system.docker.version})` : `unavailable (${system.docker.error ?? 'no observation yet'})`} observed ${system.docker.observedAt ?? '-'}`);
+        lines.push(`Busy operation: ${system.busyOperationId ?? 'none'}`);
+      }
+      return lines.join('\n');
+    });
+    if (!live) process.exitCode = 4;
+  });
+
+// ---------------- local maintenance (direct state access, no HTTP)
+
+program
+  .command('init')
+  .description('explicitly initialize a fresh state directory for the given config (never overwrites)')
+  .requiredOption('--config <file>', 'daemon config JSON')
+  .action((opts: { config: string }) => {
+    const cfg = loadConfig(opts.config);
+    const r = initState(cfg);
+    out({ initialized: true, installationId: r.installationId, stateDir: cfg.stateDir }, () => `Initialized state at ${cfg.stateDir} (installation ${r.installationId}).`);
+  });
+
+program
+  .command('enroll')
+  .description('enroll (or with --reset, replace) the single local administrator; requires the daemon to be stopped for --reset')
+  .requiredOption('--config <file>', 'daemon config JSON')
+  .option('--username <name>')
+  .option('--password-stdin', 'read the password from stdin (protected pipe only)')
+  .option('--reset', 'replace existing credentials and revoke all sessions', false)
+  .action(async (opts: { config: string; username?: string; passwordStdin?: boolean; reset: boolean }) => {
+    const cfg = loadConfig(opts.config);
+    const username = opts.username ?? (await promptVisible('Administrator username: '));
+    let password: string;
+    if (opts.passwordStdin) password = await readStdinAll();
+    else {
+      password = await promptHidden('Password (min 12 chars): ');
+      const again = await promptHidden('Repeat password: ');
+      if (password !== again) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
+    }
+    const r = await enrollAdministrator(cfg, username, password, { reset: opts.reset });
+    out({ username, created: r.created, revokedSessions: r.revokedSessions }, () => `${r.created ? 'Enrolled' : 'Reset'} administrator ${username}${r.revokedSessions ? ` (revoked ${r.revokedSessions} session(s))` : ''}.`);
+  });
+
+program.addOption(new Option('--no-color').hideHelp());
+
+export async function runCli(argv: string[]): Promise<number> {
+  try {
+    await program.parseAsync(argv);
+    return Number(process.exitCode ?? 0);
+  } catch (e) {
+    if (e instanceof HarborError) {
+      if (globals().json) process.stdout.write(JSON.stringify(e.toBody(), null, 2) + '\n');
+      else {
+        process.stderr.write(`error ${e.code}: ${e.message}\n`);
+        for (const d of e.details.slice(0, 5)) process.stderr.write(`  - ${d}\n`);
+        if (e.nextAction) process.stderr.write(`next: ${e.nextAction}\n`);
+        if (e.operationId) process.stderr.write(`operation: ${e.operationId}\n`);
+      }
+      return e.exitCode;
+    }
+    if ((e as { code?: string }).code === 'commander.helpDisplayed' || (e as { code?: string }).code === 'commander.version') return 0;
+    process.stderr.write(`error: ${(e as Error).message}\n`);
+    return 1;
+  }
+}
+
+if (process.argv[1] && /cli\/main\.(js|ts)$|\/harbor$/.test(process.argv[1])) {
+  runCli(process.argv).then((code) => process.exit(code));
+}

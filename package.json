@@ -1,0 +1,61 @@
+{
+  "name": "harbor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harbor — simple self-hosted application manager (local preview)",
+  "type": "module",
+  "engines": {
+    "node": ">=24.12.0 <25",
+    "pnpm": ">=10.16.0"
+  },
+  "packageManager": "pnpm@10.16.1",
+  "bin": {
+    "harbor": "./dist/cli/main.js",
+    "harbor-daemon": "./dist/daemon.js"
+  },
+  "scripts": {
+    "dev": "tsx src/dev.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "pnpm build:server && pnpm build:web",
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:web": "vite build --config web/vite.config.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
+    "test:vm": "node scripts/vm/run-vm-tests.mjs",
+    "package": "node scripts/package.mjs",
+    "catalog:verify": "tsx scripts/catalog-verify.ts",
+    "openapi": "tsx scripts/openapi.ts"
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.3",
+    "@fastify/swagger": "^9.8.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "better-sqlite3": "^13.0.3",
+    "commander": "^15.0.0",
+    "dockerode": "^5.0.1",
+    "fastify": "^5.12.4",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/dockerode": "^4.0.1",
+    "@types/node": "^24.13.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "^10.10.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.0"
+  }
+}

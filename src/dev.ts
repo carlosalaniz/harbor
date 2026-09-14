@@ -1,0 +1,53 @@
+// `pnpm dev`: run the daemon against a private local state directory with the fake Docker
+// adapter. Nothing on the host is touched. Set HARBOR_DEV_DOCKER_SOCKET=/path/to/docker.sock
+// to target a Docker engine explicitly (developer opt-in; never auto-discovered).
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import path from 'node:path';
+import { normalizeConfig } from './config.js';
+import { startDaemon } from './daemon.js';
+import { enrollAdministrator, initState } from './maintenance.js';
+import { openState } from './state/db.js';
+import { Repo } from './state/repo.js';
+import { systemClock } from './util.js';
+
+const root = path.resolve(process.env['HARBOR_DEV_ROOT'] ?? '.harbor-dev');
+mkdirSync(root, { recursive: true, mode: 0o700 });
+const stateDir = path.join(root, 'state');
+const socket = process.env['HARBOR_DEV_DOCKER_SOCKET'];
+const port = Number(process.env['HARBOR_DEV_PORT'] ?? 18000);
+const config = normalizeConfig(
+  {
+    stateDir,
+    catalogDir: path.resolve('catalog'),
+    uiDir: existsSync(path.resolve('web/dist/index.html')) ? path.resolve('web/dist') : null,
+    listen: { host: '127.0.0.1', port },
+    docker: socket ? { mode: 'socket', socketPath: socket } : { mode: 'fake' },
+    appPortRange: { from: Number(process.env['HARBOR_DEV_PORT_FROM'] ?? 18080), to: Number(process.env['HARBOR_DEV_PORT_TO'] ?? 18999) },
+    logLevel: 'info',
+  },
+  root,
+);
+writeFileSync(path.join(root, 'harbor.json'), JSON.stringify(config, null, 2));
+
+if (!existsSync(path.join(stateDir, 'harbor.db'))) {
+  const r = initState(config);
+  console.error(`[dev] initialized private state at ${stateDir} (installation ${r.installationId})`);
+}
+{
+  const db = openState(stateDir, { readonly: true });
+  const hasAdmin = new Repo(db, systemClock).administrator() !== null;
+  db.close();
+  if (!hasAdmin) {
+    const password = process.env['HARBOR_DEV_PASSWORD'] ?? randomBytes(9).toString('base64url');
+    await enrollAdministrator(config, 'admin', password, { reset: false });
+    console.error(`[dev] enrolled administrator "admin". Password (dev only, shown once): ${password}`);
+    console.error(`[dev] set HARBOR_DEV_PASSWORD to choose it yourself.`);
+  }
+}
+
+const daemon = await startDaemon(config);
+console.error(`[dev] ${daemon.url}  docker=${daemon.ctx.docker.description}  ui=${config.uiDir ?? '(not built; run pnpm build:web)'}`);
+const stop = () => void daemon.close().then(() => process.exit(0));
+process.on('SIGINT', stop);
+process.on('SIGTERM', stop);

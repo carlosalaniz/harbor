@@ -1,0 +1,28 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: bentopdf
+  name: BentoPDF
+  description: Browser PDF tools
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 8080
+    scheme: http
+    exposure: direct
+    browserContext: secure
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 90
+ui:
+  primaryEndpoint: web

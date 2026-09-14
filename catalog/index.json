@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "bentopdf": {
+      "revision": "1",
+      "dir": "bentopdf"
+    },
+    "excalidraw": {
+      "revision": "1",
+      "dir": "excalidraw"
+    }
+  }
+}
