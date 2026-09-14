@@ -160,7 +160,9 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.get('/v1/catalog', { preHandler: requireAuth, schema: { description: 'Bundled packages.' } }, async () => ({ items: service.catalog() }));
   app.get(
     '/v1/catalog/:id/asset/:name',
-    { preHandler: requireAuth, schema: { description: 'Package presentation asset (icon/gallery) from the bundled package.', params: { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$' } } } } },
+    // Unauthenticated on purpose: <img src> cannot carry the bearer token, and the assets are static
+    // files of the bundled, hash-verified catalog (no instance or host data). Same-origin/Host guards still apply.
+    { schema: { description: 'Package presentation asset (icon/gallery) from the bundled package. Open (no session): static catalog content only.', security: [], params: { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$' } } } } },
     async (req, reply) => {
       const { id, name } = req.params as { id: string; name: string };
       const a = service.asset(id, name);

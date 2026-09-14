@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -53,6 +53,7 @@ export const api = {
     }
   },
   system: () => call<SystemDto>('GET', '/v1/system'),
+  metrics: () => call<SystemMetricsDto>('GET', '/v1/system/metrics'),
   catalog: () => call<{ items: CatalogItemDto[] }>('GET', '/v1/catalog').then((r) => r.items),
   instances: () => call<{ items: InstanceSummary[] }>('GET', '/v1/instances').then((r) => r.items),
   instance: (id: string) => call<InstanceDetail>('GET', `/v1/instances/${id}`),

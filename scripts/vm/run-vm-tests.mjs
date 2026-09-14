@@ -83,12 +83,13 @@ async function newPage(opts = {}) {
   return { ctx, page: await ctx.newPage() };
 }
 
-async function uiLogin(page) {
-  await page.goto(`${UI}/`, { waitUntil: 'networkidle' });
+async function uiLogin(page, route = 'home') {
+  await page.goto(`${UI}/#/${route}`, { waitUntil: 'networkidle' });
   await page.getByLabel('Username').fill(ADMIN.username);
   await page.getByLabel('Password').fill(ADMIN.password);
   await page.getByRole('button', { name: 'Log in' }).click();
-  await page.getByRole('heading', { name: 'Installed' }).waitFor({ timeout: 30_000 });
+  const heading = { home: 'Your apps', store: 'App Store', platform: 'Platform tools', publishing: 'Published addresses' }[route];
+  await page.getByRole('heading', { name: heading }).waitFor({ timeout: 30_000 });
 }
 
 async function apiToken() {
@@ -186,7 +187,7 @@ const A02 = step('A02', 'CLI and UI show three real pinned packages; invalid pac
   const digests = JSON.parse(ssh(`for p in bentopdf excalidraw n8n; do jq -c '{id:.package.id, images:[.images[]|.reference]}' /opt/harbor/catalog/$p/release.json; done | jq -s .`));
   for (const d of digests) for (const ref of d.images) if (!/@sha256:[a-f0-9]{64}$/.test(ref)) throw new Error(`unpinned image ${ref}`);
   const { ctx, page } = await newPage();
-  await uiLogin(page);
+  await uiLogin(page, 'store');
   for (const name of ['Excalidraw', 'BentoPDF', 'n8n']) await page.getByRole('heading', { name, exact: true }).waitFor();
   await page.screenshot({ path: path.join(ev.dir, 'A02-ui-catalog.png') });
   await ctx.close();
@@ -425,6 +426,18 @@ const A11 = step('A11', 'n8n/PostgreSQL installs; owner setup and credentialed w
   };
 });
 
+// Partial reruns (--only B04,B09) and post-reboot steps need the gateway address and the fixture endpoint;
+// A11 sets them up the first time, this makes them available again without redoing A11.
+function ensureN8nFixture(n) {
+  n8nGateway ??= ssh(`docker network inspect hb_${n.id.replace(/-/g, '')}_default --format '{{(index .IPAM.Config 0).Gateway}}'`).trim();
+  const alive = sshTry(`curl -s -m 3 http://${n8nGateway}:18999/__hits >/dev/null`).code === 0;
+  if (!alive) {
+    target.scp(path.join(ROOT, 'scripts/vm/fixtures/test-endpoint.mjs'), '/root/test-endpoint.mjs');
+    ssh(`nohup /opt/harbor/node/bin/node /root/test-endpoint.mjs ${n8nGateway} 18999 >/root/endpoint.log 2>&1 & echo $! > /root/endpoint.pid; sleep 1`);
+  }
+  return n8nGateway;
+}
+
 async function n8nWorkflowDemo(page, gateway, create) {
   const rest = (p, init) => page.evaluate(async ({ p, init }) => {
     const r = await fetch(p, { ...init, headers: { 'content-type': 'application/json' }, credentials: 'same-origin' });
@@ -616,8 +629,8 @@ const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboa
   // OS test user for Cockpit login
   ssh(`id ${OS_TEST_USER.name} >/dev/null 2>&1 || useradd -m -s /bin/bash ${OS_TEST_USER.name}; echo '${OS_TEST_USER.name}:${OS_TEST_USER.password}' | chpasswd`);
   const { ctx, page } = await newPage({ ignoreHTTPSErrors: true });
-  // Open links from the Harbor UI
-  await uiLogin(page);
+  // Open links from the Harbor UI (Platform page)
+  await uiLogin(page, 'platform');
   const cockpitHref = await page.getByRole('link', { name: 'Open Cockpit' }).getAttribute('href');
   const portainerHref = await page.getByRole('link', { name: 'Open Portainer' }).getAttribute('href');
   await page.screenshot({ path: path.join(ev.dir, 'A14-harbor-tools-cards.png') });
@@ -764,11 +777,10 @@ function dnsSet(fqdn) {
 const B04 = step('B04', 'Public exposure of n8n as primary: HTTPS via Let\'s Encrypt, owner login and workflow through the public URL', async () => {
   const n = byName('n8n');
   if (!n) throw new Error('n8n instance missing (A11 must run first)');
+  ensureN8nFixture(n);
   target.controller(['firewall-web', 'on']);
   const host = publicHost('n8n');
   dnsSet(host);
-  const plan = cliOk(target, ['plan', 'expose', n.id]).catch?.() ?? null; // placeholder (plan command needs kind args)
-  void plan;
   const op = cliOk(target, ['expose', n.id, '--via', 'public', '--host', host, '--protect', 'none', '--primary', '--yes'], { timeoutMs: 600_000 });
   if (op.state !== 'succeeded') throw new Error(`expose n8n ${op.state}: ${JSON.stringify(op.error)}`);
   const url = `https://${host}/`;
@@ -839,6 +851,7 @@ const B07 = step('B07', 'Provider down: exposures degrade, apps stay fine on loo
 
 const B09 = step('B09', 'Reconfigure primary back to loopback; n8n works locally again; unexpose withdraws routes', async () => {
   const n = byName('n8n');
+  ensureN8nFixture(n);
   const op = cliOk(target, ['primary', n.id, 'loopback', '--yes'], { timeoutMs: 600_000 });
   if (op.state !== 'succeeded') throw new Error(`primary loopback ${op.state}: ${JSON.stringify(op.error)}`);
   const env = ssh(`grep -E 'N8N_EDITOR_BASE_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim();

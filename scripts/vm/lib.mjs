@@ -38,8 +38,18 @@ class SshTarget {
     this.hostForTunnels = hostForTunnels;
   }
   ssh(command, opts = {}) {
-    const r = spawnSync(this.sshBase[0], [...this.sshBase.slice(1), command], { encoding: 'utf8', timeout: opts.timeoutMs ?? 600_000, maxBuffer: 64 * 1024 * 1024, input: opts.input });
-    return { code: r.status, stdout: r.stdout ?? '', stderr: (r.stderr ?? '').replace(/^tar: Ignoring unknown extended header keyword.*\n/gm, '') };
+    // A failure *before* the remote command starts (banner exchange / TCP connect) is safe to retry
+    // even for mutating commands; DigitalOcean droplets occasionally drop the first SSH attempt.
+    for (let attempt = 1; ; attempt++) {
+      const r = spawnSync(this.sshBase[0], [...this.sshBase.slice(1), command], { encoding: 'utf8', timeout: opts.timeoutMs ?? 600_000, maxBuffer: 64 * 1024 * 1024, input: opts.input });
+      const stderr = (r.stderr ?? '').replace(/^tar: Ignoring unknown extended header keyword.*\n/gm, '');
+      const preCommandFailure = r.status === 255 && /timed out during banner exchange|Connection timed out|Connection refused|kex_exchange_identification/.test(stderr);
+      if (preCommandFailure && attempt < 4) {
+        spawnSync('sleep', [String(5 * attempt)]);
+        continue;
+      }
+      return { code: r.status, stdout: r.stdout ?? '', stderr };
+    }
   }
   sshOk(command, opts = {}) {
     const r = this.ssh(command, opts);

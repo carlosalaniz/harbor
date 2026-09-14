@@ -14,6 +14,7 @@ describe('OpenAPI description', () => {
     const p = doc['paths'] as Record<string, Record<string, { security?: unknown[] }>>;
     expect(p['/healthz']!['get']!.security).toEqual([]);
     expect(p['/v1/sessions']!['post']!.security).toEqual([]);
+    expect(p['/v1/catalog/{id}/asset/{name}']!['get']!.security).toEqual([]); // <img src> cannot send a bearer token
     expect(p['/v1/plans']!['post']!.security).toBeUndefined(); // inherits global bearer
   });
 });
