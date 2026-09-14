@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global window, localStorage, sessionStorage */
 // pnpm test:vm — the live acceptance suite (TDD A01–A16) against the designated disposable VM only.
 //
 //   node scripts/vm/run-vm-tests.mjs [--fresh] [--skip-reboot] [--only A01,A03] [--archive <tar.gz>]
@@ -461,3 +462,304 @@ async function n8nWorkflowDemo(page, gateway, create) {
   const newHits = hits.slice(hitsBefore);
   return { workflowId: wf.id, credentialId: credId, executionId: run.json.data.executionId, executionStatus: exec.status, fixtureSawCredentialedCall: newHits.some((h) => h.ok && h.path === '/n8n-demo'), newFixtureHits: newHits };
 }
+
+// ---------------------------------------------------------------- A12 remove/reinstall retention
+const A12 = step('A12', 'Remove/reinstall the exact n8n instance preserves workflow and credential; missing volume blocks without replacement', async () => {
+  const n = byName('n8n');
+  const volsBefore = ssh(`docker volume inspect hb_${n.id.replace(/-/g, '')}_database --format '{{.CreatedAt}} {{index .Labels "io.harbor.preview/token"}}'`).trim();
+  const keyHash = ssh(`sha256sum /var/lib/harbor/instances/${n.id}/secrets/encryption-key | cut -c1-16`).trim();
+  const rm = cliOk(target, ['remove', n.id, '--yes']);
+  if (rm.state !== 'succeeded') throw new Error('remove failed');
+  const afterRemove = byName('n8n');
+  const volsAfterRemove = ssh(`docker volume inspect hb_${n.id.replace(/-/g, '')}_database --format '{{.CreatedAt}} {{index .Labels "io.harbor.preview/token"}}'`).trim();
+  if (afterRemove.installState !== 'retained' || volsAfterRemove !== volsBefore) throw new Error('remove did not retain data');
+  const ri = cliOk(target, ['reinstall', n.id, '--yes'], { timeoutMs: 1800_000 });
+  if (ri.state !== 'succeeded') throw new Error(`reinstall ${ri.state}: ${JSON.stringify(ri.error)}`);
+  const after = byName('n8n');
+  if (after.endpoints[0].hostPort !== n.endpoints[0].hostPort) throw new Error('port changed on reinstall');
+  const keyHashAfter = ssh(`sha256sum /var/lib/harbor/instances/${n.id}/secrets/encryption-key | cut -c1-16`).trim();
+  if (keyHashAfter !== keyHash) throw new Error('encryption key changed');
+  const { ctx, page } = await newPage();
+  await page.goto(`${after.endpoints[0].browserUrl}signin`, { waitUntil: 'networkidle', timeout: 120_000 });
+  const result = await n8nWorkflowDemo(page, n8nGateway, false);
+  await page.screenshot({ path: path.join(ev.dir, 'A12-n8n-after-reinstall.png') });
+  await ctx.close();
+  if (result.executionStatus !== 'success' || !result.fixtureSawCredentialedCall) throw new Error(`post-reinstall execution ${result.executionStatus}`);
+  // Missing volume must block reinstall of the SECOND instance without creating a replacement (test-owned data).
+  const n2 = byName('n8n-2');
+  const rm2 = cliOk(target, ['remove', n2.id, '--yes']);
+  if (rm2.state !== 'succeeded') throw new Error('remove n8n-2 failed');
+  const vol2 = `hb_${n2.id.replace(/-/g, '')}_database`;
+  ssh(`docker volume rm ${vol2}`);
+  const blocked = cliOk(target, ['reinstall', n2.id, '--yes'], { timeoutMs: 600_000 });
+  const volExistsAfter = ssh(`docker volume ls --format {{.Name}} | grep -c '^${vol2}$' || true`).trim();
+  if (blocked.state !== 'needs_action' || blocked.error?.code !== 'DATA_MISSING' || volExistsAfter !== '0') throw new Error(`expected DATA_MISSING with no replacement, got ${blocked.state} ${blocked.error?.code} volExists=${volExistsAfter}`);
+  const n2After = byName('n8n-2');
+  return {
+    details: { instance: n.id, volumeIdentity: volsBefore, encryptionKeySha256Prefix: { before: keyHash, after: keyHashAfter }, postReinstall: result, missingVolumeCase: { instance: n2.id, state: blocked.state, error: blocked.error, replacementCreated: volExistsAfter !== '0', instanceStateAfter: n2After.installState } },
+    notes: ['remove retained the database volume (same creation time/token) and keys; reinstall reused the exact port and key', `same owner login, stored workflow and credential worked after reinstall (execution ${result.executionStatus}, fixture credentialed hit ${result.fixtureSawCredentialedCall})`, 'deleted volume of the second instance -> reinstall needs_action DATA_MISSING, no replacement volume, instance stays retained'],
+  };
+});
+
+// ---------------------------------------------------------------- A10 failure / interruption / docker down
+const A10 = step('A10', 'Failed/interrupted install shows needs_action, retains scope, no blind replay; Docker unavailable is not healthy', async () => {
+  // Interrupt a real install by restarting the daemon while it runs.
+  const plan = cliOk(target, ['plan', 'install', 'excalidraw', '--name', 'interrupted']);
+  const sub = cliOk(target, ['apply', plan.id, '--idempotency-key', `vm-a10-${Date.now()}`, '--yes', '--no-wait']);
+  await waitFor(() => {
+    const o = cliOk(target, ['operation', sub.operationId]);
+    return ['pulling', 'starting', 'checking'].includes(o.phase) || ['succeeded', 'failed'].includes(o.state) ? o : null;
+  }, { timeoutMs: 120_000, intervalMs: 500, what: 'operation in flight' });
+  ssh('systemctl restart harbor');
+  await waitFor(async () => (await fetch(`${UI}/healthz`)).ok, { timeoutMs: 60_000, intervalMs: 1000, what: 'daemon after restart' });
+  cliOk(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
+  const op = cliOk(target, ['operation', sub.operationId]);
+  const inst = byName('interrupted');
+  const interrupted = op.state === 'needs_action';
+  const notes = [];
+  if (interrupted) {
+    if (inst.installState !== 'needs_action' || inst.endpoints.length !== 1) throw new Error('interrupted instance not needs_action with allocation');
+    const rm = cliOk(target, ['remove', inst.id, '--yes']);
+    if (rm.state !== 'succeeded') throw new Error('cleanup of interrupted instance failed');
+    notes.push('install interrupted by daemon restart -> operation and instance needs_action, allocation kept, no replay; remove cleaned up');
+  } else {
+    notes.push(`install completed (${op.state}) before the restart took effect; interruption semantics are covered by tests/integration/lifecycle.test.ts`);
+    if (op.state === 'succeeded') cliOk(target, ['remove', inst.id, '--yes']);
+  }
+  // Docker unavailable
+  ssh('systemctl stop docker.socket docker.service');
+  await sleep(12_000);
+  const doctor = cliOk(target, ['doctor']);
+  const list = listInstances();
+  const anyHealthy = list.some((i) => i.readiness === 'healthy' || i.runtime === 'running');
+  const planDown = cli(target, ['plan', 'install', 'bentopdf', '--name', 'while-down']);
+  ssh('systemctl start docker.socket docker.service');
+  await sleep(15_000);
+  const doctorUp = await waitFor(() => {
+    const d = cliOk(target, ['doctor']);
+    return d.system?.docker?.available ? d : null;
+  }, { timeoutMs: 120_000, what: 'docker back' });
+  await waitFor(() => (byName('excalidraw')?.readiness === 'healthy' ? true : null), { timeoutMs: 180_000, what: 'excalidraw healthy again' });
+  if (doctor.system.docker.available || anyHealthy || planDown.code === 0 || planDown.json?.error?.code !== 'DOCKER_UNAVAILABLE') throw new Error(`docker-down state wrong: ${JSON.stringify({ docker: doctor.system.docker, anyHealthy, planDown: planDown.json })}`);
+  notes.push('Docker stopped -> system docker.available=false, instances unavailable/unknown (none healthy), plan -> 503 DOCKER_UNAVAILABLE; Docker started -> healthy again');
+  return { details: { interruptedOperation: { id: sub.operationId, state: op.state, phase: op.phase, error: op.error }, dockerDown: { system: doctor.system.docker, instances: list.map((i) => [i.name, i.runtime, i.readiness]), plan: planDown.json?.error }, dockerUp: doctorUp.system.docker }, notes };
+});
+
+// ---------------------------------------------------------------- A13 auth controls
+const A13 = step('A13', 'UI login/logout, bearer auth, Host/Origin/content type controls; no secrets in DTOs or browser storage', async () => {
+  const token = await apiToken();
+  const h = { authorization: `Bearer ${token}` };
+  const checks = {};
+  checks.noToken = (await fetch(`${UI}/v1/instances`)).status;
+  checks.badToken = (await fetch(`${UI}/v1/instances`, { headers: { authorization: 'Bearer nope' } })).status;
+  checks.tokenInQuery = (await fetch(`${UI}/v1/instances?token=${token}`)).status;
+  checks.foreignOrigin = (await fetch(`${UI}/v1/instances`, { headers: { ...h, origin: 'http://evil.example' } })).status;
+  checks.crossSite = (await fetch(`${UI}/v1/instances`, { headers: { ...h, 'sec-fetch-site': 'cross-site' } })).status;
+  checks.wrongContentType = (await fetch(`${UI}/v1/plans`, { method: 'POST', headers: { ...h, 'content-type': 'text/plain' }, body: '{"kind":"install","packageId":"excalidraw"}' })).status;
+  checks.malformedJson = (await fetch(`${UI}/v1/plans`, { method: 'POST', headers: { ...h, 'content-type': 'application/json' }, body: '{"kind":' })).status;
+  checks.invalidBody = (await fetch(`${UI}/v1/plans`, { method: 'POST', headers: { ...h, 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'install', packageId: '../x' }) })).status;
+  checks.wrongPassword = (await fetch(`${UI}/v1/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: ADMIN.username, password: 'wrong-password-xx' }) })).status;
+  const expected = { noToken: 401, badToken: 401, tokenInQuery: 401, foreignOrigin: 403, crossSite: 403, wrongContentType: 422, malformedJson: 400, invalidBody: 422, wrongPassword: 401 };
+  for (const [k, v] of Object.entries(expected)) if (checks[k] !== v) throw new Error(`${k}: expected ${v}, got ${checks[k]}`);
+  // DTOs contain no secret material
+  const n = byName('n8n');
+  const detail = await (await fetch(`${UI}/v1/instances/${n.id}`, { headers: h })).text();
+  const secretsOnHost = ssh(`cat /var/lib/harbor/instances/${n.id}/secrets/database-password /var/lib/harbor/instances/${n.id}/secrets/encryption-key`).trim().split('\n');
+  for (const s of secretsOnHost) if (detail.includes(s)) throw new Error('secret value leaked in instance DTO');
+  const logs = ssh('journalctl -u harbor --no-pager -o cat | tail -n 2000');
+  for (const s of secretsOnHost) if (logs.includes(s)) throw new Error('secret value in daemon log');
+  if (logs.includes(token)) throw new Error('bearer token in daemon log');
+  // browser: no persistent storage, logout works
+  const { ctx, page } = await newPage();
+  await uiLogin(page);
+  const storage = await page.evaluate(() => JSON.stringify({ ls: { ...localStorage }, ss: { ...sessionStorage } }));
+  const cookies = await ctx.cookies();
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('heading', { name: 'Log in' }).waitFor();
+  await ctx.close();
+  await fetch(`${UI}/v1/sessions/current`, { method: 'DELETE', headers: h });
+  checks.afterLogout = (await fetch(`${UI}/v1/instances`, { headers: h })).status;
+  if (storage !== '{"ls":{},"ss":{}}' || cookies.length !== 0 || checks.afterLogout !== 401) throw new Error(`browser persistence/logout wrong: ${storage} cookies=${cookies.length} afterLogout=${checks.afterLogout}`);
+  return { details: { statusChecks: checks, browserStorage: storage, cookies: cookies.length }, notes: ['401/403/422/400 controls verified over the tunnel', 'no secret values or bearer tokens in DTOs or journal', 'browser: no localStorage/sessionStorage/cookies; logout revokes the token', 'login rate limiting (429) is covered by tests/integration/auth.test.ts to avoid locking this run out'] };
+});
+
+// ---------------------------------------------------------------- A14 tools
+const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboarding works; real Open links; absent/external tools honest', async () => {
+  const tools = cliOk(target, ['tools']);
+  const cockpit = tools.find((t) => t.id === 'cockpit');
+  const portainer = tools.find((t) => t.id === 'portainer');
+  if (!cockpit?.browserUrl || !portainer?.browserUrl) throw new Error(`tools missing urls: ${JSON.stringify(tools)}`);
+  const cockpitListen = ssh('systemctl show cockpit.socket -p Listen').trim();
+  // OS test user for Cockpit login
+  ssh(`id ${OS_TEST_USER.name} >/dev/null 2>&1 || useradd -m -s /bin/bash ${OS_TEST_USER.name}; echo '${OS_TEST_USER.name}:${OS_TEST_USER.password}' | chpasswd`);
+  const { ctx, page } = await newPage({ ignoreHTTPSErrors: true });
+  // Open links from the Harbor UI
+  await uiLogin(page);
+  const cockpitHref = await page.getByRole('link', { name: 'Open Cockpit' }).getAttribute('href');
+  const portainerHref = await page.getByRole('link', { name: 'Open Portainer' }).getAttribute('href');
+  await page.screenshot({ path: path.join(ev.dir, 'A14-harbor-tools-cards.png') });
+  // Cockpit login
+  await page.goto(cockpitHref, { waitUntil: 'networkidle', timeout: 60_000 });
+  await page.fill('#login-user-input', OS_TEST_USER.name);
+  await page.fill('#login-password-input', OS_TEST_USER.password);
+  await page.click('#login-button');
+  await page.waitForURL(/system|overview/, { timeout: 60_000 }).catch(() => undefined);
+  await sleep(3000);
+  await page.screenshot({ path: path.join(ev.dir, 'A14-cockpit-after-login.png') });
+  const cockpitTitle = await page.title();
+  const cockpitLoggedIn = !(await page.locator('#login-button').isVisible().catch(() => false));
+  // Portainer first-run admin
+  await page.goto(portainerHref, { waitUntil: 'networkidle', timeout: 60_000 });
+  await sleep(2000);
+  let portainerOnboarded = false;
+  if (await page.locator('#username').isVisible().catch(() => false)) {
+    await page.fill('#username', PORTAINER_ADMIN.username);
+    await page.fill('#password', PORTAINER_ADMIN.password);
+    await page.fill('#confirm_password', PORTAINER_ADMIN.password);
+    await page.getByRole('button', { name: /Create user/i }).click();
+    await sleep(4000);
+    portainerOnboarded = true;
+  }
+  await page.screenshot({ path: path.join(ev.dir, 'A14-portainer-after-onboarding.png') });
+  await ctx.close();
+  const adminCheck = ssh('curl -sk -o /dev/null -w "%{http_code}" https://127.0.0.1:9443/api/users/admin/check').trim();
+  const toolsAfter = await waitFor(() => {
+    const t = cliOk(target, ['tools']);
+    return t.find((x) => x.id === 'portainer')?.installationState === 'installed' ? t : null;
+  }, { timeoutMs: 60_000, intervalMs: 6000, what: 'portainer installed after onboarding' });
+  const bindManaged = cli(target, ['tools', 'bind', 'portainer', '--url', 'https://localhost:9443/']);
+  const listeners = ssh("ss -ltnp | awk 'NR>1{print $4}' | grep -E ':(9090|9443)$' | sort").trim().split('\n');
+  return {
+    details: { toolsBefore: tools, toolsAfter, cockpit: { listen: cockpitListen, title: cockpitTitle, loggedIn: cockpitLoggedIn, mode: cockpit.mode }, portainer: { onboardedNow: portainerOnboarded, adminCheckHttp: adminCheck }, listeners, bindManagedRejected: bindManaged.json?.error?.code },
+    notes: [`Cockpit ${cockpit.mode} (${cockpit.mode === 'external' ? 'pre-installed fixture bound without reconfiguring its listener' : 'installed by bootstrap, loopback listener'}): login with an OS account ${cockpitLoggedIn ? 'succeeded' : 'NOT confirmed'}`, `Portainer managed: first-run admin ${portainerOnboarded ? 'created in its own form' : 'already existed'}; card moved from setup_required to installed (admin check HTTP ${adminCheck})`, 'tools absent before --with-tools were shown as not_installed with no fake link (A01 evidence)', `binding a managed tool is rejected (${bindManaged.json?.error?.code})`],
+    status: cockpitLoggedIn ? 'pass' : 'fail',
+  };
+});
+
+// ---------------------------------------------------------------- A09 restart + reboot
+const A09 = step('A09', 'Daemon restart leaves apps running; host reboot returns desired-running apps; intentional stop stays stopped', async () => {
+  const a = byName('excalidraw');
+  const a2 = byName('excalidraw-2'); // stopped in A07
+  if (a2.desired !== 'stopped') throw new Error('excalidraw-2 expected stopped from A07');
+  const before = { a: containersOf(a.id), a2: containersOf(a2.id), n8n: containersOf(byName('n8n').id) };
+  ssh('systemctl restart harbor');
+  await waitFor(async () => (await fetch(`${UI}/healthz`)).ok, { timeoutMs: 60_000, intervalMs: 1000, what: 'daemon after restart' });
+  if (JSON.stringify(containersOf(a.id)) !== JSON.stringify(before.a)) throw new Error('daemon restart changed excalidraw containers');
+  cliOk(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
+  const { ctx, page } = await newPage();
+  await uiLogin(page);
+  await page.locator('.instance').filter({ hasText: 'excalidraw' }).first().waitFor();
+  await page.screenshot({ path: path.join(ev.dir, 'A09-ui-after-daemon-restart.png') });
+  await ctx.close();
+  const notes = ['daemon restart: container ids/creation unchanged; UI recovered after login'];
+  let rebootDetails = null;
+  if (SKIP_REBOOT) notes.push('host reboot SKIPPED (--skip-reboot)');
+  else {
+    const bootBefore = ssh('uptime -s').trim();
+    tunnel?.close();
+    await target.reboot();
+    const bootAfter = ssh('uptime -s').trim();
+    if (bootAfter === bootBefore) throw new Error('boot time unchanged; reboot did not happen');
+    await waitFor(async () => target.ssh('systemctl is-active harbor').stdout.trim() === 'active', { timeoutMs: 180_000, intervalMs: 3000, what: 'harbor active after reboot' });
+    await openTunnels();
+    cliOk(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
+    const list = await waitFor(() => {
+      const l = listInstances();
+      const running = l.filter((i) => i.desired === 'running' && i.installState === 'installed');
+      return running.every((i) => i.readiness === 'healthy') ? l : null;
+    }, { timeoutMs: 300_000, intervalMs: 5000, what: 'desired-running instances healthy after reboot' });
+    const a2After = list.find((i) => i.id === a2.id);
+    if (a2After.runtime !== 'stopped' || a2After.desired !== 'stopped') throw new Error(`stopped instance came back: ${JSON.stringify(a2After)}`);
+    const sentinelState = ssh('docker inspect -f {{.State.Status}} harbor-test-sentinel').trim();
+    rebootDetails = { bootBefore, bootAfter, instances: list.map((i) => ({ name: i.name, desired: i.desired, installState: i.installState, runtime: i.runtime, readiness: i.readiness })), sameContainerIds: JSON.stringify(containersOf(a.id).map((c) => c.id)) === JSON.stringify(before.a.map((c) => c.id)), sentinelState };
+    notes.push(`host reboot (${bootBefore} -> ${bootAfter}): desired-running apps healthy again, excalidraw-2 stayed stopped`);
+  }
+  return { details: { beforeRestart: before, reboot: rebootDetails }, notes };
+});
+
+// ---------------------------------------------------------------- A15 negative inputs
+const A15 = step('A15', 'Package traversal/aliases/duplicate keys/interpolation/undeclared mounts/privileges rejected; malformed API bodies never execute', async () => {
+  const token = await apiToken();
+  const h = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const before = dockerPs().length;
+  const bodies = ['{"kind":', '[]', JSON.stringify({ kind: 'install', packageId: '../../etc' }), JSON.stringify({ kind: 'install', packageId: 'excalidraw', name: 'Bad Name' }), JSON.stringify({ kind: 'remove', instanceId: 'not-a-uuid' }), JSON.stringify({ kind: 'destroy', instanceId: '11111111-1111-4111-8111-111111111111' }), 'x'.repeat(300 * 1024)];
+  const statuses = [];
+  for (const b of bodies) statuses.push((await fetch(`${UI}/v1/plans`, { method: 'POST', headers: h, body: b })).status);
+  if (statuses.some((s) => s < 400)) throw new Error(`malformed body accepted: ${statuses}`);
+  if (dockerPs().length !== before) throw new Error('malformed bodies had Docker effects');
+  // Live package negative: a package with a privileged flag + alias + interpolation is rejected by the daemon's loader.
+  ssh(`set -e; cd /opt/harbor/catalog && rm -rf badpkg && cp -r excalidraw badpkg && sed -i 's/^  id: excalidraw$/  id: badpkg/' badpkg/manifest.yaml && printf '    privileged: true\\n    environment:\\n      A: &x \${HOME}\\n      B: *x\\n    volumes:\\n      - /var/run/docker.sock:/var/run/docker.sock\\n' >> badpkg/compose.yaml && cp index.json /root/index.json.bak && jq '.packages["badpkg"]={revision:"1",dir:"badpkg"}' index.json > index.tmp && mv index.tmp index.json`);
+  let bad;
+  let planBad;
+  try {
+    bad = cliOk(target, ['catalog']).find((c) => c.id === 'badpkg');
+    planBad = cli(target, ['plan', 'install', 'badpkg']);
+  } finally {
+    ssh('mv /root/index.json.bak /opt/harbor/catalog/index.json && rm -rf /opt/harbor/catalog/badpkg');
+  }
+  if (bad.availability !== 'unavailable' || planBad.code === 0) throw new Error('bad package was not rejected');
+  return { details: { apiStatuses: statuses, badPackage: { availability: bad.availability, reason: bad.reason, planError: planBad.json?.error?.code } }, notes: ['malformed/oversized/invalid API bodies -> 4xx with zero Docker effects', 'package with privileged/alias/interpolation/bind mount -> unavailable in catalog, plan rejected', 'full parser/schema negative matrix: tests/unit/yaml.test.ts, manifest.test.ts'] };
+});
+
+// ---------------------------------------------------------------- cleanup + A16
+async function cleanupFixtures() {
+  sshTry('docker rm -f harbor-test-sentinel >/dev/null 2>&1; docker volume rm harbor-test-sentinel-data >/dev/null 2>&1; [ -f /root/endpoint.pid ] && kill $(cat /root/endpoint.pid) 2>/dev/null; userdel -r harbor-cockpit-test 2>/dev/null; true');
+}
+
+function writeMarkdown() {
+  const rows = ev.results.map((r) => `| ${r.id} | ${r.title} | **${r.status.toUpperCase()}** | ${r.notes.map((n) => n.replace(/\|/g, '\\|')).join('<br>')} |`);
+  const md = `# Live VM run ${runId}
+
+- Target: ${target.name} (${JSON.stringify(target.facts())})
+- Archive: ${path.basename(ARCHIVE)}
+- Fresh VM: ${FRESH} · reboot test: ${!SKIP_REBOOT}
+- Versions: ${JSON.stringify(state.versions)}
+- Started ${ev.startedAt}, finished ${new Date().toISOString()}
+
+| ID | Test | Result | Evidence notes |
+|---|---|---|---|
+${rows.join('\n')}
+
+Files in this directory: report.json (full details), bootstrap logs, screenshots, exported PNG/PDF fixtures.
+`;
+  writeFileSync(path.join(ev.dir, 'report.md'), md);
+}
+
+async function main() {
+  await localPortsFree();
+  const steps = [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, A09, A15];
+  if (!should('A01')) await openTunnels();
+  for (const s of steps) await s();
+  if (should('A16')) {
+    const required = ['A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A08', 'A09', 'A10', 'A11', 'A12', 'A13', 'A14', 'A15'];
+    const got = Object.fromEntries(ev.results.map((r) => [r.id, r.status]));
+    const missing = required.filter((id) => !got[id]);
+    const failed = required.filter((id) => got[id] && got[id] !== 'pass');
+    const status = missing.length || failed.length ? (missing.length && !failed.length ? 'blocked' : 'fail') : FRESH ? 'pass' : 'blocked';
+    ev.record('A16', 'Build artifact installs and reproduces the full section-1 demo with recorded results', status, { missing, failed, fresh: FRESH }, [
+      FRESH ? 'run started from a rebuilt VM' : 'NOT from a fresh VM: run again with --fresh for A16 evidence',
+      ...(missing.length ? [`not run: ${missing.join(', ')}`] : []),
+      ...(failed.length ? [`failed: ${failed.join(', ')}`] : []),
+    ]);
+  }
+  await cleanupFixtures();
+  writeMarkdown();
+  await browser?.close();
+  tunnel?.close();
+  const bad = ev.results.filter((r) => r.status === 'fail');
+  console.log(`\n${ev.results.length} checks, ${bad.length} failed. Report: ${path.relative(ROOT, ev.dir)}/report.md`);
+  process.exit(bad.length ? 1 : 0);
+}
+
+main().catch(async (e) => {
+  console.error(e);
+  try {
+    await cleanupFixtures();
+    writeMarkdown();
+  } catch {
+    /* best effort */
+  }
+  await browser?.close();
+  tunnel?.close();
+  process.exit(1);
+});
