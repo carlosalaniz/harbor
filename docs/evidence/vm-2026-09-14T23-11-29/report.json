@@ -1,0 +1,25 @@
+{
+  "startedAt": "2026-09-14T23:11:29.786Z",
+  "updatedAt": "2026-09-14T23:15:04.588Z",
+  "results": [
+    {
+      "id": "A01",
+      "title": "Clean VM bootstrap without Node/npm; re-run preserves identity/admin/app state",
+      "status": "fail",
+      "at": "2026-09-14T23:15:04.586Z",
+      "details": {
+        "error": "bootstrap #2 (re-run, --with-tools) failed (exit 1); see docs/evidence/vm-2026-09-14T23-11-29/bootstrap-2.log",
+        "stack": [
+          "Error: bootstrap #2 (re-run, --with-tools) failed (exit 1); see docs/evidence/vm-2026-09-14T23-11-29/bootstrap-2.log",
+          "    at file:///Users/carlos/Documents/devshit/harbor/scripts/vm/run-vm-tests.mjs:157:28",
+          "    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)",
+          "    at async file:///Users/carlos/Documents/devshit/harbor/scripts/vm/run-vm-tests.mjs:104:62",
+          "    at async main (file:///Users/carlos/Documents/devshit/harbor/scripts/vm/run-vm-tests.mjs:934:26)"
+        ]
+      },
+      "notes": [
+        "bootstrap #2 (re-run, --with-tools) failed (exit 1); see docs/evidence/vm-2026-09-14T23-11-29/bootstrap-2.log"
+      ]
+    }
+  ]
+}

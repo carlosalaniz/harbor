@@ -12,6 +12,7 @@ export const MANIFEST_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['apiVersion', 'kind', 'metadata', 'release', 'deployment', 'endpoints', 'health', 'ui'],
+  // `presentation` is an optional, additive block for the console (docs/design/UI.md §3).
   properties: {
     apiVersion: { const: PRODUCT.apiVersion },
     kind: { const: 'Application' },
@@ -145,6 +146,19 @@ export const MANIFEST_SCHEMA = {
       additionalProperties: false,
       required: ['endpoint', 'instructions'],
       properties: { endpoint: idString, instructions: plainText(1000) },
+    },
+    presentation: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        tagline: plainText(80),
+        category: { enum: ['productivity', 'media', 'files', 'automation', 'network', 'developer', 'other'] },
+        icon: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png)$' },
+        gallery: { type: 'array', maxItems: 6, items: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(png|jpg|jpeg|webp)$' } },
+        developer: plainText(80),
+        website: { type: 'string', pattern: '^https://[^\\s<>"]{1,200}$' },
+        releaseNotes: plainText(1000),
+      },
     },
   },
 } as const;

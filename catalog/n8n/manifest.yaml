@@ -56,3 +56,10 @@ secrets:
 configuration:
   - {service: web, environment: N8N_EDITOR_BASE_URL, endpoint: web}
   - {service: web, environment: WEBHOOK_URL, endpoint: web}
+presentation:
+  tagline: Automate workflows with a private PostgreSQL database
+  category: automation
+  icon: icon.svg
+  developer: n8n GmbH
+  website: https://n8n.io
+  releaseNotes: n8n 2.38.7 (upstream stable) with PostgreSQL 16.15; telemetry disabled.

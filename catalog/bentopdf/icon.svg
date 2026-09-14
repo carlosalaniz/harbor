@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="BentoPDF">
+  <rect width="64" height="64" rx="14" fill="#d9534f"/>
+  <path d="M20 12 h18 l10 10 v30 a2 2 0 0 1 -2 2 h-26 a2 2 0 0 1 -2 -2 z" fill="#fff"/>
+  <path d="M38 12 v10 h10 z" fill="#f2b8b5"/>
+  <rect x="24" y="30" width="18" height="3" rx="1.5" fill="#d9534f"/>
+  <rect x="24" y="37" width="18" height="3" rx="1.5" fill="#d9534f"/>
+  <rect x="24" y="44" width="11" height="3" rx="1.5" fill="#d9534f"/>
+</svg>

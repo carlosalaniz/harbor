@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
-import { exec, which } from './exec.js';
+import { exec, httpGetStatus, which } from './exec.js';
 
 export interface HostFacts {
   osId: string;
@@ -84,14 +84,7 @@ export async function gatherHostFacts(): Promise<HostFacts> {
   }
   const caddyBin = await which('caddy');
   let caddyAdmin = false;
-  if (caddyBin) {
-    try {
-      const r = await fetch('http://127.0.0.1:2019/config/', { signal: AbortSignal.timeout(3000) });
-      caddyAdmin = r.ok;
-    } catch {
-      caddyAdmin = false;
-    }
-  }
+  if (caddyBin) caddyAdmin = (await httpGetStatus('127.0.0.1', 2019, '/config/')) === 200;
   let portainerPresent = false;
   if (dockerBin && daemonActive) {
     const ps = await exec(dockerBin, ['ps', '-a', '--filter', 'name=hb_platform_portainer', '--format', '{{.Names}}'], { timeoutMs: 20_000, env: { DOCKER_CONFIG: '/nonexistent-harbor-bootstrap' } });

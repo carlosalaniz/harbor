@@ -158,6 +158,19 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   // --- reads
   app.get('/v1/system', { preHandler: requireAuth, schema: { description: 'Daemon/Docker availability.' } }, async () => service.system());
   app.get('/v1/catalog', { preHandler: requireAuth, schema: { description: 'Bundled packages.' } }, async () => ({ items: service.catalog() }));
+  app.get(
+    '/v1/catalog/:id/asset/:name',
+    { preHandler: requireAuth, schema: { description: 'Package presentation asset (icon/gallery) from the bundled package.', params: { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$' } } } } },
+    async (req, reply) => {
+      const { id, name } = req.params as { id: string; name: string };
+      const a = service.asset(id, name);
+      reply.header('content-type', a.contentType);
+      reply.header('cache-control', 'private, max-age=300');
+      if (a.contentType === 'image/svg+xml') reply.header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+      return reply.send(a.bytes);
+    },
+  );
+  app.get('/v1/system/metrics', { preHandler: requireAuth, schema: { description: 'Host metrics for the console (cpu, memory, disk, docker).' } }, async () => service.metrics());
   app.get('/v1/instances', { preHandler: requireAuth, schema: { description: 'All instances including retained records.' } }, async () => ({ items: service.instances() }));
   app.get(
     '/v1/instances/:id',

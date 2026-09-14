@@ -16,6 +16,18 @@ export interface Manifest {
   secrets?: SecretClaim[];
   configuration?: ConfigurationBinding[];
   setup?: { endpoint: string; instructions: string };
+  presentation?: PackagePresentation;
+}
+
+export type PackageCategory = 'productivity' | 'media' | 'files' | 'automation' | 'network' | 'developer' | 'other';
+export interface PackagePresentation {
+  tagline?: string;
+  category?: PackageCategory;
+  icon?: string;
+  gallery?: string[];
+  developer?: string;
+  website?: string;
+  releaseNotes?: string;
 }
 
 export interface ManifestEndpoint {
@@ -62,6 +74,7 @@ export interface ReleaseInventory {
   schemaVersion: 1;
   package: { id: string; revision: string };
   files: Record<'manifest.yaml' | 'compose.yaml' | 'README.md', { sha256: string }>;
+  assets?: Record<string, { sha256: string }>;
   images: Record<string, ReleaseImage>;
   qualification: {
     status: 'passed' | 'blocked' | 'pending';
@@ -90,4 +103,6 @@ export interface LoadedPackage {
   readme: string;
   raw: { manifest: Buffer; compose: Buffer; readme: Buffer; release: Buffer };
   hashes: Record<'manifest.yaml' | 'compose.yaml' | 'README.md', string>;
+  // presentation assets (icon, gallery) verified against release.json `assets`
+  assets: Record<string, Buffer>;
 }

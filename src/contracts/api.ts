@@ -40,6 +40,8 @@ export interface InstanceSummary {
   name: string;
   packageId: string;
   packageName: string;
+  icon: string | null; // asset name inside the package; served at /v1/catalog/{packageId}/asset/{icon}
+  category: string;
   revision: string;
   desired: Desired;
   installState: InstallState;
@@ -121,6 +123,18 @@ export interface CatalogItemDto {
   availability: 'available' | 'unavailable';
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
+  presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; releaseNotes: string | null };
+  setup: boolean;
+  storage: number;
+}
+
+export interface SystemMetricsDto {
+  sampledAt: string;
+  uptimeSeconds: number;
+  cpu: { cores: number; load1: number; load5: number; load15: number };
+  memory: { totalBytes: number; usedBytes: number };
+  disk: { path: string; totalBytes: number; usedBytes: number } | null;
+  docker: { available: boolean; version: string | null; containersRunning: number; containersTotal: number };
 }
 
 export interface SystemDto {

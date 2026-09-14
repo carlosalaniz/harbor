@@ -213,6 +213,46 @@
         }
       }
     },
+    "/v1/catalog/{id}/asset/{name}": {
+      "get": {
+        "description": "Package presentation asset (icon/gallery) from the bundled package.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/metrics": {
+      "get": {
+        "description": "Host metrics for the console (cpu, memory, disk, docker).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/instances": {
       "get": {
         "description": "All instances including retained records.",

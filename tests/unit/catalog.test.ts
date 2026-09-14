@@ -71,3 +71,27 @@ describe('bundled catalog', () => {
     expect(items.find((i) => i.id === 'excalidraw')?.availability).toBe('available');
   });
 });
+
+describe('presentation assets', () => {
+  it('bundled icons are hashed in release.json and served bytes match', () => {
+    for (const id of ['excalidraw', 'bentopdf', 'n8n']) {
+      const pkg = loadPackage(REPO_CATALOG, id);
+      expect(pkg.manifest.presentation?.icon).toBe('icon.svg');
+      expect(Object.keys(pkg.assets)).toEqual(['icon.svg']);
+      expect(pkg.assets['icon.svg']!.toString('utf8')).toContain('<svg');
+      expect(pkg.assets['icon.svg']!.toString('utf8')).not.toMatch(/<script|onload=/i);
+    }
+  });
+  it('a tampered or unlisted asset invalidates the package', () => {
+    const dir = cloneCatalog();
+    const icon = path.join(dir, 'excalidraw', 'icon.svg');
+    writeFileSync(icon, readFileSync(icon, 'utf8') + '<!-- x -->');
+    expect(() => loadPackage(dir, 'excalidraw')).toThrow(/asset icon.svg hash mismatch/);
+    const dir2 = cloneCatalog();
+    const rel = path.join(dir2, 'n8n', 'release.json');
+    const j = JSON.parse(readFileSync(rel, 'utf8'));
+    delete j.assets;
+    writeFileSync(rel, JSON.stringify(j));
+    expect(() => loadPackage(dir2, 'n8n')).toThrow(/not listed in release.json assets/);
+  });
+});

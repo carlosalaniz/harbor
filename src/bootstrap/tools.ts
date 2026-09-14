@@ -7,7 +7,7 @@ import { ComposeCli } from '../docker/compose-cli.js';
 import { DockerodeAdapter } from '../docker/dockerode-adapter.js';
 import { loopbackPortFree } from '../docker/ports.js';
 import type { PlatformToolRow } from '../state/repo.js';
-import { exec, execOk } from './exec.js';
+import { exec, execOk, httpGetStatus } from './exec.js';
 import { cockpitSocketDropIn } from './systemd.js';
 
 // Platform tool recipes (host infrastructure; deliberately specialized, unlike app packages).
@@ -286,11 +286,8 @@ export async function setupCaddy(log: (m: string) => void, existing: { installed
   await execOk('/usr/bin/systemctl', ['restart', 'caddy'], { timeoutMs: 120_000 });
   let reachable = false;
   for (let i = 0; i < 20 && !reachable; i++) {
-    try {
-      reachable = (await fetch('http://127.0.0.1:2019/config/', { signal: AbortSignal.timeout(2000) })).ok;
-    } catch {
-      await new Promise((r) => setTimeout(r, 1000));
-    }
+    reachable = (await httpGetStatus('127.0.0.1', 2019, '/config/')) === 200;
+    if (!reachable) await new Promise((r) => setTimeout(r, 1000));
   }
   if (!reachable) throw new HarborError('OPERATION_FAILED', 'caddy admin API did not become reachable on 127.0.0.1:2019', { nextAction: 'Check `systemctl status caddy` and `journalctl -u caddy`.' });
   log('caddy running with the Harbor-owned config; admin API on 127.0.0.1:2019');

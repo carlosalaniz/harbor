@@ -54,6 +54,7 @@ export function writeReleaseSnapshot(releaseDir: string, pkg: LoadedPackage): vo
     ['compose.yaml', pkg.raw.compose],
     ['README.md', pkg.raw.readme],
     ['release.json', pkg.raw.release],
+    ...Object.entries(pkg.assets),
   ];
   for (const [name, bytes] of files) {
     const target = path.join(releaseDir, name);

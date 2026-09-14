@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto } from '../contracts/api.js';
+import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import { browserUrlFor, managementOrigin } from '../config.js';
 import { HarborError } from '../errors.js';
@@ -49,28 +50,53 @@ export class ApplicationService {
     };
   }
 
+  async metrics(): Promise<SystemMetricsDto> {
+    const recorded = this.ctx.repo.listInstances().flatMap((i) => this.ctx.repo.resources(i.id).filter((r) => r.kind === 'container'));
+    let running = 0;
+    if (this.lastDockerObservation.available) {
+      for (const r of recorded) {
+        try {
+          const c = await this.ctx.docker.inspectContainer(r.dockerId ?? r.name);
+          if (c?.state === 'running') running += 1;
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    return sampleMetrics(this.ctx.clock.now(), { available: this.lastDockerObservation.available, version: this.lastDockerObservation.version, containersRunning: running, containersTotal: recorded.length });
+  }
+
   catalog(): CatalogItemDto[] {
     return listCatalog(this.ctx.config.catalogDir);
   }
 
-  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null } {
+  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string } {
+    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other' });
     try {
-      const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId);
-      return { name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null };
+      return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
-        const pkg = loadPackage(this.ctx.config.catalogDir, i.packageId);
-        return { name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null };
+        return from(loadPackage(this.ctx.config.catalogDir, i.packageId));
       } catch {
-        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null };
+        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other' };
       }
     }
+  }
+
+  // Package asset bytes for the console (icon/gallery), from the bundled package only.
+  asset(packageId: string, name: string): { bytes: Buffer; contentType: string } {
+    const pkg = loadPackage(this.ctx.config.catalogDir, packageId);
+    const bytes = pkg.assets[name];
+    if (!bytes) throw new HarborError('NOT_FOUND', `no asset ${name} in package ${packageId}`);
+    const ext = name.split('.').pop();
+    const contentType = ext === 'svg' ? 'image/svg+xml' : ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    return { bytes, contentType };
   }
 
   instances(): InstanceSummary[] {
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id));
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category });
     });
   }
 
@@ -88,7 +114,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id));
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
