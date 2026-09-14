@@ -140,7 +140,7 @@ export function cli(target, args, opts = {}) {
   const quoted = args.map((a) => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ');
   const cmd = `export HARBOR_CLI_CONFIG_DIR=/root/.config/harbor; ${REMOTE_CLI} --json ${quoted}`;
   const r = target.ssh(cmd, { input: opts.input, timeoutMs: opts.timeoutMs ?? 900_000 });
-  let json = null;
+  let json;
   try {
     json = r.stdout.trim() ? JSON.parse(r.stdout) : null;
   } catch {

@@ -81,7 +81,7 @@ export class PlatformToolsService {
 
   unbind(id: string): void {
     const existing = this.repo.platformTool(id);
-    if (!existing) throw new HarborError('NOT_FOUND', `no binding for ${id}`);
+    if (!existing || existing.mode === 'absent') throw new HarborError('NOT_FOUND', `no binding for ${id}`);
     if (existing.mode === 'managed') throw new HarborError('INVALID_STATE', `${id} is managed by Harbor bootstrap and cannot be unbound here`);
     this.repo.upsertPlatformTool({ id, mode: 'absent', browserUrl: null, installationState: 'not_installed', availability: 'unknown', observedAt: null, note: 'Binding removed.', resources: null });
     this.cache = null;
