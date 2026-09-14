@@ -3,6 +3,11 @@ import type { ComposeRunner, DockerAdapter } from '../docker/adapter.js';
 import type { PortObserver } from '../docker/ports.js';
 import type { Repo } from '../state/repo.js';
 import type { Clock, Ids } from '../util.js';
+import type { TailscaleProvider } from '../exposure/tailscale.js';
+import type { CaddyAdmin } from '../exposure/caddy.js';
+
+// HTTPS reachability check of a published address with real certificate verification.
+export type UrlVerifier = (url: string, opts?: { expectStatus?: number[]; timeoutMs?: number }) => Promise<{ ok: boolean; status: number | null; error: string | null }>;
 
 export interface Logger {
   debug(msg: string, data?: Record<string, unknown>): void;
@@ -22,6 +27,9 @@ export interface Ctx {
   log: Logger;
   installationId: string;
   version: string;
+  tailscale: TailscaleProvider;
+  caddy: CaddyAdmin;
+  verify: UrlVerifier;
 }
 
 export function jsonLogger(level: 'debug' | 'info' | 'warn' | 'error', sink: (line: string) => void = (l) => process.stderr.write(l + '\n')): Logger {

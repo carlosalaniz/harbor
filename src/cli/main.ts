@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto } from '../contracts/api.js';
+import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -64,12 +64,16 @@ function planSummary(p: PlanDto): string {
   if (p.endpoints.length) lines.push('  Endpoints: ' + p.endpoints.map((e) => `${e.id}=${e.browserUrl}`).join(', '));
   if (p.storage.length) lines.push('  Storage:   ' + p.storage.map((s) => `${s.volumeName} (${s.state})`).join(', '));
   if (p.secrets.length) lines.push('  Secrets:   ' + p.secrets.map((s) => `${s.id} (${s.state})`).join(', '));
+  if (p.exposure) lines.push(`  Address:   ${p.exposure.url} via ${p.exposure.via}, protection ${p.exposure.protection}${p.exposure.makePrimary ? ', becomes primary' : ''}`);
   for (const w of p.warnings) lines.push(`  ! ${w}`);
   return lines.join('\n');
 }
 
 function operationSummary(o: OperationDto): string {
   const lines = [`Operation ${o.id}: ${o.kind} ${o.state} (${o.phase})`];
+  const creds = o.result?.['credentials'] as { username: string; password: string } | undefined;
+  if (o.result?.['url']) lines.push(`  Address: ${String(o.result['url'])} (${String(o.result['exposureState'] ?? '')})`);
+  if (creds) lines.push(`  Basic-auth credentials (shown once, retained as an instance secret): ${creds.username} / ${creds.password}`);
   if (o.error) lines.push(`  ${o.error.code}: ${o.error.message}`, `  Next: ${o.error.nextAction}`);
   for (const e of o.events.slice(-12)) lines.push(`  ${e.at} ${e.phase.padEnd(12)} ${e.message}`);
   return lines.join('\n');
@@ -171,7 +175,7 @@ program
     const { items } = await client().get<{ items: InstanceSummary[] }>('/v1/instances');
     out(items, () =>
       items.length
-        ? table([['NAME', 'PACKAGE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'URL', 'ID'], ...items.map((i) => [i.name, `${i.packageId}@${i.revision}`, i.installState, i.desired, i.runtime, i.readiness, i.endpoints.find((e) => e.id === i.primaryEndpoint)?.browserUrl ?? '-', i.id])])
+        ? table([['NAME', 'PACKAGE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'URL', 'ID'], ...items.map((i) => { const ep = i.endpoints.find((e) => e.id === i.primaryEndpoint); const u = ep ? (ep.urls[ep.primary as keyof typeof ep.urls] ?? ep.urls.loopback) : '-'; return [i.name, `${i.packageId}@${i.revision}`, i.installState, i.desired, i.runtime, i.readiness, u, i.id]; })])
         : 'No instances.',
     );
   });
@@ -187,7 +191,7 @@ program
       const lines = [
         `${d.name}  (${d.packageName} ${d.packageId}@${d.revision})  id ${d.id}`,
         `  install ${d.installState}  desired ${d.desired}  runtime ${d.runtime}  readiness ${d.readiness}  observed ${d.observedAt ?? '-'}`,
-        ...d.endpoints.map((e) => `  endpoint ${e.id}: ${e.browserUrl} (container port ${e.containerPort})`),
+        ...d.endpoints.map((e) => `  endpoint ${e.id} (container port ${e.containerPort}, primary ${e.primary}): loopback ${e.urls.loopback}${e.urls.tailnet ? `, tailnet ${e.urls.tailnet}` : ''}${e.urls.public ? `, public ${e.urls.public}` : ''}`),
         ...(d.setup ? [`  setup: ${d.setup.instructions} -> ${d.setup.browserUrl}`] : []),
         ...(d.lastError ? [`  last error ${d.lastError.code}: ${d.lastError.message}`, `  next: ${d.lastError.nextAction}`] : []),
         '  resources:',
@@ -209,12 +213,12 @@ program
     out(plan, () => planSummary(plan) + `\nApply with: ${PRODUCT.cliName} apply ${plan.id} --idempotency-key <key>`);
   });
 
-async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string): Promise<PlanDto> {
+async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}) });
-  if (!['start', 'stop', 'remove', 'reinstall'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'remove', 'reinstall', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
-  return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id });
+  return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
 
 program
@@ -269,6 +273,74 @@ program
     const op = opts.follow ? await waitOperation(api, id, true) : await api.get<OperationDto>(`/v1/operations/${id}`);
     out(op, () => operationSummary(op));
     if (opts.follow && op.state !== 'succeeded') process.exitCode = op.state === 'failed' ? 1 : 3;
+  });
+
+const exposuresTable = (items: ExposureDto[], ui: UiExposureDto | null) =>
+  table([
+    ['INSTANCE', 'ENDPOINT', 'VIA', 'URL', 'PROTECTION', 'STATE', 'PRIMARY', 'NOTE'],
+    ...(ui ? [['(harbor ui)', '-', ui.via, ui.url, '-', ui.state, '-', ui.note ?? '']] : []),
+    ...items.map((e) => [e.instanceName, e.endpointId, e.via, e.url, e.protection, e.state, e.isPrimary ? 'yes' : '', e.note ?? '']),
+  ]);
+
+program
+  .command('exposures')
+  .description('list published addresses (tailnet/public) and the UI exposure')
+  .action(async () => {
+    const r = await client().get<{ items: ExposureDto[]; ui: UiExposureDto | null }>('/v1/exposures');
+    out(r, () => (r.items.length || r.ui ? exposuresTable(r.items, r.ui) : 'No exposures. Everything is loopback-only.'));
+  });
+
+program
+  .command('expose [instance]')
+  .description('publish an instance endpoint: --via tailnet (same port on your tailnet) or --via public --host <fqdn> (Caddy, Let\'s Encrypt); --ui exposes the Harbor UI on the tailnet')
+  .requiredOption('--via <tailnet|public>')
+  .option('--endpoint <id>', 'endpoint id (default: the package primary endpoint)')
+  .option('--host <fqdn>', 'public hostname (public only)')
+  .option('--protect <none|basic>', 'basic-auth protection (public only; default basic for apps without their own login)')
+  .option('--primary', 'make this the primary address (re-renders apps that embed their base URL)', false)
+  .option('--ui', 'expose the Harbor UI itself on the tailnet (never public)', false)
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; host?: string; protect?: string; primary: boolean; ui: boolean; yes: boolean; wait: boolean }) => {
+    const api = client();
+    if (opts.ui) {
+      if (opts.via !== 'tailnet') throw new HarborError('INVALID_REQUEST', 'the Harbor UI can only be exposed on the tailnet');
+      const ui = await api.post<UiExposureDto>('/v1/ui-exposure', { via: 'tailnet' }, {}, 'PUT');
+      out(ui, () => `Harbor UI exposed on the tailnet: ${ui.url}\nLog in from a device on your tailnet; tailnet ACLs govern access.`);
+      return;
+    }
+    const plan = await createPlan(api, 'expose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}), ...(opts.host ? { hostname: opts.host } : {}), ...(opts.protect ? { protection: opts.protect } : {}), ...(opts.primary ? { makePrimary: true } : {}) });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+
+program
+  .command('unexpose [instance]')
+  .description('withdraw a published address (--via tailnet|public); --ui withdraws the Harbor UI tailnet exposure')
+  .requiredOption('--via <tailnet|public>')
+  .option('--endpoint <id>')
+  .option('--ui', 'withdraw the Harbor UI exposure', false)
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; ui: boolean; yes: boolean; wait: boolean }) => {
+    const api = client();
+    if (opts.ui) {
+      await api.delete('/v1/ui-exposure');
+      out({ uiExposed: false }, () => 'Harbor UI tailnet exposure withdrawn.');
+      return;
+    }
+    const plan = await createPlan(api, 'unexpose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}) });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+
+program
+  .command('primary <instance> <loopback|tailnet|public>')
+  .description('choose which address an app treats as its base URL (re-renders and recreates containers if the package embeds it)')
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, primary: string, opts: { yes: boolean; wait: boolean }) => {
+    const api = client();
+    const plan = await createPlan(api, 'reconfigure', ref, undefined, { primary });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 
 const toolsTable = (items: PlatformToolDto[]) => table([['TOOL', 'MODE', 'INSTALLED', 'REACHABLE', 'URL', 'OBSERVED', 'NOTE'], ...items.map((t) => [t.name, t.mode, t.installationState, t.availability, t.browserUrl ?? '-', t.observedAt ?? '-', t.note ?? ''])]);
@@ -335,8 +407,11 @@ program
   .option('--password-stdin', 'read the administrator password from stdin (protected pipe only)')
   .option('--bind-cockpit <url>', 'record an existing Cockpit at this loopback URL instead of installing it')
   .option('--bind-portainer <url>', 'record an existing Portainer at this loopback URL instead of installing it')
+  .option('--with-tailscale', 'set up Tailscale for private-cloud (tailnet) exposure (separately approved)', false)
+  .option('--tailscale-authkey-stdin', 'read a Tailscale auth key from stdin to log the node in non-interactively (protected pipe only; combine with --password-stdin: first line password, second line auth key)')
+  .option('--with-public-proxy', 'set up Caddy for public HTTPS exposure (separately approved)', false)
   .option('--release-dir <dir>', 'extracted release directory (default: the one containing this CLI)')
-  .action(async (opts: { yes: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; releaseDir?: string }) => {
+  .action(async (opts: { yes: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; withTailscale: boolean; tailscaleAuthkeyStdin?: boolean; withPublicProxy: boolean; releaseDir?: string }) => {
     const { bootstrap, accessInstructions } = await import('../bootstrap/bootstrap.js');
     const releaseDir = opts.releaseDir ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const log = (m: string) => process.stderr.write(`[bootstrap] ${m}\n`);
@@ -349,7 +424,14 @@ program
       return confirm('Proceed?');
     };
     let passwordProvider: (() => Promise<string>) | null = null;
-    if (opts.passwordStdin) passwordProvider = () => readStdinAll();
+    let tailscaleAuthKey: string | null = null;
+    if (opts.passwordStdin || opts.tailscaleAuthkeyStdin) {
+      // stdin lines: [password] [tailscale auth key] — only the requested ones are read.
+      const lines = (await readStdinAll()).split('\n');
+      const pw = opts.passwordStdin ? (lines.shift() ?? '') : null;
+      if (pw !== null) passwordProvider = async () => pw;
+      if (opts.tailscaleAuthkeyStdin) tailscaleAuthKey = (lines.shift() ?? '').trim() || null;
+    }
     else if (process.stdin.isTTY) {
       passwordProvider = async () => {
         const p1 = await promptHidden('Administrator password (min 12 chars): ');
@@ -368,6 +450,9 @@ program
       passwordProvider,
       bindCockpit: opts.bindCockpit ?? null,
       bindPortainer: opts.bindPortainer ?? null,
+      withTailscale: opts.withTailscale,
+      tailscaleAuthKey,
+      withPublicProxy: opts.withPublicProxy,
       log,
       confirm: confirmStep,
     });

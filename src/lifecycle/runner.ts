@@ -10,6 +10,10 @@ import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
+import { exposureUrl, primaryUrlFor } from '../exposure/urls.js';
+import { renderCaddyConfig, type CaddyRoute } from '../exposure/caddy.js';
+import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
+import bcrypt from 'bcryptjs';
 
 // Thrown when the daemon is shutting down while an operation waits. The operation is left in
 // its in-flight state on purpose; the next daemon start marks it needs_action without replay.
@@ -25,6 +29,7 @@ export class OperationRunner {
   private running = false;
   private stopping = false;
   private idle: Promise<void> = Promise.resolve();
+  private opResult: Record<string, unknown> | null = null; // set by an operation to enrich the success result
 
   constructor(private readonly ctx: Ctx) {}
 
@@ -94,6 +99,7 @@ export class OperationRunner {
       return;
     }
     const secretValues: string[] = [];
+    this.opResult = null;
     try {
       if (this.stopping) throw new InterruptedError();
       switch (op.kind) {
@@ -102,9 +108,14 @@ export class OperationRunner {
         case 'start': await this.start(op, plan, inst); break;
         case 'stop': await this.stop(op, inst); break;
         case 'remove': await this.remove(op, inst); break;
+        case 'expose': await this.expose(op, plan, inst, secretValues); break;
+        case 'unexpose': await this.unexpose(op, plan, inst, secretValues); break;
+        case 'reconfigure': await this.reconfigure(op, plan, inst, secretValues); break;
       }
+      const result = { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) };
+      this.opResult = null;
       repo.transaction(() => {
-        repo.finishOperation(op.id, 'succeeded', { result: { instanceId: inst.id, name: inst.name } });
+        repo.finishOperation(op.id, 'succeeded', { result });
         repo.updateInstance(inst.id, { activeOperationId: null, lastOperationId: op.id });
         repo.bumpGeneration(inst.id);
         repo.addEvent({ operationId: op.id, instanceId: inst.id, phase: 'succeeded', message: `${op.kind} succeeded` });
@@ -121,7 +132,7 @@ export class OperationRunner {
         repo.updateInstance(inst.id, {
           activeOperationId: null,
           lastOperationId: op.id,
-          installState: installStateAfterFailure(op.kind, repo.resources(inst.id).some((r) => r.kind === 'container')),
+          installState: installStateAfterFailure(op.kind, repo.resources(inst.id).some((r) => r.kind === 'container'), inst.installState),
           readiness: 'unknown',
         });
         repo.bumpGeneration(inst.id);
@@ -197,8 +208,14 @@ export class OperationRunner {
     return values;
   }
 
-  private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>): Promise<string> {
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues });
+  // URLs handed to `configuration` bindings follow the instance's primary exposure.
+  private endpointUrlsFor(inst: InstanceRow, primary: PrimaryExposure = inst.primaryExposure): Record<string, string> {
+    const exposures = this.ctx.repo.exposures(inst.id);
+    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary)]));
+  }
+
+  private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure): Promise<string> {
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary) });
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
       await this.ctx.compose.config({ projectDir: runtimeDir, projectName: identity.project, file }, 60_000);
@@ -257,6 +274,137 @@ export class OperationRunner {
       throw new HarborError('READINESS_TIMEOUT', `readiness check did not pass within ${health.deadlineSeconds}s (last: ${result.last.status ?? result.last.error}); containers were kept for inspection`);
     }
     this.event(op, 'checking', `readiness passed after ${result.attempts} attempt(s) with status ${result.last.status}`);
+  }
+
+  // ---------- exposure
+
+  private basicSecretId(endpointId: string): string {
+    return `exposure-basic-${endpointId}`;
+  }
+
+  // Full Caddy reconcile from state: every public exposure becomes one route; nothing else exists in the config.
+  private async reconcileCaddy(op: OperationRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    const routes: CaddyRoute[] = [];
+    for (const e of repo.exposures().filter((x) => x.via === 'public' && x.state !== 'removing')) {
+      const inst = repo.instance(e.instanceId);
+      const alloc = inst?.endpoints.find((a) => a.id === e.endpointId);
+      if (!inst || !alloc) continue;
+      let basicAuth: CaddyRoute['basicAuth'] = null;
+      if (e.protection === 'basic') {
+        const secretsDir = path.join(this.ctx.config.stateDir, 'instances', inst.id, 'secrets');
+        const raw = readSecret(secretsDir, this.basicSecretId(e.endpointId));
+        sink.push(raw);
+        basicAuth = { username: 'harbor', bcryptHash: bcrypt.hashSync(raw, 10) };
+      }
+      routes.push({ id: e.id, hostname: e.hostname, upstreamPort: alloc.hostPort, basicAuth });
+    }
+    await this.ctx.caddy.load(renderCaddyConfig(routes));
+    this.event(op, 'applying', `reconciled ${routes.length} public route(s) in Caddy`);
+  }
+
+  private async withdrawExposure(op: OperationRow, e: ExposureRow): Promise<void> {
+    if (e.via === 'tailnet') {
+      const inst = this.ctx.repo.instance(e.instanceId);
+      const alloc = inst?.endpoints.find((a) => a.id === e.endpointId);
+      await this.ctx.tailscale.unserve(e.port, `http://127.0.0.1:${alloc?.hostPort ?? e.port}`);
+    } else {
+      this.ctx.repo.updateExposure(e.id, { state: 'removing' });
+      await this.reconcileCaddy(op, []);
+    }
+  }
+
+  private async expose(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo, ids } = this.ctx;
+    const x = plan.proposal.exposure;
+    if (!x) throw new HarborError('STATE_CHANGED', 'plan carries no exposure');
+    this.phase(op, 'applying', 'publishing', `publishing ${exposureUrl(x)} via ${x.via}`);
+    const alloc = inst.endpoints.find((a) => a.id === x.endpointId);
+    if (!alloc) throw new HarborError('STATE_CHANGED', `endpoint ${x.endpointId} is not allocated`);
+    if (repo.exposureByAddress(x.via, x.hostname, x.port)) throw new HarborError('NAME_CONFLICT', `${exposureUrl(x)} is already used by another exposure`);
+    const dirs = this.dirs(inst);
+    let credentials: { username: string; password: string } | null = null;
+    if (x.protection === 'basic') {
+      const created = generateSecretOnce(dirs.secrets, this.basicSecretId(x.endpointId), ids);
+      const value = readSecret(dirs.secrets, this.basicSecretId(x.endpointId));
+      sink.push(value);
+      credentials = { username: 'harbor', password: value };
+      this.event(op, 'publishing', created ? 'generated retained basic-auth credentials' : 'reusing retained basic-auth credentials');
+      if (!inst.secrets.some((s) => s.id === this.basicSecretId(x.endpointId))) repo.updateInstance(inst.id, { secrets: [...inst.secrets, { id: this.basicSecretId(x.endpointId), file: path.join('secrets', this.basicSecretId(x.endpointId)) }] });
+    }
+    const exposureId = ids.uuid();
+    repo.insertExposure({ id: exposureId, instanceId: inst.id, endpointId: x.endpointId, via: x.via, hostname: x.hostname, port: x.port, protection: x.protection, state: 'pending', note: null });
+    const row = repo.exposure(exposureId)!;
+    if (x.via === 'tailnet') {
+      await this.ctx.tailscale.serve(x.port, `http://127.0.0.1:${alloc.hostPort}`);
+      this.event(op, 'publishing', `tailscale serve --https=${x.port} -> 127.0.0.1:${alloc.hostPort}`);
+    } else {
+      await this.reconcileCaddy(op, sink);
+    }
+    if (x.makePrimary) {
+      await this.applyPrimary(op, inst, x.via, sink);
+    }
+    this.ctx.repo.setOperationPhase(op.id, 'verifying', 'checking');
+    const url = exposureUrl(row);
+    this.event(op, 'checking', `verifying ${url} answers over HTTPS (certificate issuance may take a minute)`);
+    const deadline = this.ctx.clock.now().getTime() + 120_000;
+    let last = await this.ctx.verify(url);
+    while (!last.ok && this.ctx.clock.now().getTime() < deadline && !this.stopping) {
+      await new Promise((r) => setTimeout(r, 5000));
+      last = await this.ctx.verify(url);
+    }
+    const now = repo.now();
+    if (last.ok) {
+      repo.updateExposure(exposureId, { state: 'active', observedAt: now, note: `answered HTTP ${last.status}` });
+      this.event(op, 'checking', `${url} answers (HTTP ${last.status})`);
+    } else {
+      repo.updateExposure(exposureId, { state: 'degraded', observedAt: now, note: `not reachable yet: ${last.error ?? `HTTP ${last.status}`}. ${x.via === 'public' ? 'Check the DNS record and that ports 80/443 reach this host; Harbor keeps re-checking.' : 'Check tailnet HTTPS certificates; Harbor keeps re-checking.'}` });
+      this.event(op, 'checking', `${url} not reachable yet (${last.error ?? `HTTP ${last.status}`}); exposure recorded as degraded and re-checked periodically`);
+    }
+    // Credentials appear once, in this operation's result; they are never in DTOs or logs afterwards.
+    this.opResult = { exposureId, url, exposureState: last.ok ? 'active' : 'degraded', ...(credentials ? { credentials } : {}) };
+  }
+
+  private async unexpose(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    const x = plan.proposal.exposure;
+    if (!x) throw new HarborError('STATE_CHANGED', 'plan carries no exposure');
+    const e = repo.exposureFor(inst.id, x.endpointId, x.via);
+    if (!e) throw new HarborError('STATE_CHANGED', `${inst.name}/${x.endpointId} is no longer exposed via ${x.via}`);
+    this.phase(op, 'applying', 'withdrawing', `withdrawing ${exposureUrl(e)}`);
+    if (plan.proposal.primary === 'loopback' && inst.primaryExposure === x.via) await this.applyPrimary(op, inst, 'loopback', sink);
+    await this.withdrawExposure(op, e);
+    repo.deleteExposure(e.id);
+    this.event(op, 'withdrawing', `${exposureUrl(e)} withdrawn; credentials (if any) retained as an instance secret`);
+  }
+
+  private async reconfigure(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const primary = plan.proposal.primary;
+    if (!primary) throw new HarborError('STATE_CHANGED', 'plan carries no primary exposure');
+    this.phase(op, 'applying', 'reconfiguring', `switching the primary address of ${inst.name} to ${primary}`);
+    await this.applyPrimary(op, inst, primary, sink);
+  }
+
+  // Re-render with the new base URL and recreate only if the package has configuration bindings.
+  private async applyPrimary(op: OperationRow, inst: InstanceRow, primary: PrimaryExposure, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    const dirs = this.dirs(inst);
+    const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+    repo.updateInstance(inst.id, { primaryExposure: primary });
+    if (!(pkg.manifest.configuration ?? []).length) {
+      this.event(op, 'reconfiguring', `primary address is now ${primary}; ${pkg.manifest.metadata.name} does not embed its base URL, containers unchanged`);
+      return;
+    }
+    await this.engineOrThrow();
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    const values = this.readSecrets(pkg, dirs.secrets, sink);
+    const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values, primary);
+    const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
+    this.event(op, 'reconfiguring', 'recreating containers whose configuration changed (same volumes, secrets and ports)');
+    repo.updateInstance(inst.id, { runtime: 'starting' });
+    const containers = await this.upAndRecord(op, inv, identity, inst);
+    await this.checkReadiness(op, pkg, inst, containers);
+    repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
   }
 
   // ---------- operations
@@ -392,6 +540,12 @@ export class OperationRunner {
     this.phase(op, 'applying', 'removing', 'persisting removal intent (data and secrets are retained)');
     await this.engineOrThrow();
     repo.updateInstance(inst.id, { desired: 'retained' });
+    for (const e of repo.exposures(inst.id)) {
+      await this.withdrawExposure(op, e);
+      repo.deleteExposure(e.id);
+      this.event(op, 'removing', `withdrew ${e.via} address ${exposureUrl(e)}`);
+    }
+    if (inst.primaryExposure !== 'loopback') repo.updateInstance(inst.id, { primaryExposure: 'loopback' });
     const resources = repo.resources(inst.id);
     for (const r of resources.filter((x) => x.kind === 'container')) {
       const c = await docker.inspectContainer(r.dockerId ?? r.name);
@@ -427,12 +581,16 @@ export class OperationRunner {
   }
 }
 
+// ---------- exposure helpers (module scope; used by the class below via prototype extension)
+
 // install: failed (Remove cleans up; never eligible for reinstall unless it once succeeded).
 // reinstall: back to retained when nothing was created, so the operator can fix data and retry;
 //            failed once containers exist. start/stop/remove: needs_action (inspect, then stop/remove).
-function installStateAfterFailure(kind: OperationRow['kind'], hasContainers: boolean): 'failed' | 'needs_action' | 'retained' {
+// exposure kinds: the app itself is untouched by a failed publish/withdraw, so its install state stays.
+function installStateAfterFailure(kind: OperationRow['kind'], hasContainers: boolean, current: InstanceRow['installState']): InstanceRow['installState'] {
   if (kind === 'install') return 'failed';
   if (kind === 'reinstall') return hasContainers ? 'failed' : 'retained';
+  if (kind === 'expose' || kind === 'unexpose' || kind === 'reconfigure') return current;
   return 'needs_action';
 }
 

@@ -19,6 +19,10 @@ import { openState } from './state/db.js';
 import { Repo } from './state/repo.js';
 import { PlatformToolsService } from './tools/service.js';
 import { systemClock, systemIds, type Clock, type Ids } from './util.js';
+import { FakeTailscale, TailscaleCli, type TailscaleProvider } from './exposure/tailscale.js';
+import { CaddyAdminClient, FakeCaddyAdmin, type CaddyAdmin } from './exposure/caddy.js';
+import { FakeVerifier, httpsVerifier } from './exposure/verify.js';
+import type { UrlVerifier } from './lifecycle/context.js';
 
 export function productVersion(): string {
   try {
@@ -38,6 +42,9 @@ export interface DaemonOverrides {
   log?: Logger;
   observerIntervalMs?: number;
   toolsProbe?: ConstructorParameters<typeof PlatformToolsService>[2];
+  tailscale?: TailscaleProvider;
+  caddy?: CaddyAdmin;
+  verify?: UrlVerifier;
 }
 
 export interface Daemon {
@@ -86,11 +93,16 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       compose = overrides.compose ?? new ComposeCli({ dockerBinary: bin, socketPath: config.docker.socketPath, configDir: path.join(config.stateDir, 'docker-config'), pluginDirs: config.docker.cliPluginDirs });
     }
 
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion() };
+    // Exposure providers: real host CLIs/APIs in socket mode, in-memory fakes in fake mode (tests, pnpm dev).
+    const fakeMode = config.docker.mode === 'fake';
+    const tailscale = overrides.tailscale ?? (fakeMode ? new FakeTailscale() : new TailscaleCli());
+    const caddy = overrides.caddy ?? (fakeMode ? new FakeCaddyAdmin() : new CaddyAdminClient());
+    const verify = overrides.verify ?? (fakeMode ? new FakeVerifier().fn : httpsVerifier);
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
-    const tools = new PlatformToolsService(repo, clock, overrides.toolsProbe);
+    const tools = new PlatformToolsService(repo, clock, overrides.toolsProbe, { tailscale, caddy });
     const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000);
     service.onSubmit(() => runner.wake());
 

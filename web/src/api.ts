@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto } from '../../src/contracts/api';
+import type { ApiErrorBody, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -57,6 +57,9 @@ export const api = {
   instances: () => call<{ items: InstanceSummary[] }>('GET', '/v1/instances').then((r) => r.items),
   instance: (id: string) => call<InstanceDetail>('GET', `/v1/instances/${id}`),
   tools: () => call<{ items: PlatformToolDto[] }>('GET', '/v1/platform-tools').then((r) => r.items),
+  exposures: () => call<{ items: ExposureDto[]; ui: UiExposureDto | null }>('GET', '/v1/exposures'),
+  exposeUi: () => call<UiExposureDto>('PUT', '/v1/ui-exposure', { via: 'tailnet' }),
+  unexposeUi: () => call<void>('DELETE', '/v1/ui-exposure'),
   plan: (req: PlanRequest) => call<PlanDto>('POST', '/v1/plans', req),
   submit: (planId: string, idempotencyKey: string) => call<{ operationId: string; created: boolean; operation: OperationDto }>('POST', '/v1/operations', { planId }, { 'idempotency-key': idempotencyKey }),
   operation: (id: string) => call<OperationDto>('GET', `/v1/operations/${id}`),

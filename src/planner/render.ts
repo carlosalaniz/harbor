@@ -12,6 +12,8 @@ export interface RenderInput {
   endpoints: EndpointAllocation[];
   // secret id -> value. When absent, a non-secret placeholder is rendered (prospective model).
   secretValues: Record<string, string> | null;
+  // endpoint id -> URL handed to `configuration` bindings (defaults to the loopback URL)
+  endpointUrls?: Record<string, string>;
 }
 
 export interface RenderedCompose {
@@ -31,7 +33,7 @@ export function secretPlaceholder(secretId: string): string {
 }
 
 export function renderCompose(input: RenderInput): RenderedCompose {
-  const { manifest, compose, identity, endpoints, secretValues } = input;
+  const { manifest, compose, identity, endpoints, secretValues, endpointUrls } = input;
   const labels = instanceLabels(identity);
   const generatedEnv: Record<string, string[]> = {};
   const services: Record<string, unknown> = {};
@@ -56,7 +58,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       if (c.service !== service) continue;
       const ep = endpointById.get(c.endpoint);
       if (!ep) throw new Error(`configuration references unallocated endpoint ${c.endpoint}`);
-      env[c.environment] = escapeCompose(browserUrlFor(ep.hostPort));
+      env[c.environment] = escapeCompose(endpointUrls?.[c.endpoint] ?? browserUrlFor(ep.hostPort));
       generated.push(c.environment);
     }
     generatedEnv[service] = generated.sort();

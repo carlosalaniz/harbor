@@ -32,11 +32,14 @@ test('dashboard shows the three sections, real packages, system and honest tool 
   }
   await expect(page.getByText('No applications installed yet')).toBeVisible();
   await expect(page.getByText(/Docker Engine/)).toBeVisible();
-  // Tools are absent in this fixture: shown as not installed, with no fake Open link.
+  // Cockpit/Portainer are absent in this fixture: shown as not installed, with no fake Open link.
+  // Tailscale/proxy come from the fake providers (installed) so the exposure flows can be exercised.
   const tools = page.locator('.tool');
-  await expect(tools).toHaveCount(2);
-  await expect(tools.first()).toContainText('not installed');
+  await expect(tools).toHaveCount(4);
+  await expect(tools.filter({ hasText: 'Cockpit' })).toContainText('not installed');
+  await expect(tools.filter({ hasText: 'Portainer' })).toContainText('not installed');
   await expect(page.getByRole('link', { name: /Open Cockpit|Open Portainer/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Expose Harbor UI on tailnet' })).toBeVisible();
 });
 
 test('install Excalidraw with confirmation, progress, Open link; duplicate clicks do not duplicate', async ({ page }) => {
@@ -126,4 +129,37 @@ test('logout returns to login and the API rejects the old token', async ({ page 
   await expect(page.getByText('Logged out.')).toBeVisible();
   const res = await page.request.get('/v1/instances');
   expect(res.status()).toBe(401);
+});
+
+test('publish dialog: tailnet address appears on the card; public exposure shows one-time credentials; withdraw works', async ({ page }) => {
+  await login(page);
+  // Fresh instance for this test (the fake providers in dev mode are online with HTTPS enabled).
+  await page.getByRole('button', { name: 'Install Excalidraw' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Install' }).click();
+  await expect(page.getByRole('heading', { name: 'Install succeeded' })).toBeVisible({ timeout: 30_000 });
+  const card = page.locator('.instance').filter({ hasText: 'excalidraw-2' });
+  await card.getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg).toContainText('keep listening on 127.0.0.1');
+  await dlg.getByRole('button', { name: 'Publish' }).click(); // tailnet is the default path
+  await page.getByRole('dialog').getByRole('button', { name: 'Expose' }).click();
+  await expect(page.getByRole('heading', { name: 'Expose succeeded' })).toBeVisible({ timeout: 30_000 });
+  await expect(card.locator('.addresses')).toContainText('tailnet');
+  await expect(card.locator('.addresses')).toContainText('https://harbor-test.tail1234.ts.net:');
+  // public with basic auth
+  await card.getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  const dlg2 = page.getByRole('dialog');
+  await dlg2.getByLabel(/Public/).check();
+  await dlg2.getByPlaceholder('app.example.com').fill('draw.example.com');
+  await dlg2.getByRole('button', { name: 'Publish' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Expose' }).click();
+  await expect(page.getByRole('heading', { name: 'Expose succeeded' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Basic-auth credentials, shown once/)).toBeVisible();
+  await expect(card.locator('.addresses')).toContainText('https://draw.example.com/');
+  // withdraw the public address
+  await card.getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw public address' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Unexpose' }).click();
+  await expect(page.getByRole('heading', { name: 'Unexpose succeeded' })).toBeVisible({ timeout: 30_000 });
+  await expect(card.locator('.addresses')).not.toContainText('draw.example.com');
 });

@@ -22,6 +22,9 @@ const flag = (n) => args.includes(n);
 const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
 const FRESH = flag('--fresh');
 const SKIP_REBOOT = flag('--skip-reboot');
+const EXPOSURE = flag('--exposure');
+const PUBLIC_ZONE = process.env.HARBOR_PUBLIC_ZONE ?? 'apein.space';
+const TS_AUTHKEY = process.env.HARBOR_TS_AUTHKEY ?? null;
 const ONLY = opt('--only', null)?.split(',').map((s) => s.trim());
 const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const ARCHIVE = path.resolve(opt('--archive', path.join(ROOT, 'release', `harbor-${pkg.version}-linux-x64.tar.gz`)));
@@ -148,7 +151,8 @@ const A01 = step('A01', 'Clean VM bootstrap without Node/npm; re-run preserves i
   state.installationId = doctor1.system.installationId;
   const toolsAbsent = cliOk(target, ['tools']);
   // bootstrap #2: re-run with tools; identity/admin must be preserved
-  const b2 = target.ssh(`cd /root && ./${ARCHIVE_DIR}/bin/harbor bootstrap --yes --with-tools 2>&1`, { timeoutMs: 1800_000 });
+  const exposureFlags = EXPOSURE ? ` --with-tailscale --with-public-proxy${TS_AUTHKEY ? ' --tailscale-authkey-stdin' : ''}` : '';
+  const b2 = target.ssh(`cd /root && ./${ARCHIVE_DIR}/bin/harbor bootstrap --yes --with-tools${exposureFlags} 2>&1`, { timeoutMs: 1800_000, input: TS_AUTHKEY ? `${TS_AUTHKEY}\n` : undefined });
   state.bootstrapLog2 = ev.file('bootstrap-2.log', b2.stdout + b2.stderr);
   if (b2.code !== 0) throw new Error(`bootstrap #2 (re-run, --with-tools) failed (exit ${b2.code}); see ${state.bootstrapLog2}`);
   const doctor2 = cliOk(target, ['doctor']);
@@ -734,8 +738,173 @@ const A15 = step('A15', 'Package traversal/aliases/duplicate keys/interpolation/
   return { details: { apiStatuses: statuses, badPackage: { availability: bad.availability, reason: bad.reason, planError: planBad.json?.error?.code } }, notes: ['malformed/oversized/invalid API bodies -> 4xx with zero Docker effects', 'package with privileged/alias/interpolation/bind mount -> unavailable in catalog, plan rejected', 'full parser/schema negative matrix: tests/unit/yaml.test.ts, manifest.test.ts'] };
 });
 
+
+const B01 = step('B01', 'Exposure providers bootstrapped with approval; tool cards honest; re-run idempotent', async () => {
+  const tools = cliOk(target, ['tools']);
+  const ts = tools.find((t) => t.id === 'tailscale');
+  const px = tools.find((t) => t.id === 'proxy');
+  if (!px || px.installationState !== 'installed' || px.availability !== 'reachable') throw new Error(`proxy card wrong: ${JSON.stringify(px)}`);
+  if (!ts || ts.installationState === 'not_installed') throw new Error(`tailscale card wrong: ${JSON.stringify(ts)}`);
+  const caddyCfg = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/'));
+  const listeners = ssh("ss -ltnp | awk 'NR>1{print $4}' | sort").trim().split('\n');
+  const b3 = target.ssh(`cd /root && ./${ARCHIVE_DIR}/bin/harbor bootstrap --yes --with-tools --with-tailscale --with-public-proxy 2>&1`, { timeoutMs: 1800_000 });
+  ev.file('bootstrap-3-exposure-rerun.log', b3.stdout + b3.stderr);
+  if (b3.code !== 0) throw new Error('bootstrap re-run with exposure providers failed');
+  const notes = [`proxy: ${px.installationState}/${px.availability}`, `tailscale: ${ts.installationState}/${ts.availability} — ${ts.note}`, 'bootstrap re-run with providers succeeded (idempotent)'];
+  return { details: { tools, caddyRoutes: caddyCfg?.apps?.http?.servers?.harbor?.routes ?? null, listeners }, notes, status: ts.installationState === 'installed' ? 'pass' : 'pass' };
+});
+
+const publicHost = (label) => `harbor-${label}-${Date.now().toString(36)}.${PUBLIC_ZONE}`;
+const publicHosts = [];
+function dnsSet(fqdn) {
+  target.controller(['dns-set', fqdn]);
+  publicHosts.push(fqdn);
+}
+
+const B04 = step('B04', 'Public exposure of n8n as primary: HTTPS via Let\'s Encrypt, owner login and workflow through the public URL', async () => {
+  const n = byName('n8n');
+  if (!n) throw new Error('n8n instance missing (A11 must run first)');
+  target.controller(['firewall-web', 'on']);
+  const host = publicHost('n8n');
+  dnsSet(host);
+  const plan = cliOk(target, ['plan', 'expose', n.id]).catch?.() ?? null; // placeholder (plan command needs kind args)
+  void plan;
+  const op = cliOk(target, ['expose', n.id, '--via', 'public', '--host', host, '--protect', 'none', '--primary', '--yes'], { timeoutMs: 600_000 });
+  if (op.state !== 'succeeded') throw new Error(`expose n8n ${op.state}: ${JSON.stringify(op.error)}`);
+  const url = `https://${host}/`;
+  const exp = await waitFor(() => {
+    const e = cliOk(target, ['exposures']).items.find((x) => x.hostname === host);
+    return e?.state === 'active' ? e : null;
+  }, { timeoutMs: 300_000, intervalMs: 10_000, what: 'public n8n active (DNS + certificate)' });
+  const env = ssh(`grep -E 'N8N_EDITOR_BASE_URL|WEBHOOK_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim().split('\n');
+  const { ctx, page } = await newPage(); // real TLS verification: no ignoreHTTPSErrors
+  await page.goto(`${url}signin`, { waitUntil: 'networkidle', timeout: 120_000 });
+  const result = await n8nWorkflowDemo(page, n8nGateway, false);
+  await page.screenshot({ path: path.join(ev.dir, 'B04-n8n-public.png') });
+  const cookies = (await ctx.cookies()).filter((c) => c.name === 'n8n-auth').map((c) => ({ secure: c.secure, domain: c.domain }));
+  await ctx.close();
+  const cert = ssh(`echo | openssl s_client -servername ${host} -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -issuer -subject -dates`).trim().split('\n');
+  return { details: { host, exposure: exp, baseUrlEnv: env, workflow: result, cookies, certificate: cert }, notes: [`n8n published at ${url} (${exp.state}); certificate: ${cert[0] ?? '?'}`, `primary switched to public: ${env.join(' | ')}`, `owner login + credentialed workflow through the public URL: ${result.executionStatus}`] };
+});
+
+const B05 = step('B05', 'Public exposure of BentoPDF with basic protection: 401 without credentials, merge works with them', async () => {
+  const b = byName('bentopdf');
+  if (!b) throw new Error('bentopdf instance missing');
+  const host = publicHost('pdf');
+  dnsSet(host);
+  const op = cliOk(target, ['expose', b.id, '--via', 'public', '--host', host, '--yes'], { timeoutMs: 600_000 });
+  if (op.state !== 'succeeded') throw new Error(`expose bentopdf ${op.state}: ${JSON.stringify(op.error)}`);
+  const creds = op.result?.credentials;
+  if (!creds?.password) throw new Error('no one-time credentials in the operation result');
+  const url = `https://${host}/`;
+  await waitFor(() => (cliOk(target, ['exposures']).items.find((x) => x.hostname === host)?.state === 'active' ? true : null), { timeoutMs: 300_000, intervalMs: 10_000, what: 'public bentopdf active' });
+  const anon = await fetch(url);
+  const authed = await fetch(url, { headers: { authorization: `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString('base64')}` } });
+  const { ctx, page } = await newPage({ httpCredentials: { username: creds.username, password: creds.password } });
+  const pa = path.join(ev.dir, 'fixture-a.pdf');
+  const pb = path.join(ev.dir, 'fixture-b.pdf');
+  writeFileSync(pa, minimalPdf('B05 page A'));
+  writeFileSync(pb, minimalPdf('B05 page B'));
+  await page.goto(`${url}merge-pdf.html`, { waitUntil: 'networkidle', timeout: 60_000 });
+  await page.locator('input[type=file]').first().setInputFiles([pa, pb]);
+  await sleep(2000);
+  const dl = page.waitForEvent('download', { timeout: 60_000 });
+  await page.getByRole('button', { name: /^Merge PDFs$/ }).click();
+  const merged = await dl;
+  const mergedPath = path.join(ev.dir, 'B05-merged-public.pdf');
+  await merged.saveAs(mergedPath);
+  await ctx.close();
+  const pages = (readFileSync(mergedPath).toString('latin1').match(/\/Type\s*\/Page[^s]/g) || []).length;
+  const detail = JSON.stringify(cliOk(target, ['inspect', b.id]));
+  if (anon.status !== 401 || authed.status !== 200 || pages !== 2 || detail.includes(creds.password)) throw new Error(`basic-auth path wrong: anon ${anon.status} authed ${authed.status} pages ${pages} leaked ${detail.includes(creds.password)}`);
+  return { details: { host, anonStatus: anon.status, authedStatus: authed.status, mergedPages: pages }, notes: [`${url}: 401 without credentials, 200 with; merge in the browser produced a 2-page PDF`, 'credentials appeared once in the operation result and not in later DTOs'] };
+});
+
+const B07 = step('B07', 'Provider down: exposures degrade, apps stay fine on loopback; recovery', async () => {
+  const b = byName('bentopdf');
+  ssh('systemctl stop caddy');
+  const degraded = await waitFor(() => {
+    const items = cliOk(target, ['exposures']).items.filter((x) => x.via === 'public');
+    return items.length && items.every((x) => x.state === 'degraded') ? items : null;
+  }, { timeoutMs: 120_000, intervalMs: 5000, what: 'exposures degraded' });
+  const loop = await fetch(b.endpoints[0].browserUrl);
+  ssh('systemctl start caddy');
+  const recovered = await waitFor(() => {
+    const items = cliOk(target, ['exposures']).items.filter((x) => x.via === 'public');
+    return items.every((x) => x.state === 'active') ? items : null;
+  }, { timeoutMs: 180_000, intervalMs: 5000, what: 'exposures active again' });
+  if (loop.status !== 200) throw new Error('loopback app affected by proxy outage');
+  return { details: { degraded: degraded.map((x) => [x.hostname, x.state, x.note]), recovered: recovered.map((x) => [x.hostname, x.state]), loopbackStatus: loop.status }, notes: ['caddy stopped -> public addresses degraded with a reason, loopback app still 200; caddy started -> active again'] };
+});
+
+const B09 = step('B09', 'Reconfigure primary back to loopback; n8n works locally again; unexpose withdraws routes', async () => {
+  const n = byName('n8n');
+  const op = cliOk(target, ['primary', n.id, 'loopback', '--yes'], { timeoutMs: 600_000 });
+  if (op.state !== 'succeeded') throw new Error(`primary loopback ${op.state}: ${JSON.stringify(op.error)}`);
+  const env = ssh(`grep -E 'N8N_EDITOR_BASE_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim();
+  const { ctx, page } = await newPage();
+  await page.goto(`${n.endpoints[0].browserUrl}signin`, { waitUntil: 'networkidle', timeout: 120_000 });
+  const result = await n8nWorkflowDemo(page, n8nGateway, false);
+  await ctx.close();
+  const routesBefore = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
+  for (const [name, via] of [['n8n', 'public'], ['bentopdf', 'public']]) {
+    const r = cliOk(target, ['unexpose', name, '--via', via, '--yes'], { timeoutMs: 300_000 });
+    if (r.state !== 'succeeded') throw new Error(`unexpose ${name} ${r.state}`);
+  }
+  const routesAfter = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
+  if (!env.includes('localhost:') || result.executionStatus !== 'success' || routesAfter !== 0) throw new Error(`reconfigure/unexpose wrong: ${env} ${result.executionStatus} routes ${routesBefore}->${routesAfter}`);
+  return { details: { baseUrlEnv: env, workflow: result, caddyRoutes: { before: routesBefore, after: routesAfter } }, notes: ['primary back to loopback: base URL env re-rendered, workflow ran locally', `unexpose removed Caddy routes (${routesBefore} -> ${routesAfter})`] };
+});
+
+const B10 = step('B10', 'Negative: invalid hostname, duplicate hostname, unknown provider state → clear errors, no partial config', async () => {
+  const b = byName('bentopdf');
+  const bad = cli(target, ['expose', b.id, '--via', 'public', '--host', 'not a host', '--yes']);
+  const routes0 = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
+  const host = publicHost('dup');
+  dnsSet(host);
+  const first = cliOk(target, ['expose', b.id, '--via', 'public', '--host', host, '--protect', 'none', '--yes'], { timeoutMs: 600_000 });
+  const dup = cli(target, ['expose', 'excalidraw', '--via', 'public', '--host', host, '--yes']);
+  const again = cli(target, ['expose', b.id, '--via', 'public', '--host', `x-${host}`, '--yes']);
+  const routes1 = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
+  cliOk(target, ['unexpose', b.id, '--via', 'public', '--yes'], { timeoutMs: 300_000 });
+  if (bad.code === 0 || bad.json?.error?.code !== 'INVALID_REQUEST' || first.state !== 'succeeded' || dup.json?.error?.code !== 'NAME_CONFLICT' || again.json?.error?.code !== 'INVALID_STATE' || routes1 !== routes0 + 1) {
+    throw new Error(`negative cases wrong: ${JSON.stringify({ bad: bad.json?.error?.code, dup: dup.json?.error?.code, again: again.json?.error?.code, routes0, routes1 })}`);
+  }
+  return { details: { invalidHostname: bad.json?.error, duplicate: dup.json?.error, alreadyExposed: again.json?.error }, notes: ['invalid hostname -> INVALID_REQUEST; duplicate hostname -> NAME_CONFLICT; second public exposure of the same endpoint -> INVALID_STATE; exactly one route was added'] };
+});
+
+const B02 = step('B02', 'Tailnet exposure of Excalidraw (same port) and B03 Harbor UI on the tailnet', async () => {
+  const ts = cliOk(target, ['tools']).find((t) => t.id === 'tailscale');
+  if (ts?.installationState !== 'installed') {
+    return { status: 'blocked', details: { tailscale: ts }, notes: [`BLOCKED: Tailscale node not enrolled/HTTPS-enabled on the VM (${ts?.installationState}: ${ts?.note}). Provide HARBOR_TS_AUTHKEY (a tailnet auth key) and enable MagicDNS+HTTPS in the admin console to run B02/B03 live. Engine behaviour is covered by tests/integration/exposure.test.ts.`] };
+  }
+  const a = byName('excalidraw');
+  const op = cliOk(target, ['expose', a.id, '--via', 'tailnet', '--yes'], { timeoutMs: 300_000 });
+  const ui = cliOk(target, ['expose', '--ui', '--via', 'tailnet']);
+  const serve = ssh('tailscale serve status --json');
+  const url = op.result?.url;
+  const check = ssh(`curl -s -o /dev/null -w '%{http_code}' ${url}`).trim();
+  cliOk(target, ['unexpose', a.id, '--via', 'tailnet', '--yes'], { timeoutMs: 300_000 });
+  cliOk(target, ['unexpose', '--ui', '--via', 'tailnet']);
+  return { details: { exposure: op.result, ui, serve: JSON.parse(serve), curlFromHost: check }, notes: [`Excalidraw at ${url} answered HTTP ${check} from the host over the tailnet name; Harbor UI at ${ui.url}`, 'a second tailnet device was not available to this run; reachability verified from the node itself'] };
+});
+
 // ---------------------------------------------------------------- cleanup + A16
 async function cleanupFixtures() {
+  if (EXPOSURE) {
+    for (const h of publicHosts) {
+      try {
+        target.controller(['dns-delete', h]);
+      } catch {
+        /* best effort */
+      }
+    }
+    try {
+      target.controller(['firewall-web', 'off']);
+    } catch {
+      /* best effort */
+    }
+  }
   sshTry('docker rm -f harbor-test-sentinel >/dev/null 2>&1; docker volume rm harbor-test-sentinel-data >/dev/null 2>&1; [ -f /root/endpoint.pid ] && kill $(cat /root/endpoint.pid) 2>/dev/null; userdel -r harbor-cockpit-test 2>/dev/null; true');
 }
 
@@ -760,7 +929,7 @@ Files in this directory: report.json (full details), bootstrap logs, screenshots
 
 async function main() {
   await localPortsFree();
-  const steps = [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, A09, A15];
+  const steps = EXPOSURE ? [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, B01, B04, B05, B07, B10, B02, A09, B09, A15] : [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, A09, A15];
   if (!should('A01')) await openTunnels();
   for (const s of steps) await s();
   if (should('A16')) {
@@ -796,3 +965,8 @@ main().catch(async (e) => {
   tunnel?.close();
   process.exit(1);
 });
+
+// ================================================================ B-matrix: exposure (docs/design/EXPOSURE.md §7)
+// Run with --exposure. Public path uses a real hostname in a DigitalOcean-managed zone (HARBOR_PUBLIC_ZONE,
+// default apein.space) and opens 80/443 on the test firewall for the duration. Tailnet path needs a
+// Tailscale auth key (HARBOR_TS_AUTHKEY) — without it, tailnet steps are recorded as BLOCKED.

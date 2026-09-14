@@ -12,7 +12,9 @@ import type { InstanceRow, OperationRow, PlanProposal, PlanRow } from '../state/
 import { addSeconds, rfc3339 } from '../util.js';
 import { ComposeError } from '../docker/adapter.js';
 import type { Ctx } from './context.js';
-import { instanceSummary, operationDto, planDto } from './dto.js';
+import { exposureDto, instanceSummary, operationDto, planDto } from './dto.js';
+import type { ExposureDto } from '../contracts/api.js';
+import { HOSTNAME_RE, exposureUrl } from '../exposure/urls.js';
 import { instanceDir, loadReleaseSnapshot, secretExists } from './instance-dir.js';
 
 export interface SubmitResult {
@@ -68,8 +70,13 @@ export class ApplicationService {
   instances(): InstanceSummary[] {
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint);
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id));
     });
+  }
+
+  exposuresList(): ExposureDto[] {
+    const names = new Map(this.ctx.repo.listInstances().map((i) => [i.id, i]));
+    return this.ctx.repo.exposures().map((e) => exposureDto(e, names.get(e.instanceId)?.name ?? e.instanceId, names.get(e.instanceId)?.primaryExposure ?? 'loopback'));
   }
 
   instanceRow(idOrName: string): InstanceRow {
@@ -81,7 +88,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint);
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id));
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
@@ -179,6 +186,7 @@ export class ApplicationService {
     const inst = this.instanceRow(req.instanceId);
     if (inst.activeOperationId) throw new HarborError('BUSY', `instance ${inst.name} has an active operation`, { operationId: inst.activeOperationId });
     const pkgName = this.packageMeta(inst).name;
+    if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
     switch (req.kind) {
       case 'start':
@@ -214,6 +222,92 @@ export class ApplicationService {
       releaseHashes: inst.releaseHashes,
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: req.kind, instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  private async exposurePlan(req: Extract<PlanRequest, { kind: 'expose' | 'unexpose' | 'reconfigure' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `exposure changes require an installed instance; ${inst.name} is ${inst.installState}`);
+    const meta = this.packageMeta(inst);
+    const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+    const existing = repo.exposures(inst.id);
+    const base: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [],
+      warnings: [],
+      releaseHashes: inst.releaseHashes,
+    };
+    const hasBaseUrlBindings = (pkg.manifest.configuration ?? []).length > 0;
+    if (req.kind === 'reconfigure') {
+      if (req.primary !== 'loopback' && !existing.some((e) => e.via === req.primary)) throw new HarborError('INVALID_REQUEST', `instance ${inst.name} has no ${req.primary} exposure to make primary`);
+      if (req.primary === inst.primaryExposure) throw new HarborError('INVALID_STATE', `${req.primary} is already the primary address of ${inst.name}`);
+      base.primary = req.primary;
+      base.changes.push(`Make ${req.primary} the primary address of "${inst.name}"`, hasBaseUrlBindings ? `Re-render the private Compose file with the new base URL and recreate ${pkgName}'s containers (same volumes, secrets and ports), then check readiness` : 'No package configuration depends on the base URL; only Harbor\'s records change');
+      const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'reconfigure', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+      repo.insertPlan(plan);
+      return this.plan(plan.id);
+    }
+    const endpointId = req.endpointId ?? meta.primaryEndpoint;
+    const alloc = inst.endpoints.find((e) => e.id === endpointId);
+    if (!alloc) throw new HarborError('INVALID_REQUEST', `instance ${inst.name} has no endpoint ${endpointId}`);
+    if (req.kind === 'unexpose') {
+      const e = existing.find((x) => x.endpointId === endpointId && x.via === req.via);
+      if (!e) throw new HarborError('NOT_FOUND', `${inst.name}/${endpointId} is not exposed via ${req.via}`);
+      base.exposure = { endpointId, via: e.via, hostname: e.hostname, port: e.port, protection: e.protection, makePrimary: false };
+      base.changes.push(`Remove the ${req.via} address ${exposureUrl(e)} of "${inst.name}" (${req.via === 'public' ? 'Caddy route' : 'tailscale serve entry'})`);
+      if (inst.primaryExposure === req.via) {
+        base.primary = 'loopback';
+        base.changes.push(hasBaseUrlBindings ? 'It is the primary address: switch back to loopback and recreate containers with the loopback base URL' : 'It is the primary address: switch back to loopback');
+      }
+      if (e.protection === 'basic') base.changes.push('Retain the generated basic-auth credentials (instance secret) for a later re-exposure');
+      const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'unexpose', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+      repo.insertPlan(plan);
+      return this.plan(plan.id);
+    }
+    // expose
+    if (existing.some((x) => x.endpointId === endpointId && x.via === req.via)) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already exposed via ${req.via}`, { nextAction: 'Unexpose it first to change hostname or protection.' });
+    const endpoint = pkg.manifest.endpoints[endpointId]!;
+    let hostname: string;
+    let port: number;
+    let protection: 'none' | 'basic';
+    if (req.via === 'tailnet') {
+      const st = await this.ctx.tailscale.status();
+      if (!st || st.backendState !== 'Running' || !st.dnsName) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Tailscale is not set up on this host', { nextAction: 'Re-run bootstrap with --with-tailscale and complete the login; see the Tailscale tool card.' });
+      if (!st.httpsEnabled) throw new HarborError('UNSUPPORTED_CAPABILITY', 'HTTPS certificates are not enabled for this tailnet', { nextAction: 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS settings), then retry.' });
+      if (req.hostname && req.hostname !== st.dnsName) throw new HarborError('INVALID_REQUEST', `tailnet exposures use the node name ${st.dnsName}; a custom hostname is not possible`);
+      hostname = st.dnsName;
+      port = alloc.hostPort; // same port number as loopback: "same port, three addresses"
+      protection = 'none'; // tailnet ACLs are the access control; serve has no auth layer
+      if (req.protection === 'basic') base.warnings.push('Basic-auth protection is not available on the tailnet path; access is governed by your tailnet ACLs.');
+    } else {
+      if (!(await this.ctx.caddy.available())) throw new HarborError('UNSUPPORTED_CAPABILITY', 'The public proxy (Caddy) is not set up on this host', { nextAction: 'Re-run bootstrap with --with-public-proxy; see the Public proxy tool card.' });
+      if (!req.hostname || !HOSTNAME_RE.test(req.hostname)) throw new HarborError('INVALID_REQUEST', 'public exposure needs a fully qualified hostname you control (e.g. n8n.example.com)');
+      hostname = req.hostname;
+      port = 443;
+      const packageHasOwnAuth = pkg.manifest.setup !== undefined; // packages with their own onboarding manage their own accounts (n8n)
+      protection = req.protection ?? (packageHasOwnAuth ? 'none' : 'basic');
+      if (protection === 'none' && !packageHasOwnAuth) base.warnings.push(`${pkgName} has no login of its own; without basic-auth protection anyone who reaches ${hostname} can use it.`);
+      base.warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued.`);
+    }
+    const taken = repo.exposureByAddress(req.via, hostname, port);
+    if (taken) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.via, hostname, port })} is already used by another exposure`);
+    if (endpoint.browserContext === 'ordinary') base.warnings.push('This endpoint is declared for ordinary browser contexts; it will still be served over HTTPS.');
+    base.exposure = { endpointId, via: req.via, hostname, port, protection, makePrimary: req.makePrimary ?? false };
+    if (req.makePrimary) base.primary = req.via;
+    base.changes.push(
+      `Publish "${inst.name}" endpoint ${endpointId} at ${exposureUrl(base.exposure)} via ${req.via === 'public' ? 'Caddy (Let\'s Encrypt certificate)' : 'tailscale serve (tailnet certificate)'} -> 127.0.0.1:${alloc.hostPort}`,
+      ...(protection === 'basic' ? ['Generate retained basic-auth credentials (shown once when the operation completes)'] : []),
+      ...(req.makePrimary ? [hasBaseUrlBindings ? 'Make it the primary address and recreate containers with the new base URL' : 'Make it the primary address'] : []),
+      'Verify the address answers over HTTPS before marking it active',
+    );
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'expose', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
   }

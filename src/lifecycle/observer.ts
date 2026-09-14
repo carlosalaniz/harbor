@@ -5,6 +5,7 @@ import { instanceDir, loadReleaseSnapshot } from './instance-dir.js';
 import { probeOnce } from './readiness.js';
 import { LABELS } from '../naming.js';
 import type { Readiness, Runtime } from '../state/repo.js';
+import { exposureUrl } from '../exposure/urls.js';
 
 // Periodic observation of what actually exists. Never mutates Docker.
 export class Observer {
@@ -71,10 +72,24 @@ export class Observer {
         }
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
       }
+      await this.verifyExposures(now);
     } catch (e) {
       this.ctx.log.warn(`observer tick failed: ${(e as Error).message}`);
     } finally {
       this.busy = false;
+    }
+  }
+
+  // Published addresses are re-checked every tick; a degraded exposure recovers when DNS/certificates settle.
+  private async verifyExposures(now: string): Promise<void> {
+    for (const e of this.ctx.repo.exposures()) {
+      if (e.state === 'removing') continue;
+      const inst = this.ctx.repo.instance(e.instanceId);
+      if (!inst || inst.activeOperationId) continue;
+      const r = await this.ctx.verify(exposureUrl(e));
+      const state = r.ok ? 'active' : 'degraded';
+      if (state !== e.state || r.ok) this.ctx.repo.updateExposure(e.id, { state, observedAt: now, note: r.ok ? `answered HTTP ${r.status}` : `not reachable: ${r.error ?? `HTTP ${r.status}`}` });
+      else this.ctx.repo.updateExposure(e.id, { observedAt: now });
     }
   }
 

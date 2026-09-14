@@ -13,7 +13,7 @@ import { dockerInstallPreview, installDocker } from './docker-install.js';
 import { exec, execOk } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
 import { harborUnit } from './systemd.js';
-import { cockpitPreview, externalToolRecord, portainerPreview, setupCockpit, setupPortainer, type ToolRecord } from './tools.js';
+import { caddyPreview, cockpitPreview, externalToolRecord, portainerPreview, setupCaddy, setupCockpit, setupPortainer, setupTailscale, tailscalePreview, type ToolRecord } from './tools.js';
 
 export interface BootstrapOptions {
   releaseDir: string; // extracted archive root (contains bin/, dist/, node/, ...)
@@ -25,6 +25,9 @@ export interface BootstrapOptions {
   passwordProvider: (() => Promise<string>) | null; // hidden prompt or stdin; null = keep existing/skip
   bindCockpit: string | null;
   bindPortainer: string | null;
+  withTailscale: boolean;
+  tailscaleAuthKey: string | null;
+  withPublicProxy: boolean;
   log: (m: string) => void;
   confirm: (question: string, preview: string[]) => Promise<boolean>;
 }
@@ -184,6 +187,16 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
         tools.push(await setupPortainer(log, installationId, facts.docker.binary!, facts.docker.socket, config.stateDir, facts.existing.portainer.containerPresent, now));
       } else log('Portainer skipped');
     }
+  }
+  if (opts.withTailscale) {
+    if (await opts.confirm('Set up Tailscale (private-cloud access path)?', tailscalePreview(facts.existing.tailscale, Boolean(opts.tailscaleAuthKey)))) {
+      tools.push(await setupTailscale(log, facts.existing.tailscale, opts.tailscaleAuthKey, now));
+    } else log('Tailscale skipped');
+  }
+  if (opts.withPublicProxy) {
+    if (await opts.confirm('Set up the public proxy (Caddy, HTTPS with Let\'s Encrypt)?', caddyPreview(facts.existing.caddy))) {
+      tools.push(await setupCaddy(log, facts.existing.caddy, now));
+    } else log('public proxy skipped');
   }
   if (tools.length) {
     const lock = acquireLock(config.stateDir, 'bootstrap-tools');

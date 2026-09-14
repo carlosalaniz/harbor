@@ -146,6 +146,43 @@ intentionally stopped instances stay stopped. Harbor re-observes and reports act
 - Bind existing tools: `harbor tools bind portainer --url https://localhost:9443/` (loopback URLs only).
 - Ordinary `harbor remove` cannot touch platform resources; they are not application instances.
 
+## 6a. Publishing apps beyond localhost (exposure)
+
+Everything stays bound to 127.0.0.1. Publishing adds an HTTPS address in front of the same port:
+
+| Path | Address | Provider | Set up with |
+|---|---|---|---|
+| tailnet (private) | `https://<node>.<tailnet>.ts.net:<same port>/` | Tailscale (`tailscale serve`) | `sudo ... bootstrap --with-tailscale`, then `sudo tailscale up` and approve the login URL; enable **MagicDNS + HTTPS certificates** in the Tailscale admin console (DNS settings) |
+| public | `https://<your hostname>/` | Caddy (Let's Encrypt) | `sudo ... bootstrap --with-public-proxy`; create an A/AAAA record for each hostname pointing at this host; ports 80 and 443 must be reachable from the internet |
+
+```sh
+harbor tools                                        # Tailscale / Public proxy cards say what is missing
+harbor expose n8n --via tailnet                     # https://<node>.ts.net:18086/
+harbor expose n8n --via public --host n8n.example.com --primary
+harbor expose bentopdf --via public --host pdf.example.com          # basic auth by default (credentials shown once)
+harbor expose bentopdf --via public --host pdf.example.com --protect none
+harbor exposures                                    # all published addresses with state
+harbor primary n8n loopback                         # which address the app treats as its base URL
+harbor unexpose n8n --via public
+harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
+```
+
+In the Web UI every running card has **Publish…** with the same options; the tool cards show
+Tailscale enrollment and proxy state.
+
+Notes:
+
+- Apps that embed their base URL (n8n's editor and webhook URLs) follow the **primary** address.
+  Changing it recreates their containers with the same volumes, secrets and ports; data is untouched.
+- Apps without their own login (Excalidraw, BentoPDF) get **basic-auth** protection on public
+  addresses unless you opt out; the credentials are shown once and retained as an instance secret
+  (`/var/lib/harbor/instances/<uuid>/secrets/exposure-basic-<endpoint>`).
+- An address shows `degraded` until DNS resolves and the certificate is issued; Harbor keeps
+  re-checking and does not mark it `active` before it answers over HTTPS.
+- `remove <instance>` withdraws its addresses first. Tailscale and Caddy entries Harbor did not
+  create are never touched.
+- The Harbor UI is loopback and tailnet only; the API refuses any public exposure of it.
+
 ## 7. Troubleshooting
 
 | Symptom | What to do |
@@ -160,6 +197,8 @@ intentionally stopped instances stay stopped. Harbor re-observes and reports act
 | `DOCKER_UNAVAILABLE` (503) | `systemctl status docker`. |
 | Login 429 | Rate limited after repeated failures; wait ten minutes. |
 | UI says "session ended" after reload | Expected: tokens live in memory only. Log in again; running operations continue. |
+| Public address stays `degraded` | Check `dig +short <hostname>` resolves to this host and that 80/443 are open in your cloud firewall; `journalctl -u caddy` shows certificate attempts. |
+| Tailnet address stays `degraded` | `tailscale status` must show the node online; enable HTTPS certificates in the admin console; `tailscale serve status` lists Harbor's entries. |
 | Portainer login page loads but no admin form, or the form refuses to submit | The 5-minute window expired (restart its container, above) or the setup token is missing (read it from the container log). |
 
 ## 8. Trust boundary and limits (read this)

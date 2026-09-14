@@ -359,3 +359,47 @@ progress {
     grid-template-columns: 1fr;
   }
 }
+
+.addresses {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.addresses a {
+  color: var(--accent);
+  word-break: break-all;
+}
+.pill.via.loopback {
+  color: var(--muted);
+}
+.pill.via.tailnet {
+  background: #eef0fb;
+  border-color: #c5cbf2;
+  color: #3b47c4;
+}
+.pill.via.public {
+  background: #fff1e6;
+  border-color: #f5c9a3;
+  color: #a4530a;
+}
+.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  display: grid;
+  gap: 8px;
+}
+select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+.dialog h3 {
+  font-size: 15px;
+  margin: 14px 0 6px;
+}

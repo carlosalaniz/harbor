@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanKind, PlatformToolDto, SystemDto } from '../../src/contracts/api';
+import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SystemDto, UiExposureDto } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken, newIdempotencyKey } from './api';
 
 type View = { kind: 'login' } | { kind: 'dashboard' };
@@ -107,12 +107,20 @@ interface DashboardData {
   catalog: CatalogItemDto[];
   instances: InstanceSummary[];
   tools: PlatformToolDto[];
+  exposures: ExposureDto[];
+  uiExposure: UiExposureDto | null;
 }
 
-type PendingAction = { kind: 'install'; packageId: string; name: string } | { kind: Exclude<PlanKind, 'install'>; instance: InstanceSummary };
+type PendingAction =
+  | { kind: 'install'; packageId: string; name: string }
+  | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instance: InstanceSummary }
+  | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean }
+  | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' }
+  | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public' };
 
 function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
-  const [data, setData] = useState<DashboardData>({ system: null, catalog: [], instances: [], tools: [] });
+  const [data, setData] = useState<DashboardData>({ system: null, catalog: [], instances: [], tools: [], exposures: [], uiExposure: null });
+  const [publishing, setPublishing] = useState<InstanceSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [pending, setPending] = useState<PendingAction | null>(null);
@@ -126,8 +134,8 @@ function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [system, catalog, instances, tools] = await Promise.all([api.system(), api.catalog(), api.instances(), api.tools()]);
-      setData({ system, catalog, instances, tools });
+      const [system, catalog, instances, tools, exp] = await Promise.all([api.system(), api.catalog(), api.instances(), api.tools(), api.exposures()]);
+      setData({ system, catalog, instances, tools, exposures: exp.items, uiExposure: exp.ui });
       setLoadError(null);
       setLoaded(true);
       // Resume watching an accepted operation after reload/relogin.
@@ -166,7 +174,7 @@ function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
     setPlan(null);
     setPlanError(null);
     try {
-      const p = await api.plan(action.kind === 'install' ? { kind: 'install', packageId: action.packageId, ...(action.name ? { name: action.name } : {}) } : { kind: action.kind, instanceId: action.instance.id });
+      const p = await api.plan(planRequestFor(action));
       setPlan(p);
       submitKey.current = newIdempotencyKey();
     } catch (e) {
@@ -220,7 +228,7 @@ function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
         ) : (
           <ul className="grid">
             {installed.map((i) => (
-              <InstanceCard key={i.id} inst={i} busy={busy} onAction={(kind) => void startAction({ kind, instance: i })} onInspect={async () => setInspecting(await api.instance(i.id))} />
+              <InstanceCard key={i.id} inst={i} busy={busy} onAction={(kind) => void startAction({ kind, instance: i })} onInspect={async () => setInspecting(await api.instance(i.id))} onPublish={() => setPublishing(i)} />
             ))}
           </ul>
         )}
@@ -293,6 +301,15 @@ function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
                     <a className="btn" href={t.browserUrl} target="_blank" rel="noopener noreferrer">
                       Open {t.name}
                     </a>
+                  ) : t.id === 'tailscale' && t.installationState === 'installed' ? (
+                    data.uiExposure ? (
+                      <span className="row">
+                        <a className="btn" href={data.uiExposure.url} target="_blank" rel="noopener noreferrer">Harbor on tailnet</a>
+                        <button className="btn ghost" onClick={() => void api.unexposeUi().then(() => refresh())}>Withdraw</button>
+                      </span>
+                    ) : (
+                      <button className="btn" onClick={() => void api.exposeUi().then(() => refresh())}>Expose Harbor UI on tailnet</button>
+                    )
                   ) : (
                     <span className="muted small">no link</span>
                   )}
@@ -302,6 +319,19 @@ function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           )}
         </section>
       </div>
+
+      {publishing && !pending && (
+        <PublishDialog
+          inst={publishing}
+          exposures={data.exposures.filter((e) => e.instanceId === publishing.id)}
+          tools={data.tools}
+          onClose={() => setPublishing(null)}
+          onAction={(a) => {
+            setPublishing(null);
+            void startAction(a);
+          }}
+        />
+      )}
 
       {pending && (
         <Dialog title={plan ? `Confirm ${plan.kind}` : `Planning ${pending.kind}…`} onClose={() => setPending(null)}>
@@ -336,6 +366,16 @@ function Dashboard({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   );
 }
 
+function planRequestFor(a: PendingAction): PlanRequest {
+  switch (a.kind) {
+    case 'install': return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}) };
+    case 'expose': return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), makePrimary: a.makePrimary };
+    case 'unexpose': return { kind: 'unexpose', instanceId: a.instance.id, via: a.via };
+    case 'reconfigure': return { kind: 'reconfigure', instanceId: a.instance.id, primary: a.primary };
+    default: return { kind: a.kind, instanceId: a.instance.id };
+  }
+}
+
 function isFinal(op: OperationDto): boolean {
   return op.state === 'succeeded' || op.state === 'failed' || op.state === 'needs_action';
 }
@@ -361,7 +401,7 @@ function InstallForm({ pkg, disabled, onSubmit }: { pkg: CatalogItemDto; disable
   );
 }
 
-function InstanceCard({ inst, busy, onAction, onInspect }: { inst: InstanceSummary; busy: boolean; onAction: (kind: Exclude<PlanKind, 'install'>) => void; onInspect: () => void }) {
+function InstanceCard({ inst, busy, onAction, onInspect, onPublish }: { inst: InstanceSummary; busy: boolean; onAction: (kind: 'start' | 'stop' | 'remove' | 'reinstall') => void; onInspect: () => void; onPublish: () => void }) {
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
   const retained = inst.installState === 'retained';
   const canOpen = inst.installState === 'installed' && inst.runtime === 'running';
@@ -380,7 +420,20 @@ function InstanceCard({ inst, busy, onAction, onInspect }: { inst: InstanceSumma
         {!retained && <span className={`pill ${inst.readiness}`}>{inst.readiness}</span>}
         <span className="muted small">desired {inst.desired}</span>
       </p>
-      {primary && !retained && <p className="muted small">{primary.browserUrl}</p>}
+      {primary && !retained && (
+        <ul className="addresses" aria-label={`Addresses of ${inst.name}`}>
+          {(['loopback', 'tailnet', 'public'] as const).map((via) => {
+            const url = primary.urls[via];
+            if (!url) return null;
+            return (
+              <li key={via}>
+                <span className={`pill via ${via}`}>{via}</span> <a href={url} target="_blank" rel="noopener noreferrer">{url}</a>
+                {primary.primary === via && <span className="muted small"> · primary</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {retained && <p className="muted small">Removed. Data volumes and secrets are retained; reinstall restores the exact same release.</p>}
       <p className="muted small">observed {fmtTime(inst.observedAt)}</p>
       <div className="row wrap">
@@ -407,6 +460,11 @@ function InstanceCard({ inst, busy, onAction, onInspect }: { inst: InstanceSumma
         {retained && inst.hasRetainedData && (
           <button className="btn" disabled={busy} onClick={() => onAction('reinstall')} aria-label={`Reinstall ${inst.name}`}>
             Reinstall
+          </button>
+        )}
+        {canOpen && (
+          <button className="btn" disabled={busy} onClick={onPublish} aria-label={`Publish ${inst.name}`}>
+            Publish…
           </button>
         )}
         <button className="btn ghost" onClick={onInspect} aria-label={`Details of ${inst.name}`}>
@@ -443,6 +501,12 @@ function PlanView({ plan }: { plan: PlanDto }) {
           <strong>Secrets:</strong> {plan.secrets.map((s) => `${s.id} (${s.state})`).join(', ')} — values are never shown.
         </p>
       )}
+      {plan.exposure && (
+        <p>
+          <strong>Address:</strong> {plan.exposure.url} via {plan.exposure.via}, protection {plan.exposure.protection}
+          {plan.exposure.makePrimary ? ', becomes the primary address' : ''}
+        </p>
+      )}
       {plan.warnings.map((w, i) => (
         <p key={i} className="warn">
           {w}
@@ -468,6 +532,16 @@ function OperationPanel({ op, onDismiss }: { op: OperationDto; onDismiss: () => 
         )}
       </div>
       {!final && <progress aria-label="operation progress" />}
+      {op.state === 'succeeded' && Boolean(op.result?.['url']) && (
+        <p>
+          Published at <a href={String(op.result?.['url'])} target="_blank" rel="noopener noreferrer">{String(op.result?.['url'])}</a> ({String(op.result?.['exposureState'])})
+        </p>
+      )}
+      {op.state === 'succeeded' && Boolean(op.result?.['credentials']) && (
+        <p className="warn">
+          Basic-auth credentials, shown once (retained as an instance secret): <code>{String((op.result?.['credentials'] as { username: string }).username)}</code> / <code>{String((op.result?.['credentials'] as { password: string }).password)}</code>
+        </p>
+      )}
       {op.error && (
         <p className="error">
           {op.error.code}: {op.error.message} <br />
@@ -534,6 +608,74 @@ function InstanceDetails({ d }: { d: InstanceDetail }) {
         ))}
       </ol>
     </div>
+  );
+}
+
+function PublishDialog({ inst, exposures, tools, onClose, onAction }: { inst: InstanceSummary; exposures: ExposureDto[]; tools: PlatformToolDto[]; onClose: () => void; onAction: (a: PendingAction) => void }) {
+  const [via, setVia] = useState<'tailnet' | 'public'>('tailnet');
+  const [hostname, setHostname] = useState('');
+  const [protection, setProtection] = useState<'none' | 'basic'>('basic');
+  const [makePrimary, setMakePrimary] = useState(false);
+  const ts = tools.find((t) => t.id === 'tailscale');
+  const px = tools.find((t) => t.id === 'proxy');
+  const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
+  const has = (v: 'tailnet' | 'public') => exposures.some((e) => e.via === v);
+  const providerOk = via === 'tailnet' ? ts?.installationState === 'installed' : px?.installationState === 'installed';
+  return (
+    <Dialog title={`Publish ${inst.name}`} onClose={onClose}>
+      <p className="muted small">Apps always keep listening on 127.0.0.1. Publishing adds an HTTPS address in front of the same port; nothing else opens.</p>
+      <ul className="plain">
+        {exposures.map((e) => (
+          <li key={e.id} className="row between">
+            <span>
+              <span className={`pill via ${e.via}`}>{e.via}</span> <a href={e.url} target="_blank" rel="noopener noreferrer">{e.url}</a> <span className={`pill ${e.state === 'active' ? 'healthy' : e.state === 'degraded' ? 'unhealthy' : 'checking'}`}>{e.state}</span>
+              {e.isPrimary && <span className="muted small"> primary</span>}
+              {e.note && <span className="muted small"> · {e.note}</span>}
+            </span>
+            <span className="row">
+              {!e.isPrimary && e.state === 'active' && (
+                <button className="btn ghost" onClick={() => onAction({ kind: 'reconfigure', instance: inst, primary: e.via })}>Make primary</button>
+              )}
+              <button className="btn danger" onClick={() => onAction({ kind: 'unexpose', instance: inst, via: e.via })} aria-label={`Withdraw ${e.via} address`}>Withdraw</button>
+            </span>
+          </li>
+        ))}
+        {primary?.primary !== 'loopback' && (
+          <li className="row between">
+            <span><span className="pill via loopback">loopback</span> {primary?.urls.loopback}</span>
+            <button className="btn ghost" onClick={() => onAction({ kind: 'reconfigure', instance: inst, primary: 'loopback' })}>Make primary</button>
+          </li>
+        )}
+      </ul>
+      <h3>Add an address</h3>
+      <div className="row wrap">
+        <label className="check"><input type="radio" name="via" checked={via === 'tailnet'} onChange={() => setVia('tailnet')} /> Tailnet (private, {ts?.facts?.['dnsName'] ? String(ts.facts['dnsName']) : 'Tailscale'})</label>
+        <label className="check"><input type="radio" name="via" checked={via === 'public'} onChange={() => setVia('public')} /> Public (Caddy, Let&apos;s Encrypt)</label>
+      </div>
+      {!providerOk && <p className="warn">{via === 'tailnet' ? ts?.note ?? 'Tailscale is not set up.' : px?.note ?? 'The public proxy is not set up.'}</p>}
+      {via === 'public' && (
+        <>
+          <label className="small">
+            Hostname you control (DNS must point at this host)
+            <input value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="app.example.com" />
+          </label>
+          <label className="small">
+            Protection
+            <select value={protection} onChange={(e) => setProtection(e.target.value as 'none' | 'basic')}>
+              <option value="basic">Basic auth (generated credentials, shown once)</option>
+              <option value="none">None (the app&apos;s own login only)</option>
+            </select>
+          </label>
+        </>
+      )}
+      <label className="check"><input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} /> make it the primary address (apps that embed their URL are reconfigured)</label>
+      <div className="row end">
+        <button className="btn" onClick={onClose}>Close</button>
+        <button className="btn primary" disabled={!providerOk || has(via) || (via === 'public' && !hostname)} onClick={() => onAction({ kind: 'expose', instance: inst, via, hostname, protection, makePrimary })}>
+          {has(via) ? `Already published via ${via}` : 'Publish'}
+        </button>
+      </div>
+    </Dialog>
   );
 }
 

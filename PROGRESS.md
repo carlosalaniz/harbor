@@ -62,16 +62,26 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Context-only architecture check (plan §11) documented in docs/FUTURE.md; no code change needed
 - Bugs found only by the live suite and fixed: bootstrap re-run over existing release (EEXIST on symlinks); `harbor.service` `Requires=docker` stopped Harbor with Docker (now `Wants=`); CLI `--json` printed two documents on failed operations; Portainer 2.39 setup-token onboarding documented and automated
 
+## Phase 6 — exposure (branch `exposure`, 2026-09-14) 🔄
+- [x] Design addendum docs/design/EXPOSURE.md (tailnet via Tailscale serve, public via Caddy; no package hooks)
+- [x] Schema v2 + migration; `expose`/`unexpose`/`reconfigure` plan kinds through the same queue; primary address per instance re-renders `configuration` bindings
+- [x] Providers: Tailscale CLI + Caddy admin API clients with fakes; HTTPS verifier; observer re-checks exposures
+- [x] Bootstrap `--with-tailscale [--tailscale-authkey-stdin]`, `--with-public-proxy`; tool cards for both
+- [x] CLI `expose/unexpose/exposures/primary`, `expose --ui --via tailnet`; UI Publish dialog, addresses per card
+- [x] Tests: 9 exposure integration tests, unit tests (renderer, URLs, migration), Playwright publish flow
+- [ ] Live B-matrix (`pnpm test:vm -- --fresh --exposure`): public path with real DNS (apein.space) and Let's Encrypt; tailnet path BLOCKED without a Tailscale auth key
+- [ ] UI redesign (Umbrel/HexOS-inspired) — next phase
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 43 passed |
-| `pnpm test:integration` (fake adapter) | 34 passed (install, lifecycle, auth, tools); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 48 passed |
+| `pnpm test:integration` (fake adapter) | 43 passed (install, lifecycle, auth, tools, exposure); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 7 passed |
+| `pnpm test:e2e` (Playwright, fake adapter) | 8 passed |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

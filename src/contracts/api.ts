@@ -6,13 +6,33 @@ export type InstallState = 'installing' | 'installed' | 'failed' | 'needs_action
 export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unknown';
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'expose' | 'unexpose' | 'reconfigure';
+export type ExposureVia = 'tailnet' | 'public';
+export type PrimaryExposure = 'loopback' | ExposureVia;
 
 export interface EndpointDto {
   id: string;
   containerPort: number;
   hostPort: number;
-  browserUrl: string;
+  browserUrl: string; // loopback URL (compatibility)
+  urls: { loopback: string; tailnet?: string; public?: string };
+  primary: PrimaryExposure;
+}
+
+export interface ExposureDto {
+  id: string;
+  instanceId: string;
+  instanceName: string;
+  endpointId: string;
+  via: ExposureVia;
+  url: string;
+  hostname: string;
+  port: number;
+  protection: 'none' | 'basic';
+  state: 'pending' | 'active' | 'degraded' | 'removing';
+  observedAt: string | null;
+  note: string | null;
+  isPrimary: boolean;
 }
 
 export interface InstanceSummary {
@@ -75,6 +95,7 @@ export interface PlanDto {
   storage: StorageDto[];
   secrets: { id: string; state: 'new' | 'existing' }[];
   warnings: string[];
+  exposure?: { endpointId: string; via: ExposureVia; url: string; protection: 'none' | 'basic'; makePrimary: boolean; credentials?: { username: string; password: string } };
 }
 
 export interface OperationDto {
@@ -120,6 +141,8 @@ export interface PlatformToolDto {
   observedAt: string | null;
   note: string | null;
   mode: 'managed' | 'external' | 'absent';
+  // provider facts (tailscale: node dns name / tailnet; proxy: public address) for the UI
+  facts?: Record<string, string | boolean | null>;
 }
 
 export interface SessionDto {
@@ -131,4 +154,16 @@ export interface ApiErrorBody {
   error: { code: string; message: string; nextAction: string; operationId?: string; details?: string[] };
 }
 
-export type PlanRequest = { kind: 'install'; packageId: string; name?: string } | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instanceId: string };
+export type PlanRequest =
+  | { kind: 'install'; packageId: string; name?: string }
+  | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instanceId: string }
+  | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean }
+  | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
+  | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };
+
+export interface UiExposureDto {
+  via: 'tailnet';
+  url: string;
+  state: 'pending' | 'active' | 'degraded';
+  note: string | null;
+}
