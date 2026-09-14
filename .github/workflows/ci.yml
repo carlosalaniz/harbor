@@ -1,0 +1,34 @@
+# CI: lint, typecheck, unit + integration (fake adapter), build, UI e2e. Frozen lockfile.
+# Never touches a Docker socket and never reboots anything; live VM tests are run separately with pnpm test:vm.
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.16.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.12.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:integration
+      - run: pnpm build
+      - run: pnpm catalog:verify
+      - run: pnpm openapi -- --check
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report

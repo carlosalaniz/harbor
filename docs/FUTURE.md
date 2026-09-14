@@ -36,3 +36,12 @@ added for it. This note records how the current code already leaves room for it,
 
 Backups remain configuration and Harbor-owned recovery secrets only; Nextcloud files, databases and
 documents stay the application's/administrator's responsibility.
+
+## Context-only architecture check (plan.md §11), performed 2026-09-14
+
+Reviewed the implementation against the four points; no code change was needed.
+
+1. **Services/volumes/endpoints are package data keyed by identity** — `src/planner/render.ts` iterates `compose.services`, `manifest.storage[]` and `manifest.endpoints{}`; the runner records resources per `(instanceId, kind, role)` (`resources` table). There is no "web container" assumption; n8n's two services already flow through it.
+2. **Browser URLs are distinct from internal targets** — state holds `hostPort`; `browserUrlFor()` (`src/config.ts`) is the single rendering point used by DTOs and the `configuration` binding; readiness targets `127.0.0.1:<hostPort>` (`src/lifecycle/readiness.ts`). A proxy would change that function and the access policy, not packages.
+3. **Instance-owned removal and instance-scoped secrets do not assume unique product names** — every Docker resource is matched by `io.harbor.preview/instance=<uuid>` before mutation (`src/lifecycle/runner.ts`), volumes carry per-instance ownership tokens, secrets live under `instances/<uuid>/secrets/`. Two n8n instances coexist with distinct keys (live evidence A11).
+4. **Runtime/readiness is distinct from setup** — `installState`/`readiness` come only from container state and the HTTP probe; the manifest `setup` block renders as separate guidance in `InstanceDetail.setup` and the UI ("Harbor did not create any account in this application").
