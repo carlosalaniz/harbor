@@ -165,6 +165,8 @@ async function waitSsh(ip, timeoutMs = 5 * 60_000) {
     const r = sshRun(ip, 'echo harbor-ssh-ok && cat /etc/machine-id && uptime -s', { capture: true, timeoutMs: 20_000 });
     if (r.status === 0 && r.stdout.includes('harbor-ssh-ok')) {
       const [, machineId, bootedAt] = r.stdout.trim().split('\n');
+      // A fresh droplet still runs cloud-init, which can reset SSH sessions; wait for it to finish.
+      sshRun(ip, 'command -v cloud-init >/dev/null && cloud-init status --wait >/dev/null 2>&1; true', { capture: true, timeoutMs: 300_000 });
       return { attempt, machineId, bootedAt, elapsedMs: Date.now() - start };
     }
     await sleep(5000);

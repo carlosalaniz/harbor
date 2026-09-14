@@ -114,12 +114,20 @@ const A01 = step('A01', 'Clean VM bootstrap without Node/npm; re-run preserves i
     await target.rebuildFresh();
     notes.push('VM rebuilt to a fresh image before this run');
   } else notes.push('VM NOT rebuilt (--fresh not given); A01 evidence is from a re-used VM');
+  // cloud-init on a fresh image may still be finishing (it can reset SSH); wait for it before doing anything.
+  sshTry('command -v cloud-init >/dev/null && cloud-init status --wait >/dev/null 2>&1; true', { timeoutMs: 300_000 });
   const facts = ssh('lsb_release -ds; uname -m; systemctl --version | head -1; command -v docker || echo docker:absent; command -v node || echo node:absent; command -v npm || echo npm:absent; cat /etc/machine-id').trim().split('\n');
   const preinstalled = { docker: !facts.includes('docker:absent'), node: !facts.includes('node:absent'), npm: !facts.includes('npm:absent') };
   if (FRESH && (preinstalled.node || preinstalled.npm || preinstalled.docker)) throw new Error(`fresh VM unexpectedly has ${JSON.stringify(preinstalled)}`);
   // Fixture: pre-installed Cockpit so bootstrap must bind an existing tool without reconfiguring it.
   if (FRESH) {
-    ssh('DEBIAN_FRONTEND=noninteractive apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends cockpit', { timeoutMs: 900_000 });
+    for (let attempt = 1; ; attempt++) {
+      const r = sshTry('DEBIAN_FRONTEND=noninteractive apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends cockpit', { timeoutMs: 900_000 });
+      if (r.code === 0) break;
+      if (attempt >= 3) throw new Error(`cockpit fixture install failed (exit ${r.code}): ${r.stderr.slice(-800)}`);
+      await sleep(15_000);
+      await target.waitSsh();
+    }
     notes.push('fixture: Cockpit pre-installed from Ubuntu repos before bootstrap (tests binding an existing tool)');
   }
   target.scp(ARCHIVE, `/root/${path.basename(ARCHIVE)}`);
