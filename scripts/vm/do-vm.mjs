@@ -157,16 +157,27 @@ function sshRun(ip, command, opts = {}) {
   return r;
 }
 
+// Fresh boots (create/rebuild) present the image's host key first; cloud-init then regenerates host
+// keys and restarts sshd. So: reach the host with relaxed checking, wait for cloud-init, then pin the
+// final key into .vm-known_hosts for everything that follows.
+const RELAXED = ['-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR'];
 async function waitSsh(ip, timeoutMs = 5 * 60_000) {
   const start = Date.now();
   let attempt = 0;
   while (Date.now() - start < timeoutMs) {
     attempt += 1;
-    const r = sshRun(ip, 'echo harbor-ssh-ok && cat /etc/machine-id && uptime -s', { capture: true, timeoutMs: 20_000 });
+    const r = sshRun(ip, 'echo harbor-ssh-ok && cat /etc/machine-id && uptime -s', { capture: true, timeoutMs: 20_000, sshExtra: RELAXED });
     if (r.status === 0 && r.stdout.includes('harbor-ssh-ok')) {
       const [, machineId, bootedAt] = r.stdout.trim().split('\n');
-      // A fresh droplet still runs cloud-init, which can reset SSH sessions; wait for it to finish.
-      sshRun(ip, 'command -v cloud-init >/dev/null && cloud-init status --wait >/dev/null 2>&1; true', { capture: true, timeoutMs: 300_000 });
+      // Wait for cloud-init (may drop the session once when it regenerates host keys); retry until clean.
+      for (let i = 0; i < 20; i++) {
+        const c = sshRun(ip, 'command -v cloud-init >/dev/null || { echo done; exit 0; }; cloud-init status --wait >/dev/null 2>&1; cloud-init status | head -1', { capture: true, timeoutMs: 300_000, sshExtra: RELAXED });
+        if (c.status === 0 && /done|disabled|status: (done|disabled)/.test(c.stdout)) break;
+        await sleep(5000);
+      }
+      if (existsSync(KNOWN_HOSTS)) rmSync(KNOWN_HOSTS);
+      const pin = sshRun(ip, 'true', { capture: true, timeoutMs: 20_000 }); // accept-new records the final key
+      if (pin.status !== 0) fail(`could not pin host key after boot: ${pin.stderr.trim()}`, 4);
       return { attempt, machineId, bootedAt, elapsedMs: Date.now() - start };
     }
     await sleep(5000);
