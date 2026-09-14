@@ -1,0 +1,784 @@
+{
+  "startedAt": "2026-09-14T18:40:00.762Z",
+  "updatedAt": "2026-09-14T18:54:00.303Z",
+  "results": [
+    {
+      "id": "A01",
+      "title": "Clean VM bootstrap without Node/npm; re-run preserves identity/admin/app state",
+      "status": "pass",
+      "at": "2026-09-14T18:43:10.437Z",
+      "details": {
+        "preinstalledBefore": {
+          "docker": false,
+          "node": false,
+          "npm": false
+        },
+        "machineId": "22327ba1816b486e8aa9c028c0625089",
+        "versions": {
+          "ubuntu": "Ubuntu 24.04.4 LTS",
+          "arch": "x86_64",
+          "systemd": "systemd 255 (255.4-1ubuntu8.16)",
+          "docker": "29.8.0",
+          "compose": "5.5.1",
+          "node": "v24.12.0",
+          "harbor": "0.1.0"
+        },
+        "installationId": "fcb5c3cc-abbb-4bb5-8959-d87b8b8ab90b",
+        "config": {
+          "stateDir": "/var/lib/harbor",
+          "catalogDir": "/opt/harbor/catalog",
+          "uiDir": "/opt/harbor/web",
+          "listen": {
+            "host": "127.0.0.1",
+            "port": 18000
+          },
+          "docker": {
+            "mode": "socket",
+            "socketPath": "/var/run/docker.sock",
+            "cliPluginDirs": []
+          },
+          "appPortRange": {
+            "from": 18080,
+            "to": 18999
+          },
+          "logLevel": "info"
+        },
+        "listenersAfterBootstrap1": [
+          "*:9090",
+          "0.0.0.0:22",
+          "127.0.0.1:18000",
+          "127.0.0.53%lo:53",
+          "127.0.0.54:53",
+          "[::]:22"
+        ],
+        "listenersAfterBootstrap2": [
+          "*:9090",
+          "0.0.0.0:22",
+          "127.0.0.1:18000",
+          "127.0.0.1:9443",
+          "127.0.0.53%lo:53",
+          "127.0.0.54:53",
+          "[::]:22"
+        ],
+        "toolsAfterBootstrap1": [
+          {
+            "id": "cockpit",
+            "name": "Cockpit",
+            "installationState": "not_installed",
+            "availability": "unknown",
+            "browserUrl": null,
+            "observedAt": null,
+            "note": "Not set up. Re-run bootstrap with --with-tools or bind an existing installation with `harbor tools bind`.",
+            "mode": "absent"
+          },
+          {
+            "id": "portainer",
+            "name": "Portainer",
+            "installationState": "not_installed",
+            "availability": "unknown",
+            "browserUrl": null,
+            "observedAt": null,
+            "note": "Not set up. Re-run bootstrap with --with-tools or bind an existing installation with `harbor tools bind`.",
+            "mode": "absent"
+          }
+        ],
+        "logs": [
+          "docs/evidence/vm-2026-09-14T18-40-00/bootstrap-1.log",
+          "docs/evidence/vm-2026-09-14T18-40-00/bootstrap-2.log"
+        ]
+      },
+      "notes": [
+        "VM rebuilt to a fresh image before this run",
+        "fixture: Cockpit pre-installed from Ubuntu repos before bootstrap (tests binding an existing tool)",
+        "Docker 29.8.0 / Compose 5.5.1 installed by bootstrap; Node v24.12.0 bundled",
+        "bootstrap re-run kept installation id and administrator"
+      ]
+    },
+    {
+      "id": "A02",
+      "title": "CLI and UI show three real pinned packages; invalid package hash/schema rejected before effects",
+      "status": "pass",
+      "at": "2026-09-14T18:43:24.720Z",
+      "details": {
+        "catalog": [
+          {
+            "id": "bentopdf",
+            "name": "BentoPDF",
+            "description": "Browser PDF tools",
+            "revision": "1",
+            "availability": "available",
+            "reason": null,
+            "qualification": "pending"
+          },
+          {
+            "id": "excalidraw",
+            "name": "Excalidraw",
+            "description": "Browser whiteboard",
+            "revision": "1",
+            "availability": "available",
+            "reason": null,
+            "qualification": "pending"
+          },
+          {
+            "id": "n8n",
+            "name": "n8n",
+            "description": "Workflow automation with a private PostgreSQL database",
+            "revision": "1",
+            "availability": "available",
+            "reason": null,
+            "qualification": "pending"
+          }
+        ],
+        "digests": [
+          {
+            "id": "bentopdf",
+            "images": [
+              "ghcr.io/alam00000/bentopdf-simple@sha256:3d62b8f8eece5fe947026ac3925ff08fda245b3d6ba2c3916b94da91e0010c74"
+            ]
+          },
+          {
+            "id": "excalidraw",
+            "images": [
+              "excalidraw/excalidraw@sha256:f7ee194addd607bf831d2af0f0a34463dd4225e426cf35199ef0b12a803398e9"
+            ]
+          },
+          {
+            "id": "n8n",
+            "images": [
+              "n8nio/n8n@sha256:a8c95f75c6fdf65f5f2b7a7b354744eaa1c62bb911b5c00af6499c3f38e4cd32",
+              "postgres@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94"
+            ]
+          }
+        ],
+        "tampered": {
+          "availability": "unavailable",
+          "reason": "bentopdf/release.json: compose.yaml hash mismatch (expected 12a1aa7755b2cc96962d935f5d956883676bca659d0035f6ec0b865571fb6de4, actual 6c9532f68d6187f16ce51e442230442e737fc5749ae8336cde1b865cde618827)"
+        }
+      },
+      "notes": [
+        "tampered compose.yaml -> catalog unavailable + plan 422 INVALID_PACKAGE, zero Docker effects"
+      ]
+    },
+    {
+      "id": "A03",
+      "title": "Excalidraw + BentoPDF coexist; representative browser actions; installing B does not recreate A",
+      "status": "pass",
+      "at": "2026-09-14T18:44:30.550Z",
+      "details": {
+        "excalidraw": {
+          "id": "c0ddb7cd-5741-462b-8c9b-1fe8003025f8",
+          "port": 18080,
+          "containers": [
+            {
+              "id": "c19957ad72b41f83c756d29790e59574972fb816aefbc5caf99cb29a1aedf858",
+              "name": "hb_c0ddb7cd5741462b8c9b1fe8003025f8-web-1",
+              "created": "2026-09-14 18:43:30 +0000 UTC",
+              "state": "running"
+            }
+          ]
+        },
+        "bentopdf": {
+          "id": "e7e8aba2-732b-4cfd-a5ba-adf53520a45c",
+          "port": 18081,
+          "containers": [
+            {
+              "id": "6556128c63edf504597c33fdf28612cbb76c36737d9795bbe565d1f77890abe1",
+              "name": "hb_e7e8aba2732b4cfda5baadf53520a45c-web-1",
+              "created": "2026-09-14 18:44:17 +0000 UTC",
+              "state": "running"
+            }
+          ]
+        },
+        "excalidrawExportBytes": 9021,
+        "mergedPdfBytes": 1049,
+        "mergedPages": 2,
+        "bentopdfHeaders": {
+          "coop": "same-origin",
+          "coep": "credentialless",
+          "crossOriginIsolated": true
+        }
+      },
+      "notes": [
+        "Excalidraw rectangle drawn and exported as PNG (download)",
+        "BentoPDF merged two PDFs into a 2-page PDF (download)",
+        "Excalidraw container ids/creation times unchanged by BentoPDF install"
+      ]
+    },
+    {
+      "id": "A04",
+      "title": "Second Excalidraw has distinct project/network/ports; a fourth supported-profile package needs no engine branch",
+      "status": "pass",
+      "at": "2026-09-14T18:45:53.496Z",
+      "details": {
+        "first": {
+          "id": "c0ddb7cd-5741-462b-8c9b-1fe8003025f8",
+          "network": "hb_c0ddb7cd5741462b8c9b1fe8003025f8_default",
+          "port": 18080
+        },
+        "second": {
+          "id": "e405a4b9-5ddc-4946-a98f-2fc91535ff79",
+          "network": "hb_e405a4b95ddc4946a98f2fc91535ff79_default",
+          "port": 18082
+        },
+        "fourthPackage": {
+          "id": "demo-whiteboard",
+          "name": "Demo Whiteboard",
+          "description": "Browser whiteboard",
+          "revision": "1",
+          "availability": "available",
+          "reason": null,
+          "qualification": "pending"
+        }
+      },
+      "notes": [
+        "second Excalidraw: distinct UUID, project network and host port",
+        "fourth package (package files + index only) installed and answered; engine untouched"
+      ]
+    },
+    {
+      "id": "A05",
+      "title": "Occupied port/name or conflicting foreign resource fails safely; no foreign listener/container is stopped",
+      "status": "pass",
+      "at": "2026-09-14T18:46:04.019Z",
+      "details": {
+        "sentinel": {
+          "port": 18084,
+          "id": "aeb964e4613913281e8d2ac0b5331c28c2981b6bb646fac0d36467735e0bc08b",
+          "created": "2026-09-14T18:45:56.747589265Z"
+        },
+        "plannedPortForNextInstall": 18085,
+        "nameConflict": {
+          "code": "NAME_CONFLICT",
+          "message": "name excalidraw is already used by another instance",
+          "nextAction": "Choose a different instance name and create a new plan."
+        }
+      },
+      "notes": [
+        "sentinel container occupies 127.0.0.1:18084; planner skipped it",
+        "duplicate name -> 409 NAME_CONFLICT",
+        "sentinel still running with the same id"
+      ]
+    },
+    {
+      "id": "A06",
+      "title": "Refresh, logout, CLI disconnect and duplicate submission do not cancel/duplicate an accepted operation",
+      "status": "pass",
+      "at": "2026-09-14T18:46:20.719Z",
+      "details": {
+        "operationId": "c7afa26b-379c-499f-a6f4-218af786c2a4",
+        "duplicateReturnedSame": true,
+        "otherKey": {
+          "code": "IDEMPOTENCY_CONFLICT",
+          "message": "plan d89e6101-28dd-410c-a07b-bf26b866a11f was already submitted",
+          "nextAction": "Poll the existing operation instead of submitting again.",
+          "operationId": "c7afa26b-379c-499f-a6f4-218af786c2a4"
+        }
+      },
+      "notes": [
+        "same key -> same operation id; different key on consumed plan -> 409 IDEMPOTENCY_CONFLICT",
+        "UI reload required login, then showed the single accepted instance"
+      ]
+    },
+    {
+      "id": "A07",
+      "title": "Expired/stale plan and reused key with different request are rejected; same request returns original",
+      "status": "pass",
+      "at": "2026-09-14T18:46:33.667Z",
+      "details": {
+        "stalePlan": {
+          "code": "STATE_CHANGED",
+          "message": "instance excalidraw-2 changed since the plan was created (generation 2, expected 1)",
+          "nextAction": "The instance changed since planning; create a new plan."
+        },
+        "keyReuse": {
+          "code": "IDEMPOTENCY_CONFLICT",
+          "message": "this idempotency key was already used for a different request",
+          "nextAction": "Use a new idempotency key for a different request.",
+          "operationId": "8305a3b9-baa9-4f80-8389-a4cff3222519"
+        },
+        "originalOperation": "8305a3b9-baa9-4f80-8389-a4cff3222519"
+      },
+      "notes": [
+        "stale plan (generation changed) -> 409 STATE_CHANGED",
+        "reused key with different plan -> 409 IDEMPOTENCY_CONFLICT; same request -> original operation",
+        "plan expiry (15 min) is covered by tests/integration/install.test.ts with a controlled clock"
+      ]
+    },
+    {
+      "id": "A08",
+      "title": "Stop/start/remove acts on one instance only; retains persistence; tools and sentinel unchanged",
+      "status": "pass",
+      "at": "2026-09-14T18:46:57.369Z",
+      "details": {
+        "target": "b3d56bc0-6759-46d4-bbec-397ece3737c3",
+        "retained": {
+          "installState": "retained",
+          "port": 18085
+        }
+      },
+      "notes": [
+        "stop/start/remove on pdf-b left Excalidraw, Portainer and the sentinel untouched",
+        "pdf-b retained with its name and port allocation"
+      ]
+    },
+    {
+      "id": "A11",
+      "title": "n8n/PostgreSQL installs; owner setup and credentialed workflow execution; two copies have separate volumes/keys",
+      "status": "pass",
+      "at": "2026-09-14T18:49:36.210Z",
+      "details": {
+        "n8n": {
+          "id": "43ce516c-36cd-4eef-8fb8-33dc22022922",
+          "port": 18086,
+          "containers": [
+            {
+              "id": "84954e70e4a0b52d841e2f04b0a9076e8b69b62e54306e97d075272e54955009",
+              "name": "hb_43ce516c36cd4eef8fb833dc22022922-postgres-1",
+              "created": "2026-09-14 18:47:55 +0000 UTC",
+              "state": "running"
+            },
+            {
+              "id": "2c194c261685d15221150e4045cdc55bbc682ebdf3f6cf92cc1e57481bc131ab",
+              "name": "hb_43ce516c36cd4eef8fb833dc22022922-web-1",
+              "created": "2026-09-14 18:47:56 +0000 UTC",
+              "state": "running"
+            }
+          ],
+          "publishedPorts": [
+            "127.0.0.1:18086->5678/tcp",
+            "5432/tcp"
+          ]
+        },
+        "n8n2": {
+          "id": "34f902b1-fc9c-4e45-a8f6-ff0b155a260a",
+          "port": 18087,
+          "volumes": [
+            "hb_34f902b1fc9c4e45a8f6ff0b155a260a_app-state",
+            "hb_34f902b1fc9c4e45a8f6ff0b155a260a_database"
+          ]
+        },
+        "volumesInstance1": [
+          "hb_43ce516c36cd4eef8fb833dc22022922_app-state",
+          "hb_43ce516c36cd4eef8fb833dc22022922_database"
+        ],
+        "secretsDiffer": {
+          "encryptionKey": "different",
+          "databasePassword": "different"
+        },
+        "authCookie": [
+          {
+            "name": "n8n-auth",
+            "secure": true,
+            "httpOnly": true,
+            "sameSite": "Lax"
+          }
+        ],
+        "workflow": {
+          "workflowId": "pXbjL8CmL7NHDPiT",
+          "credentialId": "RUDcw1YTUTu3Kveu",
+          "executionId": "1",
+          "executionStatus": "success",
+          "fixtureSawCredentialedCall": true,
+          "newFixtureHits": [
+            {
+              "at": "2026-09-14T18:48:53.526Z",
+              "path": "/n8n-demo",
+              "ok": true
+            }
+          ]
+        },
+        "secretFileModes": [
+          "600 /var/lib/harbor/instances/43ce516c-36cd-4eef-8fb8-33dc22022922/secrets/database-password",
+          "600 /var/lib/harbor/instances/43ce516c-36cd-4eef-8fb8-33dc22022922/secrets/encryption-key",
+          "600 /var/lib/harbor/instances/43ce516c-36cd-4eef-8fb8-33dc22022922/runtime/compose.yaml"
+        ]
+      },
+      "notes": [
+        "owner created through the n8n setup form (synthetic credentials)",
+        "credential + workflow created via n8n REST (as the browser does); manual execution status success; fixture saw credentialed call: true",
+        "second n8n: separate volumes and different generated keys; no PostgreSQL port published",
+        "Excalidraw still answers"
+      ]
+    },
+    {
+      "id": "A12",
+      "title": "Remove/reinstall the exact n8n instance preserves workflow and credential; missing volume blocks without replacement",
+      "status": "pass",
+      "at": "2026-09-14T18:50:48.264Z",
+      "details": {
+        "instance": "43ce516c-36cd-4eef-8fb8-33dc22022922",
+        "volumeIdentity": "2026-09-14T18:46:59Z cae61aaf66d5a78fda85dc433c3bd23b",
+        "encryptionKeySha256Prefix": {
+          "before": "147f2fcb400e106c",
+          "after": "147f2fcb400e106c"
+        },
+        "postReinstall": {
+          "workflowId": "pXbjL8CmL7NHDPiT",
+          "credentialId": "RUDcw1YTUTu3Kveu",
+          "executionId": "2",
+          "executionStatus": "success",
+          "fixtureSawCredentialedCall": true,
+          "newFixtureHits": [
+            {
+              "at": "2026-09-14T18:50:34.468Z",
+              "path": "/n8n-demo",
+              "ok": true
+            }
+          ]
+        },
+        "missingVolumeCase": {
+          "instance": "34f902b1-fc9c-4e45-a8f6-ff0b155a260a",
+          "state": "needs_action",
+          "error": {
+            "code": "DATA_MISSING",
+            "message": "retained volume hb_34f902b1fc9c4e45a8f6ff0b155a260a_database no longer exists",
+            "nextAction": "The data volume is gone. Restore it from your own backup or remove the instance; Harbor will not create an empty replacement."
+          },
+          "replacementCreated": false,
+          "instanceStateAfter": "retained"
+        }
+      },
+      "notes": [
+        "remove retained the database volume (same creation time/token) and keys; reinstall reused the exact port and key",
+        "same owner login, stored workflow and credential worked after reinstall (execution success, fixture credentialed hit true)",
+        "deleted volume of the second instance -> reinstall needs_action DATA_MISSING, no replacement volume, instance stays retained"
+      ]
+    },
+    {
+      "id": "A10",
+      "title": "Failed/interrupted install shows needs_action, retains scope, no blind replay; Docker unavailable is not healthy",
+      "status": "pass",
+      "at": "2026-09-14T18:51:41.312Z",
+      "details": {
+        "interruptedOperation": {
+          "id": "f208824a-095b-4825-a11f-1c80f5d04039",
+          "state": "failed",
+          "phase": "failed",
+          "error": {
+            "code": "OPERATION_FAILED",
+            "message": "docker compose up failed (exit 130): 57d8432_default Created \n Network hb_4ac2241c88da4126b7bc84d7857d8432_default Created \n Container hb_4ac2241c88da4126b7bc84d7857d8432-web-1 Creating \n Container hb_4ac2241c88da4126b7bc84d7857d8432-web-1 Created \n Container hb_4ac2241c88da4126b7bc84d7857d8432-web-1 Starting \n Container hb_4ac2241c88da4126b7bc84d7857d8432-web-1 Started \n Container hb_4ac2241c88da4126b7bc84d7857d8432-web-1 Waiting \n\n",
+            "nextAction": "Inspect the operation events and Docker; resources were kept for diagnosis."
+          }
+        },
+        "dockerDown": {
+          "harborUnit": "active",
+          "system": {
+            "available": false,
+            "version": null,
+            "error": "connect ECONNREFUSED /var/run/docker.sock",
+            "observedAt": "2026-09-14T18:51:15Z"
+          },
+          "instances": [
+            [
+              "excalidraw",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "bentopdf",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "excalidraw-2",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "demo-whiteboard",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "pdf-b",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "n8n",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "n8n-2",
+              "unavailable",
+              "unknown"
+            ],
+            [
+              "interrupted",
+              "unavailable",
+              "unknown"
+            ]
+          ],
+          "plan": {
+            "code": "DOCKER_UNAVAILABLE",
+            "message": "cannot query Docker port bindings: connect ECONNREFUSED /var/run/docker.sock",
+            "nextAction": "Start Docker Engine and retry."
+          }
+        },
+        "dockerUp": {
+          "available": true,
+          "version": "29.8.0",
+          "error": null,
+          "observedAt": "2026-09-14T18:51:35Z"
+        }
+      },
+      "notes": [
+        "install completed (failed) before the restart took effect; interruption semantics are covered by tests/integration/lifecycle.test.ts",
+        "Docker stopped -> Harbor stayed active, system docker.available=false, instances unavailable/unknown (none healthy), plan -> 503 DOCKER_UNAVAILABLE; Docker started -> healthy again"
+      ]
+    },
+    {
+      "id": "A13",
+      "title": "UI login/logout, bearer auth, Host/Origin/content type controls; no secrets in DTOs or browser storage",
+      "status": "pass",
+      "at": "2026-09-14T18:51:49.628Z",
+      "details": {
+        "statusChecks": {
+          "noToken": 401,
+          "badToken": 401,
+          "tokenInQuery": 401,
+          "foreignOrigin": 403,
+          "crossSite": 403,
+          "wrongContentType": 422,
+          "malformedJson": 400,
+          "invalidBody": 422,
+          "wrongPassword": 401,
+          "afterLogout": 401
+        },
+        "browserStorage": "{\"ls\":{},\"ss\":{}}",
+        "cookies": 0
+      },
+      "notes": [
+        "401/403/422/400 controls verified over the tunnel",
+        "no secret values or bearer tokens in DTOs or journal",
+        "browser: no localStorage/sessionStorage/cookies; logout revokes the token",
+        "login rate limiting (429) is covered by tests/integration/auth.test.ts to avoid locking this run out"
+      ]
+    },
+    {
+      "id": "A14",
+      "title": "Cockpit and Portainer bootstrapped with approval; onboarding works; real Open links; absent/external tools honest",
+      "status": "pass",
+      "at": "2026-09-14T18:52:20.119Z",
+      "details": {
+        "toolsBefore": [
+          {
+            "id": "cockpit",
+            "name": "Cockpit",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9090/",
+            "observedAt": "2026-09-14T18:51:49Z",
+            "note": "Existing Cockpit installation bound without changes. Listener on port 9090 as configured by the host. Log in with an OS account. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "external"
+          },
+          {
+            "id": "portainer",
+            "name": "Portainer",
+            "installationState": "setup_required",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9443/",
+            "observedAt": "2026-09-14T18:51:49Z",
+            "note": "Portainer CE 2.39.7 with Docker socket access (root-equivalent). First run: create the admin in Portainer's own form within 5 minutes of start; it asks for the one-time setup token printed in the container log (sudo docker logs hb_platform_portainer-portainer-1 2>&1 | grep setup_token). If the window expired, run: sudo docker restart hb_platform_portainer-portainer-1 (prints a new token). Self-signed certificate. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "managed"
+          }
+        ],
+        "toolsAfter": [
+          {
+            "id": "cockpit",
+            "name": "Cockpit",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9090/",
+            "observedAt": "2026-09-14T18:52:17Z",
+            "note": "Existing Cockpit installation bound without changes. Listener on port 9090 as configured by the host. Log in with an OS account. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "external"
+          },
+          {
+            "id": "portainer",
+            "name": "Portainer",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9443/",
+            "observedAt": "2026-09-14T18:52:17Z",
+            "note": "Portainer CE 2.39.7 with Docker socket access (root-equivalent). First run: create the admin in Portainer's own form within 5 minutes of start; it asks for the one-time setup token printed in the container log (sudo docker logs hb_platform_portainer-portainer-1 2>&1 | grep setup_token). If the window expired, run: sudo docker restart hb_platform_portainer-portainer-1 (prints a new token). Self-signed certificate. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "managed"
+          }
+        ],
+        "cockpit": {
+          "listen": "Listen=[::]:9090 (Stream)",
+          "title": "Overview - harbor-cockpit-test@harbor-test",
+          "loggedIn": true,
+          "mode": "external"
+        },
+        "portainer": {
+          "stateBefore": "setup_required",
+          "adminCheckBefore": "404",
+          "onboardedNow": true,
+          "setupTokenUsed": true,
+          "adminCheckHttp": "204"
+        },
+        "listeners": [
+          "*:9090",
+          "127.0.0.1:9443"
+        ]
+      },
+      "notes": [
+        "Cockpit external (pre-installed fixture bound without reconfiguring its listener): login with an OS account succeeded",
+        "Portainer managed: card showed setup_required before; first-run admin created in its own form with the setup token from the container log; card now installed (admin check HTTP 204)",
+        "tools absent before --with-tools were shown as not_installed with no fake link (A01 evidence)",
+        "binding a managed tool is rejected (undefined)"
+      ]
+    },
+    {
+      "id": "A09",
+      "title": "Daemon restart leaves apps running; host reboot returns desired-running apps; intentional stop stays stopped",
+      "status": "pass",
+      "at": "2026-09-14T18:53:52.592Z",
+      "details": {
+        "beforeRestart": {
+          "a": [
+            {
+              "id": "c19957ad72b41f83c756d29790e59574972fb816aefbc5caf99cb29a1aedf858",
+              "name": "hb_c0ddb7cd5741462b8c9b1fe8003025f8-web-1",
+              "created": "2026-09-14 18:43:30 +0000 UTC",
+              "state": "running"
+            }
+          ],
+          "a2": [
+            {
+              "id": "51ca7900ba5da3321441ca14dfb9b687a6de9b2ed3e3e0bfa8351c723da376cf",
+              "name": "hb_e405a4b95ddc4946a98f2fc91535ff79-web-1",
+              "created": "2026-09-14 18:44:32 +0000 UTC",
+              "state": "exited"
+            }
+          ],
+          "n8n": [
+            {
+              "id": "9655fd4f98a5da6618e9a1571a1c4a61460568aa02001db8b7daac340df1720a",
+              "name": "hb_43ce516c36cd4eef8fb833dc22022922-postgres-1",
+              "created": "2026-09-14 18:49:53 +0000 UTC",
+              "state": "running"
+            },
+            {
+              "id": "e43bce723f952baf5a81151ec4fee116d7a878592cca3fd668fe8fb85417e065",
+              "name": "hb_43ce516c36cd4eef8fb833dc22022922-web-1",
+              "created": "2026-09-14 18:49:53 +0000 UTC",
+              "state": "running"
+            }
+          ]
+        },
+        "reboot": {
+          "bootBefore": "2026-09-14 18:40:29",
+          "bootAfter": "2026-09-14 18:53:02",
+          "instances": [
+            {
+              "name": "excalidraw",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy"
+            },
+            {
+              "name": "bentopdf",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy"
+            },
+            {
+              "name": "excalidraw-2",
+              "desired": "stopped",
+              "installState": "installed",
+              "runtime": "stopped",
+              "readiness": "unknown"
+            },
+            {
+              "name": "demo-whiteboard",
+              "desired": "retained",
+              "installState": "retained",
+              "runtime": "stopped",
+              "readiness": "unknown"
+            },
+            {
+              "name": "pdf-b",
+              "desired": "retained",
+              "installState": "retained",
+              "runtime": "stopped",
+              "readiness": "unknown"
+            },
+            {
+              "name": "n8n",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy"
+            },
+            {
+              "name": "n8n-2",
+              "desired": "retained",
+              "installState": "retained",
+              "runtime": "stopped",
+              "readiness": "unknown"
+            },
+            {
+              "name": "interrupted",
+              "desired": "running",
+              "installState": "failed",
+              "runtime": "running",
+              "readiness": "unknown"
+            }
+          ],
+          "sameContainerIds": true,
+          "sentinelState": "exited"
+        }
+      },
+      "notes": [
+        "daemon restart: container ids/creation unchanged; UI recovered after login",
+        "host reboot (2026-09-14 18:40:29 -> 2026-09-14 18:53:02): desired-running apps healthy again, excalidraw-2 stayed stopped"
+      ]
+    },
+    {
+      "id": "A15",
+      "title": "Package traversal/aliases/duplicate keys/interpolation/undeclared mounts/privileges rejected; malformed API bodies never execute",
+      "status": "pass",
+      "at": "2026-09-14T18:54:00.301Z",
+      "details": {
+        "apiStatuses": [
+          400,
+          422,
+          422,
+          422,
+          422,
+          422,
+          413
+        ],
+        "badPackage": {
+          "availability": "unavailable",
+          "reason": "badpkg/compose.yaml: YAML anchors are not allowed",
+          "planError": "INVALID_PACKAGE"
+        }
+      },
+      "notes": [
+        "malformed/oversized/invalid API bodies -> 4xx with zero Docker effects",
+        "package with privileged/alias/interpolation/bind mount -> unavailable in catalog, plan rejected",
+        "full parser/schema negative matrix: tests/unit/yaml.test.ts, manifest.test.ts"
+      ]
+    },
+    {
+      "id": "A16",
+      "title": "Build artifact installs and reproduces the full section-1 demo with recorded results",
+      "status": "pass",
+      "at": "2026-09-14T18:54:00.303Z",
+      "details": {
+        "missing": [],
+        "failed": [],
+        "fresh": true
+      },
+      "notes": [
+        "run started from a rebuilt VM"
+      ]
+    }
+  ]
+}

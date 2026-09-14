@@ -55,10 +55,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Cockpit (loopback socket drop-in or bind existing) and Portainer CE 2.39.7 (loopback HTTPS, retained volume) recipes; tools bind/unbind API + CLI; Portainer admin check
 - [x] Live on the VM: bootstrap from the archive on a fresh Ubuntu 24.04 x86-64 host installed Docker 29.8.0 / Compose 5.5.1, Harbor, Cockpit (127.0.0.1:9090) and Portainer (127.0.0.1:9443); all listeners loopback-only
 
-### Phase 5 — full demo + report 🔄
+### Phase 5 — full demo + report ✅ (2026-09-14)
 - [x] `pnpm test:vm` runner (scripts/vm/run-vm-tests.mjs): A01–A16 with evidence directory, DigitalOcean or Vagrant target, fresh rebuild, reboot via cloud API, browser steps (Excalidraw export, BentoPDF merge, n8n owner/workflow, Cockpit login, Portainer onboarding)
-- [ ] Full `--fresh` run recorded in docs/VERIFICATION.md
-- [ ] Final docs review, context-only architecture check (plan §11), handoff
+- [x] Full `--fresh` run **vm-2026-09-14T18-40-00: 16/16 passed** — recorded in docs/VERIFICATION.md and docs/evidence/vm-2026-09-14T18-40-00/
+- [x] Package qualification set to `passed` (Docker 29.8.0, Compose 5.5.1, Node v24.12.0, Ubuntu 24.04.4 x86_64); archive rebuilt with the qualified inventories
+- [x] Context-only architecture check (plan §11) documented in docs/FUTURE.md; no code change needed
+- Bugs found only by the live suite and fixed: bootstrap re-run over existing release (EEXIST on symlinks); `harbor.service` `Requires=docker` stopped Harbor with Docker (now `Wants=`); CLI `--json` printed two documents on failed operations; Portainer 2.39 setup-token onboarding documented and automated
 
 ## Test results (latest local run)
 
@@ -66,15 +68,19 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 41 passed |
-| `pnpm test:integration` (fake adapter) | 34 passed (install, lifecycle, auth, tools) |
+| `pnpm test` (unit) | 43 passed |
+| `pnpm test:integration` (fake adapter) | 34 passed (install, lifecycle, auth, tools); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 7 passed |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
-| Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) |
+| Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
+| `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |
 
 ## Blockers
 None.
 
+## Status
+**Scoped release delivered.** All phases complete; acceptance matrix A01–A16 passed live; automated suites green; repository self-contained (source, lockfile, packages, tests, release builder, guides, verification report).
+
 ## Exact next step
-Run `pnpm test:vm -- --fresh` to completion, fix any failures, record the run in docs/VERIFICATION.md, set package qualification to `passed` with the recorded versions, final review and handoff.
+None for the build. Operator decision pending: destroy the `harbor-test` droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists) or keep it for exploration.

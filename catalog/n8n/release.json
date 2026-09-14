@@ -38,12 +38,22 @@
     }
   },
   "qualification": {
-    "status": "pending",
+    "status": "passed",
     "date": "2026-09-14",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "2.38.7",
+      "postgres": "16.15"
+    },
     "notes": [
       "Digests resolved 2026-09-14 via registry API (scripts/registry.mjs). n8n tag 2.38.7 == upstream `stable` tag at that time.",
       "postgres image config declares VOLUME /var/lib/postgresql/data (claimed as storage `database`); n8n image declares no volumes, ExposedPorts 5678/tcp, User node.",
-      "n8n 2.x task runners: internal mode inside the web container; no sidecar. External runners not qualified."
+      "n8n 2.x task runners: internal mode inside the web container; no sidecar. External runners not qualified.",
+      "Live run vm-2026-09-14T18-40-00: passed",
+      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory"
     ]
   }
 }

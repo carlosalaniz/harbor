@@ -27,11 +27,20 @@
     }
   },
   "qualification": {
-    "status": "pending",
+    "status": "passed",
     "date": "2026-09-14",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "latest"
+    },
     "notes": [
       "Digest resolved 2026-09-14 via registry API (scripts/registry.mjs digest docker.io/excalidraw/excalidraw:latest).",
-      "Image config: ExposedPorts 80/tcp, no declared volumes."
+      "Image config: ExposedPorts 80/tcp, no declared volumes.",
+      "Live run vm-2026-09-14T18-40-00: passed",
+      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory"
     ]
   }
 }
