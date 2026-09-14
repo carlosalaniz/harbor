@@ -30,7 +30,8 @@ const ADMIN = { username: 'admin', password: 'vm-suite-FIXTURE-password' };
 const N8N_OWNER = { email: 'harbor-test@example.invalid', firstName: 'Harbor', lastName: 'Tester', password: 'n8n-owner-FIXTURE-password' };
 const PORTAINER_ADMIN = { username: 'admin', password: 'portainer-FIXTURE-password' };
 const OS_TEST_USER = { name: 'harbor-cockpit-test', password: 'cockpit-FIXTURE-password' };
-const PORTS = [18000, 18080, 18081, 18082, 18083, 18084, 18085, 9090, 9443];
+// Management, tools, and the app port range slice the demo can consume (retained instances keep their ports).
+const PORTS = [18000, 9090, 9443, ...Array.from({ length: 20 }, (_, i) => 18080 + i)];
 const UI = 'http://localhost:18000';
 
 if (!existsSync(ARCHIVE)) fail(`release archive not found: ${ARCHIVE} (run pnpm package)`, 2);
@@ -534,23 +535,31 @@ const A10 = step('A10', 'Failed/interrupted install shows needs_action, retains 
     notes.push(`install completed (${op.state}) before the restart took effect; interruption semantics are covered by tests/integration/lifecycle.test.ts`);
     if (op.state === 'succeeded') cliOk(target, ['remove', inst.id, '--yes']);
   }
-  // Docker unavailable
-  ssh('systemctl stop docker.socket docker.service');
-  await sleep(12_000);
-  const doctor = cliOk(target, ['doctor']);
-  const list = listInstances();
+  // Docker unavailable (Docker is always restarted, even if the checks below fail)
+  let doctor;
+  let list;
+  let planDown;
+  let harborActiveWhileDockerDown;
+  try {
+    ssh('systemctl stop docker.socket docker.service');
+    await sleep(12_000);
+    harborActiveWhileDockerDown = sshTry('systemctl is-active harbor').stdout.trim();
+    doctor = cliOk(target, ['doctor']);
+    list = listInstances();
+    planDown = cli(target, ['plan', 'install', 'bentopdf', '--name', 'while-down']);
+  } finally {
+    ssh('systemctl start docker.socket docker.service');
+  }
   const anyHealthy = list.some((i) => i.readiness === 'healthy' || i.runtime === 'running');
-  const planDown = cli(target, ['plan', 'install', 'bentopdf', '--name', 'while-down']);
-  ssh('systemctl start docker.socket docker.service');
   await sleep(15_000);
   const doctorUp = await waitFor(() => {
     const d = cliOk(target, ['doctor']);
     return d.system?.docker?.available ? d : null;
   }, { timeoutMs: 120_000, what: 'docker back' });
   await waitFor(() => (byName('excalidraw')?.readiness === 'healthy' ? true : null), { timeoutMs: 180_000, what: 'excalidraw healthy again' });
-  if (doctor.system.docker.available || anyHealthy || planDown.code === 0 || planDown.json?.error?.code !== 'DOCKER_UNAVAILABLE') throw new Error(`docker-down state wrong: ${JSON.stringify({ docker: doctor.system.docker, anyHealthy, planDown: planDown.json })}`);
-  notes.push('Docker stopped -> system docker.available=false, instances unavailable/unknown (none healthy), plan -> 503 DOCKER_UNAVAILABLE; Docker started -> healthy again');
-  return { details: { interruptedOperation: { id: sub.operationId, state: op.state, phase: op.phase, error: op.error }, dockerDown: { system: doctor.system.docker, instances: list.map((i) => [i.name, i.runtime, i.readiness]), plan: planDown.json?.error }, dockerUp: doctorUp.system.docker }, notes };
+  if (harborActiveWhileDockerDown !== 'active' || doctor.system.docker.available || anyHealthy || planDown.code === 0 || planDown.json?.error?.code !== 'DOCKER_UNAVAILABLE') throw new Error(`docker-down state wrong: ${JSON.stringify({ harbor: harborActiveWhileDockerDown, docker: doctor.system.docker, anyHealthy, planDown: planDown.json })}`);
+  notes.push('Docker stopped -> Harbor stayed active, system docker.available=false, instances unavailable/unknown (none healthy), plan -> 503 DOCKER_UNAVAILABLE; Docker started -> healthy again');
+  return { details: { interruptedOperation: { id: sub.operationId, state: op.state, phase: op.phase, error: op.error }, dockerDown: { harborUnit: harborActiveWhileDockerDown, system: doctor.system.docker, instances: list.map((i) => [i.name, i.runtime, i.readiness]), plan: planDown.json?.error }, dockerUp: doctorUp.system.docker }, notes };
 });
 
 // ---------------------------------------------------------------- A13 auth controls

@@ -3,15 +3,15 @@ import { UNIT_MARKER } from './host.js';
 
 // The unit restarts the daemon, runs it as the dedicated user with Docker group access, and kills
 // only Harbor's own child processes (KillMode=control-group). App containers belong to Docker's
-// cgroups, so restarting Harbor never stops them.
+// cgroups, so restarting Harbor never stops them. Docker is Wanted, not Required: if Docker stops,
+// Harbor stays up and reports it as unavailable instead of being stopped along with it.
 export function harborUnit(): string {
   return `${UNIT_MARKER}
 [Unit]
 Description=${PRODUCT.displayName} local application manager (preview)
 Documentation=file://${PRODUCT.paths.opt}/docs/OPERATOR_GUIDE.md
 After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple
