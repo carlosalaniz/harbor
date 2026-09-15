@@ -175,6 +175,10 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
   // 10. Tools (optional, separately approved)
   const tools: ToolRecord[] = [];
   const now = rfc3339(systemClock.now());
+  // Optional tools must never leave Harbor itself down: the daemon was stopped above for the release
+  // update, so a failing tool step is remembered here and rethrown only after the unit is (re)started.
+  let toolFailure: unknown = null;
+  try {
   if (opts.bindCockpit) tools.push(externalToolRecord('cockpit', opts.bindCockpit, now));
   if (opts.bindPortainer) tools.push(externalToolRecord('portainer', opts.bindPortainer, now));
   if (opts.withTools) {
@@ -210,6 +214,10 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     }
     chownTree(config.stateDir, uid, gid);
   }
+  } catch (e) {
+    toolFailure = e;
+    log(`tool setup failed (${e instanceof Error ? e.message : String(e)}); Harbor itself is still being (re)started`);
+  }
 
   // 11. systemd unit
   writeFileSync(`/etc/systemd/system/${PRODUCT.paths.systemdUnit}`, harborUnit(), { mode: 0o644 });
@@ -223,6 +231,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     throw new HarborError('OPERATION_FAILED', `daemon did not become healthy at ${managementUrl}/healthz`, { details: status.stdout.split('\n').slice(-20) });
   }
   log(`daemon healthy at ${managementUrl}`);
+  if (toolFailure) throw toolFailure;
 
   const nodeVersion = (await exec(`${PRODUCT.paths.opt}/node/bin/node`, ['--version'], { timeoutMs: 10_000 })).stdout.trim();
   return { facts, installationId, adminCreated, managementUrl, tools, versions: { harbor: release.version, node: nodeVersion, docker: facts.docker.version, compose: facts.docker.composeVersion } };

@@ -762,7 +762,8 @@ const B01 = step('B01', 'Exposure providers bootstrapped with approval; tool car
   if (!ts || ts.installationState === 'not_installed') throw new Error(`tailscale card wrong: ${JSON.stringify(ts)}`);
   const caddyCfg = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/'));
   const listeners = ssh("ss -ltnp | awk 'NR>1{print $4}' | sort").trim().split('\n');
-  const b3 = target.ssh(`cd /root && ./${ARCHIVE_DIR}/bin/harbor bootstrap --yes --with-tools --with-tailscale --with-public-proxy 2>&1`, { timeoutMs: 1800_000 });
+  // the auth key (if any) goes over stdin, never on the command line or into the log
+  const b3 = target.ssh(`cd /root && ./${ARCHIVE_DIR}/bin/harbor bootstrap --yes --with-tools --with-tailscale --with-public-proxy${TS_AUTHKEY ? ' --tailscale-authkey-stdin' : ''} 2>&1`, { timeoutMs: 1800_000, input: TS_AUTHKEY ? `${TS_AUTHKEY}\n` : undefined });
   ev.file('bootstrap-3-exposure-rerun.log', b3.stdout + b3.stderr);
   if (b3.code !== 0) throw new Error('bootstrap re-run with exposure providers failed');
   const notes = [`proxy: ${px.installationState}/${px.availability}`, `tailscale: ${ts.installationState}/${ts.availability} — ${ts.note}`, 'bootstrap re-run with providers succeeded (idempotent)'];

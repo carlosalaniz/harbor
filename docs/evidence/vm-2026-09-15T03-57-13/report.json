@@ -1,0 +1,118 @@
+{
+  "startedAt": "2026-09-15T03:57:13.120Z",
+  "updatedAt": "2026-09-15T03:57:25.998Z",
+  "results": [
+    {
+      "id": "B01",
+      "title": "Exposure providers bootstrapped with approval; tool cards honest; re-run idempotent",
+      "status": "pass",
+      "at": "2026-09-15T03:57:24.429Z",
+      "details": {
+        "tools": [
+          {
+            "id": "cockpit",
+            "name": "Cockpit",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9090/",
+            "observedAt": "2026-09-15T03:57:16Z",
+            "note": "Existing Cockpit installation bound without changes. Listener on port 9090 as configured by the host. Log in with an OS account. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "external"
+          },
+          {
+            "id": "portainer",
+            "name": "Portainer",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9443/",
+            "observedAt": "2026-09-15T03:57:16Z",
+            "note": "Portainer CE 2.39.7 with Docker socket access (root-equivalent). First run: create the admin in Portainer's own form within 5 minutes of start; it asks for the one-time setup token printed in the container log (sudo docker logs hb_platform_portainer-portainer-1 2>&1 | grep setup_token). If the window expired, run: sudo docker restart hb_platform_portainer-portainer-1 (prints a new token). Self-signed certificate. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "managed"
+          },
+          {
+            "id": "tailscale",
+            "name": "Tailscale",
+            "browserUrl": null,
+            "observedAt": "2026-09-15T03:57:16Z",
+            "mode": "external",
+            "installationState": "setup_required",
+            "availability": "reachable",
+            "note": "Node harbor-test.tail7d0db4.ts.net is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).",
+            "facts": {
+              "dnsName": "harbor-test.tail7d0db4.ts.net",
+              "tailnet": "carlosglvn93@gmail.com",
+              "magicDnsEnabled": true,
+              "httpsEnabled": false,
+              "online": true
+            }
+          },
+          {
+            "id": "proxy",
+            "name": "Public proxy (Caddy)",
+            "browserUrl": null,
+            "observedAt": "2026-09-15T03:57:16Z",
+            "mode": "external",
+            "installationState": "installed",
+            "availability": "reachable",
+            "note": "Caddy admin API answering on 127.0.0.1:2019; routes are reconciled from Harbor state. Public exposure needs DNS records pointing at this host and ports 80/443 reachable.",
+            "facts": {
+              "adminApi": true
+            }
+          }
+        ],
+        "caddyRoutes": [],
+        "listeners": [
+          "*:443",
+          "*:80",
+          "*:9090",
+          "0.0.0.0:22",
+          "100.114.153.90:60565",
+          "127.0.0.1:18000",
+          "127.0.0.1:18080",
+          "127.0.0.1:18081",
+          "127.0.0.1:18086",
+          "127.0.0.1:18088",
+          "127.0.0.1:2019",
+          "127.0.0.1:9443",
+          "127.0.0.53%lo:53",
+          "127.0.0.54:53",
+          "[::]:22",
+          "[fd7a:115c:a1e0::8f2a:995b]:41739"
+        ]
+      },
+      "notes": [
+        "proxy: installed/reachable",
+        "tailscale: setup_required/reachable — Node harbor-test.tail7d0db4.ts.net is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).",
+        "bootstrap re-run with providers succeeded (idempotent)"
+      ]
+    },
+    {
+      "id": "B02",
+      "title": "Tailnet exposure of Excalidraw (same port) and B03 Harbor UI on the tailnet",
+      "status": "blocked",
+      "at": "2026-09-15T03:57:25.998Z",
+      "details": {
+        "tailscale": {
+          "id": "tailscale",
+          "name": "Tailscale",
+          "browserUrl": null,
+          "observedAt": "2026-09-15T03:57:25Z",
+          "mode": "external",
+          "installationState": "setup_required",
+          "availability": "reachable",
+          "note": "Node harbor-test.tail7d0db4.ts.net is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).",
+          "facts": {
+            "dnsName": "harbor-test.tail7d0db4.ts.net",
+            "tailnet": "carlosglvn93@gmail.com",
+            "magicDnsEnabled": true,
+            "httpsEnabled": false,
+            "online": true
+          }
+        }
+      },
+      "notes": [
+        "BLOCKED: Tailscale node not enrolled/HTTPS-enabled on the VM (setup_required: Node harbor-test.tail7d0db4.ts.net is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).). Provide HARBOR_TS_AUTHKEY (a tailnet auth key) and enable MagicDNS+HTTPS in the admin console to run B02/B03 live. Engine behaviour is covered by tests/integration/exposure.test.ts."
+      ]
+    }
+  ]
+}

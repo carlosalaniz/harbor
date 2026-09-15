@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { stringify as yamlStringify } from 'yaml';
 import { LABELS, PRODUCT, platformProjectNameFor } from '../naming.js';
@@ -203,9 +203,18 @@ export async function setupTailscale(log: (m: string) => void, existing: { insta
   let state = existing.backendState;
   if (state !== 'Running') {
     if (authKey) {
-      // The key is passed through an environment variable to the CLI, not as an argument (not visible in `ps`).
-      const r = await exec('/usr/bin/tailscale', ['up', '--auth-key=env:TS_AUTHKEY', '--ssh=false'], { timeoutMs: 180_000, env: { TS_AUTHKEY: authKey } });
-      if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+      // The key goes through a root-only temporary file (`--auth-key=file:`, the documented non-interactive form),
+      // never as a command-line argument (visible in `ps`) and never in logs. Live run 12 showed the CLI does
+      // not understand an `env:` prefix: it treated the literal string as the key.
+      const keyFile = '/run/harbor-tailscale-authkey';
+      writeFileSync(keyFile, authKey.trim() + '\n', { mode: 0o600 });
+      let r;
+      try {
+        r = await exec('/usr/bin/tailscale', ['up', `--auth-key=file:${keyFile}`, '--ssh=false', '--timeout=120s'], { timeoutMs: 180_000 });
+      } finally {
+        rmSync(keyFile, { force: true });
+      }
+      if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${(r.stderr || r.stdout).trim().replace(/tskey-[A-Za-z0-9-]+/g, '<key>').slice(0, 300)}`);
       state = 'Running';
       log('tailscale node logged in with the provided auth key');
     } else {
