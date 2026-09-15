@@ -6,7 +6,7 @@ export type InstallState = 'installing' | 'installed' | 'failed' | 'needs_action
 export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unknown';
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'expose' | 'unexpose' | 'reconfigure';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'expose' | 'unexpose' | 'reconfigure';
 export type ExposureVia = 'tailnet' | 'public';
 export type PrimaryExposure = 'loopback' | ExposureVia;
 
@@ -183,10 +183,21 @@ export interface ApiErrorBody {
 
 export type PlanRequest =
   | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }> }
-  | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instanceId: string }
+  | { kind: 'start' | 'stop' | 'remove' | 'reinstall' | 'purge'; instanceId: string }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean }
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
   | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };
+
+export interface DomainDto {
+  hostname: string;
+  dns: { state: 'points_here' | 'points_elsewhere' | 'no_record' | 'unknown'; addresses: string[]; checkedAt: string | null; note: string | null };
+  // the app published at this hostname, if any
+  usedBy: { instanceId: string; instanceName: string; exposureState: string; url: string } | null;
+}
+export interface DomainsDto {
+  publicIp: { v4: string | null; v6: string | null; detectedAt: string | null; error: string | null };
+  items: DomainDto[];
+}
 
 export interface HostStorageDto {
   dataFolder: { path: string; exists: boolean; writable: boolean };

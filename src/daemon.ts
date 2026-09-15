@@ -20,6 +20,7 @@ import { Repo } from './state/repo.js';
 import { PlatformToolsService } from './tools/service.js';
 import { systemClock, systemIds, type Clock, type Ids } from './util.js';
 import { FakeTailscale, TailscaleCli, type TailscaleProvider } from './exposure/tailscale.js';
+import { FakeNet, RealNet, type NetProvider } from './system/net.js';
 import { CaddyAdminClient, FakeCaddyAdmin, type CaddyAdmin } from './exposure/caddy.js';
 import { FakeVerifier, httpsVerifier } from './exposure/verify.js';
 import type { UrlVerifier } from './lifecycle/context.js';
@@ -45,6 +46,7 @@ export interface DaemonOverrides {
   tailscale?: TailscaleProvider;
   caddy?: CaddyAdmin;
   verify?: UrlVerifier;
+  net?: NetProvider;
 }
 
 export interface Daemon {
@@ -98,7 +100,8 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const tailscale = overrides.tailscale ?? (fakeMode ? new FakeTailscale() : new TailscaleCli());
     const caddy = overrides.caddy ?? (fakeMode ? new FakeCaddyAdmin() : new CaddyAdminClient());
     const verify = overrides.verify ?? (fakeMode ? new FakeVerifier().fn : httpsVerifier);
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify };
+    const net = overrides.net ?? (fakeMode ? new FakeNet() : new RealNet());
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify, net };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);

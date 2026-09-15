@@ -1,10 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import type { HostStorageDto, PlatformToolDto } from '../../../../src/contracts/api';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import type { DomainsDto, HostStorageDto, PlatformToolDto } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { FolderPicker, Pill } from '../components';
 import { fmtBytes } from '../format';
 import type { Console } from '../store';
-import { WALLPAPERS, applyTheme, applyWallpaper, readTheme, readWallpaper, type Theme, type Wallpaper } from '../theme';
+import { WALLPAPERS, applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper, type Theme, type Wallpaper } from '../theme';
 
 type Section = 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'access' | 'about';
 const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] = [
@@ -17,8 +17,15 @@ const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] =
   { id: 'about', label: 'About', glyph: 'ℹ️', blurb: 'Version and trust boundary' },
 ];
 
-export function Settings({ c, onLogout }: { c: Console; onLogout: () => void }) {
-  const [section, setSection] = useState<Section>('account');
+export function Settings({ c, onLogout, initialSection, onSection }: { c: Console; onLogout: () => void; initialSection?: string; onSection?: (s: string) => void }) {
+  const [section, setSectionState] = useState<Section>((SECTIONS.some((s) => s.id === initialSection) ? initialSection : 'account') as Section);
+  useEffect(() => {
+    if (initialSection && SECTIONS.some((s) => s.id === initialSection)) setSectionState(initialSection as Section);
+  }, [initialSection]);
+  const setSection = (s: Section) => {
+    setSectionState(s);
+    onSection?.(s);
+  };
   return (
     <div className="settings">
       <nav className="settings-nav" aria-label="Settings sections">
@@ -177,6 +184,20 @@ function RemoteAccess({ c }: { c: Console }) {
               This machine is <strong>{String(facts['dnsName'] ?? 'connected')}</strong>
               {facts['tailnet'] ? ` on tailnet ${String(facts['tailnet'])}` : ''}.
             </p>
+            <dl className="kv">
+              <dt>Tailnet addresses</dt>
+              <dd>{String(facts['tailscaleIps'] ?? '—')}</dd>
+              <dt>Node key expires</dt>
+              <dd>{facts['keyExpiry'] ? new Date(String(facts['keyExpiry'])).toLocaleDateString() : 'never / unknown'}</dd>
+              <dt>Auth key</dt>
+              <dd className="muted">Used once at login and never stored by Harbor or Tailscale; create a new one in the admin console if you need another machine.</dd>
+              <dt>Admin console</dt>
+              <dd>
+                <a href={String(facts['adminConsole'] ?? 'https://login.tailscale.com/admin/machines')} target="_blank" rel="noopener noreferrer">
+                  login.tailscale.com/admin ↗
+                </a>
+              </dd>
+            </dl>
             {facts['httpsEnabled'] === false && (
               <p className="warn">
                 One more step in the Tailscale admin console: under <strong>DNS</strong>, turn on <strong>MagicDNS</strong> and click <strong>Enable HTTPS</strong>. Harbor needs it for the padlock on tailnet addresses.
@@ -221,23 +242,126 @@ function RemoteAccess({ c }: { c: Console }) {
 
 function PublicAddresses({ c }: { c: Console }) {
   const px = c.data.tools.find((t) => t.id === 'proxy');
-  const publicOnes = c.data.exposures.filter((e) => e.via === 'public');
+  const [d, setD] = useState<DomainsDto | null>(null);
+  const [host, setHost] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = () => api.domains().then(setD, (e: Error) => setMsg(e.message));
+  useEffect(() => {
+    void load();
+  }, []);
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setMsg(e instanceof ApiError ? `${e.message}. ${e.nextAction}` : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const installed = px && px.installationState !== 'not_installed';
+  const stateLabel = (s: string) => ({ points_here: 'Points here', points_elsewhere: 'Points elsewhere', no_record: 'No DNS record yet', unknown: 'Not checked' })[s] ?? s;
+  const stateTone = (s: string): 'ok' | 'warn' | 'muted' => (s === 'points_here' ? 'ok' : s === 'unknown' ? 'muted' : 'warn');
   return (
-    <section className="card" aria-labelledby="pub-h">
-      <h2 id="pub-h">Public addresses</h2>
-      <p className="muted small">For apps you want the whole internet to reach (a blog, a shared photo album), Harbor can put a real HTTPS address in front of an app. It needs a domain name you own pointing at this machine and ports 80 and 443 open on your router.</p>
-      <StatusRow tool={px} />
-      {!px || px.installationState === 'not_installed' ? (
-        <div className="stack">
-          <p>The public proxy is not installed. Run this once on the machine (as root):</p>
-          <pre className="code">sudo /opt/harbor/bin/harbor bootstrap --yes --with-public-proxy</pre>
-        </div>
-      ) : (
-        <p>
-          {publicOnes.length === 0 ? 'No app is public right now.' : `${publicOnes.length} public address${publicOnes.length === 1 ? '' : 'es'}.`} Publish or withdraw apps from the <a href="#/publishing">Publishing</a> page.
+    <>
+      <section className="card" aria-labelledby="pub-h">
+        <h2 id="pub-h">Publish an app on the internet</h2>
+        <p className="muted small">Three steps, all from here: point a domain you own at this machine, let Harbor confirm it, then choose the app. The HTTPS certificate is issued by Let's Encrypt automatically the moment the app is published, and renewed for you.</p>
+        <StatusRow tool={px} />
+        {!installed && (
+          <div className="stack">
+            <p>The public proxy (Caddy) is not installed. Run this once on the machine (as root), then come back:</p>
+            <pre className="code">sudo /opt/harbor/bin/harbor bootstrap --yes --with-public-proxy</pre>
+          </div>
+        )}
+      </section>
+      <section className="card" aria-labelledby="ip-h">
+        <h2 id="ip-h">
+          <span className="step">1</span> This machine's public address
+        </h2>
+        {d ? (
+          d.publicIp.v4 || d.publicIp.v6 ? (
+            <p>
+              Create an <strong>A record</strong> {d.publicIp.v6 ? 'and/or an AAAA record ' : ''}for your domain pointing at <code>{d.publicIp.v4 ?? d.publicIp.v6}</code>
+              {d.publicIp.v4 && d.publicIp.v6 ? <> / <code>{d.publicIp.v6}</code></> : null}. If this machine is behind a home router, forward ports <strong>80</strong> and <strong>443</strong> to it.
+            </p>
+          ) : (
+            <p className="warn">Harbor could not detect the public address ({d.publicIp.error ?? 'unknown'}). Find it in your router or from your provider, then continue below.</p>
+          )
+        ) : (
+          <p className="muted">Detecting…</p>
+        )}
+      </section>
+      <section className="card" aria-labelledby="dom-h">
+        <h2 id="dom-h">
+          <span className="step">2</span> Your domains
+        </h2>
+        <form
+          className="row wrap"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (host.trim()) void run(async () => (await api.addDomain(host.trim()), setHost('')));
+          }}
+        >
+          <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="photos.example.com" aria-label="Domain name" />
+          <button className="btn primary" type="submit" disabled={busy || !host.trim()}>
+            Add and check
+          </button>
+        </form>
+        {msg && (
+          <p className="error small" role="alert">
+            {msg}
+          </p>
+        )}
+        <ul className="plain domains">
+          {d?.items.map((dom) => (
+            <li key={dom.hostname} className="domain">
+              <div className="row between wrap">
+                <span className="row wrap">
+                  <strong>{dom.hostname}</strong>
+                  <Pill tone={stateTone(dom.dns.state)}>
+                    <span className="dot" aria-hidden="true" />
+                    {stateLabel(dom.dns.state)}
+                  </Pill>
+                  {dom.usedBy && (
+                    <Pill tone={dom.usedBy.exposureState === 'active' ? 'ok' : 'busy'}>
+                      {dom.usedBy.instanceName} · {dom.usedBy.exposureState === 'active' ? 'live with HTTPS' : dom.usedBy.exposureState}
+                    </Pill>
+                  )}
+                </span>
+                <span className="row">
+                  <button className="btn ghost" disabled={busy} onClick={() => void run(() => api.checkDomain(dom.hostname))} aria-label={`Re-check ${dom.hostname}`}>
+                    Re-check
+                  </button>
+                  {!dom.usedBy && (
+                    <button className="btn ghost danger" disabled={busy} onClick={() => void run(() => api.forgetDomain(dom.hostname))} aria-label={`Forget ${dom.hostname}`}>
+                      Forget
+                    </button>
+                  )}
+                </span>
+              </div>
+              <p className="muted small">
+                {dom.dns.addresses.length ? `Resolves to ${dom.dns.addresses.join(', ')}` : 'No address yet'}
+                {dom.dns.checkedAt ? ` · checked ${new Date(dom.dns.checkedAt).toLocaleTimeString()}` : ''}
+                {dom.dns.note ? ` · ${dom.dns.note}` : ''}
+              </p>
+            </li>
+          ))}
+          {d && d.items.length === 0 && <li className="muted small">No domains yet. Add the first one above.</li>}
+        </ul>
+      </section>
+      <section className="card" aria-labelledby="pubapp-h">
+        <h2 id="pubapp-h">
+          <span className="step">3</span> Publish the app
+        </h2>
+        <p className="muted small">
+          Once a domain says <em>Points here</em>, open <a href="#/publishing">Publishing</a>, pick the app, choose <em>Public</em> and select the domain. Apps without their own login get a generated password in front of them unless you opt out. The address shows as <em>pending</em> for a minute while the certificate is issued, then <em>active</em>.
         </p>
-      )}
-    </section>
+      </section>
+    </>
   );
 }
 
@@ -343,7 +467,29 @@ function Appearance() {
     applyWallpaper(w);
     setWallpaper(w);
   };
-  const names: Record<Wallpaper, string> = { harbor: 'Harbor blue', dusk: 'Dusk', forest: 'Forest', plain: 'Plain' };
+  const names: Record<Wallpaper, string> = { harbor: 'Harbor blue', dusk: 'Dusk', forest: 'Forest', plain: 'Plain', photo: 'My picture' };
+  const [hasPhoto, setHasPhoto] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    void api.hasWallpaper().then(setHasPhoto);
+  }, []);
+  const upload = (f: File) => {
+    if (f.size > 6 * 1024 * 1024) return setMsg('Pick a picture of 6 MB or less.');
+    const reader = new FileReader();
+    reader.onload = () => {
+      api.setWallpaper(String(reader.result)).then(
+        () => {
+          setHasPhoto(true);
+          applyWallpaperPhoto(true);
+          pickWallpaper('photo');
+          setMsg(null);
+        },
+        (e: Error) => setMsg(e.message),
+      );
+    };
+    reader.readAsDataURL(f);
+  };
   return (
     <>
       <section className="card" aria-labelledby="look-h">
@@ -359,7 +505,7 @@ function Appearance() {
       <section className="card" aria-labelledby="wp-h">
         <h2 id="wp-h">Wallpaper</h2>
         <ul className="wallpapers" role="radiogroup" aria-label="Wallpaper">
-          {WALLPAPERS.map((w) => (
+          {WALLPAPERS.filter((w) => w !== 'photo' || hasPhoto).map((w) => (
             <li key={w}>
               <button role="radio" aria-checked={wallpaper === w} className={`swatch wp-${w} ${wallpaper === w ? 'active' : ''}`} onClick={() => pickWallpaper(w)} aria-label={names[w]}>
                 <span className="swatch-name">{names[w]}</span>
@@ -367,7 +513,32 @@ function Appearance() {
             </li>
           ))}
         </ul>
-        <p className="muted small">Remembered in this browser only.</p>
+        <div className="row wrap">
+          <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" className="visually-hidden" aria-label="Choose a picture" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+          <button className="btn" onClick={() => file.current?.click()}>
+            {hasPhoto ? 'Replace my picture…' : 'Use my own picture…'}
+          </button>
+          {hasPhoto && (
+            <button
+              className="btn ghost"
+              onClick={() =>
+                void api.clearWallpaper().then(() => {
+                  setHasPhoto(false);
+                  applyWallpaperPhoto(false);
+                  setWallpaper(readWallpaper());
+                })
+              }
+            >
+              Remove picture
+            </button>
+          )}
+        </div>
+        <p className="muted small">PNG, JPEG or WebP up to 6 MB, stored on this machine for everyone who uses this Harbor. The preset choice is remembered in this browser. Harbor does not fetch pictures from the internet; download one you like (r/wallpapers is full of them) and pick it here.</p>
+        {msg && (
+          <p className="error small" role="alert">
+            {msg}
+          </p>
+        )}
       </section>
     </>
   );

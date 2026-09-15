@@ -5,6 +5,7 @@ import { createServer } from 'node:net';
 import { normalizeConfig, type DaemonConfig } from '../../src/config.js';
 import { FakeDocker } from '../../src/docker/fake.js';
 import { FakeTailscale } from '../../src/exposure/tailscale.js';
+import { FakeNet } from '../../src/system/net.js';
 import { FakeCaddyAdmin } from '../../src/exposure/caddy.js';
 import { FakeVerifier } from '../../src/exposure/verify.js';
 import { startDaemon, type Daemon, type DaemonOverrides } from '../../src/daemon.js';
@@ -41,6 +42,7 @@ export interface Harness {
   daemon: Daemon;
   fake: FakeDocker;
   tailscale: FakeTailscale;
+  net: FakeNet;
   userDataDir: string;
   caddy: FakeCaddyAdmin;
   verifier: FakeVerifier;
@@ -138,9 +140,10 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   await enrollAdministrator(config, ADMIN.username, ADMIN.password, { reset: false });
   const fake = new FakeDocker(clock);
   const tailscale = new FakeTailscale();
+  const net = new FakeNet();
   const caddy = new FakeCaddyAdmin();
   const verifier = new FakeVerifier();
-  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
+  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, net, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
   let daemon = await start();
   const baseUrl = `http://localhost:${port}`;
   const api = new Api(baseUrl, null);
@@ -150,6 +153,7 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     daemon,
     fake,
     tailscale,
+    net,
     userDataDir: config.userDataDir,
     caddy,
     verifier,

@@ -18,7 +18,7 @@ async function approve(page: Page, label: string | RegExp) {
   await dlg.getByRole('button', { name: label }).click();
 }
 // Tray titles are human sentences; map the operation kind to the wording that proves success.
-const DONE_RE: Record<string, RegExp> = { Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
+const DONE_RE: Record<string, RegExp> = { Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
 const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
 async function installFromStore(page: Page, pkgName: string) {
@@ -316,4 +316,64 @@ test('settings: change password and back, remote access login flow, storage over
   await expect(page.getByRole('heading', { name: 'Harbor data folder' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Folders used by apps' })).toBeVisible();
   await expect(page.getByText('Media e2e')).toBeVisible(); // from the Jellyfin install above
+});
+
+test('full uninstall: typed confirmation, data deleted, name free again', async ({ page }) => {
+  await login(page);
+  await installFromStore(page, 'Memos');
+  await approve(page, 'Install');
+  await trayDone(page, 'Install');
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of memos' }).click();
+  const d = page.getByRole('dialog');
+  await d.getByText('Uninstall completely…').click();
+  const del = d.getByRole('button', { name: 'Uninstall memos completely' });
+  await expect(del).toBeDisabled();
+  await d.getByLabel('Type memos to confirm').fill('memos');
+  await expect(del).toBeEnabled();
+  await del.click();
+  const plan = page.getByRole('dialog');
+  await expect(plan).toContainText('uninstall Memos completely');
+  await expect(plan).toContainText(/deletes the app's data for good/);
+  await plan.getByRole('button', { name: 'Delete everything' }).click();
+  await trayDone(page, 'Purge');
+  await expect(page.locator('.instance').filter({ hasText: 'Memos' })).toHaveCount(0);
+  // the name is free: installing again works with the default name
+  await installFromStore(page, 'Memos');
+  await approve(page, 'Install');
+  await trayDone(page, 'Install');
+});
+
+test('public addresses wizard: public IP, add and check a domain, use it in the publish wizard; spotlight palette', async ({ page }) => {
+  await login(page);
+  await page.goto('/#/settings/public');
+  await expect(page.getByRole('heading', { name: /Publish an app on the internet/ })).toBeVisible();
+  await expect(page.getByText('203.0.113.10').first()).toBeVisible(); // fake public IP
+  await page.getByLabel('Domain name').fill('photos.example.com');
+  await page.getByRole('button', { name: 'Add and check' }).click();
+  const row = page.locator('.domain').filter({ hasText: 'photos.example.com' });
+  await expect(row).toContainText('No DNS record yet'); // fake resolver has no records
+  await page.getByRole('button', { name: 'Re-check photos.example.com' }).click();
+  await expect(row).toContainText('No DNS record yet');
+  // the publish wizard offers the registered domain
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Publishing' }).click();
+  await page.getByRole('button', { name: 'Publish memos' }).click();
+  const dlg = page.getByRole('dialog');
+  await dlg.getByLabel(/Public/).check();
+  await dlg.getByLabel('Domain').selectOption('photos.example.com');
+  await expect(dlg).toContainText("Let's Encrypt automatically");
+  await dlg.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Forget photos.example.com' }).isVisible().catch(() => false);
+  // palette
+  await page.keyboard.press('Meta+k');
+  const pal = page.getByRole('dialog', { name: 'Search' });
+  await expect(pal).toBeVisible();
+  await pal.getByLabel('Search everything').fill('storage');
+  await expect(pal.getByRole('option', { name: /Settings · Storage/ })).toBeVisible();
+  await pal.getByLabel('Search everything').press('Enter');
+  await expect(page.getByRole('heading', { name: 'Harbor data folder' })).toBeVisible();
+  await page.keyboard.press('/');
+  await page.getByLabel('Search everything').fill('memos');
+  await expect(page.getByRole('option', { name: /Memos/ }).first()).toBeVisible();
+  await page.keyboard.press('Escape');
 });

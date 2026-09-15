@@ -9,12 +9,14 @@ import { Publishing } from './app/pages/Publishing';
 import { Settings } from './app/pages/Settings';
 import { Store } from './app/pages/Store';
 import { useRoute, type Route } from './app/router';
-import { applyTheme, applyWallpaper, readTheme, readWallpaper } from './app/theme';
+import { applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper } from './app/theme';
+import { Palette, usePaletteShortcut } from './app/Palette';
 import { isFinal, useConsole } from './app/store';
 
 type View = { kind: 'login' } | { kind: 'console' };
 applyTheme(readTheme());
 applyWallpaper(readWallpaper());
+void api.hasWallpaper().then(applyWallpaperPhoto);
 
 export function App() {
   const [view, setView] = useState<View>(hasToken() ? { kind: 'console' } : { kind: 'login' });
@@ -108,6 +110,9 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   const [storeItem, setStoreItem] = useState<CatalogItemDto | null>(null);
   const [drawer, setDrawer] = useState<InstanceSummary | null>(null);
   const [publishing, setPublishing] = useState<InstanceSummary | null>(null);
+  const [palette, setPalette] = useState(false);
+  const openPalette = useCallback(() => setPalette(true), []);
+  usePaletteShortcut(openPalette);
 
   // Deep links: #/store/<id> opens the app page; #/app/<id> opens the drawer.
   useEffect(() => {
@@ -141,6 +146,13 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           </span>
           <span className="brand-name">Harbor</span>
         </div>
+        <button className="btn ghost search-btn" onClick={openPalette} aria-label="Search (Cmd+K)" title="Search apps, store and settings (⌘K)">
+          <span className="glyph" aria-hidden="true">
+            ⌕
+          </span>
+          <span>Search</span>
+          <kbd aria-hidden="true">⌘K</kbd>
+        </button>
         <ul>
           {NAV.map((n) => (
             <li key={n.route.page}>
@@ -170,7 +182,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
         {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
-        {page === 'settings' && <Settings c={c} onLogout={() => void logout()} />}
+        {page === 'settings' && <Settings c={c} onLogout={() => void logout()} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go({ page: 'settings', section: s })} />}
       </main>
 
       {storeItem && !c.pending && (
@@ -216,15 +228,27 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           }}
         />
       )}
+      {palette && (
+        <Palette
+          c={c}
+          go={(r) => go(r)}
+          onOpenApp={(i) => setDrawer(i)}
+          onAbout={(item) => {
+            go({ page: 'store' });
+            setStoreItem(item);
+          }}
+          onClose={() => setPalette(false)}
+        />
+      )}
       <PlanDialog c={c} />
       <Tray c={c} />
     </div>
   );
 }
 
-const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of' };
-const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched' };
-const PHASE: Record<string, string> = { queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
+const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', purge: 'Uninstalling', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of' };
+const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', purge: 'was uninstalled completely', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched' };
+const PHASE: Record<string, string> = { purging: 'deleting its data', queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
 
 // Bottom-right operation tray: progress while running, one-shot result (with credentials) when done.
 function Tray({ c }: { c: ReturnType<typeof useConsole> }) {

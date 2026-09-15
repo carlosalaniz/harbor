@@ -14,7 +14,7 @@ export interface Data {
 
 export type Action =
   | { kind: 'install'; packageId: string; name: string; storage?: Record<string, { hostPath: string }> }
-  | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instance: InstanceSummary }
+  | { kind: 'start' | 'stop' | 'remove' | 'reinstall' | 'purge'; instance: InstanceSummary }
   | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean }
   | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' }
   | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public' };

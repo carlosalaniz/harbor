@@ -12,7 +12,7 @@ export const BINDABLE_TOOL_IDS = ['cockpit', 'portainer'] as const;
 
 export interface ExposureProviders {
   tailscale: {
-    status(): Promise<{ backendState: string; online: boolean; dnsName: string | null; tailnet: string | null; magicDnsEnabled: boolean; httpsEnabled: boolean } | null>;
+    status(): Promise<{ backendState: string; online: boolean; dnsName: string | null; tailnet: string | null; magicDnsEnabled: boolean; httpsEnabled: boolean; tailscaleIps: string[]; keyExpiry: string | null } | null>;
     installed(): Promise<boolean>;
     serve(port: number, target: string): Promise<void>;
     unserve(port: number, target: string): Promise<void>;
@@ -46,7 +46,7 @@ export class PlatformToolsService {
       if (!installed) return { ...base, installationState: 'not_installed', availability: 'unknown', note: 'Not set up. Re-run bootstrap with --with-tailscale.' };
       const st = await this.providers.tailscale.status();
       if (!st || st.backendState !== 'Running' || !st.dnsName) return { ...base, mode: row?.mode ?? 'managed', installationState: 'setup_required', availability: 'unreachable', note: `Installed but not logged in (state ${st?.backendState ?? 'unknown'}). Run: sudo tailscale up  (then approve the printed login URL).`, facts: { backendState: st?.backendState ?? null } };
-      const facts = { dnsName: st.dnsName, tailnet: st.tailnet, magicDnsEnabled: st.magicDnsEnabled, httpsEnabled: st.httpsEnabled, online: st.online };
+      const facts = { dnsName: st.dnsName, tailnet: st.tailnet, magicDnsEnabled: st.magicDnsEnabled, httpsEnabled: st.httpsEnabled, online: st.online, tailscaleIps: st.tailscaleIps.join(', '), keyExpiry: st.keyExpiry, adminConsole: 'https://login.tailscale.com/admin/machines' };
       if (!st.httpsEnabled) return { ...base, mode: row?.mode ?? 'managed', installationState: 'setup_required', availability: st.online ? 'reachable' : 'unreachable', note: `Node ${st.dnsName} is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).`, facts };
       return { ...base, mode: row?.mode ?? 'managed', installationState: 'installed', availability: st.online ? 'reachable' : 'unreachable', note: `Node ${st.dnsName} on tailnet ${st.tailnet ?? '?'}; MagicDNS and HTTPS enabled. Apps can be published with harbor expose --via tailnet.`, facts };
     }

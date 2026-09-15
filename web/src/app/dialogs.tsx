@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { DomainsDto } from '../../../src/contracts/api';
 import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { api } from '../api';
 import { AppIcon, Copy, Dialog, EventList, FolderPicker, Pill, StatusPill } from './components';
@@ -12,7 +13,7 @@ export function PlanDialog({ c }: { c: Console }) {
   const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
-  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'install' ? 'Install' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : capitalize(plan.kind);
+  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
       {planError && (
@@ -218,6 +219,12 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
 export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { inst: InstanceSummary; exposures: ExposureDto[]; tools: PlatformToolDto[]; onClose: () => void; onStart: (a: Action) => void }) {
   const [via, setVia] = useState<'tailnet' | 'public'>('tailnet');
   const [hostname, setHostname] = useState('');
+  const [domains, setDomains] = useState<DomainsDto | null>(null);
+  const [customHost, setCustomHost] = useState(false);
+  useEffect(() => {
+    api.domains().then(setDomains, () => setDomains(null));
+  }, []);
+  const freeDomains = (domains?.items ?? []).filter((d) => !d.usedBy);
   const [protection, setProtection] = useState<'none' | 'basic'>('basic');
   const [makePrimary, setMakePrimary] = useState(false);
   const ts = tools.find((t) => t.id === 'tailscale');
@@ -275,10 +282,29 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
       {!providerOk && <p className="warn">{via === 'tailnet' ? ts?.note ?? 'Tailscale is not set up.' : px?.note ?? 'The public proxy is not set up.'}</p>}
       {via === 'public' && (
         <>
-          <label className="small">
-            Hostname you control (its DNS record must point at this host)
-            <input value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="app.example.com" />
-          </label>
+          {freeDomains.length > 0 && !customHost ? (
+            <label className="small">
+              Domain (registered under Settings → Public addresses)
+              <select value={hostname} onChange={(e) => (e.target.value === '__other' ? (setCustomHost(true), setHostname('')) : setHostname(e.target.value))} aria-label="Domain">
+                <option value="">Choose a domain…</option>
+                {freeDomains.map((d) => (
+                  <option key={d.hostname} value={d.hostname}>
+                    {d.hostname} — {d.dns.state === 'points_here' ? 'points here ✓' : d.dns.state === 'no_record' ? 'no DNS record yet' : d.dns.state === 'points_elsewhere' ? 'points elsewhere' : 'not checked'}
+                  </option>
+                ))}
+                <option value="__other">Another hostname…</option>
+              </select>
+            </label>
+          ) : (
+            <label className="small">
+              Hostname you control (its DNS record must point at this machine)
+              <input value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="app.example.com" />
+              <span className="muted small">
+                Tip: register it under <a href="#/settings/public">Settings → Public addresses</a> first and Harbor checks the DNS for you.
+              </span>
+            </label>
+          )}
+          <p className="muted small">The HTTPS certificate comes from Let's Encrypt automatically once the domain points here; nothing to upload.</p>
           <label className="small">
             Protection
             <select value={protection} onChange={(e) => setProtection(e.target.value as 'none' | 'basic')}>
@@ -306,6 +332,8 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
 export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void }) {
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmPurge, setConfirmPurge] = useState('');
+  const [purgeOpen, setPurgeOpen] = useState(false);
   useEffect(() => {
     let live = true;
     const load = () => api.instance(inst.id).then((d) => live && setDetail(d), (e: Error) => live && setError(e.message));
@@ -388,6 +416,23 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish 
         </>
       )}
       {retained && <p className="muted">Removed. Data volumes and secrets are retained; Reinstall restores the exact same release.</p>}
+      {inst.installState !== 'installing' && (
+        <details className="danger-zone" open={purgeOpen} onToggle={(e) => setPurgeOpen((e.target as HTMLDetailsElement).open)}>
+          <summary className="small">Uninstall completely…</summary>
+          <p className="small">
+            Deletes {inst.packageName}'s containers, <strong>its data</strong>, secrets and stored release, and frees the name. Folders of yours stay untouched. There is no undo.
+          </p>
+          <label className="small">
+            <span>
+              Type <code>{inst.name}</code> to confirm
+            </span>
+            <input value={confirmPurge} onChange={(e) => setConfirmPurge(e.target.value)} aria-label={`Type ${inst.name} to confirm`} autoComplete="off" />
+          </label>
+          <button className="btn danger" disabled={busy || confirmPurge.trim() !== inst.name} onClick={() => onAction({ kind: 'purge', instance: inst })} aria-label={`Uninstall ${inst.name} completely`}>
+            Delete app and its data
+          </button>
+        </details>
+      )}
       {error && <p className="error">{error}</p>}
       {detail && (
         <>
@@ -465,11 +510,13 @@ function humanSummary(plan: PlanDto, n: string): string {
       return `Harbor will withdraw one address of ${n}. The app itself is untouched.`;
     case 'reconfigure':
       return `Harbor will switch which address ${n} treats as its own, then restart it with the same data.`;
+    case 'purge':
+      return `Harbor will uninstall ${n} completely: containers, its data volumes, secrets and stored release. Folders of yours are left alone. This cannot be undone.`;
   }
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

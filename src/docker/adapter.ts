@@ -51,6 +51,8 @@ export interface DockerAdapter {
   listVolumes(labels?: Record<string, string>): Promise<VolumeInfo[]>;
   inspectVolume(name: string): Promise<VolumeInfo | null>;
   createVolume(name: string, labels: Record<string, string>): Promise<VolumeInfo>;
+  // Only ever called for a volume whose ownership labels were verified moments before (full uninstall).
+  removeVolume(name: string): Promise<void>;
   inspectNetwork(idOrName: string): Promise<NetworkInfo | null>;
   removeNetwork(id: string): Promise<void>;
   // Host ports published by any container on this engine (for allocation conflict checks).

@@ -14,6 +14,7 @@ export interface TailscaleStatus {
   magicDnsEnabled: boolean;
   httpsEnabled: boolean; // CertDomains non-empty
   tailscaleIps: string[];
+  keyExpiry: string | null; // node key expiry (RFC 3339) from `Self.KeyExpiry`
 }
 
 export interface ServeEntry {
@@ -93,6 +94,7 @@ export class TailscaleCli implements TailscaleProvider {
       magicDnsEnabled: Boolean(tailnet['MagicDNSEnabled']),
       httpsEnabled: certDomains.length > 0,
       tailscaleIps: (self['TailscaleIPs'] as string[] | undefined) ?? [],
+      keyExpiry: (self['KeyExpiry'] as string | undefined) ?? null,
     };
   }
 
@@ -153,7 +155,7 @@ export class TailscaleCli implements TailscaleProvider {
 export class FakeTailscale implements TailscaleProvider {
   readonly description = 'fake tailscale';
   isInstalled = true;
-  statusValue: TailscaleStatus | null = { backendState: 'Running', online: true, dnsName: 'harbor-test.tail1234.ts.net', tailnet: 'example.ts.net', magicDnsEnabled: true, httpsEnabled: true, tailscaleIps: ['100.64.0.10'] };
+  statusValue: TailscaleStatus | null = { backendState: 'Running', online: true, dnsName: 'harbor-test.tail1234.ts.net', tailnet: 'example.ts.net', magicDnsEnabled: true, httpsEnabled: true, tailscaleIps: ['100.64.0.10'], keyExpiry: '2027-03-01T00:00:00Z' };
   entries: ServeEntry[] = [];
   async installed(): Promise<boolean> {
     return this.isInstalled;
@@ -176,7 +178,7 @@ export class FakeTailscale implements TailscaleProvider {
     this.loginCalls.push({ authKey });
     if (authKey === 'tskey-fixture-bad') throw new HarborError('OPERATION_FAILED', 'tailscale login failed: invalid key', { nextAction: 'Check the auth key.' });
     if (authKey) {
-      this.statusValue = { backendState: 'Running', online: true, dnsName: 'harbor-test.tail1234.ts.net', tailnet: 'example.ts.net', magicDnsEnabled: true, httpsEnabled: true, tailscaleIps: ['100.64.0.10'] };
+      this.statusValue = { backendState: 'Running', online: true, dnsName: 'harbor-test.tail1234.ts.net', tailnet: 'example.ts.net', magicDnsEnabled: true, httpsEnabled: true, tailscaleIps: ['100.64.0.10'], keyExpiry: '2027-03-01T00:00:00Z' };
       return { loginUrl: null };
     }
     return { loginUrl: 'https://login.tailscale.com/a/fake123' };

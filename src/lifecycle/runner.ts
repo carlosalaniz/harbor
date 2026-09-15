@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { rmSync } from 'node:fs';
 import type { Ctx } from './context.js';
 import { HarborError, type ErrorCode } from '../errors.js';
 import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
@@ -9,7 +10,7 @@ import { checkHostDirectory } from '../storage/host-path.js';
 import { loadPackage } from '../packages/catalog.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
-import { ensureInstanceDirs, generateSecretOnce, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
+import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
 import { exposureUrl, primaryUrlFor } from '../exposure/urls.js';
 import { renderCaddyConfig, type CaddyRoute } from '../exposure/caddy.js';
@@ -109,6 +110,7 @@ export class OperationRunner {
         case 'start': await this.start(op, plan, inst); break;
         case 'stop': await this.stop(op, inst); break;
         case 'remove': await this.remove(op, inst); break;
+        case 'purge': await this.purge(op, inst); break;
         case 'expose': await this.expose(op, plan, inst, secretValues); break;
         case 'unexpose': await this.unexpose(op, plan, inst, secretValues); break;
         case 'reconfigure': await this.reconfigure(op, plan, inst, secretValues); break;
@@ -554,6 +556,39 @@ export class OperationRunner {
       if (c && c.state === 'running') throw new HarborError('OPERATION_FAILED', `container ${r.name} is still running after stop`);
     }
     repo.updateInstance(inst.id, { runtime: 'stopped', readiness: 'unknown', observedAt: repo.now() });
+  }
+
+  // Full uninstall: remove (if needed), then delete every Docker volume this instance created (ownership
+  // verified by labels first), its secrets and release snapshot, and leave every namespace (name, ports).
+  // Folders of the operator's own ("bind" resources) are never touched.
+  private async purge(op: OperationRow, inst: InstanceRow): Promise<void> {
+    const { repo, docker } = this.ctx;
+    if (inst.installState !== 'retained') await this.remove(op, inst);
+    this.phase(op, 'applying', 'purging', 'deleting retained data of this app (verified as Harbor-created first)');
+    const resources = repo.resources(inst.id);
+    for (const r of resources.filter((x) => x.kind === 'volume')) {
+      const vol = await docker.inspectVolume(r.name);
+      if (!vol) {
+        this.event(op, 'purging', `volume ${r.name} already absent`);
+        repo.deleteResource(inst.id, 'volume', r.role);
+        continue;
+      }
+      if (vol.labels[LABELS.instance] !== inst.id || (r.token && vol.labels[LABELS.token] !== r.token)) {
+        this.event(op, 'purging', `volume ${r.name} is not the one this instance created; left untouched`);
+        continue;
+      }
+      await docker.removeVolume(r.name);
+      repo.deleteResource(inst.id, 'volume', r.role);
+      this.event(op, 'purging', `deleted volume ${r.name}`);
+    }
+    const folders = resources.filter((x) => x.kind === 'bind').map((x) => x.name);
+    if (folders.length) this.event(op, 'purging', `your folder(s) left untouched: ${folders.join(', ')}`);
+    const dir = instanceDir(this.ctx.config.stateDir, inst.id);
+    rmSync(dir, { recursive: true, force: true });
+    this.event(op, 'purging', 'deleted secrets, runtime files and the stored release');
+    // archived name keeps the row unique while freeing the name for a fresh install
+    repo.purgeInstance(inst.id, `${inst.name}~purged~${inst.id.slice(0, 8)}`);
+    this.event(op, 'purging', `${inst.name} fully uninstalled; name and ports are free again`);
   }
 
   private async remove(op: OperationRow, inst: InstanceRow): Promise<void> {

@@ -58,8 +58,7 @@ Reviewed the implementation against the four points; no code change was needed.
   create their admin from an environment variable (Paperless-ngx, Linkding, code-server).
 - **Scheme-dependent configuration** (`format: if-https`, or a template) for Collabora's
   `ssl.termination` and similar switches.
-- **Storage inventory**: a Settings page listing all managed volumes and external folders with sizes;
-  a "purge retained instance" operation (delete volumes and records after explicit confirmation).
+- **Storage inventory**: sizes of managed volumes per app (the Storage page lists disks and folders; volume sizes need `docker system df` plumbing). Full uninstall shipped in v0.4.0.
 - **App updates**: no update engine yet; a new package revision is a manual reinstall today.
 - **Cross-app links**: AnythingLLM could use the Ollama bundled with Open WebUI if instances could
   address each other; today every package is its own private network.

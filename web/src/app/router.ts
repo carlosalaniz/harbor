@@ -6,7 +6,7 @@ export type Route =
   | { page: 'store'; packageId?: string }
   | { page: 'publishing' }
   | { page: 'platform' }
-  | { page: 'settings' }
+  | { page: 'settings'; section?: string }
   | { page: 'app'; instanceId: string };
 
 export function parseRoute(hash: string): Route {
@@ -19,7 +19,7 @@ export function parseRoute(hash: string): Route {
     case 'platform':
       return { page: 'platform' };
     case 'settings':
-      return { page: 'settings' };
+      return parts[1] ? { page: 'settings', section: parts[1] } : { page: 'settings' };
     case 'app':
       return parts[1] ? { page: 'app', instanceId: parts[1] } : { page: 'home' };
     default:
@@ -33,6 +33,8 @@ export function routeHref(r: Route): string {
       return r.packageId ? `#/store/${r.packageId}` : '#/store';
     case 'app':
       return `#/app/${r.instanceId}`;
+    case 'settings':
+      return r.section ? `#/settings/${r.section}` : '#/settings';
     default:
       return `#/${r.page}`;
   }

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import { dnsState } from '../system/net.js';
 import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import { browserUrlFor, managementOrigin } from '../config.js';
@@ -176,6 +177,41 @@ export class ApplicationService {
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 
+  // ---- public domains (wizard for public publishing)
+  async domains(): Promise<DomainsDto> {
+    const ip = await this.ctx.net.publicIp();
+    const exposures = this.exposuresList().filter((e) => e.via === 'public');
+    const items: DomainDto[] = this.ctx.repo.domains().map((d) => {
+      const used = exposures.find((e) => e.hostname === d.hostname);
+      return { hostname: d.hostname, dns: { state: d.dnsState, addresses: d.addresses, checkedAt: d.checkedAt, note: d.note }, usedBy: used ? { instanceId: used.instanceId, instanceName: used.instanceName, exposureState: used.state, url: used.url } : null };
+    });
+    return { publicIp: { v4: ip.v4, v6: ip.v6, detectedAt: rfc3339(this.ctx.clock.now()), error: ip.error }, items };
+  }
+
+  async addDomain(hostname: string): Promise<DomainDto> {
+    const h = hostname.trim().toLowerCase();
+    if (!HOSTNAME_RE.test(h) || !h.includes('.')) throw new HarborError('INVALID_REQUEST', `${hostname} is not a fully qualified hostname (like photos.example.com)`);
+    if (this.ctx.repo.domain(h)) throw new HarborError('NAME_CONFLICT', `${h} is already registered`);
+    this.ctx.repo.insertDomain(h);
+    return this.checkDomain(h);
+  }
+
+  async checkDomain(hostname: string): Promise<DomainDto> {
+    const d = this.ctx.repo.domain(hostname);
+    if (!d) throw new HarborError('NOT_FOUND', `unknown domain ${hostname}`);
+    const [ip, rec] = await Promise.all([this.ctx.net.publicIp(), this.ctx.net.resolve(hostname)]);
+    const judged = rec.error ? { state: 'unknown' as const, note: `DNS lookup failed: ${rec.error}` } : dnsState(rec, ip);
+    this.ctx.repo.updateDomainCheck(hostname, judged.state, [...rec.a, ...rec.aaaa], judged.note);
+    return (await this.domains()).items.find((x) => x.hostname === hostname)!;
+  }
+
+  removeDomain(hostname: string): void {
+    const d = this.ctx.repo.domain(hostname);
+    if (!d) throw new HarborError('NOT_FOUND', `unknown domain ${hostname}`);
+    if (this.exposuresList().some((e) => e.via === 'public' && e.hostname === hostname)) throw new HarborError('INVALID_STATE', `${hostname} is in use by a published app`, { nextAction: 'Withdraw that address first.' });
+    this.ctx.repo.deleteDomain(hostname);
+  }
+
   // ---- planning
 
   async createPlan(req: PlanRequest, actor: string): Promise<PlanDto> {
@@ -242,6 +278,15 @@ export class ApplicationService {
         if (inst.installState === 'retained') throw new HarborError('INVALID_STATE', `instance ${inst.name} is already removed (retained)`);
         changes.push(`Stop and delete the recorded containers of "${inst.name}"`, `Delete the private network ${inst.project}_default if unused`, 'Retain volumes, secrets, name and port allocations');
         break;
+      case 'purge':
+        if (inst.installState === 'installing') throw new HarborError('INVALID_STATE', `cannot uninstall ${inst.name} while it is installing`);
+        changes.push(
+          ...(inst.installState !== 'retained' ? [`Stop and delete the containers of "${inst.name}" and its private network`] : []),
+          `Delete the data volume(s) Harbor created for "${inst.name}" (ownership verified first)`,
+          'Delete its secrets and stored release',
+          `Free the name "${inst.name}" and its ports`,
+        );
+        break;
       case 'reinstall':
         if (inst.installState !== 'retained') throw new HarborError('INVALID_STATE', `reinstall requires a removed (retained) instance; ${inst.name} is ${inst.installState}`);
         if (!inst.everInstalled) throw new HarborError('INVALID_STATE', `instance ${inst.name} never completed an installation; manual investigation is required`, { nextAction: 'Inspect the instance and its resources manually. Automatic reinstall only applies to previously successful instances.' });
@@ -261,7 +306,12 @@ export class ApplicationService {
         .map((r) => (r.kind === 'bind' ? { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: null, purpose: '', hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) } : { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: r.name, purpose: '' })),
       secrets: inst.secrets.map((s) => ({ id: s.id })),
       changes,
-      warnings: req.kind === 'remove' ? ['Data volumes and secrets are retained; nothing is deleted except containers and the private network.'] : [],
+      warnings:
+        req.kind === 'remove'
+          ? ['Data volumes and secrets are retained; nothing is deleted except containers and the private network.']
+          : req.kind === 'purge'
+            ? [`This deletes the app's data for good: ${resources.filter((r) => r.kind === 'volume').map((r) => r.name).join(', ') || 'no managed volumes'}. There is no undo.`, ...(resources.some((r) => r.kind === 'bind') ? [`Your own folder(s) are not touched: ${resources.filter((r) => r.kind === 'bind').map((r) => r.name).join(', ')}.`] : [])]
+            : [],
       releaseHashes: inst.releaseHashes,
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: req.kind, instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
@@ -363,7 +413,10 @@ export class ApplicationService {
       const packageHasOwnAuth = pkg.manifest.setup !== undefined; // packages with their own onboarding manage their own accounts (n8n)
       protection = req.protection ?? (packageHasOwnAuth ? 'none' : 'basic');
       if (protection === 'none' && !packageHasOwnAuth) base.warnings.push(`${pkgName} has no login of its own; without basic-auth protection anyone who reaches ${hostname} can use it.`);
-      base.warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued.`);
+      const known = repo.domain(hostname);
+      if (known?.dnsState === 'points_here') base.warnings.push(`${hostname} points at this machine (checked ${known.checkedAt ?? 'recently'}); the certificate is requested from Let's Encrypt automatically once published.`);
+      else if (known) base.warnings.push(`${hostname} does not point at this machine yet (${known.dnsState.replace('_', ' ')}${known.note ? `: ${known.note}` : ''}); the certificate cannot be issued until it does.`);
+      else base.warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued. Register the domain under Settings → Public addresses to have Harbor check it.`);
     }
     const taken = repo.exposureByAddress(req.via, hostname, port);
     if (taken) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.via, hostname, port })} is already used by another exposure`);

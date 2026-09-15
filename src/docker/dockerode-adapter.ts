@@ -120,6 +120,10 @@ export class DockerodeAdapter implements DockerAdapter {
     return { name: info.Name, labels: info.Labels ?? {}, createdAt: info.CreatedAt ?? null, driver: info.Driver };
   }
 
+  async removeVolume(name: string): Promise<void> {
+    await this.docker.getVolume(name).remove();
+  }
+
   async inspectNetwork(idOrName: string): Promise<NetworkInfo | null> {
     try {
       const n = await this.docker.getNetwork(idOrName).inspect();

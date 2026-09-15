@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CatalogItemDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -71,6 +71,20 @@ export const api = {
   createFolder: (parent: string, name: string) => call<{ name: string; path: string; writable: boolean }>('POST', '/v1/host/folders', { parent, name }),
   tailscaleLogin: (authKey?: string) => call<TailscaleLoginDto>('POST', '/v1/platform-tools/tailscale/login', authKey ? { authKey } : {}),
   tailscaleLogout: () => call<void>('POST', '/v1/platform-tools/tailscale/logout', {}),
+  domains: () => call<DomainsDto>('GET', '/v1/domains'),
+  addDomain: (hostname: string) => call<DomainDto>('POST', '/v1/domains', { hostname }),
+  checkDomain: (hostname: string) => call<DomainDto>('POST', `/v1/domains/${encodeURIComponent(hostname)}/check`, {}),
+  forgetDomain: (hostname: string) => call<void>('DELETE', `/v1/domains/${encodeURIComponent(hostname)}`),
+  setWallpaper: (dataUrl: string) => call<void>('PUT', '/v1/appearance/wallpaper', { dataUrl }),
+  clearWallpaper: () => call<void>('DELETE', '/v1/appearance/wallpaper'),
+  hasWallpaper: async (): Promise<boolean> => {
+    try {
+      const r = await fetch('/v1/appearance/wallpaper', { method: 'HEAD' });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  },
 };
 
 export function newIdempotencyKey(): string {

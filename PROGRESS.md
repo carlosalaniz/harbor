@@ -96,6 +96,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit (mounts parsing, folder listing/creation), integration (password change + session revocation, storage endpoints + picker-created folder used by an install, Tailscale login/logout with the fake), Playwright (picker flow, settings flows)
 - [x] Live: droplet re-bootstrapped with the new build (`v0.3.0`); `harbor storage` shows the data folder ready and one system disk; Settings shows the enrolled tailnet node (a systemd `ReadWritePaths` gap for `/srv/harbor` was found and fixed on the way)
 
+## Phase 10 — full uninstall, domains wizard, palette, wallpapers (2026-09-15) ✅
+- [x] `purge` plan kind (schema v4: `instances.purged_at`), volume ownership verified before deletion, folders untouched, name/ports freed, audit rows kept; console typed confirmation; CLI `harbor purge`
+- [x] Domains: `/v1/domains` (public IP detection, DNS judgement, used-by), publish wizard offers registered domains, plan warnings reflect DNS state; Settings → Public addresses is a 3-step wizard; CLI `harbor domains`
+- [x] Tailscale card: tailnet IPs, key expiry, admin console link; auth key explained as single-use
+- [x] Wallpaper upload (`/v1/appearance/wallpaper`), presets, 'My picture'; Spotlight palette (⌘K, `/`); Launchpad-style Home; Settings sections addressable (`#/settings/<section>`)
+- [x] Tests: unit (DNS judgement, migration to v4), integration (purge incl. foreign volume guard, domains lifecycle, wallpaper), Playwright (uninstall flow, domains wizard + publish dropdown, palette)
+
 ## Test results (latest local run)
 
 | Command | Result |

@@ -4,6 +4,7 @@ import type { PortObserver } from '../docker/ports.js';
 import type { Repo } from '../state/repo.js';
 import type { Clock, Ids } from '../util.js';
 import type { TailscaleProvider } from '../exposure/tailscale.js';
+import type { NetProvider } from '../system/net.js';
 import type { CaddyAdmin } from '../exposure/caddy.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
@@ -30,6 +31,7 @@ export interface Ctx {
   tailscale: TailscaleProvider;
   caddy: CaddyAdmin;
   verify: UrlVerifier;
+  net: NetProvider;
 }
 
 export function jsonLogger(level: 'debug' | 'info' | 'warn' | 'error', sink: (line: string) => void = (l) => process.stderr.write(l + '\n')): Logger {

@@ -106,6 +106,12 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     this.log.push(`volume create ${name}`);
     return v;
   }
+  async removeVolume(name: string): Promise<void> {
+    this.assertUp();
+    if (!this.volumes.has(name)) throw new Error(`no such volume ${name}`);
+    this.volumes.delete(name);
+    this.log.push(`volume rm ${name}`);
+  }
   async inspectNetwork(idOrName: string): Promise<NetworkInfo | null> {
     this.assertUp();
     const n = this.networks.get(idOrName) ?? [...this.networks.values()].find((x) => x.name === idOrName);

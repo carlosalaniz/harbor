@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -217,7 +217,7 @@ program
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
-  if (!['start', 'stop', 'remove', 'reinstall', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'remove', 'reinstall', 'purge', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
@@ -251,6 +251,48 @@ program
     }
     const plan = await createPlan(api, 'install', pkg, opts.name, Object.keys(storage).length ? { storage } : {});
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+
+program
+  .command('purge <instance>')
+  .description('full uninstall: remove the app AND delete its data volumes, secrets and stored release (your own folders are untouched); frees the name and ports')
+  .option('--yes', 'skip the typed confirmation', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { yes: boolean; wait: boolean }) => {
+    const api = client();
+    const plan = await createPlan(api, 'purge', ref);
+    if (!opts.yes) {
+      const typed = await promptVisible(`This deletes the data of "${plan.name}" for good. Type the instance name to confirm: `);
+      if (typed.trim() !== plan.name) throw new HarborError('INVALID_REQUEST', 'confirmation did not match; nothing was done');
+    }
+    await approveAndApply(api, plan, { yes: true, wait: opts.wait });
+  });
+
+const domainsCmd = program.command('domains').description('public domains for publishing: register, check DNS, forget');
+domainsCmd.action(async () => {
+  const d = await client().get<DomainsDto>('/v1/domains');
+  out(d, () => [`This machine's public address: ${d.publicIp.v4 ?? '?'}${d.publicIp.v6 ? ` / ${d.publicIp.v6}` : ''}${d.publicIp.error ? ` (${d.publicIp.error})` : ''}`, table([['DOMAIN', 'DNS', 'RESOLVES TO', 'USED BY', 'CHECKED'], ...d.items.map((i) => [i.hostname, i.dns.state.replace('_', ' '), i.dns.addresses.join(', ') || '-', i.usedBy ? `${i.usedBy.instanceName} (${i.usedBy.exposureState})` : '-', i.dns.checkedAt ?? '-'])])].join('\n'));
+});
+domainsCmd
+  .command('add <hostname>')
+  .description('register a domain you own and check that it points at this machine')
+  .action(async (hostname: string) => {
+    const d = await client().post<DomainDto>('/v1/domains', { hostname });
+    out(d, () => `${d.hostname}: ${d.dns.state.replace('_', ' ')}${d.dns.note ? ` — ${d.dns.note}` : ''}`);
+  });
+domainsCmd
+  .command('check <hostname>')
+  .description('re-check a registered domain')
+  .action(async (hostname: string) => {
+    const d = await client().post<DomainDto>(`/v1/domains/${hostname}/check`, {});
+    out(d, () => `${d.hostname}: ${d.dns.state.replace('_', ' ')}${d.dns.note ? ` — ${d.dns.note}` : ''}`);
+  });
+domainsCmd
+  .command('forget <hostname>')
+  .description('forget a registered domain (refused while an app is published at it)')
+  .action(async (hostname: string) => {
+    await client().delete(`/v1/domains/${hostname}`);
+    out({ hostname, forgotten: true }, () => `${hostname} forgotten.`);
   });
 
 for (const kind of ['start', 'stop', 'remove', 'reinstall'] as const) {

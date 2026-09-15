@@ -104,6 +104,15 @@ running/stopped/retained · **runtime** running/stopped/starting/unavailable/unk
 **readiness** healthy/unhealthy/checking/unknown. `installed`+`healthy` means the app answers its
 readiness URL. It does **not** mean the app's own onboarding is done: n8n shows separate setup guidance.
 
+### Full uninstall
+
+`remove` keeps data so `reinstall` can bring an app back. When you want an app **gone**, use the full
+uninstall: in the console open the app's details, expand *Uninstall completely…*, type the app's name,
+confirm; or `harbor purge <instance>` (asks you to type the name unless `--yes`). It deletes the
+containers, the data volumes Harbor created for that app (after checking they really are Harbor's),
+its secrets and stored release, and frees the name and ports. Folders of yours are never touched.
+There is no undo.
+
 ### Data retention
 
 - `remove` never deletes data volumes or generated secrets. `reinstall` verifies both (ownership
@@ -163,12 +172,15 @@ The console's **Settings** page covers what a household operator needs after boo
 |---|---|
 | Account | change the administrator password (every other logged-in browser or CLI is signed out) |
 | Remote access | connect this machine to your Tailscale tailnet by clicking *Log in with Tailscale* (opens the approval page) or by pasting an auth key; see the node name; turn *Harbor on your tailnet* on or off; log out of the tailnet |
-| Public addresses | see whether the public proxy is installed and how many apps are public; publishing itself is on the Publishing page |
+| Public addresses | the wizard for publishing on the internet: this machine's public address, your domains with a DNS check (*Points here* / *Points elsewhere* / *No DNS record yet*), which app uses each, re-check and forget; certificates are automatic |
+| Remote access (details) | tailnet addresses, node key expiry, link to the Tailscale admin console; the auth key you used is single-use and is not stored |
 | Storage | disks with free space, the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
-| Appearance | theme (match device / dark / light) and wallpaper |
+| Appearance | theme (match device / dark / light), wallpaper presets, or your own picture (PNG/JPEG/WebP up to 6 MB, stored on the machine) |
 | Advanced access | the exact SSH forwarding line and the CLI equivalents |
 
-The same actions exist as commands: `harbor account set-password`, `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor storage`.
+The same actions exist as commands: `harbor account set-password`, `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor storage`, `harbor domains [add|check|forget]`, `harbor purge`.
+
+Search everything with **⌘K / Ctrl+K** (or `/`): installed apps open on Enter, store apps show their page, settings sections jump straight there.
 
 Two things still need root on the machine, once: installing Tailscale (`bootstrap --with-tailscale`) and the public proxy (`bootstrap --with-public-proxy`). Settings shows the exact command when they are missing.
 
@@ -237,6 +249,18 @@ Notes:
 - `remove <instance>` withdraws its addresses first. Tailscale and Caddy entries Harbor did not
   create are never touched.
 - The Harbor UI is loopback and tailnet only; the API refuses any public exposure of it.
+
+### Publishing on the internet, step by step
+
+1. **Settings → Public addresses** shows this machine's public address. Create an A (and, if shown, AAAA)
+   record for your domain pointing at it. Behind a home router, forward ports 80 and 443 to this machine.
+2. Add the domain in the same page. Harbor resolves it and says *Points here*, *Points elsewhere* (with
+   the address it found) or *No DNS record yet*; *Re-check* after DNS has spread.
+3. **Publishing** → *Publish…* on the app → *Public* → pick the domain. Caddy requests the Let's Encrypt
+   certificate as soon as the address is added and renews it; the address is *pending* for a minute and
+   then *active*. Apps without their own login get a generated password unless you opt out.
+
+`harbor domains` prints the same table from the terminal.
 
 ## 7. Troubleshooting
 

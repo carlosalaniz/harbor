@@ -22,7 +22,7 @@ export function applyTheme(t: Theme): void {
 }
 
 // Wallpaper: a handful of CSS presets, remembered per browser like the theme.
-export const WALLPAPERS = ['harbor', 'dusk', 'forest', 'plain'] as const;
+export const WALLPAPERS = ['harbor', 'dusk', 'forest', 'plain', 'photo'] as const;
 export type Wallpaper = (typeof WALLPAPERS)[number];
 export function readWallpaper(): Wallpaper {
   try {
@@ -39,5 +39,23 @@ export function applyWallpaper(w: Wallpaper): void {
   } catch {
     /* ignore */
   }
+  document.documentElement.dataset['wallpaper'] = w;
+}
+// The operator's uploaded picture (served by the daemon) becomes the 'photo' wallpaper; CSS reads the variable.
+export function applyWallpaperPhoto(present: boolean): void {
+  if (present) document.documentElement.style.setProperty('--wallpaper-url', `url(/v1/appearance/wallpaper?v=${Date.now()})`);
+  else document.documentElement.style.removeProperty('--wallpaper-url');
+  const pref = readWallpaper();
+  if (present && !hasExplicitWallpaper()) applyWallpaperRuntime('photo');
+  else if (!present && pref === 'photo') applyWallpaper('harbor');
+}
+function hasExplicitWallpaper(): boolean {
+  try {
+    return localStorage.getItem('harbor.wallpaper') !== null;
+  } catch {
+    return false;
+  }
+}
+function applyWallpaperRuntime(w: Wallpaper): void {
   document.documentElement.dataset['wallpaper'] = w;
 }

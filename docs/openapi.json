@@ -449,6 +449,137 @@
         }
       }
     },
+    "/v1/domains": {
+      "get": {
+        "description": "Registered public domains with DNS check results, this machine's public address and which app uses each domain.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "description": "Register a domain you own and check that its DNS points at this machine.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "hostname"
+                ],
+                "properties": {
+                  "hostname": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 253
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/domains/{hostname}/check": {
+      "post": {
+        "description": "Re-check a registered domain's DNS.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
+              "maxLength": 253
+            },
+            "in": "path",
+            "name": "hostname",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/domains/{hostname}": {
+      "delete": {
+        "description": "Forget a registered domain (refused while an app is published at it).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
+              "maxLength": 253
+            },
+            "in": "path",
+            "name": "hostname",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/appearance/wallpaper": {
+      "get": {
+        "description": "The operator's wallpaper picture (open: it is background art, loaded by <img>/CSS which cannot send a token).",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "put": {
+        "description": "Set the wallpaper: a PNG, JPEG or WebP picture as a data URL (max 6 MB).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "dataUrl"
+                ],
+                "properties": {
+                  "dataUrl": {
+                    "type": "string",
+                    "minLength": 32,
+                    "maxLength": 8388608
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "description": "Remove the wallpaper picture.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/platform-tools/tailscale/login": {
       "post": {
         "description": "Log this host into a tailnet: with an auth key, or get a login URL to approve in a browser.",
@@ -657,7 +788,8 @@
                           "start",
                           "stop",
                           "remove",
-                          "reinstall"
+                          "reinstall",
+                          "purge"
                         ]
                       },
                       "instanceId": {

@@ -14,7 +14,7 @@ import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
 import { PRODUCT } from '../naming.js';
 import { createFolder, listFolders, listMounts } from '../system/host-storage.js';
-import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
+import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 export interface ApiDeps {
   config: DaemonConfig;
@@ -228,6 +228,68 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     },
   );
 
+  // --- public domains (wizard for publishing on the internet)
+  app.get('/v1/domains', { preHandler: requireAuth, schema: { description: 'Registered public domains with DNS check results, this machine\'s public address and which app uses each domain.' } }, async () => service.domains());
+  app.post(
+    '/v1/domains',
+    { preHandler: requireAuth, schema: { description: 'Register a domain you own and check that its DNS points at this machine.', body: { type: 'object', additionalProperties: false, required: ['hostname'], properties: { hostname: { type: 'string', minLength: 3, maxLength: 253 } } } } },
+    async (req, reply) => reply.status(201).send(await service.addDomain((req.body as { hostname: string }).hostname)),
+  );
+  app.post(
+    '/v1/domains/:hostname/check',
+    { preHandler: requireAuth, schema: { description: 'Re-check a registered domain\'s DNS.', params: { type: 'object', required: ['hostname'], properties: { hostname: { type: 'string', pattern: HOSTNAME_RE.source, maxLength: 253 } } } } },
+    async (req) => service.checkDomain((req.params as { hostname: string }).hostname),
+  );
+  app.delete(
+    '/v1/domains/:hostname',
+    { preHandler: requireAuth, schema: { description: 'Forget a registered domain (refused while an app is published at it).', params: { type: 'object', required: ['hostname'], properties: { hostname: { type: 'string', pattern: HOSTNAME_RE.source, maxLength: 253 } } } } },
+    async (req, reply) => {
+      service.removeDomain((req.params as { hostname: string }).hostname);
+      return reply.status(204).send();
+    },
+  );
+
+  // --- appearance: one wallpaper picture per installation, chosen by the operator
+  const wallpaperFile = path.join(config.stateDir, 'wallpaper.bin');
+  const wallpaperMeta = path.join(config.stateDir, 'wallpaper.json');
+  const MAGIC: [string, number[]][] = [
+    ['image/png', [0x89, 0x50, 0x4e, 0x47]],
+    ['image/jpeg', [0xff, 0xd8, 0xff]],
+    ['image/webp', [0x52, 0x49, 0x46, 0x46]],
+  ];
+  app.get('/v1/appearance/wallpaper', { schema: { description: 'The operator\'s wallpaper picture (open: it is background art, loaded by <img>/CSS which cannot send a token).', security: [] } }, async (_req, reply) => {
+    if (!fsExists(wallpaperFile) || !fsExists(wallpaperMeta)) throw new HarborError('NOT_FOUND', 'no wallpaper set');
+    const meta = JSON.parse(readFileSync(wallpaperMeta, 'utf8')) as { contentType: string };
+    reply.header('content-type', meta.contentType);
+    reply.header('cache-control', 'private, max-age=60');
+    reply.header('content-security-policy', "default-src 'none'; sandbox");
+    return reply.send(readFileSync(wallpaperFile));
+  });
+  app.put(
+    '/v1/appearance/wallpaper',
+    {
+      preHandler: requireAuth,
+      bodyLimit: 8 * 1024 * 1024,
+      schema: { description: 'Set the wallpaper: a PNG, JPEG or WebP picture as a data URL (max 6 MB).', body: { type: 'object', additionalProperties: false, required: ['dataUrl'], properties: { dataUrl: { type: 'string', minLength: 32, maxLength: 8 * 1024 * 1024 } } } },
+    },
+    async (req, reply) => {
+      const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec((req.body as { dataUrl: string }).dataUrl);
+      if (!m) throw new HarborError('INVALID_REQUEST', 'wallpaper must be a PNG, JPEG or WebP data URL');
+      const bytes = Buffer.from(m[2]!, 'base64');
+      if (bytes.length > 6 * 1024 * 1024) throw new HarborError('INVALID_REQUEST', 'wallpaper must be 6 MB or smaller');
+      const sniffed = MAGIC.find(([, magic]) => magic.every((b, i) => bytes[i] === b))?.[0];
+      if (!sniffed || sniffed !== m[1]) throw new HarborError('INVALID_REQUEST', 'the picture bytes do not match the declared image type');
+      writeFileSync(wallpaperFile, bytes, { mode: 0o600 });
+      writeFileSync(wallpaperMeta, JSON.stringify({ contentType: sniffed, bytes: bytes.length, setAt: new Date().toISOString() }), { mode: 0o600 });
+      return reply.status(204).send();
+    },
+  );
+  app.delete('/v1/appearance/wallpaper', { preHandler: requireAuth, schema: { description: 'Remove the wallpaper picture.' } }, async (_req, reply) => {
+    rmSync(wallpaperFile, { force: true });
+    rmSync(wallpaperMeta, { force: true });
+    return reply.status(204).send();
+  });
+
   // --- remote access (Tailscale) from the console
   app.post(
     '/v1/platform-tools/tailscale/login',
@@ -296,7 +358,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
               },
             },
-            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
             {
               type: 'object',
               additionalProperties: false,
