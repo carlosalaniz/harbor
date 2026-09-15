@@ -1,0 +1,1 @@
+{"needed":false,"hostname":"harbor","deviceName":"Public Proof","lan":{"enabled":true,"url":"http://harbor.local/"},"tailscale":{"installed":true,"loggedIn":false},"version":"0.8.2"}

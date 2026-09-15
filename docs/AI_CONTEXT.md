@@ -56,8 +56,8 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 
 ## 4. Versions, tags, releases
 
-Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1.
-`package.json` version is **0.8.1**. GitHub Releases exist for v0.7.0, v0.8.0, v0.8.1 (assets:
+Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2.
+`package.json` version is **0.8.2**. GitHub Releases exist for v0.7.0, v0.8.0, v0.8.1, v0.8.2 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; publish with `gh release create v<v> release/harbor-<v>-linux-x64.tar.gz release/SHA256SUMS install.sh`.
 Note: `gh release create` creates the remote tag itself; create the local tag afterwards or `git fetch --tags --force`.
@@ -82,34 +82,31 @@ verified. **All commit SHAs changed** in the rewrite — SHAs mentioned in older
 the pre-rewrite history.
 
 **Last three actions, most recent first:**
-1. **Purged flagged fixtures, rewrote history, made the repo public** (2026-09-15): replaced the
+1. **Proved the public paths live on a fresh droplet `harbor-test-3`** (2026-09-15): created the
+   droplet, ran the real `curl … | sudo bash` one-liner (installed 0.8.1 from GitHub Releases, checksum
+   verified, setup code printed), drove the wizard through an SSH tunnel, published **v0.8.2**, pressed
+   *Update now* in Settings → the polkit-started root unit downloaded the archive from GitHub, verified
+   the checksum, bootstrapped in place, restarted — `status.json` `succeeded`, console back on 0.8.2 in
+   ~13 s. Evidence: `docs/evidence/install-2026-09-15-public/`. **No open items.**
+2. **Purged flagged fixtures, rewrote history, made the repo public** (2026-09-15): replaced the
    fixture strings in 7 files, `git filter-repo --replace-text` over all 59 commits, force-pushed
    `main` + all 11 tags, flipped visibility, verified unauthenticated access. Decision 75 recorded;
    `PROGRESS.md` blockers cleared; `docs/VERIFICATION.md` v0.8.x section updated.
-2. **Shipped and verified v0.8.0 → v0.8.1** (GitHub Releases v0.8.0, v0.8.1
+3. **Shipped and verified v0.8.0 → v0.8.1** (GitHub Releases v0.8.0, v0.8.1
    with `install.sh` attached): one-line installer, first-run setup wizard with a printed setup code, LAN
    mode + mDNS (`http://harbor.local`, Caddy LAN route), Harbor self-update via `harbor-self-update@<v>.service`,
-   `defaultCredentials` manifest field. Verified on a brand-new droplet `harbor-test-2`: install from a
-   local archive (1 min 52 s), wizard over the machine's address, app install from the LAN console,
-   in-place self-update 0.8.0→0.8.1 from an archive, polkit-started unit failing cleanly on GitHub's 404.
+   `defaultCredentials` manifest field. Verified on a brand-new droplet `harbor-test-2`.
    Four bugs found on the real box were fixed in 0.8.1 (see §8).
-3. **Shipped v0.7.0**: terminal in the console (WebSocket + Python pty
-   bridge), Troubleshoot logs, TOTP two-factor login, device name, Tailscale re-login self-heal (the bug
-   Carlos hit after disconnecting from the tailnet), Advanced access page redesign. Verified live on
-   `harbor-test`, which is still logged out of the tailnet until Carlos approves a login link.
 
-## 5a. THE OPEN ITEM — fresh-box proof of the public paths
+## 5a. No open items
 
-The repo is public and the URLs answer unauthenticated. What remains is the **live** proof on a fresh
-box (only the local-archive paths have been proven so far):
-1. Rebuild `harbor-test-2` (`HARBOR_VM_NAME=harbor-test-2 HARBOR_VM_STATE=.vm2.local.json HARBOR_VM_KNOWN_HOSTS=.vm2-known_hosts node scripts/vm/do-vm.mjs rebuild`), then run the real one-liner over SSH (`curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh | sudo bash`) and drive the wizard.
-2. Publish a newer release (bump to 0.8.2, `pnpm build && pnpm package`, `gh release create v0.8.2 …`) and press *Update* in Settings → Overview to prove the GitHub-feed self-update path.
-3. Record results in `docs/VERIFICATION.md` (v0.8.x section) and `PROGRESS.md`.
+The public install and self-update paths are proven (see above). Nothing is blocked.
 
 ## 6. Live environments (DigitalOcean; each ~$0.07/h; token only in git-ignored `.env.vm.local`)
 
 - `harbor-test` (id 600403086, state `.vm.local.json`, known hosts `.vm-known_hosts`): Carlos's own test box. Harbor **0.7.0**, admin `admin` / the VM-suite fixture password (pass it as `HARBOR_VM_ADMIN_PASSWORD`; never commit it), rotating Bing wallpapers on, uploaded example app `hello-nginx` installed, **logged out of the tailnet** (Carlos disconnected; login link works from Settings → Remote access since 0.7.0; the console's tailnet exposure must be re-enabled by him). Tailnet node name was `harbor-test.tail7d0db4.ts.net`. **Never destroy without asking.** Real DNS record `harbor-demo.apein.space` points at it (delete with `node scripts/vm/do-vm.mjs dns-delete harbor-demo.apein.space` when unwanted).
 - `harbor-test-2` (id 600732480, state `.vm2.local.json`, known hosts `.vm2-known_hosts`; select with env `HARBOR_VM_NAME=harbor-test-2 HARBOR_VM_STATE=.vm2.local.json HARBOR_VM_KNOWN_HOSTS=.vm2-known_hosts`): created 2026-09-15 with permission for the fresh-install test. Harbor **0.8.1**, LAN mode on, hostname `harbor`, admin `carlos` / same fixture password, Excalidraw installed. Disposable; web firewall (80/443) currently **off** (`firewall-web on|off`). Destroy with `… do-vm.mjs destroy --yes` when Carlos agrees.
+- `harbor-test-3` (id 600780190, state `.vm3.local.json`, known hosts `.vm3-known_hosts`; select with env `HARBOR_VM_NAME=harbor-test-3 HARBOR_VM_STATE=.vm3.local.json HARBOR_VM_KNOWN_HOSTS=.vm3-known_hosts`): created 2026-09-15 for the public-path proof. Harbor **0.8.2** (installed 0.8.1 from the public one-liner, self-updated from the console), LAN mode on, hostname `harbor`, device name *Public Proof*, admin `carlos` / a fixture password, no apps installed. Disposable; destroy with `… do-vm.mjs destroy --yes` when Carlos agrees.
 - Access: `bash scripts/vm/vm-ssh.sh -- '<cmd>'`, `vm-scp.sh <files> /root/`; console through a tunnel **with identical port numbers** (`-L 18000:127.0.0.1:18000`) because the daemon rejects other Host values.
 - Tailscale auth key from Carlos lives in `.env.vm.local` as `HARBOR_TS_AUTHKEY` (likely single-use, consumed).
 - Never write VM IPs, tokens or keys into committed files; `scripts/vm/lib.mjs` redacts IPs in evidence.
