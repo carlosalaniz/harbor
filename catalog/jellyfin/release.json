@@ -28,10 +28,18 @@
     }
   },
   "qualification": {
-    "status": "pending",
-    "date": "2026-09-14",
+    "status": "blocked",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "10.11.11"
+    },
     "notes": [
-      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; jellyfin/jellyfin:10.11.11); image config: ExposedPorts 8096/tcp, Volumes /cache,/config, User root."
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; jellyfin/jellyfin:10.11.11); image config: ExposedPorts 8096/tcp, Volumes /cache,/config, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: blocked (fetch failed)"
     ]
   },
   "assets": {

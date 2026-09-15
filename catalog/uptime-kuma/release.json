@@ -6,7 +6,7 @@
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "310920ae68dca34404ffd90714dc5454795d88c270e64a7e8da19d121ec08872"
+      "sha256": "30ba7655d41a56c38a0e89c29cd81d71d848b60f4f509a2690722c76eb629632"
     },
     "compose.yaml": {
       "sha256": "df7fbf4c47316ce45c709fa619b0bb6a8f9ed8d7660509f5efe3bbe618c8739a"
@@ -28,10 +28,18 @@
     }
   },
   "qualification": {
-    "status": "pending",
-    "date": "2026-09-14",
+    "status": "blocked",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "2.5.4"
+    },
     "notes": [
-      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; louislam/uptime-kuma:2.5.4); image config: ExposedPorts 3001/tcp, Volumes none, User root."
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; louislam/uptime-kuma:2.5.4); image config: ExposedPorts 3001/tcp, Volumes none, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: blocked (harbor install uptime-kuma --name uptime-kuma-q0013 --yes exited 1:  457\","
     ]
   },
   "assets": {

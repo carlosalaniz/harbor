@@ -38,11 +38,20 @@
     }
   },
   "qualification": {
-    "status": "pending",
-    "date": "2026-09-14",
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "ollama": "0.34.0",
+      "web": "0.11.3"
+    },
     "notes": [
       "Digest of ollama resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ollama/ollama:0.34.0); image config: ExposedPorts 11434/tcp, Volumes none, User root.",
-      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/open-webui/open-webui:v0.11.3); image config: ExposedPorts 8080/tcp, Volumes none, User 0:0."
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/open-webui/open-webui:v0.11.3); image config: ExposedPorts 8080/tcp, Volumes none, User 0:0.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 211s; page title \"Open WebUI\"; health 200)"
     ]
   },
   "assets": {

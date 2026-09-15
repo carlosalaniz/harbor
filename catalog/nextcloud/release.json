@@ -48,12 +48,22 @@
     }
   },
   "qualification": {
-    "status": "pending",
-    "date": "2026-09-14",
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "db": "17.11",
+      "redis": "8.10.1-alpine",
+      "app": "34.0.4-apache"
+    },
     "notes": [
       "Digest of db resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; postgres:17.11); image config: ExposedPorts 5432/tcp, Volumes /var/lib/postgresql/data, User root.",
       "Digest of redis resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; redis:8.10.1-alpine); image config: ExposedPorts 6379/tcp, Volumes none, User root.",
-      "Digest of app resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; nextcloud:34.0.4-apache); image config: ExposedPorts 80/tcp, Volumes /var/www/html, User root."
+      "Digest of app resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; nextcloud:34.0.4-apache); image config: ExposedPorts 80/tcp, Volumes /var/www/html, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 65s; page title \"Nextcloud\"; health 200)"
     ]
   },
   "assets": {

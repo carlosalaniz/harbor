@@ -58,13 +58,24 @@
     }
   },
   "qualification": {
-    "status": "pending",
-    "date": "2026-09-14",
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "database": "14-vectorchord0.4.3-pgvectors0.2.0",
+      "redis": "8.1.3-bookworm",
+      "machine-learning": "3.2.1",
+      "server": "3.2.1"
+    },
     "notes": [
       "Digest of database resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0); image config: ExposedPorts 5432/tcp, Volumes /var/lib/postgresql/data, User root.",
       "Digest of redis resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; valkey/valkey:8.1.3-bookworm); image config: ExposedPorts 6379/tcp, Volumes /data, User root.",
       "Digest of machine-learning resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/immich-app/immich-machine-learning:v3.2.1); image config: ExposedPorts none, Volumes none, User root.",
-      "Digest of server resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/immich-app/immich-server:v3.2.1); image config: ExposedPorts 2283/tcp, Volumes /data, User root."
+      "Digest of server resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/immich-app/immich-server:v3.2.1); image config: ExposedPorts 2283/tcp, Volumes /data, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 131s; page title \"Welcome 🎉 - Immich\"; health 200)"
     ]
   },
   "assets": {

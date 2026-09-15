@@ -29,7 +29,7 @@
   },
   "qualification": {
     "status": "passed",
-    "date": "2026-09-14",
+    "date": "2026-09-15",
     "node": "v24.12.0",
     "dockerEngine": "29.8.0",
     "dockerCompose": "5.5.1",
@@ -41,7 +41,8 @@
       "Digest resolved 2026-09-14 via registry API (scripts/registry.mjs digest ghcr.io/alam00000/bentopdf-simple:v2.8.8).",
       "Image config: ExposedPorts 8080/tcp, User nginx, no declared volumes.",
       "Live run vm-2026-09-14T18-40-00: passed",
-      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory"
+      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 30s; page title \"BentoPDF - PDF Tools\"; health 200)"
     ]
   },
   "assets": {

@@ -89,6 +89,10 @@ async function prepareHost() {
   return versions;
 }
 
+function logsTail(instanceId) {
+  return sshTry(`for c in $(docker ps -aq --filter label=io.harbor.preview/instance=${instanceId}); do echo "== $c"; docker logs --tail 15 $c 2>&1; done`).stdout.slice(-3000);
+}
+
 async function waitHealthy(name, timeoutMs) {
   return waitFor(() => {
     const i = cliOk(target, ['list']).find((x) => x.name === name);
@@ -106,8 +110,22 @@ async function qualifyOne(id, variant, storageArgs) {
   if (op.state !== 'succeeded') throw new Error(`install ${op.state}: ${JSON.stringify(op.error)} | ${op.events.slice(-3).map((e) => e.message).join(' | ')}`);
   const inst = await waitHealthy(name, 600_000);
   const url = inst.endpoints[0].browserUrl;
-  const probe = await fetch(new URL(healthPathOf(m), url), { redirect: 'manual' });
   const expected = expectedOf(m);
+  // Harbor already saw the app healthy; the probe is a second opinion through the tunnel. Some apps
+  // (Jellyfin) answer 503 for a moment right after start, so give it a few tries and keep the history.
+  const probeUrl = new URL(healthPathOf(m), url);
+  const probeHistory = [];
+  let probe = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      probe = await fetch(probeUrl, { redirect: 'manual' });
+      probeHistory.push(probe.status);
+      if (expected.includes(probe.status)) break;
+    } catch (e) {
+      probeHistory.push(`error: ${e.cause?.code ?? e.message}`);
+    }
+    await sleep(5000);
+  }
   const { ctx, page } = await newPage();
   let title;
   const consoleErrors = [];
@@ -126,9 +144,9 @@ async function qualifyOne(id, variant, storageArgs) {
   const mounts = ssh(`docker inspect -f '{{range .Mounts}}{{.Type}}:{{.Source}}->{{.Destination}} {{end}}' $(docker ps -q --filter label=io.harbor.preview/instance=${inst.id})`).trim().split('\n');
   const rm = cliOk(target, ['remove', inst.id, '--yes'], { timeoutMs: 600_000 });
   if (rm.state !== 'succeeded') throw new Error(`remove ${rm.state}: ${JSON.stringify(rm.error)}`);
-  if (!expected.includes(probe.status)) throw new Error(`health probe ${probe.status} not in ${expected} at ${url}`);
+  if (!probe || !expected.includes(probe.status)) throw new Error(`health probe ${probeUrl}: ${probeHistory.join(', ')} (expected ${expected}); container logs: ${logsTail(inst.id)}`);
   return {
-    details: { name, instanceId: inst.id, url, title, healthStatus: probe.status, containers, mounts, resources: detail.resources, secondsToHealthy: Math.round((Date.now() - t0) / 1000), consoleErrors: consoleErrors.slice(0, 10) },
+    details: { name, instanceId: inst.id, url, title, healthStatus: probe.status, probeHistory, containers, mounts, resources: detail.resources, secondsToHealthy: Math.round((Date.now() - t0) / 1000), consoleErrors: consoleErrors.slice(0, 10) },
     notes: [`healthy after ${Math.round((Date.now() - t0) / 1000)}s; page title "${title}"; health ${probe.status}`, ...(variant ? [`external storage: ${storageArgs.join(' ')} mounted as bind`] : []), 'removed after the check; volumes and folders retained'],
   };
 }
@@ -189,7 +207,8 @@ async function main() {
         dockerCompose: versions.compose,
         hostOs: `${versions.ubuntu} ${versions.arch}`,
         appVersions,
-        notes: [...(rel.qualification.notes ?? []).filter((n) => !n.startsWith('Live catalog run ')), `Live catalog run ${runId}: ${status}${r ? ` (${r.notes[0]})` : ''}`],
+        // release.json notes are bounded (≤ 1000 chars, plain text): keep the first line of the reason, truncated
+        notes: [...(rel.qualification.notes ?? []).filter((n) => !n.startsWith('Live catalog run ')), `Live catalog run ${runId}: ${status}${r ? ` (${String(r.notes[0]).split('\n')[0].slice(0, 400)})` : ''}`],
       };
       writeFileSync(file, JSON.stringify(rel, null, 2) + '\n');
       execFileSync('pnpm', ['tsx', 'scripts/catalog-hash.ts', id], { stdio: 'ignore' });

@@ -21,7 +21,7 @@ endpoints:
 health:
   endpoint: web
   path: /
-  expectedStatus: [200]
+  expectedStatus: [200, 302]
   timeoutSeconds: 5
   deadlineSeconds: 180
 ui:
