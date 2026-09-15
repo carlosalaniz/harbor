@@ -69,7 +69,33 @@ macOS visual pass; 0.6 uploaded packages (zip, digest pinning) + app updates wit
 troubleshoot logs, TOTP 2FA, device name, Tailscale operator self-heal; 0.8 install.sh, setup wizard,
 LAN mode + mDNS, Harbor self-update, defaultCredentials.
 
-## 5. THE OPEN ITEM (decided, not yet executed)
+## 5. Latest decision and the last three actions (read this first when resuming)
+
+**Latest decision (Carlos, 2026-09-15, session paused right after):** make the GitHub repository
+`carlosalaniz/harbor` **public** (option 1), so that the `curl … | sudo bash` installer, the release
+downloads inside `install.sh`, and Harbor's self-update check all work without a token. The alternative
+(a separate public releases-only repository) was rejected. **Not executed yet.** Record it as decision 75
+in `docs/DECISIONS.md` when done.
+
+**Last three actions, most recent first:**
+1. **Paused and wrote this file** (`docs/AI_CONTEXT.md`, commit `e2a482f`) so a new session, possibly a
+   different model, can continue. Memory file points here.
+2. **Shipped and verified v0.8.0 → v0.8.1** (commits `e32555a`, `13f8cda`; GitHub Releases v0.8.0, v0.8.1
+   with `install.sh` attached): one-line installer, first-run setup wizard with a printed setup code, LAN
+   mode + mDNS (`http://harbor.local`, Caddy LAN route), Harbor self-update via `harbor-self-update@<v>.service`,
+   `defaultCredentials` manifest field. Verified on a brand-new droplet `harbor-test-2`: install from a
+   local archive (1 min 52 s), wizard over the machine's address, app install from the LAN console,
+   in-place self-update 0.8.0→0.8.1 from an archive, polkit-started unit failing cleanly on GitHub's 404.
+   Four bugs found on the real box were fixed in 0.8.1 (see §8). The public-URL path could not be tested
+   because the repo is private.
+3. **Shipped v0.7.0** (commits `09d5df9`, `c74711c`): terminal in the console (WebSocket + Python pty
+   bridge), Troubleshoot logs, TOTP two-factor login, device name, Tailscale re-login self-heal (the bug
+   Carlos hit after disconnecting from the tailnet), Advanced access page redesign. Verified live on
+   `harbor-test`, which is still logged out of the tailnet until Carlos approves a login link.
+
+Everything is committed and pushed; `git status` is clean; `main` = `e2a482f`.
+
+## 5a. THE OPEN ITEM — steps to execute the decision
 
 **The GitHub repo `carlosalaniz/harbor` is private.** The public one-liner URL
 (`https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh`), the release downloads inside
