@@ -94,7 +94,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Bootstrap creates the Harbor data folder `/srv/harbor` (service account); config `userDataDir`
 - [x] Console: Home is a launcher (icons, status dots, "⋯"), Settings with Account / Remote access / Public addresses / Storage / Appearance (theme + wallpaper) / Advanced access / About, folder picker in the install page
 - [x] Tests: unit (mounts parsing, folder listing/creation), integration (password change + session revocation, storage endpoints + picker-created folder used by an install, Tailscale login/logout with the fake), Playwright (picker flow, settings flows)
-- [x] Live: droplet re-bootstrapped with the new build; Settings shows the enrolled tailnet node and disks
+- [x] Live: droplet re-bootstrapped with the new build (`v0.3.0`); `harbor storage` shows the data folder ready and one system disk; Settings shows the enrolled tailnet node (a systemd `ReadWritePaths` gap for `/srv/harbor` was found and fixed on the way)
 
 ## Test results (latest local run)
 
@@ -116,7 +116,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 None.
 
 ## Status
-**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` on `main` adds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder. `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
 Nothing for the build: every acceptance and exposure check has live evidence. decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).
