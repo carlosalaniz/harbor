@@ -103,6 +103,7 @@ class DigitalOceanTarget extends SshTarget {
     const state = JSON.parse(readFileSync(path.join(ROOT, '.vm.local.json'), 'utf8'));
     const key = process.env.HARBOR_VM_SSH_KEY ?? path.join(homedir(), '.ssh', 'harbor-test-vm_ed25519');
     super(`digitalocean droplet ${state.dropletId}`, ['ssh', '-i', key, '-o', `UserKnownHostsFile=${path.join(ROOT, '.vm-known_hosts')}`, '-o', 'StrictHostKeyChecking=accept-new', '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=15', '-o', 'ConnectTimeout=15', `root@${state.ip}`], state.ip);
+    addRedaction(state.ip);
     this.state = state;
   }
   scp(local, remote) {
@@ -184,6 +185,18 @@ export function cliOk(target, args, opts = {}) {
 
 // ---------------- evidence
 
+// Strings that must never appear in committed evidence (the droplet's public IP, for one).
+const REDACTIONS = [];
+export function redact(value) {
+  if (!REDACTIONS.length) return value;
+  let text = typeof value === 'string' ? value : JSON.stringify(value);
+  for (const r of REDACTIONS) text = text.split(r).join('<vm-ip>');
+  return typeof value === 'string' ? text : JSON.parse(text);
+}
+export function addRedaction(...values) {
+  for (const v of values) if (v && !REDACTIONS.includes(v)) REDACTIONS.push(v);
+}
+
 export class Evidence {
   constructor(dir) {
     this.dir = dir;
@@ -192,7 +205,7 @@ export class Evidence {
     this.startedAt = new Date().toISOString();
   }
   record(id, title, status, details = {}, notes = []) {
-    const entry = { id, title, status, at: new Date().toISOString(), details, notes };
+    const entry = { id, title, status, at: new Date().toISOString(), details: redact(details), notes: redact(notes) };
     this.results.push(entry);
     const mark = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : status.toUpperCase();
     console.log(`\n[${mark}] ${id} ${title}`);
@@ -202,7 +215,7 @@ export class Evidence {
   }
   file(name, data) {
     const p = path.join(this.dir, name);
-    writeFileSync(p, data);
+    writeFileSync(p, typeof data === 'string' ? redact(data) : data);
     return path.relative(ROOT, p);
   }
   flush() {

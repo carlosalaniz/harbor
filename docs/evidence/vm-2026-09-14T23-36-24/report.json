@@ -1,0 +1,166 @@
+{
+  "startedAt": "2026-09-14T23:36:24.093Z",
+  "updatedAt": "2026-09-14T23:38:27.418Z",
+  "results": [
+    {
+      "id": "B04",
+      "title": "Public exposure of n8n as primary: HTTPS via Let's Encrypt, owner login and workflow through the public URL",
+      "status": "pass",
+      "at": "2026-09-14T23:37:02.166Z",
+      "details": {
+        "host": "harbor-n8n-mu1vtjer.apein.space",
+        "exposure": {
+          "id": "d1dfae0e-d16c-4be0-8dae-335518b9ca99",
+          "instanceId": "2ebfc7c8-21c1-4973-9170-6fc33b4b9e8b",
+          "instanceName": "n8n",
+          "endpointId": "web",
+          "via": "public",
+          "url": "https://harbor-n8n-mu1vtjer.apein.space/",
+          "hostname": "harbor-n8n-mu1vtjer.apein.space",
+          "port": 443,
+          "protection": "none",
+          "state": "active",
+          "observedAt": "2026-09-14T23:36:49Z",
+          "note": "answered HTTP 200",
+          "isPrimary": true
+        },
+        "baseUrlEnv": [
+          "N8N_EDITOR_BASE_URL: \"https://harbor-n8n-mu1vtjer.apein.space/\"",
+          "      WEBHOOK_URL: \"https://harbor-n8n-mu1vtjer.apein.space/\""
+        ],
+        "workflow": {
+          "workflowId": "v2n2cePxdXzzYSVS",
+          "credentialId": "MatEZG4D4Z3DaZ4V",
+          "executionId": "3",
+          "executionStatus": "success",
+          "fixtureSawCredentialedCall": true,
+          "newFixtureHits": [
+            {
+              "at": "2026-09-14T23:36:59.224Z",
+              "path": "/n8n-demo",
+              "ok": true
+            }
+          ]
+        },
+        "cookies": [
+          {
+            "secure": true,
+            "domain": "harbor-n8n-mu1vtjer.apein.space"
+          }
+        ],
+        "certificate": [
+          "issuer=C = US, O = Let's Encrypt, CN = YE2",
+          "subject=CN = harbor-n8n-mu1vtjer.apein.space",
+          "notBefore=Sep 14 22:38:07 2026 GMT",
+          "notAfter=Dec 13 22:38:06 2026 GMT"
+        ]
+      },
+      "notes": [
+        "n8n published at https://harbor-n8n-mu1vtjer.apein.space/ (active); certificate: issuer=C = US, O = Let's Encrypt, CN = YE2",
+        "primary switched to public: N8N_EDITOR_BASE_URL: \"https://harbor-n8n-mu1vtjer.apein.space/\" |       WEBHOOK_URL: \"https://harbor-n8n-mu1vtjer.apein.space/\"",
+        "owner login + credentialed workflow through the public URL: success"
+      ]
+    },
+    {
+      "id": "B05",
+      "title": "Public exposure of BentoPDF with basic protection: 401 without credentials, merge works with them",
+      "status": "pass",
+      "at": "2026-09-14T23:37:20.882Z",
+      "details": {
+        "host": "harbor-pdf-mu1vu790.apein.space",
+        "anonStatus": 401,
+        "authedStatus": 200,
+        "mergedPages": 2
+      },
+      "notes": [
+        "https://harbor-pdf-mu1vu790.apein.space/: 401 without credentials, 200 with; merge in the browser produced a 2-page PDF",
+        "credentials appeared once in the operation result and not in later DTOs"
+      ]
+    },
+    {
+      "id": "B07",
+      "title": "Provider down: exposures degrade, apps stay fine on loopback; recovery",
+      "status": "pass",
+      "at": "2026-09-14T23:37:40.098Z",
+      "details": {
+        "degraded": [
+          [
+            "harbor-n8n-mu1vtjer.apein.space",
+            "degraded",
+            "not reachable: connect ECONNREFUSED <vm-ip>:443"
+          ],
+          [
+            "harbor-pdf-mu1vu790.apein.space",
+            "degraded",
+            "not reachable: connect ECONNREFUSED <vm-ip>:443"
+          ]
+        ],
+        "recovered": [
+          [
+            "harbor-n8n-mu1vtjer.apein.space",
+            "active"
+          ],
+          [
+            "harbor-pdf-mu1vu790.apein.space",
+            "active"
+          ]
+        ],
+        "loopbackStatus": 200
+      },
+      "notes": [
+        "caddy stopped -> public addresses degraded with a reason, loopback app still 200; caddy started -> active again"
+      ]
+    },
+    {
+      "id": "B10",
+      "title": "Negative: invalid hostname, duplicate hostname, unknown provider state → clear errors, no partial config",
+      "status": "fail",
+      "at": "2026-09-14T23:37:46.798Z",
+      "details": {
+        "error": "harbor expose 546ed117-61b5-47fc-8d22-d6d517e042d5 --via public --host harbor-dup-mu1vv2c4.apein.space --protect none --yes exited 3:  {\n  \"error\": {\n    \"code\": \"INVALID_STATE\",\n    \"message\": \"bentopdf/web is already exposed via public\",\n    \"nextAction\": \"Unexpose it first to change hostname or protection.\"\n  }\n}\n",
+        "stack": [
+          "Error: harbor expose 546ed117-61b5-47fc-8d22-d6d517e042d5 --via public --host harbor-dup-mu1vv2c4.apein.space --protect none --yes exited 3:  {",
+          "  \"error\": {",
+          "    \"code\": \"INVALID_STATE\",",
+          "    \"message\": \"bentopdf/web is already exposed via public\",",
+          "    \"nextAction\": \"Unexpose it first to change hostname or protection.\"",
+          "  }"
+        ]
+      },
+      "notes": [
+        "harbor expose 546ed117-61b5-47fc-8d22-d6d517e042d5 --via public --host harbor-dup-mu1vv2c4.apein.space --protect none --yes exited 3:  {\n  \"error\": {\n    \"code\": \"INVALID_STATE\",\n    \"message\": \"bentopdf/web is already exposed via public\",\n    \"nextAction\": \"Unexpose it first to change hostname or protection.\"\n  }\n}\n"
+      ]
+    },
+    {
+      "id": "B09",
+      "title": "Reconfigure primary back to loopback; n8n works locally again; unexpose withdraws routes",
+      "status": "pass",
+      "at": "2026-09-14T23:38:27.415Z",
+      "details": {
+        "baseUrlEnv": "N8N_EDITOR_BASE_URL: \"http://localhost:18086/\"",
+        "workflow": {
+          "workflowId": "v2n2cePxdXzzYSVS",
+          "credentialId": "MatEZG4D4Z3DaZ4V",
+          "executionId": "4",
+          "executionStatus": "success",
+          "fixtureSawCredentialedCall": true,
+          "newFixtureHits": [
+            {
+              "at": "2026-09-14T23:38:18.600Z",
+              "path": "/n8n-demo",
+              "ok": true
+            }
+          ]
+        },
+        "caddyRoutes": {
+          "before": 2,
+          "after": 0
+        }
+      },
+      "notes": [
+        "primary back to loopback: base URL env re-rendered, workflow ran locally",
+        "unexpose removed Caddy routes (2 -> 0)"
+      ]
+    }
+  ]
+}

@@ -12,6 +12,15 @@ Platform tools: **Cockpit** and **Portainer** set up or bound by bootstrap, open
 - Decisions: [docs/DECISIONS.md](docs/DECISIONS.md) · verification report: [docs/VERIFICATION.md](docs/VERIFICATION.md) · future context: [docs/FUTURE.md](docs/FUTURE.md)
 - API: [docs/openapi.json](docs/openapi.json) (generated from the route schemas)
 
+## Catalog (17 packages)
+
+Excalidraw, BentoPDF, n8n, Open WebUI (with Ollama), AnythingLLM, Jellyfin, Immich, Nextcloud,
+Vaultwarden, Uptime Kuma, Forgejo, FreshRSS, Actual Budget, Audiobookshelf, Navidrome, Memos, Mealie.
+Every package is data (manifest, Compose subset with images pinned by digest, README, release
+inventory with hashes and a qualification record). Apps with big data (Immich, Jellyfin, Nextcloud,
+Audiobookshelf, Navidrome, Open WebUI models) accept a folder of your own at install time; see
+docs/design/CATALOG.md and the operator guide section 4a.
+
 ## Repository layout
 
 ```

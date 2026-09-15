@@ -117,6 +117,35 @@ readiness URL. It does **not** mean the app's own onboarding is done: n8n shows 
   Nothing is replayed automatically. Inspect, then `stop`/`remove`/`reinstall` after confirming ownership.
 - Docker unavailable: instances show `unavailable`/`unknown`, never a stale `healthy`.
 
+## 4a. Your own folders for app data ("bring your own folder")
+
+Apps keep their data in retained Docker volumes by default. Where the big data lives (photos, media,
+files) a package may offer an **external** storage claim: at install time you can point it at a folder
+on this machine instead. Harbor validates the folder, mounts it into the app and never creates,
+changes or deletes it.
+
+```sh
+harbor catalog                                              # lists claims that accept a folder
+sudo mkdir -p /mnt/photos                                   # the folder must already exist
+harbor install immich --storage library=/mnt/photos         # claim=path, repeatable
+harbor install jellyfin --storage media=/mnt/media          # Jellyfin sees it at /media
+harbor inspect immich                                       # `bind` resources show the folder and whether it is present
+```
+
+In the console, the app page shows "Where should the data live?" with *Managed by Harbor* or *Use a
+folder on this machine* per claim.
+
+Rules and behaviour:
+
+- Absolute path, must exist and be a directory; system locations (`/etc`, `/usr`, `/var/lib/docker`,
+  `/var/lib/harbor`, …) and the root are refused, also when a symlink points there.
+- Two instances cannot share or nest their folders; the plan says which instance uses a folder.
+- Remove leaves the folder untouched. Reinstall and start check that it still exists; a missing
+  folder blocks with `DATA_MISSING` (mount or restore it at the same path, then retry).
+- Harbor does not change permissions. The packaged apps run as root inside their containers or take
+  ownership on first start (Nextcloud); keep the folder for one app only.
+- Read-only claims (Navidrome's music) are mounted read-only.
+
 ## 5. Service operations
 
 ```sh
@@ -218,3 +247,31 @@ sudo rm -rf /opt/harbor /etc/harbor /etc/systemd/system/harbor.service
 sudo rm -rf /var/lib/harbor            # DELETES state, secrets and release snapshots; volumes stay in Docker
 sudo userdel harbor
 ```
+
+## 10. The catalog
+
+Seventeen packages ship in this release (see docs/design/CATALOG.md for the selection rules and the
+per-app first-run notes in each `catalog/<id>/README.md`):
+
+| App | What it is | Notes |
+|---|---|---|
+| Excalidraw, BentoPDF | whiteboard, PDF tools | no accounts; basic auth when published |
+| n8n | workflow automation with PostgreSQL | owner setup in the app |
+| Open WebUI | private AI assistant with bundled Ollama (CPU) | first account is admin; pull a model |
+| AnythingLLM | chat with documents, agents | onboarding wizard |
+| Jellyfin | media server | `media` folder claim |
+| Immich | photo backup | `library` folder claim; mobile app needs a published address |
+| Nextcloud | files, calendar, contacts, office | `data` folder claim; keep "Install recommended apps" checked for Nextcloud Office |
+| Vaultwarden | password manager server | Bitwarden apps need HTTPS: publish it |
+| Uptime Kuma | monitoring | – |
+| Forgejo | Git forge | HTTPS clone only; registration closed |
+| FreshRSS | feed reader | – |
+| Actual Budget | budgeting | set a server password first |
+| Audiobookshelf | audiobooks and podcasts | `audiobooks`, `podcasts` folder claims |
+| Navidrome | music streaming | `music` folder claim (read-only) |
+| Memos | notes | – |
+| Mealie | recipes | default login `changeme@example.com` / `MyPassword`: change it |
+
+`qualification` in `harbor catalog` tells you whether a package passed the live check on the
+reference host (Ubuntu 24.04 x86-64) for the pinned image digests; `pending`/`blocked` packages can
+still be installed, the status is shown honestly in the CLI and the console.

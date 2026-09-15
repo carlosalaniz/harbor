@@ -1,0 +1,27 @@
+{
+  "startedAt": "2026-09-15T00:05:40.994Z",
+  "updatedAt": "2026-09-15T00:08:16.084Z",
+  "results": [
+    {
+      "id": "HOST",
+      "title": "Host prepared: Harbor bootstrapped from the release archive",
+      "status": "pass",
+      "at": "2026-09-15T00:08:16.084Z",
+      "details": {
+        "versions": {
+          "node": "v24.12.0",
+          "docker": "29.8.0",
+          "compose": "5.5.1",
+          "ubuntu": "Ubuntu 24.04.4 LTS",
+          "arch": "x86_64"
+        },
+        "installationId": "b4da4e7f-2bda-47fa-8697-3736e656a130",
+        "fresh": true,
+        "rebuilt": true
+      },
+      "notes": [
+        "Docker 29.8.0, Compose 5.5.1, Node v24.12.0, Ubuntu 24.04.4 LTS x86_64"
+      ]
+    }
+  ]
+}
