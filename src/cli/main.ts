@@ -351,6 +351,64 @@ program
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 
+// --- account, remote access, storage (the console's Settings page, from the terminal)
+const account = program.command('account').description('administrator account');
+account
+  .command('set-password')
+  .description('change the administrator password (asks for the current and the new one; --stdin reads two lines)')
+  .option('--stdin', 'read current and new password from stdin (two lines)', false)
+  .action(async (opts: { stdin: boolean }) => {
+    const api = client();
+    let current: string;
+    let next: string;
+    if (opts.stdin) {
+      const lines = (await readStdinAll()).split('\n');
+      current = lines[0] ?? '';
+      next = lines[1] ?? '';
+    } else {
+      current = await promptHidden('Current password: ');
+      next = await promptHidden('New password: ');
+      const again = await promptHidden('New password (again): ');
+      if (next !== again) throw new HarborError('INVALID_REQUEST', 'the two new passwords differ');
+    }
+    const r = await api.post<{ revokedSessions: number }>('/v1/account/password', { currentPassword: current, newPassword: next }, {}, 'PUT');
+    out(r, () => `Password changed. ${r.revokedSessions} other session(s) logged out.`);
+  });
+
+const tailscaleCmd = program.command('tailscale').description('remote access: log this host into or out of your tailnet');
+tailscaleCmd
+  .command('login')
+  .description('log in with an auth key from stdin (--authkey-stdin) or print a login URL to open in a browser')
+  .option('--authkey-stdin', 'read a tailnet auth key from stdin', false)
+  .action(async (opts: { authkeyStdin: boolean }) => {
+    const api = client();
+    const authKey = opts.authkeyStdin ? (await readStdinAll()).trim() : null;
+    const r = await api.post<{ loginUrl: string | null; status: string }>('/v1/platform-tools/tailscale/login', authKey ? { authKey } : {});
+    out(r, () => (r.loginUrl ? `Open this URL in a browser to approve the host, then run \`harbor tools\`: ${r.loginUrl}` : 'Logged in. Run `harbor tools` to see the node name.'));
+  });
+tailscaleCmd
+  .command('logout')
+  .description('log this host out of the tailnet')
+  .action(async () => {
+    await client().post('/v1/platform-tools/tailscale/logout', {});
+    out({ loggedOut: true }, () => 'Logged out of the tailnet.');
+  });
+
+program
+  .command('storage')
+  .description('disks, the Harbor data folder and folders in use by apps')
+  .action(async () => {
+    const s = await client().get<{ dataFolder: { path: string; exists: boolean; writable: boolean }; mounts: { mountpoint: string; label: string; fsType: string; totalBytes: number | null; usedBytes: number | null; writable: boolean }[]; inUse: { path: string; instanceName: string; purpose: string; readOnly: boolean }[] }>('/v1/host/storage');
+    const gib = (n: number | null) => (n === null ? '-' : `${(n / 1024 ** 3).toFixed(1)} GiB`);
+    out(s, () =>
+      [
+        `Harbor data folder: ${s.dataFolder.path} (${s.dataFolder.exists ? (s.dataFolder.writable ? 'ready' : 'exists, not writable by harbor') : 'missing'})`,
+        table([['DISK', 'MOUNT', 'FS', 'USED', 'TOTAL', 'HARBOR CAN WRITE'], ...s.mounts.map((m) => [m.label, m.mountpoint, m.fsType, gib(m.usedBytes), gib(m.totalBytes), m.writable ? 'yes' : 'no'])]),
+        s.inUse.length ? table([['FOLDER', 'APP', 'PURPOSE', 'MODE'], ...s.inUse.map((f) => [f.path, f.instanceName, f.purpose, f.readOnly ? 'read-only' : 'read-write'])]) : 'No folders in use by apps yet.',
+      ].join('\n'),
+    );
+  });
+
 const toolsTable = (items: PlatformToolDto[]) => table([['TOOL', 'MODE', 'INSTALLED', 'REACHABLE', 'URL', 'OBSERVED', 'NOTE'], ...items.map((t) => [t.name, t.mode, t.installationState, t.availability, t.browserUrl ?? '-', t.observedAt ?? '-', t.note ?? ''])]);
 const tools = program.command('tools').description('show Cockpit/Portainer state and links; `tools bind|unbind` manage bindings to existing installations');
 tools.action(async () => {

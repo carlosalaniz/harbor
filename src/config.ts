@@ -12,6 +12,8 @@ export interface DaemonConfig {
   stateDir: string;
   catalogDir: string;
   uiDir: string | null;
+  // "Harbor data folder": the one place the service account may create folders for apps (bring your own folder)
+  userDataDir: string;
   listen: { host: '127.0.0.1'; port: number };
   docker: DockerConfig;
   appPortRange: { from: number; to: number };
@@ -30,6 +32,7 @@ const CONFIG_SCHEMA = {
     stateDir: { type: 'string', minLength: 1 },
     catalogDir: { type: 'string', minLength: 1 },
     uiDir: { type: ['string', 'null'] },
+    userDataDir: { type: 'string', minLength: 1 },
     listen: {
       type: 'object',
       additionalProperties: false,
@@ -64,6 +67,7 @@ export const CONFIG_DEFAULTS = {
   planTtlSeconds: 15 * 60,
   logLevel: 'info',
   uiDir: null,
+  userDataDir: '/srv/harbor',
 } as const;
 
 // Configuration is always explicit: a JSON file path. No dotenv, no cwd discovery, no
@@ -88,6 +92,7 @@ export function normalizeConfig(raw: unknown, baseDir: string): DaemonConfig {
     stateDir: abs(raw.stateDir),
     catalogDir: abs(raw.catalogDir),
     uiDir: raw.uiDir ? abs(raw.uiDir) : null,
+    userDataDir: abs(raw.userDataDir ?? CONFIG_DEFAULTS.userDataDir),
     listen: { host: '127.0.0.1', port: raw.listen?.port ?? CONFIG_DEFAULTS.listen.port },
     docker: raw.docker.mode === 'socket' ? { mode: 'socket', socketPath: raw.docker.socketPath, cliPluginDirs: (raw.docker as { cliPluginDirs?: string[] }).cliPluginDirs ?? [] } : { mode: 'fake' },
     appPortRange: raw.appPortRange ?? { ...CONFIG_DEFAULTS.appPortRange },

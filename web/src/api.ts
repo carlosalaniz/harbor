@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, CatalogItemDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -64,6 +64,13 @@ export const api = {
   plan: (req: PlanRequest) => call<PlanDto>('POST', '/v1/plans', req),
   submit: (planId: string, idempotencyKey: string) => call<{ operationId: string; created: boolean; operation: OperationDto }>('POST', '/v1/operations', { planId }, { 'idempotency-key': idempotencyKey }),
   operation: (id: string) => call<OperationDto>('GET', `/v1/operations/${id}`),
+  // settings
+  changePassword: (currentPassword: string, newPassword: string) => call<{ revokedSessions: number }>('PUT', '/v1/account/password', { currentPassword, newPassword }),
+  hostStorage: () => call<HostStorageDto>('GET', '/v1/host/storage'),
+  folders: (path: string) => call<FolderListingDto>('GET', `/v1/host/folders?path=${encodeURIComponent(path)}`),
+  createFolder: (parent: string, name: string) => call<{ name: string; path: string; writable: boolean }>('POST', '/v1/host/folders', { parent, name }),
+  tailscaleLogin: (authKey?: string) => call<TailscaleLoginDto>('POST', '/v1/platform-tools/tailscale/login', authKey ? { authKey } : {}),
+  tailscaleLogout: () => call<void>('POST', '/v1/platform-tools/tailscale/logout', {}),
 };
 
 export function newIdempotencyKey(): string {

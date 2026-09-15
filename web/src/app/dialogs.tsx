@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { api } from '../api';
-import { AppIcon, Copy, Dialog, EventList, Pill, StatusPill } from './components';
+import { AppIcon, Copy, Dialog, EventList, FolderPicker, Pill, StatusPill } from './components';
 import { categoryLabel, fmtTime } from './format';
 import type { Action, Console } from './store';
 
@@ -109,6 +109,7 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
   const [gallery, setGallery] = useState(0);
   // storage claim id -> host folder ('' = managed volume)
   const [folders, setFolders] = useState<Record<string, string>>({});
+  const [picking, setPicking] = useState<string | null>(null); // claim id being chosen
   const external = item.claims.filter((c) => c.external);
   const missingRequired = external.some((c) => c.external!.required && !(folders[c.id] ?? '').trim());
   const storage = Object.fromEntries(Object.entries(folders).filter(([, v]) => v.trim()).map(([k, v]) => [k, { hostPath: v.trim() }]));
@@ -174,11 +175,13 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
                 <input type="radio" name={`st-${c.id}`} checked={c.id in folders || Boolean(c.external!.required)} onChange={() => setFolders((f) => ({ ...f, [c.id]: f[c.id] ?? '' }))} /> Use a folder on this machine
               </label>
               {(c.id in folders || c.external!.required) && (
-                <label className="small">
-                  Folder path (must already exist)
-                  <input value={folders[c.id] ?? ''} onChange={(e) => setFolders((f) => ({ ...f, [c.id]: e.target.value }))} placeholder="/mnt/photos" aria-label={`Folder for ${c.purpose}`} />
-                  <span className="muted small">{c.external!.hint}</span>
-                </label>
+                <div className="folder-choice">
+                  <button className="btn" onClick={() => setPicking(c.id)} aria-label={`Choose folder for ${c.purpose}`}>
+                    {folders[c.id] ? 'Change folder…' : 'Choose a folder…'}
+                  </button>
+                  {folders[c.id] ? <code className="path">{folders[c.id]}</code> : <span className="muted small">{c.external!.hint}</span>}
+                  <input className="visually-hidden" readOnly value={folders[c.id] ?? ''} aria-label={`Folder for ${c.purpose}`} tabIndex={-1} />
+                </div>
               )}
             </div>
           ))}
@@ -188,6 +191,18 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
         Instance name (optional)
         <input value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z][a-z0-9-]{0,62}" placeholder={item.id} aria-label={`Instance name for ${item.name}`} />
       </label>
+      {picking && (
+        <FolderPicker
+          title={`Folder for ${external.find((c) => c.id === picking)?.purpose ?? 'this app'}`}
+          hint={external.find((c) => c.id === picking)?.external?.hint}
+          initial={folders[picking] || null}
+          onClose={() => setPicking(null)}
+          onPick={(p) => {
+            setFolders((f) => ({ ...f, [picking]: p }));
+            setPicking(null);
+          }}
+        />
+      )}
       <div className="row end">
         <button className="btn" onClick={onClose}>
           Close

@@ -16,6 +16,7 @@ export const PRODUCT = {
     opt: '/opt/harbor',
     etc: '/etc/harbor',
     var: '/var/lib/harbor',
+    data: '/srv/harbor',
     systemdUnit: 'harbor.service',
   },
   defaults: {

@@ -41,6 +41,7 @@ export interface Harness {
   daemon: Daemon;
   fake: FakeDocker;
   tailscale: FakeTailscale;
+  userDataDir: string;
   caddy: FakeCaddyAdmin;
   verifier: FakeVerifier;
   config: DaemonConfig;
@@ -130,7 +131,7 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   // A private port range far from the default so parallel test files do not collide.
   const range = opts.portRange ?? { from: base + 1, to: base + 40 };
   const config = normalizeConfig(
-    { stateDir, catalogDir, docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port }, appPortRange: range, planTtlSeconds: 900, sessionTtlSeconds: 3600, logLevel: 'error' },
+    { stateDir, catalogDir, userDataDir: path.join(root, 'data'), docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port }, appPortRange: range, planTtlSeconds: 900, sessionTtlSeconds: 3600, logLevel: 'error' },
     root,
   );
   initializeState(stateDir, { clock: systemClock, ids: systemIds, config: {} });
@@ -149,6 +150,7 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     daemon,
     fake,
     tailscale,
+    userDataDir: config.userDataDir,
     caddy,
     verifier,
     config,

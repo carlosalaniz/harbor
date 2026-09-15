@@ -165,6 +165,17 @@ export class ApplicationService {
     return operationDto(o, this.ctx.repo.eventsForOperation(id, 200));
   }
 
+  // Folders bound into apps ("bring your own folder"), for the storage overview.
+  foldersInUse(): { path: string; instanceId: string; instanceName: string; purpose: string; readOnly: boolean }[] {
+    const out: { path: string; instanceId: string; instanceName: string; purpose: string; readOnly: boolean }[] = [];
+    for (const inst of this.ctx.repo.listInstances()) {
+      for (const r of this.ctx.repo.resources(inst.id).filter((x) => x.kind === 'bind')) {
+        out.push({ path: r.name, instanceId: inst.id, instanceName: inst.name, purpose: (r.metadata?.['storageId'] as string) ?? r.role, readOnly: Boolean(r.metadata?.['readOnly']) });
+      }
+    }
+    return out.sort((a, b) => a.path.localeCompare(b.path));
+  }
+
   // ---- planning
 
   async createPlan(req: PlanRequest, actor: string): Promise<PlanDto> {

@@ -188,6 +188,25 @@ export type PlanRequest =
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
   | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };
 
+export interface HostStorageDto {
+  dataFolder: { path: string; exists: boolean; writable: boolean };
+  mounts: { mountpoint: string; device: string; fsType: string; totalBytes: number | null; usedBytes: number | null; writable: boolean; label: string }[];
+  // folders currently used by apps (bind resources), with the instance that uses each
+  inUse: { path: string; instanceId: string; instanceName: string; purpose: string; readOnly: boolean }[];
+}
+
+export interface FolderListingDto {
+  path: string;
+  parent: string | null;
+  writable: boolean;
+  entries: { name: string; path: string; writable: boolean }[];
+}
+
+export interface TailscaleLoginDto {
+  loginUrl: string | null; // present when the node must be approved in a browser
+  status: 'logged_in' | 'login_url' | 'pending';
+}
+
 export interface UiExposureDto {
   via: 'tailnet';
   url: string;

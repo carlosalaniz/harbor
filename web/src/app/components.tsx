@@ -1,6 +1,7 @@
-import { useEffect, useRef, type ReactNode } from 'react';
-import type { CatalogItemDto, InstanceSummary, OperationDto } from '../../../src/contracts/api';
-import { fmtTime, monogram, plainStatus } from './format';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import type { CatalogItemDto, FolderListingDto, HostStorageDto, InstanceSummary, OperationDto } from '../../../src/contracts/api';
+import { api } from '../api';
+import { fmtBytes, fmtTime, monogram, plainStatus } from './format';
 
 export function AppIcon({ packageId, icon, name, size = 44 }: { packageId: string; icon: string | null; name: string; size?: number }) {
   const cls = size >= 64 ? 'appicon large' : size <= 28 ? 'appicon small' : 'appicon';
@@ -28,15 +29,16 @@ export function StatusPill({ inst }: { inst: InstanceSummary }) {
 
 export function Dialog({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const headingId = useId(); // dialogs can nest (install page → folder picker); each needs its own label
   useEffect(() => {
     const el = ref.current;
     if (el && !el.open) el.showModal();
     return () => el?.close();
   }, []);
   return (
-    <dialog ref={ref} className={`dialog ${wide ? 'wide' : ''}`} onClose={onClose} aria-labelledby="dlg-h">
+    <dialog ref={ref} className={`dialog ${wide ? 'wide' : ''}`} onClose={onClose} aria-labelledby={headingId}>
       <div className="dialog-head">
-        <h2 id="dlg-h">{title}</h2>
+        <h2 id={headingId}>{title}</h2>
         <button className="btn ghost icon" onClick={onClose} aria-label="Close dialog">
           ×
         </button>
@@ -107,5 +109,126 @@ export function Copy({ text }: { text: string }) {
     >
       ⧉
     </button>
+  );
+}
+
+// Folder picker: disks and the Harbor data folder as starting points, subfolder navigation, and a
+// "new folder" affordance wherever the Harbor service account may create one. Paths can still be typed.
+export function FolderPicker({ title, hint, initial, onPick, onClose }: { title: string; hint?: string; initial?: string | null; onPick: (path: string) => void; onClose: () => void }) {
+  const [storage, setStorage] = useState<HostStorageDto | null>(null);
+  const [listing, setListing] = useState<FolderListingDto | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [typed, setTyped] = useState(initial ?? '');
+  const open = (p: string) => {
+    setError(null);
+    api.folders(p).then(setListing, (e: Error) => setError(e.message));
+  };
+  useEffect(() => {
+    api.hostStorage().then(
+      (s) => {
+        setStorage(s);
+        open(initial || (s.dataFolder.exists ? s.dataFolder.path : '/'));
+      },
+      (e: Error) => setError(e.message),
+    );
+  }, [initial]);
+  const create = () => {
+    if (!listing || !newName.trim()) return;
+    api.createFolder(listing.path, newName.trim()).then(
+      () => {
+        setNewName('');
+        open(listing.path);
+      },
+      (e: Error) => setError(e.message),
+    );
+  };
+  return (
+    <Dialog title={title} onClose={onClose} wide>
+      {hint && <p className="muted small">{hint}</p>}
+      <div className="picker">
+        <aside className="picker-side">
+          <h4>Places</h4>
+          <ul className="plain">
+            {storage?.dataFolder && (
+              <li>
+                <button className="btn ghost place" onClick={() => open(storage.dataFolder.path)}>
+                  <span aria-hidden="true">⌂</span> Harbor data folder
+                  <span className="muted small">{storage.dataFolder.path}</span>
+                </button>
+              </li>
+            )}
+            {storage?.mounts.map((m) => (
+              <li key={m.mountpoint}>
+                <button className="btn ghost place" onClick={() => open(m.mountpoint)}>
+                  <span aria-hidden="true">▣</span> {m.label}
+                  <span className="muted small">
+                    {m.mountpoint}
+                    {m.totalBytes !== null && m.usedBytes !== null ? ` · ${fmtBytes(m.totalBytes - m.usedBytes)} free` : ''}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+        <div className="picker-main">
+          {listing && (
+            <>
+              <div className="row between wrap">
+                <div className="row">
+                  {listing.parent !== null && (
+                    <button className="btn ghost icon" onClick={() => open(listing.parent!)} aria-label="Up one folder">
+                      ↑
+                    </button>
+                  )}
+                  <code className="path">{listing.path}</code>
+                </div>
+                {!listing.writable && listing.path !== '/' && <Pill tone="warn">Harbor cannot create folders here</Pill>}
+              </div>
+              <ul className="plain folders" aria-label="Folders">
+                {listing.entries.map((e) => (
+                  <li key={e.path}>
+                    <button className="btn ghost folder" onClick={() => open(e.path)} aria-label={`Open folder ${e.name}`}>
+                      <span aria-hidden="true">📁</span> {e.name}
+                    </button>
+                  </li>
+                ))}
+                {listing.entries.length === 0 && <li className="muted small">No subfolders.</li>}
+              </ul>
+              {listing.writable && (
+                <div className="row wrap new-folder">
+                  <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New folder name" aria-label="New folder name" />
+                  <button className="btn" onClick={create} disabled={!newName.trim()}>
+                    Create folder here
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+          {error && (
+            <p className="error small" role="alert">
+              {error}
+            </p>
+          )}
+          <details>
+            <summary className="muted small">Type a path instead</summary>
+            <div className="row wrap">
+              <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="/mnt/photos" aria-label="Folder path" />
+              <button className="btn" onClick={() => typed.trim() && onPick(typed.trim())}>
+                Use this path
+              </button>
+            </div>
+          </details>
+        </div>
+      </div>
+      <div className="row end">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn primary" disabled={!listing || listing.path === '/'} onClick={() => listing && onPick(listing.path)} aria-label="Use this folder">
+          Use {listing ? listing.path : 'this folder'}
+        </button>
+      </div>
+    </Dialog>
   );
 }

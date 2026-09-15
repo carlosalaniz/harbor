@@ -1,0 +1,140 @@
+import { accessSync, constants, mkdirSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
+import path from 'node:path';
+import { HarborError } from '../errors.js';
+import { normalizeHostPath } from '../storage/host-path.js';
+
+// Host storage for humans: which disks exist, what folders are there, and (inside a writable parent)
+// creating a new folder. Used by the console's folder picker. Everything is read-only except
+// createFolder, which only ever creates one directory the operator asked for by name.
+
+export interface MountInfo {
+  mountpoint: string;
+  device: string;
+  fsType: string;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  writable: boolean; // by the Harbor service account
+  label: string; // plain-words name for the console
+}
+
+export interface FolderEntry {
+  name: string;
+  path: string;
+  writable: boolean;
+}
+
+export interface FolderListing {
+  path: string;
+  parent: string | null;
+  writable: boolean;
+  entries: FolderEntry[];
+}
+
+const REAL_FS = new Set(['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs', 'vfat', 'exfat', 'ntfs', 'ntfs3', 'fuseblk', 'nfs', 'nfs4', 'cifs', 'smb3', 'apfs', 'hfs']);
+const HIDDEN_PREFIXES = ['/boot', '/snap', '/var/lib/docker', '/var/snap', '/run', '/dev', '/proc', '/sys', '/System', '/private'];
+
+export function parseMounts(procMountsText: string): { mountpoint: string; device: string; fsType: string }[] {
+  const out: { mountpoint: string; device: string; fsType: string }[] = [];
+  for (const line of procMountsText.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 3) continue;
+    const [device, rawMount, fsType] = parts as [string, string, string];
+    // /proc/mounts escapes spaces as \040
+    const mountpoint = rawMount.replace(/\\040/g, ' ');
+    if (!REAL_FS.has(fsType)) continue;
+    if (HIDDEN_PREFIXES.some((p) => mountpoint === p || mountpoint.startsWith(p + '/'))) continue;
+    out.push({ device, mountpoint, fsType });
+  }
+  // dedupe by mountpoint (bind mounts appear twice)
+  const seen = new Set<string>();
+  return out.filter((m) => (seen.has(m.mountpoint) ? false : (seen.add(m.mountpoint), true)));
+}
+
+function isWritable(p: string): boolean {
+  try {
+    accessSync(p, constants.W_OK | constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function usage(p: string): { totalBytes: number | null; usedBytes: number | null } {
+  try {
+    const st = statfsSync(p);
+    const total = Number(st.blocks) * Number(st.bsize);
+    const free = Number(st.bavail) * Number(st.bsize);
+    return { totalBytes: total, usedBytes: total - free };
+  } catch {
+    return { totalBytes: null, usedBytes: null };
+  }
+}
+
+function labelFor(mountpoint: string, device: string): string {
+  if (mountpoint === '/') return 'System disk';
+  const base = path.posix.basename(mountpoint);
+  if (/^\/media\/|^\/mnt\//.test(mountpoint)) return `Drive "${base}"`;
+  if (device.startsWith('//') || device.includes(':/')) return `Network share "${base}"`;
+  return base || mountpoint;
+}
+
+export function listMounts(procMountsText = safeRead('/proc/self/mounts')): MountInfo[] {
+  return parseMounts(procMountsText).map((m) => ({ ...m, ...usage(m.mountpoint), writable: isWritable(m.mountpoint), label: labelFor(m.mountpoint, m.device) }));
+}
+
+function safeRead(p: string): string {
+  try {
+    return readFileSync(p, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+// Lists subdirectories of `dir`. The root is allowed for navigation (its children are filtered by the
+// same denylist that governs what may be mounted), everything else must be a permitted host path.
+export function listFolders(dir: string): FolderListing {
+  const p = dir === '/' ? '/' : normalizeHostPath(dir);
+  let names: string[];
+  try {
+    names = readdirSync(p, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+      .map((d) => d.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    throw new HarborError('INVALID_REQUEST', `cannot read folder ${p}`, { nextAction: 'Check that it exists and that the Harbor service account may read it.' });
+  }
+  const entries: FolderEntry[] = [];
+  for (const name of names) {
+    const child = path.posix.join(p, name);
+    try {
+      normalizeHostPath(child); // hides system locations at the root level
+    } catch {
+      continue;
+    }
+    entries.push({ name, path: child, writable: isWritable(child) });
+  }
+  return { path: p, parent: p === '/' ? null : path.posix.dirname(p), writable: p !== '/' && isWritable(p), entries };
+}
+
+// Creates exactly one new directory inside a parent the Harbor service account may write to.
+export function createFolder(parent: string, name: string): FolderEntry {
+  const base = normalizeHostPath(parent);
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name) || name.trim() !== name) throw new HarborError('INVALID_REQUEST', 'folder name may use letters, digits, spaces, dots, dashes and underscores (max 64 chars)');
+  let st;
+  try {
+    st = statSync(base);
+  } catch {
+    throw new HarborError('INVALID_REQUEST', `parent folder ${base} does not exist`);
+  }
+  if (!st.isDirectory()) throw new HarborError('INVALID_REQUEST', `${base} is not a folder`);
+  if (!isWritable(base)) throw new HarborError('INVALID_REQUEST', `Harbor may not create folders in ${base}`, { nextAction: 'Pick a folder under Harbor\'s data folder or one owned by the harbor account, or create it yourself as root.' });
+  const full = path.posix.join(base, name);
+  try {
+    mkdirSync(full, { mode: 0o775 });
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') throw new HarborError('NAME_CONFLICT', `${full} already exists`);
+    throw new HarborError('OPERATION_FAILED', `cannot create ${full}: ${code ?? String(e)}`);
+  }
+  return { name, path: full, writable: true };
+}

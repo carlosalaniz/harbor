@@ -9,18 +9,20 @@ import { Publishing } from './app/pages/Publishing';
 import { Settings } from './app/pages/Settings';
 import { Store } from './app/pages/Store';
 import { useRoute, type Route } from './app/router';
-import { applyTheme, readTheme } from './app/theme';
+import { applyTheme, applyWallpaper, readTheme, readWallpaper } from './app/theme';
 import { isFinal, useConsole } from './app/store';
 
 type View = { kind: 'login' } | { kind: 'console' };
 applyTheme(readTheme());
+applyWallpaper(readWallpaper());
 
 export function App() {
   const [view, setView] = useState<View>(hasToken() ? { kind: 'console' } : { kind: 'login' });
   const [notice, setNotice] = useState<string | null>(null);
   const onAuthLost = useCallback((msg?: string) => {
     forgetToken();
-    setNotice(msg ?? 'Your session ended. Log in again to continue; running operations keep going on the server.');
+    // an explicit message (e.g. "Logged out.") must not be replaced by a racing poll's generic one
+    setNotice((prev) => msg ?? prev ?? 'Your session ended. Log in again to continue; running operations keep going on the server.');
     setView({ kind: 'login' });
   }, []);
   if (view.kind === 'login') {
@@ -124,11 +126,9 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   const livePublishing = publishing ? (c.data.instances.find((i) => i.id === publishing.id) ?? publishing) : null;
 
   const logout = async () => {
-    try {
-      await api.logout();
-    } finally {
-      onAuthLost('Logged out.');
-    }
+    const pending = api.logout(); // token is read synchronously; drop the UI session right away
+    onAuthLost('Logged out.');
+    await pending.catch(() => undefined);
   };
 
   const page = route.page === 'app' ? 'home' : route.page;

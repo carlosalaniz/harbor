@@ -11,7 +11,14 @@ export const TOOL_IDS = ['cockpit', 'portainer', 'tailscale', 'proxy'] as const;
 export const BINDABLE_TOOL_IDS = ['cockpit', 'portainer'] as const;
 
 export interface ExposureProviders {
-  tailscale: { status(): Promise<{ backendState: string; online: boolean; dnsName: string | null; tailnet: string | null; magicDnsEnabled: boolean; httpsEnabled: boolean } | null>; installed(): Promise<boolean>; serve(port: number, target: string): Promise<void>; unserve(port: number, target: string): Promise<void> };
+  tailscale: {
+    status(): Promise<{ backendState: string; online: boolean; dnsName: string | null; tailnet: string | null; magicDnsEnabled: boolean; httpsEnabled: boolean } | null>;
+    installed(): Promise<boolean>;
+    serve(port: number, target: string): Promise<void>;
+    unserve(port: number, target: string): Promise<void>;
+    login(authKey: string | null, keyFile: string): Promise<{ loginUrl: string | null }>;
+    logout(): Promise<void>;
+  };
   caddy: { available(): Promise<boolean> };
 }
 export const UI_TAILNET_PORT = 443;
@@ -81,6 +88,27 @@ export class PlatformToolsService {
     }
     this.cache = { at: nowMs, items };
     return items;
+  }
+
+  // Remote access setup from the console: log the node in (auth key or browser URL) or out.
+  async tailscaleLogin(authKey: string | null, keyFile: string): Promise<{ loginUrl: string | null }> {
+    if (!this.providers) throw new HarborError('UNSUPPORTED_CAPABILITY', 'exposure providers unavailable');
+    if (!(await this.providers.tailscale.installed())) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Tailscale is not installed on this host', { nextAction: 'Run the bootstrap once more with --with-tailscale (as root).' });
+    const r = await this.providers.tailscale.login(authKey, keyFile);
+    this.cache = null;
+    return r;
+  }
+
+  async tailscaleLogout(): Promise<void> {
+    if (!this.providers) throw new HarborError('UNSUPPORTED_CAPABILITY', 'exposure providers unavailable');
+    await this.providers.tailscale.logout();
+    const row = this.repo.platformTool('tailscale');
+    if (row) {
+      const rest = { ...(row.resources ?? {}) };
+      delete rest['uiExposure'];
+      this.repo.upsertPlatformTool({ ...row, installationState: 'setup_required', availability: 'unknown', note: 'Logged out of the tailnet.', observedAt: rfc3339(this.clock.now()), resources: rest });
+    }
+    this.cache = null;
   }
 
   // Harbor UI on the tailnet: `tailscale serve --https=443 -> 127.0.0.1:<management port>`.

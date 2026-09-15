@@ -13,6 +13,8 @@ import type { PlatformToolsService } from '../tools/service.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
 import { PRODUCT } from '../naming.js';
+import { createFolder, listFolders, listMounts } from '../system/host-storage.js';
+import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 
 export interface ApiDeps {
   config: DaemonConfig;
@@ -183,6 +185,63 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.get('/v1/operations/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.operation((req.params as { id: string }).id));
   app.get('/v1/platform-tools', { preHandler: requireAuth, schema: { description: 'Cockpit/Portainer/Tailscale/proxy state and real links.' } }, async () => ({ items: await tools.list() }));
   app.get('/v1/exposures', { preHandler: requireAuth, schema: { description: 'Published addresses (tailnet/public) of all instances.' } }, async () => ({ items: service.exposuresList(), ui: tools.uiExposure() }));
+
+  // --- account
+  app.put(
+    '/v1/account/password',
+    {
+      preHandler: requireAuth,
+      schema: { description: 'Change the administrator password (current password required); every other session is revoked.', body: { type: 'object', additionalProperties: false, required: ['currentPassword', 'newPassword'], properties: { currentPassword: { type: 'string', minLength: 1, maxLength: 1024 }, newPassword: { type: 'string', minLength: 1, maxLength: 1024 } } } },
+    },
+    async (req) => {
+      const b = req.body as { currentPassword: string; newPassword: string };
+      return sessions.changePassword(req.bearer!, b.currentPassword, b.newPassword);
+    },
+  );
+
+  // --- host storage (for the folder picker; read-only except creating one named folder in a writable parent)
+  const writable = (p: string) => {
+    try {
+      accessSync(p, fsConstants.W_OK | fsConstants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), the Harbor data folder and folders in use by apps.' } }, async () => ({
+    dataFolder: { path: config.userDataDir, exists: fsExists(config.userDataDir), writable: fsExists(config.userDataDir) && writable(config.userDataDir) },
+    mounts: listMounts(),
+    inUse: service.foldersInUse(),
+  }));
+  app.get(
+    '/v1/host/folders',
+    { preHandler: requireAuth, schema: { description: 'Subfolders of a host folder (system locations hidden).', querystring: { type: 'object', additionalProperties: false, required: ['path'], properties: { path: { type: 'string', minLength: 1, maxLength: 4096 } } } } },
+    async (req) => listFolders((req.query as { path: string }).path),
+  );
+  app.post(
+    '/v1/host/folders',
+    { preHandler: requireAuth, schema: { description: 'Create one new folder inside a parent the Harbor service account may write to.', body: { type: 'object', additionalProperties: false, required: ['parent', 'name'], properties: { parent: { type: 'string', minLength: 1, maxLength: 4096 }, name: { type: 'string', minLength: 1, maxLength: 64 } } } } },
+    async (req, reply) => {
+      const b = req.body as { parent: string; name: string };
+      if (b.parent === config.userDataDir && !fsExists(config.userDataDir)) mkdirSync(config.userDataDir, { recursive: true, mode: 0o755 });
+      return reply.status(201).send(createFolder(b.parent, b.name));
+    },
+  );
+
+  // --- remote access (Tailscale) from the console
+  app.post(
+    '/v1/platform-tools/tailscale/login',
+    { preHandler: requireAuth, schema: { description: 'Log this host into a tailnet: with an auth key, or get a login URL to approve in a browser.', body: { type: 'object', additionalProperties: false, properties: { authKey: { type: 'string', minLength: 8, maxLength: 512 } } } } },
+    async (req) => {
+      const b = (req.body ?? {}) as { authKey?: string };
+      const r = await tools.tailscaleLogin(b.authKey ?? null, path.join(config.stateDir, 'tailscale-authkey.tmp'));
+      return { loginUrl: r.loginUrl, status: r.loginUrl ? 'login_url' : 'logged_in' };
+    },
+  );
+  app.post('/v1/platform-tools/tailscale/logout', { preHandler: requireAuth, schema: { description: 'Log this host out of the tailnet (withdraws tailnet addresses).' } }, async (_req, reply) => {
+    await tools.tailscaleLogout();
+    return reply.status(204).send();
+  });
   app.put(
     '/v1/ui-exposure',
     { preHandler: requireAuth, schema: { description: 'Expose the Harbor UI on the tailnet (never publicly).', body: { type: 'object', additionalProperties: false, required: ['via'], properties: { via: { const: 'tailnet' } } } } },

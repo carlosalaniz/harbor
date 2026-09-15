@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Repo } from '../state/repo.js';
 import { HarborError } from '../errors.js';
 import { addSeconds, rfc3339, type Clock, type Ids } from '../util.js';
-import { verifyPassword } from './password.js';
+import { hashPassword, validatePasswordPolicy, verifyPassword } from './password.js';
 
 export interface Session {
   actor: string;
@@ -86,5 +86,20 @@ export class SessionService {
 
   logout(token: string): void {
     this.repo.revokeSession(hashToken(token));
+  }
+
+  // Password change by the logged-in administrator: current password required, policy applied,
+  // every other session revoked so a stolen token does not outlive the change.
+  async changePassword(token: string, currentPassword: string, newPassword: string): Promise<{ revokedSessions: number }> {
+    const admin = this.repo.administrator();
+    if (!admin) throw new HarborError('STATE_UNAVAILABLE', 'no administrator enrolled');
+    const ok = await verifyPassword(currentPassword, { hash: admin.passwordHash, salt: admin.salt, params: admin.params });
+    if (!ok) throw new HarborError('UNAUTHENTICATED', 'current password is wrong', { nextAction: 'Type your current password again.' });
+    const policy = validatePasswordPolicy(newPassword);
+    if (policy) throw new HarborError('INVALID_REQUEST', policy);
+    if (newPassword === currentPassword) throw new HarborError('INVALID_REQUEST', 'the new password must differ from the current one');
+    const hashed = await hashPassword(newPassword);
+    this.repo.setAdministrator({ username: admin.username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
+    return { revokedSessions: this.repo.revokeOtherSessions(hashToken(token)) };
   }
 }

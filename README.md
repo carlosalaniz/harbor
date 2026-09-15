@@ -21,6 +21,14 @@ inventory with hashes and a qualification record). Apps with big data (Immich, J
 Audiobookshelf, Navidrome, Open WebUI models) accept a folder of your own at install time; see
 docs/design/CATALOG.md and the operator guide section 4a.
 
+## For the person running it
+
+The console is a launcher (your apps as icons), an App Store, a Publishing page and a Settings page
+that covers the household jobs without a terminal: change the password, connect the machine to your
+Tailscale tailnet (log in with a click or paste an auth key) and put Harbor on it, see disks and pick or
+create folders for apps like Immich and Jellyfin, choose theme and wallpaper. See the operator guide,
+sections 4a and 4b.
+
 ## Repository layout
 
 ```

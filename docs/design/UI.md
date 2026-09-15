@@ -72,7 +72,18 @@ no history stored in this iteration (a sparkline needs a ring buffer; later).
 - Phone width: tiles collapse to a two-column grid; sidebar becomes a bottom bar; dialogs go full-screen.
 - Playwright coverage: navigation, install wizard, publish wizard, drawer, attention list, phone viewport.
 
-## 6. Out of scope now
+## 6. Settings for self-service (added 2026-09-15)
+
+Umbrel's settings are the reference: one list of sections with plain names and a one-line blurb each.
+Harbor's sections and what they call: Account (`PUT /v1/account/password`), Remote access
+(`POST /v1/platform-tools/tailscale/login` with an auth key or none → login URL; `…/logout`;
+`PUT/DELETE /v1/ui-exposure`), Public addresses (tool state), Storage (`GET /v1/host/storage`,
+`GET/POST /v1/host/folders`), Appearance (theme + wallpaper, per browser), Advanced access (SSH line, CLI),
+About. Home is a launcher: icon grid with labels and a status dot, "⋯" for the drawer, retained apps folded.
+The install page uses a folder picker (places = disks + Harbor data folder; navigate; create folder) with a
+"type a path" fallback.
+
+## 7. Out of scope now
 
 Widgets with live app data, wallpapers, multi-user, notifications center, command palette (a search
 box covers most of it), app updates UI (no update engine yet).

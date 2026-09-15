@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { rmSync, writeFileSync } from 'node:fs';
 import { HarborError } from '../errors.js';
 
 // Tailscale provider: node status and `tailscale serve` entries. Runs the CLI with an argument array
@@ -27,6 +28,9 @@ export interface TailscaleProvider {
   serveEntries(): Promise<ServeEntry[]>;
   serve(port: number, target: string): Promise<void>;
   unserve(port: number, target: string): Promise<void>;
+  // Log the node in: with an auth key (non-interactive) or by returning the login URL to open in a browser.
+  login(authKey: string | null, keyFile: string): Promise<{ loginUrl: string | null }>;
+  logout(): Promise<void>;
 }
 
 async function run(bin: string, args: string[], timeoutMs = 30_000): Promise<{ code: number | null; stdout: string; stderr: string }> {
@@ -115,6 +119,31 @@ export class TailscaleCli implements TailscaleProvider {
     if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale serve failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`, { nextAction: 'Check `tailscale status` and that HTTPS certificates are enabled for the tailnet.' });
   }
 
+  async login(authKey: string | null, keyFile: string): Promise<{ loginUrl: string | null }> {
+    if (authKey) {
+      // key via a private file (`--auth-key=file:`), never on the command line
+      writeFileSync(keyFile, authKey.trim() + '\n', { mode: 0o600 });
+      let r;
+      try {
+        r = await run(this.bin, ['up', `--auth-key=file:${keyFile}`, '--ssh=false', '--timeout=90s'], 120_000);
+      } finally {
+        rmSync(keyFile, { force: true });
+      }
+      if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale login failed: ${(r.stderr || r.stdout).trim().replace(/tskey-[A-Za-z0-9-]+/g, '<key>').slice(0, 300)}`, { nextAction: 'Check the auth key (not expired, not already used) and try again.' });
+      return { loginUrl: null };
+    }
+    // Interactive path: tailscale prints a login URL and waits; we only need the URL.
+    const r = await run(this.bin, ['up', '--ssh=false', '--timeout=8s'], 20_000);
+    const url = /(https:\/\/login\.tailscale\.com\/\S+)/.exec(r.stdout + r.stderr)?.[1] ?? null;
+    if (!url && r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+    return { loginUrl: url };
+  }
+
+  async logout(): Promise<void> {
+    const r = await run(this.bin, ['logout'], 60_000);
+    if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale logout failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+  }
+
   async unserve(port: number, target: string): Promise<void> {
     const r = await run(this.bin, ['serve', '--bg', '--yes', `--https=${port}`, target, 'off'], 60_000);
     if (r.code !== 0 && !/not found|no serve/i.test(r.stderr + r.stdout)) throw new HarborError('OPERATION_FAILED', `tailscale serve off failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
@@ -141,5 +170,19 @@ export class FakeTailscale implements TailscaleProvider {
   }
   async unserve(port: number): Promise<void> {
     this.entries = this.entries.filter((e) => e.port !== port);
+  }
+  loginCalls: { authKey: string | null }[] = [];
+  async login(authKey: string | null): Promise<{ loginUrl: string | null }> {
+    this.loginCalls.push({ authKey });
+    if (authKey === 'tskey-fixture-bad') throw new HarborError('OPERATION_FAILED', 'tailscale login failed: invalid key', { nextAction: 'Check the auth key.' });
+    if (authKey) {
+      this.statusValue = { backendState: 'Running', online: true, dnsName: 'harbor-test.tail1234.ts.net', tailnet: 'example.ts.net', magicDnsEnabled: true, httpsEnabled: true, tailscaleIps: ['100.64.0.10'] };
+      return { loginUrl: null };
+    }
+    return { loginUrl: 'https://login.tailscale.com/a/fake123' };
+  }
+  async logout(): Promise<void> {
+    if (this.statusValue) this.statusValue = { ...this.statusValue, backendState: 'NeedsLogin', online: false, dnsName: null };
+    this.entries = [];
   }
 }

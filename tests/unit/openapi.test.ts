@@ -7,7 +7,7 @@ describe('OpenAPI description', () => {
   it('covers exactly the implemented routes and matches the committed document', async () => {
     const doc = await generateOpenApi();
     const paths = Object.keys(doc['paths'] as object).sort();
-    expect(paths).toEqual(['/healthz', '/v1/catalog', '/v1/catalog/{id}/asset/{name}', '/v1/exposures', '/v1/instances', '/v1/instances/{id}', '/v1/operations', '/v1/operations/{id}', '/v1/plans', '/v1/plans/{id}', '/v1/platform-tools', '/v1/platform-tools/{id}', '/v1/sessions', '/v1/sessions/current', '/v1/system', '/v1/system/metrics', '/v1/ui-exposure']);
+    expect(paths).toEqual(['/healthz', '/v1/account/password', '/v1/catalog', '/v1/catalog/{id}/asset/{name}', '/v1/exposures', '/v1/host/folders', '/v1/host/storage', '/v1/instances', '/v1/instances/{id}', '/v1/operations', '/v1/operations/{id}', '/v1/plans', '/v1/plans/{id}', '/v1/platform-tools', '/v1/platform-tools/tailscale/login', '/v1/platform-tools/tailscale/logout', '/v1/platform-tools/{id}', '/v1/sessions', '/v1/sessions/current', '/v1/system', '/v1/system/metrics', '/v1/ui-exposure']);
     const committed = JSON.parse(readFileSync(path.resolve(import.meta.dirname, '../../docs/openapi.json'), 'utf8'));
     expect(committed.paths).toEqual(doc['paths']);
     // Login and liveness are the only unauthenticated routes.

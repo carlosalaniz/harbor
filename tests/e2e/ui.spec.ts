@@ -146,6 +146,7 @@ test('app drawer: stop, start, remove (data kept wording) and reinstall', async 
   await expect(dlg).toContainText(/retained/i);
   await dlg.getByRole('button', { name: 'Remove (keep data)' }).click();
   await trayDone(page, 'Remove');
+  await page.getByText(/removed app.* with data kept/).click(); // retained apps are folded away on Home
   await expect(page.locator('.instance.retained')).toHaveCount(1);
   await expect(page.locator('.instance.retained')).toContainText('Removed · data kept');
 
@@ -237,16 +238,19 @@ test('phone width: bottom tabs navigate, tiles render in two columns, dialogs op
 });
 
 test('install page: bring your own folder validates the path in the plan and mounts it', async ({ page }) => {
-  const { mkdtempSync } = await import('node:fs');
-  const { tmpdir } = await import('node:os');
-  const folder = mkdtempSync(`${tmpdir()}/harbor-e2e-media-`);
+  let folder = ''; // eslint-disable-line no-useless-assignment -- assigned from the picker below
   await login(page);
   await page.getByRole('link', { name: 'App Store' }).click();
   await page.getByRole('button', { name: 'About Jellyfin' }).click();
   const about = page.getByRole('dialog');
   await expect(about).toContainText('Where should the data live?');
   await about.getByLabel('Use a folder on this machine').check();
-  await about.getByLabel('Folder for Your media library').fill('/definitely/missing/folder');
+  // typed path (advanced) that does not exist
+  await about.getByRole('button', { name: 'Choose folder for Your media library' }).click();
+  const picker = page.getByRole('dialog', { name: /^Folder for/ });
+  await picker.getByText('Type a path instead').click();
+  await picker.getByLabel('Folder path').fill('/definitely/missing/folder');
+  await picker.getByRole('button', { name: 'Use this path' }).click();
   await about.getByRole('button', { name: 'Install Jellyfin now' }).click();
   // the daemon rejects the folder while planning; nothing was created
   await expect(page.getByRole('dialog')).toContainText('does not exist');
@@ -254,7 +258,18 @@ test('install page: bring your own folder validates the path in the plan and mou
   await page.getByRole('button', { name: 'About Jellyfin' }).click();
   const again = page.getByRole('dialog');
   await again.getByLabel('Use a folder on this machine').check();
-  await again.getByLabel('Folder for Your media library').fill(folder);
+  // the picker: go to the Harbor data folder, create a folder, use it
+  await again.getByRole('button', { name: 'Choose folder for Your media library' }).click();
+  const picker2 = page.getByRole('dialog', { name: /^Folder for/ });
+  await picker2.getByRole('button', { name: /Harbor data folder/ }).click();
+  await picker2.getByLabel('New folder name').fill('Media e2e');
+  await picker2.getByRole('button', { name: 'Create folder here' }).click();
+  await picker2.getByRole('button', { name: 'Open folder Media e2e' }).click();
+  await expect(picker2.locator('code.path')).toContainText('Media e2e');
+  const chosen = (await picker2.locator('code.path').textContent())!.trim();
+  await picker2.getByRole('button', { name: 'Use this folder' }).click();
+  await expect(again.locator('code.path')).toHaveText(chosen);
+  folder = chosen;
   await again.getByRole('button', { name: 'Install Jellyfin now' }).click();
   const plan = page.getByRole('dialog');
   await expect(plan).toContainText(`your folder ${folder}`);
@@ -268,4 +283,37 @@ test('install page: bring your own folder validates the path in the plan and mou
   await d.getByText('Technical details').click();
   await expect(d).toContainText('bind');
   await expect(d).toContainText(folder);
+});
+
+test('settings: change password and back, remote access login flow, storage overview', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  // account
+  await page.getByLabel('Current password').fill(ADMIN.password);
+  await page.getByLabel('New password', { exact: true }).fill('brand-new-FIXTURE-password');
+  await page.getByLabel('New password (again)').fill('brand-new-FIXTURE-password');
+  await page.getByRole('button', { name: 'Change password' }).click();
+  await expect(page.getByRole('status')).toContainText('Password changed');
+  await page.getByLabel('Current password').fill('brand-new-FIXTURE-password');
+  await page.getByLabel('New password', { exact: true }).fill(ADMIN.password);
+  await page.getByLabel('New password (again)').fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Change password' }).click();
+  await expect(page.getByRole('status')).toContainText('Password changed');
+  // remote access with the fake provider: connected → log out → login URL → key
+  await page.getByRole('button', { name: /Remote access/ }).click();
+  await expect(page.getByText(/This machine is/)).toBeVisible();
+  await page.getByText('Disconnect').click();
+  await page.getByRole('button', { name: 'Log out of the tailnet' }).click();
+  await expect(page.getByRole('button', { name: 'Log in with Tailscale' })).toBeVisible();
+  await page.getByRole('button', { name: 'Log in with Tailscale' }).click();
+  await expect(page.getByRole('link', { name: /Open the approval page/ })).toHaveAttribute('href', /login\.tailscale\.com/);
+  await page.getByText('I have an auth key instead').click();
+  await page.getByLabel('Tailscale auth key').fill('tskey-fixture-good-e2e');
+  await page.getByRole('button', { name: 'Connect with key' }).click();
+  await expect(page.getByText(/This machine is/)).toBeVisible();
+  // storage
+  await page.getByRole('button', { name: /^💽/ }).or(page.getByRole('button', { name: /Storage/ })).first().click();
+  await expect(page.getByRole('heading', { name: 'Harbor data folder' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Folders used by apps' })).toBeVisible();
+  await expect(page.getByText('Media e2e')).toBeVisible(); // from the Jellyfin install above
 });

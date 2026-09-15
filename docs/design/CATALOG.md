@@ -76,8 +76,9 @@ storage:
   `resources.kind` CHECK; the migration rebuilds the table in place.
 - Reinstall and start verify the folder still exists; if not, the operation fails with
   `DATA_MISSING` and a next action ("mount or restore the folder at the same path"). Nothing starts.
-- Remove leaves the folder untouched and says so in the events. Harbor never creates, chowns or
-  deletes an external folder. Permissions are the app's business: the packaged images run as root
+- Remove leaves the folder untouched and says so in the events. Harbor never chowns or deletes an
+  external folder; it creates one only when the operator names it in the folder picker, inside a parent
+  the service account may already write to (the Harbor data folder `/srv/harbor` by default). Permissions are the app's business: the packaged images run as root
   (Immich, Jellyfin, Audiobookshelf, Navidrome) or take ownership on first start (Nextcloud), which
   is why the hint for Nextcloud says so.
 

@@ -89,6 +89,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Final fresh acceptance run with the console and the enlarged catalog: **vm-2026-09-15T01-01-08 — A01–A16 all passed, exposure B-matrix passed (public path), B02/B03 blocked without a Tailscale key**
 - [x] Merged `exposure` → `main` via pull request #1 (2026-09-14); tagged `v0.2.0`
 
+## Phase 9 — settings for humans, launcher, folder picker (2026-09-15) ✅
+- [x] API: change password, host storage (disks, data folder, folders in use), folder listing/creation, Tailscale login (browser URL or key) and logout; CLI `account set-password`, `tailscale login|logout`, `storage`
+- [x] Bootstrap creates the Harbor data folder `/srv/harbor` (service account); config `userDataDir`
+- [x] Console: Home is a launcher (icons, status dots, "⋯"), Settings with Account / Remote access / Public addresses / Storage / Appearance (theme + wallpaper) / Advanced access / About, folder picker in the install page
+- [x] Tests: unit (mounts parsing, folder listing/creation), integration (password change + session revocation, storage endpoints + picker-created folder used by an install, Tailscale login/logout with the fake), Playwright (picker flow, settings flows)
+- [x] Live: droplet re-bootstrapped with the new build; Settings shows the enrolled tailnet node and disks
+
 ## Test results (latest local run)
 
 | Command | Result |

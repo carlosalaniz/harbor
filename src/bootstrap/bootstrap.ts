@@ -86,7 +86,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
   const preview = [
     `${facts.existing.optDir === 'harbor' ? `Replace release files in ${PRODUCT.paths.opt} (current ${facts.existing.optReleaseVersion ?? '?'} -> ${release.version})` : `Install release ${release.version} to ${PRODUCT.paths.opt}`}`,
     facts.existing.user ? `Keep service account ${PRODUCT.serviceUser}` : `Create system user ${PRODUCT.serviceUser} (nologin) and add it to the docker group (root-equivalent authority)`,
-    `Ensure ${PRODUCT.paths.etc} (root:${PRODUCT.serviceUser} 0750) and ${PRODUCT.paths.var} (${PRODUCT.serviceUser} 0700)`,
+    `Ensure ${PRODUCT.paths.etc} (root:${PRODUCT.serviceUser} 0750), ${PRODUCT.paths.var} (${PRODUCT.serviceUser} 0700) and the data folder ${PRODUCT.paths.data} (${PRODUCT.serviceUser} 0755)`,
     facts.existing.config ? `Keep ${CONFIG_FILE}` : `Write ${CONFIG_FILE} (listen 127.0.0.1:${opts.port}, app ports ${PRODUCT.defaults.appPortRange.from}-${PRODUCT.defaults.appPortRange.to}, socket ${facts.docker.socket})`,
     facts.existing.state ? `Keep existing state in ${PRODUCT.paths.var} (apps, keys, administrator untouched)` : `Initialize fresh state in ${PRODUCT.paths.var}`,
     facts.existing.state ? 'Keep the existing administrator' : `Enroll the local administrator (${opts.adminUsername ?? 'prompted'})`,
@@ -122,6 +122,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
   chownSync(PRODUCT.paths.etc, 0, gid);
   mkdirSync(PRODUCT.paths.var, { recursive: true, mode: 0o700 });
   chownSync(PRODUCT.paths.var, uid, gid);
+  // Harbor data folder: where the console lets people create folders for their apps' data.
+  mkdirSync(PRODUCT.paths.data, { recursive: true, mode: 0o755 });
+  chownSync(PRODUCT.paths.data, uid, gid);
 
   // 7. Config
   let config: DaemonConfig;
@@ -130,6 +133,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
       stateDir: PRODUCT.paths.var,
       catalogDir: `${PRODUCT.paths.opt}/catalog`,
       uiDir: `${PRODUCT.paths.opt}/web`,
+      userDataDir: PRODUCT.paths.data,
       listen: { host: '127.0.0.1', port: opts.port },
       docker: { mode: 'socket', socketPath: facts.docker.socket, cliPluginDirs: [] },
       appPortRange: { ...PRODUCT.defaults.appPortRange },

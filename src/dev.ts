@@ -15,11 +15,13 @@ import { homedir } from 'node:os';
 const root = path.resolve(process.env['HARBOR_DEV_ROOT'] ?? '.harbor-dev');
 mkdirSync(root, { recursive: true, mode: 0o700 });
 const stateDir = path.join(root, 'state');
+mkdirSync(path.join(root, 'data'), { recursive: true });
 const socket = process.env['HARBOR_DEV_DOCKER_SOCKET'];
 const port = Number(process.env['HARBOR_DEV_PORT'] ?? 18000);
 const config = normalizeConfig(
   {
     stateDir,
+    userDataDir: path.join(root, 'data'),
     catalogDir: path.resolve('catalog'),
     uiDir: existsSync(path.resolve('web/dist/index.html')) ? path.resolve('web/dist') : null,
     listen: { host: '127.0.0.1', port },

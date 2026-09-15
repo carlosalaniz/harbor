@@ -143,6 +143,9 @@ folder on this machine* per claim.
 
 Rules and behaviour:
 
+- In the console you pick the folder in a browser: disks, the Harbor data folder (`/srv/harbor`) and
+  subfolders; *Create folder here* works wherever the `harbor` account may write (the data folder
+  always). Typing a path is still possible under *Type a path instead*.
 - Absolute path, must exist and be a directory; system locations (`/etc`, `/usr`, `/var/lib/docker`,
   `/var/lib/harbor`, …) and the root are refused, also when a symlink points there.
 - Two instances cannot share or nest their folders; the plan says which instance uses a folder.
@@ -151,6 +154,23 @@ Rules and behaviour:
 - Harbor does not change permissions. The packaged apps run as root inside their containers or take
   ownership on first start (Nextcloud); keep the folder for one app only.
 - Read-only claims (Navidrome's music) are mounted read-only.
+
+## 4b. Settings in the console (for people who do not use a terminal)
+
+The console's **Settings** page covers what a household operator needs after bootstrap:
+
+| Section | What you can do |
+|---|---|
+| Account | change the administrator password (every other logged-in browser or CLI is signed out) |
+| Remote access | connect this machine to your Tailscale tailnet by clicking *Log in with Tailscale* (opens the approval page) or by pasting an auth key; see the node name; turn *Harbor on your tailnet* on or off; log out of the tailnet |
+| Public addresses | see whether the public proxy is installed and how many apps are public; publishing itself is on the Publishing page |
+| Storage | disks with free space, the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
+| Appearance | theme (match device / dark / light) and wallpaper |
+| Advanced access | the exact SSH forwarding line and the CLI equivalents |
+
+The same actions exist as commands: `harbor account set-password`, `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor storage`.
+
+Two things still need root on the machine, once: installing Tailscale (`bootstrap --with-tailscale`) and the public proxy (`bootstrap --with-public-proxy`). Settings shows the exact command when they are missing.
 
 ## 5. Service operations
 
