@@ -1,0 +1,158 @@
+{
+  "runId": "catalog-2026-09-15T00-40-44",
+  "target": "digitalocean droplet 600403086",
+  "versions": {
+    "node": "v24.12.0",
+    "docker": "29.8.0",
+    "compose": "5.5.1",
+    "ubuntu": "Ubuntu 24.04.4 LTS",
+    "arch": "x86_64"
+  },
+  "results": {
+    "jellyfin": "blocked",
+    "uptime-kuma": "passed"
+  },
+  "results_detail": [
+    {
+      "id": "HOST",
+      "title": "Host prepared: Harbor bootstrapped from the release archive",
+      "status": "pass",
+      "at": "2026-09-15T00:41:14.222Z",
+      "details": {
+        "versions": {
+          "node": "v24.12.0",
+          "docker": "29.8.0",
+          "compose": "5.5.1",
+          "ubuntu": "Ubuntu 24.04.4 LTS",
+          "arch": "x86_64"
+        },
+        "installationId": "b4da4e7f-2bda-47fa-8697-3736e656a130",
+        "fresh": false,
+        "rebuilt": false
+      },
+      "notes": [
+        "Docker 29.8.0, Compose 5.5.1, Node v24.12.0, Ubuntu 24.04.4 LTS x86_64"
+      ]
+    },
+    {
+      "id": "jellyfin",
+      "title": "Install, readiness, browser check and remove of jellyfin",
+      "status": "pass",
+      "at": "2026-09-15T00:41:52.306Z",
+      "details": {
+        "name": "jellyfin-q0040",
+        "instanceId": "868ea5fb-9e8a-4320-9c70-75feca612205",
+        "url": "http://localhost:18105/",
+        "title": "fc7eb1d1980d",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_868ea5fb9e8a43209c7075feca612205-web-1 Up 30 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_868ea5fb9e8a43209c7075feca612205_cache/_data->/cache volume:/var/lib/docker/volumes/hb_868ea5fb9e8a43209c7075feca612205_config/_data->/config volume:/var/lib/docker/volumes/hb_868ea5fb9e8a43209c7075feca612205_media/_data->/media"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_868ea5fb9e8a43209c7075feca612205-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_868ea5fb9e8a43209c7075feca612205_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "cache",
+            "name": "hb_868ea5fb9e8a43209c7075feca612205_cache",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_868ea5fb9e8a43209c7075feca612205_config",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "media",
+            "name": "hb_868ea5fb9e8a43209c7075feca612205_media",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 37,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 37s; page title \"fc7eb1d1980d\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "jellyfin (external storage)",
+      "title": "Install, readiness, browser check and remove of jellyfin (external storage)",
+      "status": "fail",
+      "at": "2026-09-15T00:41:54.532Z",
+      "details": {
+        "error": "harbor install jellyfin --name jellyfin-q0040x --storage media=/srv/harbor-test-storage/jellyfin-media --yes exited 3:  {\n  \"error\": {\n    \"code\": \"OWNERSHIP_CONFLICT\",\n    \"message\": \"/srv/harbor-test-storage/jellyfin-media overlaps /srv/harbor-test-storage/jellyfin-media, already used by instance jellyfin-q0013x\",\n    \"nextAction\": \"Choose a different folder; two apps must not share or nest their storage.\"\n  }\n}\n"
+      },
+      "notes": [
+        "harbor install jellyfin --name jellyfin-q0040x --storage media=/srv/harbor-test-storage/jellyfin-media --yes exited 3:  {\n  \"error\": {\n    \"code\": \"OWNERSHIP_CONFLICT\",\n    \"message\": \"/srv/harbor-test-storage/jellyfin-media overlaps /srv/harbor-test-storage/jellyfin-media, already used by instance jellyfin-q0013x\",\n    \"nextAction\": \"Choose a different folder; two apps must not share or nest their storage.\"\n  }\n}\n"
+      ]
+    },
+    {
+      "id": "uptime-kuma",
+      "title": "Install, readiness, browser check and remove of uptime-kuma",
+      "status": "pass",
+      "at": "2026-09-15T00:42:19.313Z",
+      "details": {
+        "name": "uptime-kuma-q0040",
+        "instanceId": "71a7458c-cbc3-4c30-a7d9-ac5d1f9c1681",
+        "url": "http://localhost:18106/",
+        "title": "Uptime Kuma",
+        "healthStatus": 302,
+        "probeHistory": [
+          302
+        ],
+        "containers": [
+          "hb_71a7458ccbc34c30a7d9ac5d1f9c1681-web-1 Up 16 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_71a7458ccbc34c30a7d9ac5d1f9c1681_data/_data->/app/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_71a7458ccbc34c30a7d9ac5d1f9c1681-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_71a7458ccbc34c30a7d9ac5d1f9c1681_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_71a7458ccbc34c30a7d9ac5d1f9c1681_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 23,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 23s; page title \"Uptime Kuma\"; health 302",
+        "removed after the check; volumes and folders retained"
+      ]
+    }
+  ]
+}

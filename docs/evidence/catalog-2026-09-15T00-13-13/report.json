@@ -1,7 +1,33 @@
 {
-  "startedAt": "2026-09-15T00:13:13.522Z",
-  "updatedAt": "2026-09-15T00:14:27.516Z",
-  "results": [
+  "runId": "catalog-2026-09-15T00-13-13",
+  "target": "digitalocean droplet 600403086",
+  "versions": {
+    "node": "v24.12.0",
+    "docker": "29.8.0",
+    "compose": "5.5.1",
+    "ubuntu": "Ubuntu 24.04.4 LTS",
+    "arch": "x86_64"
+  },
+  "results": {
+    "actual": "passed",
+    "anythingllm": "passed",
+    "audiobookshelf": "passed",
+    "bentopdf": "passed",
+    "excalidraw": "passed",
+    "forgejo": "passed",
+    "freshrss": "passed",
+    "immich": "passed",
+    "jellyfin": "blocked",
+    "mealie": "passed",
+    "memos": "passed",
+    "n8n": "passed",
+    "navidrome": "passed",
+    "nextcloud": "passed",
+    "open-webui": "passed",
+    "uptime-kuma": "blocked",
+    "vaultwarden": "passed"
+  },
+  "results_detail": [
     {
       "id": "HOST",
       "title": "Host prepared: Harbor bootstrapped from the release archive",
@@ -65,6 +91,1122 @@
       },
       "notes": [
         "healthy after 24s; page title \"Actual\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "anythingllm",
+      "title": "Install, readiness, browser check and remove of anythingllm",
+      "status": "pass",
+      "at": "2026-09-15T00:15:08.704Z",
+      "details": {
+        "name": "anythingllm-q0013",
+        "instanceId": "ad3fdb72-533d-4bd7-9909-e584db60ca05",
+        "url": "http://localhost:18083/",
+        "title": "AnythingLLM | Your personal LLM trained on anything",
+        "healthStatus": 200,
+        "containers": [
+          "hb_ad3fdb72533d4bd79909e584db60ca05-web-1 Up 20 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_ad3fdb72533d4bd79909e584db60ca05_storage/_data->/app/server/storage"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_ad3fdb72533d4bd79909e584db60ca05-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_ad3fdb72533d4bd79909e584db60ca05_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "storage",
+            "name": "hb_ad3fdb72533d4bd79909e584db60ca05_storage",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 41,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 41s; page title \"AnythingLLM | Your personal LLM trained on anything\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "audiobookshelf",
+      "title": "Install, readiness, browser check and remove of audiobookshelf",
+      "status": "pass",
+      "at": "2026-09-15T00:15:39.539Z",
+      "details": {
+        "name": "audiobookshelf-q0013",
+        "instanceId": "c636bbc4-b658-4f02-8c0e-5dd929001415",
+        "url": "http://localhost:18084/",
+        "title": "Audiobookshelf",
+        "healthStatus": 200,
+        "containers": [
+          "hb_c636bbc4b6584f028c0e5dd929001415-web-1 Up 13 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_c636bbc4b6584f028c0e5dd929001415_audiobooks/_data->/audiobooks volume:/var/lib/docker/volumes/hb_c636bbc4b6584f028c0e5dd929001415_config/_data->/config volume:/var/lib/docker/volumes/hb_c636bbc4b6584f028c0e5dd929001415_metadata/_data->/metadata volume:/var/lib/docker/volumes/hb_c636bbc4b6584f028c0e5dd929001415_podcasts/_data->/podcasts"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_c636bbc4b6584f028c0e5dd929001415-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_c636bbc4b6584f028c0e5dd929001415_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "audiobooks",
+            "name": "hb_c636bbc4b6584f028c0e5dd929001415_audiobooks",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_c636bbc4b6584f028c0e5dd929001415_config",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "metadata",
+            "name": "hb_c636bbc4b6584f028c0e5dd929001415_metadata",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "podcasts",
+            "name": "hb_c636bbc4b6584f028c0e5dd929001415_podcasts",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 31,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 31s; page title \"Audiobookshelf\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "audiobookshelf (external storage)",
+      "title": "Install, readiness, browser check and remove of audiobookshelf (external storage)",
+      "status": "pass",
+      "at": "2026-09-15T00:16:01.169Z",
+      "details": {
+        "name": "audiobookshelf-q0013x",
+        "instanceId": "790c72fb-b354-4bda-a5a8-474373373821",
+        "url": "http://localhost:18085/",
+        "title": "Audiobookshelf",
+        "healthStatus": 200,
+        "containers": [
+          "hb_790c72fbb3544bdaa5a8474373373821-web-1 Up 12 seconds"
+        ],
+        "mounts": [
+          "bind:/srv/harbor-test-storage/audiobookshelf-audiobooks->/audiobooks volume:/var/lib/docker/volumes/hb_790c72fbb3544bdaa5a8474373373821_config/_data->/config volume:/var/lib/docker/volumes/hb_790c72fbb3544bdaa5a8474373373821_metadata/_data->/metadata bind:/srv/harbor-test-storage/audiobookshelf-podcasts->/podcasts"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "audiobooks",
+            "name": "/srv/harbor-test-storage/audiobookshelf-audiobooks",
+            "present": true
+          },
+          {
+            "kind": "bind",
+            "role": "podcasts",
+            "name": "/srv/harbor-test-storage/audiobookshelf-podcasts",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_790c72fbb3544bdaa5a8474373373821-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_790c72fbb3544bdaa5a8474373373821_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_790c72fbb3544bdaa5a8474373373821_config",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "metadata",
+            "name": "hb_790c72fbb3544bdaa5a8474373373821_metadata",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 20,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 20s; page title \"Audiobookshelf\"; health 200",
+        "external storage: --storage audiobooks=/srv/harbor-test-storage/audiobookshelf-audiobooks --storage podcasts=/srv/harbor-test-storage/audiobookshelf-podcasts mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "bentopdf",
+      "title": "Install, readiness, browser check and remove of bentopdf",
+      "status": "pass",
+      "at": "2026-09-15T00:16:32.370Z",
+      "details": {
+        "name": "bentopdf-q0013",
+        "instanceId": "ca3d2647-55e6-476e-9670-dbb6cafbf96d",
+        "url": "http://localhost:18086/",
+        "title": "BentoPDF - PDF Tools",
+        "healthStatus": 200,
+        "containers": [
+          "hb_ca3d264755e6476e9670dbb6cafbf96d-web-1 Up 12 seconds"
+        ],
+        "mounts": [
+          ""
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_ca3d264755e6476e9670dbb6cafbf96d-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_ca3d264755e6476e9670dbb6cafbf96d_default",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 30,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 30s; page title \"BentoPDF - PDF Tools\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "excalidraw",
+      "title": "Install, readiness, browser check and remove of excalidraw",
+      "status": "pass",
+      "at": "2026-09-15T00:17:24.809Z",
+      "details": {
+        "name": "excalidraw-q0013",
+        "instanceId": "bdc08699-16d2-4cd8-b9ee-36149b7daa36",
+        "url": "http://localhost:18087/",
+        "title": "Excalidraw Whiteboard",
+        "healthStatus": 200,
+        "containers": [
+          "hb_bdc0869916d24cd8b9ee36149b7daa36-web-1 Up 42 seconds (healthy)"
+        ],
+        "mounts": [
+          ""
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_bdc0869916d24cd8b9ee36149b7daa36-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_bdc0869916d24cd8b9ee36149b7daa36_default",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 52,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 52s; page title \"Excalidraw Whiteboard\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "forgejo",
+      "title": "Install, readiness, browser check and remove of forgejo",
+      "status": "pass",
+      "at": "2026-09-15T00:17:52.781Z",
+      "details": {
+        "name": "forgejo-q0013",
+        "instanceId": "a123d261-735e-44f0-85fe-0f2d49e81689",
+        "url": "http://localhost:18088/",
+        "title": "Installation - Forgejo: Beyond coding. We forge.",
+        "healthStatus": 200,
+        "containers": [
+          "hb_a123d261735e44f085fe0f2d49e81689-web-1 Up 12 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_a123d261735e44f085fe0f2d49e81689_data/_data->/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_a123d261735e44f085fe0f2d49e81689-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_a123d261735e44f085fe0f2d49e81689_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_a123d261735e44f085fe0f2d49e81689_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 28,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 28s; page title \"Installation - Forgejo: Beyond coding. We forge.\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "freshrss",
+      "title": "Install, readiness, browser check and remove of freshrss",
+      "status": "pass",
+      "at": "2026-09-15T00:18:18.220Z",
+      "details": {
+        "name": "freshrss-q0013",
+        "instanceId": "238c7b06-8e30-4a31-a105-b0298122343c",
+        "url": "http://localhost:18089/",
+        "title": "Installation · FreshRSS: step 1",
+        "healthStatus": 200,
+        "containers": [
+          "hb_238c7b068e304a31a105b0298122343c-web-1 Up 9 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_238c7b068e304a31a105b0298122343c_data/_data->/var/www/FreshRSS/data volume:/var/lib/docker/volumes/hb_238c7b068e304a31a105b0298122343c_extensions/_data->/var/www/FreshRSS/extensions"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_238c7b068e304a31a105b0298122343c-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_238c7b068e304a31a105b0298122343c_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_238c7b068e304a31a105b0298122343c_data",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "extensions",
+            "name": "hb_238c7b068e304a31a105b0298122343c_extensions",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 25,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 25s; page title \"Installation · FreshRSS: step 1\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "immich",
+      "title": "Install, readiness, browser check and remove of immich",
+      "status": "pass",
+      "at": "2026-09-15T00:20:29.649Z",
+      "details": {
+        "name": "immich-q0013",
+        "instanceId": "6207a81f-ebea-43ec-87ad-853fce46b551",
+        "url": "http://localhost:18090/",
+        "title": "Welcome 🎉 - Immich",
+        "healthStatus": 200,
+        "containers": [
+          "hb_6207a81febea43ec87ad853fce46b551-server-1 Up 42 seconds (healthy)",
+          "hb_6207a81febea43ec87ad853fce46b551-database-1 Up 48 seconds (healthy)",
+          "hb_6207a81febea43ec87ad853fce46b551-machine-learning-1 Up 48 seconds (healthy)",
+          "hb_6207a81febea43ec87ad853fce46b551-redis-1 Up 47 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_6207a81febea43ec87ad853fce46b551_library/_data->/data ",
+          "volume:/var/lib/docker/volumes/hb_6207a81febea43ec87ad853fce46b551_database/_data->/var/lib/postgresql/data ",
+          "volume:/var/lib/docker/volumes/hb_6207a81febea43ec87ad853fce46b551_model-cache/_data->/cache ",
+          "volume:/var/lib/docker/volumes/42504ed063274125cb502b24f76515efe0627873da0ec8aea781c6e0d24812fb/_data->/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "database",
+            "name": "hb_6207a81febea43ec87ad853fce46b551-database-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "machine-learning",
+            "name": "hb_6207a81febea43ec87ad853fce46b551-machine-learning-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "redis",
+            "name": "hb_6207a81febea43ec87ad853fce46b551-redis-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "server",
+            "name": "hb_6207a81febea43ec87ad853fce46b551-server-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_6207a81febea43ec87ad853fce46b551_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "database",
+            "name": "hb_6207a81febea43ec87ad853fce46b551_database",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "library",
+            "name": "hb_6207a81febea43ec87ad853fce46b551_library",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "model-cache",
+            "name": "hb_6207a81febea43ec87ad853fce46b551_model-cache",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 131,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 131s; page title \"Welcome 🎉 - Immich\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "immich (external storage)",
+      "title": "Install, readiness, browser check and remove of immich (external storage)",
+      "status": "pass",
+      "at": "2026-09-15T00:21:26.103Z",
+      "details": {
+        "name": "immich-q0013x",
+        "instanceId": "f79b6d61-d1d5-46b4-b926-089f7b36721e",
+        "url": "http://localhost:18091/",
+        "title": "Welcome 🎉 - Immich",
+        "healthStatus": 200,
+        "containers": [
+          "hb_f79b6d61d1d546b4b926089f7b36721e-server-1 Up 41 seconds (healthy)",
+          "hb_f79b6d61d1d546b4b926089f7b36721e-database-1 Up 47 seconds (healthy)",
+          "hb_f79b6d61d1d546b4b926089f7b36721e-machine-learning-1 Up 47 seconds (healthy)",
+          "hb_f79b6d61d1d546b4b926089f7b36721e-redis-1 Up 47 seconds (healthy)"
+        ],
+        "mounts": [
+          "bind:/srv/harbor-test-storage/immich-library->/data ",
+          "volume:/var/lib/docker/volumes/hb_f79b6d61d1d546b4b926089f7b36721e_database/_data->/var/lib/postgresql/data ",
+          "volume:/var/lib/docker/volumes/hb_f79b6d61d1d546b4b926089f7b36721e_model-cache/_data->/cache ",
+          "volume:/var/lib/docker/volumes/71d7f76bfcf2c2f2ba515d6d745386d65c22d5772570df35ea4d52f4f7e8b30d/_data->/data"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "library",
+            "name": "/srv/harbor-test-storage/immich-library",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "database",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e-database-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "machine-learning",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e-machine-learning-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "redis",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e-redis-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "server",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e-server-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "database",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e_database",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "model-cache",
+            "name": "hb_f79b6d61d1d546b4b926089f7b36721e_model-cache",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 55,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 55s; page title \"Welcome 🎉 - Immich\"; health 200",
+        "external storage: --storage library=/srv/harbor-test-storage/immich-library mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "jellyfin",
+      "title": "Install, readiness, browser check and remove of jellyfin",
+      "status": "fail",
+      "at": "2026-09-15T00:22:08.645Z",
+      "details": {
+        "error": "fetch failed"
+      },
+      "notes": [
+        "fetch failed"
+      ]
+    },
+    {
+      "id": "jellyfin (external storage)",
+      "title": "Install, readiness, browser check and remove of jellyfin (external storage)",
+      "status": "fail",
+      "at": "2026-09-15T00:22:43.816Z",
+      "details": {
+        "error": "health probe 503 not in 200 at http://localhost:18093/"
+      },
+      "notes": [
+        "health probe 503 not in 200 at http://localhost:18093/"
+      ]
+    },
+    {
+      "id": "mealie",
+      "title": "Install, readiness, browser check and remove of mealie",
+      "status": "pass",
+      "at": "2026-09-15T00:24:06.118Z",
+      "details": {
+        "name": "mealie-q0013",
+        "instanceId": "247b3b55-a3c9-4500-80d0-4dbf3c00d222",
+        "url": "http://localhost:18094/",
+        "title": "Login",
+        "healthStatus": 200,
+        "containers": [
+          "hb_247b3b55a3c9450080d04dbf3c00d222-web-1 Up 42 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_247b3b55a3c9450080d04dbf3c00d222_data/_data->/app/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_247b3b55a3c9450080d04dbf3c00d222-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_247b3b55a3c9450080d04dbf3c00d222_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_247b3b55a3c9450080d04dbf3c00d222_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 81,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 81s; page title \"Login\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "memos",
+      "title": "Install, readiness, browser check and remove of memos",
+      "status": "pass",
+      "at": "2026-09-15T00:24:25.213Z",
+      "details": {
+        "name": "memos-q0013",
+        "instanceId": "6e6f63d3-da62-4e5a-acb4-5e53ac925a43",
+        "url": "http://localhost:18095/",
+        "title": "Memos",
+        "healthStatus": 200,
+        "containers": [
+          "hb_6e6f63d3da624e5aacb45e53ac925a43-web-1 Up 10 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_6e6f63d3da624e5aacb45e53ac925a43_data/_data->/var/opt/memos"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_6e6f63d3da624e5aacb45e53ac925a43-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_6e6f63d3da624e5aacb45e53ac925a43_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_6e6f63d3da624e5aacb45e53ac925a43_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 19,
+        "consoleErrors": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ]
+      },
+      "notes": [
+        "healthy after 19s; page title \"Memos\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "n8n",
+      "title": "Install, readiness, browser check and remove of n8n",
+      "status": "pass",
+      "at": "2026-09-15T00:26:09.058Z",
+      "details": {
+        "name": "n8n-q0013",
+        "instanceId": "1092463d-06e0-4b34-a6fd-8bdbb98ce7dd",
+        "url": "http://localhost:18096/",
+        "title": "n8n.io - Workflow Automation",
+        "healthStatus": 200,
+        "containers": [
+          "hb_1092463d06e04b34a6fd8bdbb98ce7dd-web-1 Up 37 seconds",
+          "hb_1092463d06e04b34a6fd8bdbb98ce7dd-postgres-1 Up 43 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_1092463d06e04b34a6fd8bdbb98ce7dd_app-state/_data->/home/node/.n8n ",
+          "volume:/var/lib/docker/volumes/hb_1092463d06e04b34a6fd8bdbb98ce7dd_database/_data->/var/lib/postgresql/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "postgres",
+            "name": "hb_1092463d06e04b34a6fd8bdbb98ce7dd-postgres-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_1092463d06e04b34a6fd8bdbb98ce7dd-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_1092463d06e04b34a6fd8bdbb98ce7dd_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "app-state",
+            "name": "hb_1092463d06e04b34a6fd8bdbb98ce7dd_app-state",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "database",
+            "name": "hb_1092463d06e04b34a6fd8bdbb98ce7dd_database",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 104,
+        "consoleErrors": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ]
+      },
+      "notes": [
+        "healthy after 104s; page title \"n8n.io - Workflow Automation\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "navidrome",
+      "title": "Install, readiness, browser check and remove of navidrome",
+      "status": "pass",
+      "at": "2026-09-15T00:26:34.362Z",
+      "details": {
+        "name": "navidrome-q0013",
+        "instanceId": "5ac6bf8a-4b58-4fbe-aa70-90c8808dedfa",
+        "url": "http://localhost:18097/",
+        "title": "Navidrome",
+        "healthStatus": 200,
+        "containers": [
+          "hb_5ac6bf8a4b584fbeaa7090c8808dedfa-web-1 Up 12 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_5ac6bf8a4b584fbeaa7090c8808dedfa_data/_data->/data volume:/var/lib/docker/volumes/hb_5ac6bf8a4b584fbeaa7090c8808dedfa_music/_data->/music"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_5ac6bf8a4b584fbeaa7090c8808dedfa-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_5ac6bf8a4b584fbeaa7090c8808dedfa_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_5ac6bf8a4b584fbeaa7090c8808dedfa_data",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "music",
+            "name": "hb_5ac6bf8a4b584fbeaa7090c8808dedfa_music",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 25,
+        "consoleErrors": [
+          "undefined"
+        ]
+      },
+      "notes": [
+        "healthy after 25s; page title \"Navidrome\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "navidrome (external storage)",
+      "title": "Install, readiness, browser check and remove of navidrome (external storage)",
+      "status": "pass",
+      "at": "2026-09-15T00:26:54.812Z",
+      "details": {
+        "name": "navidrome-q0013x",
+        "instanceId": "e762c6d3-e6bd-4c37-8a1f-d2b3ab5f4697",
+        "url": "http://localhost:18098/",
+        "title": "Navidrome",
+        "healthStatus": 200,
+        "containers": [
+          "hb_e762c6d3e6bd4c378a1fd2b3ab5f4697-web-1 Up 12 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_e762c6d3e6bd4c378a1fd2b3ab5f4697_data/_data->/data bind:/srv/harbor-test-storage/navidrome-music->/music"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "music",
+            "name": "/srv/harbor-test-storage/navidrome-music",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_e762c6d3e6bd4c378a1fd2b3ab5f4697-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_e762c6d3e6bd4c378a1fd2b3ab5f4697_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_e762c6d3e6bd4c378a1fd2b3ab5f4697_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 20,
+        "consoleErrors": [
+          "undefined"
+        ]
+      },
+      "notes": [
+        "healthy after 20s; page title \"Navidrome\"; health 200",
+        "external storage: --storage music=/srv/harbor-test-storage/navidrome-music mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "nextcloud",
+      "title": "Install, readiness, browser check and remove of nextcloud",
+      "status": "pass",
+      "at": "2026-09-15T00:28:00.179Z",
+      "details": {
+        "name": "nextcloud-q0013",
+        "instanceId": "3a1b23a4-3629-4844-a88d-302ac7740c8c",
+        "url": "http://localhost:18099/",
+        "title": "Nextcloud",
+        "healthStatus": 200,
+        "containers": [
+          "hb_3a1b23a436294844a88d302ac7740c8c-app-1 Up 18 seconds",
+          "hb_3a1b23a436294844a88d302ac7740c8c-db-1 Up 23 seconds (healthy)",
+          "hb_3a1b23a436294844a88d302ac7740c8c-redis-1 Up 24 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_3a1b23a436294844a88d302ac7740c8c_html/_data->/var/www/html volume:/var/lib/docker/volumes/hb_3a1b23a436294844a88d302ac7740c8c_data/_data->/var/www/html/data ",
+          "volume:/var/lib/docker/volumes/hb_3a1b23a436294844a88d302ac7740c8c_db/_data->/var/lib/postgresql/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "app",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c-app-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "db",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c-db-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "redis",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c-redis-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c_data",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "db",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c_db",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "html",
+            "name": "hb_3a1b23a436294844a88d302ac7740c8c_html",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 65,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 65s; page title \"Nextcloud\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "nextcloud (external storage)",
+      "title": "Install, readiness, browser check and remove of nextcloud (external storage)",
+      "status": "pass",
+      "at": "2026-09-15T00:28:33.029Z",
+      "details": {
+        "name": "nextcloud-q0013x",
+        "instanceId": "17917186-4aae-42d8-8869-02bc96c4f5ee",
+        "url": "http://localhost:18100/",
+        "title": "Nextcloud",
+        "healthStatus": 200,
+        "containers": [
+          "hb_179171864aae42d8886902bc96c4f5ee-app-1 Up 16 seconds",
+          "hb_179171864aae42d8886902bc96c4f5ee-db-1 Up 22 seconds (healthy)",
+          "hb_179171864aae42d8886902bc96c4f5ee-redis-1 Up 22 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_179171864aae42d8886902bc96c4f5ee_html/_data->/var/www/html bind:/srv/harbor-test-storage/nextcloud-data->/var/www/html/data ",
+          "volume:/var/lib/docker/volumes/hb_179171864aae42d8886902bc96c4f5ee_db/_data->/var/lib/postgresql/data"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "data",
+            "name": "/srv/harbor-test-storage/nextcloud-data",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "app",
+            "name": "hb_179171864aae42d8886902bc96c4f5ee-app-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "db",
+            "name": "hb_179171864aae42d8886902bc96c4f5ee-db-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "redis",
+            "name": "hb_179171864aae42d8886902bc96c4f5ee-redis-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_179171864aae42d8886902bc96c4f5ee_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "db",
+            "name": "hb_179171864aae42d8886902bc96c4f5ee_db",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "html",
+            "name": "hb_179171864aae42d8886902bc96c4f5ee_html",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 32,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 32s; page title \"Nextcloud\"; health 200",
+        "external storage: --storage data=/srv/harbor-test-storage/nextcloud-data mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "open-webui",
+      "title": "Install, readiness, browser check and remove of open-webui",
+      "status": "pass",
+      "at": "2026-09-15T00:32:04.439Z",
+      "details": {
+        "name": "open-webui-q0013",
+        "instanceId": "ca01b21a-408b-4fa4-8d0c-210734457d16",
+        "url": "http://localhost:18101/",
+        "title": "Open WebUI",
+        "healthStatus": 200,
+        "containers": [
+          "hb_ca01b21a408b4fa48d0c210734457d16-web-1 Up About a minute (healthy)",
+          "hb_ca01b21a408b4fa48d0c210734457d16-ollama-1 Up About a minute"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_ca01b21a408b4fa48d0c210734457d16_data/_data->/app/backend/data ",
+          "volume:/var/lib/docker/volumes/hb_ca01b21a408b4fa48d0c210734457d16_models/_data->/root/.ollama"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "ollama",
+            "name": "hb_ca01b21a408b4fa48d0c210734457d16-ollama-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_ca01b21a408b4fa48d0c210734457d16-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_ca01b21a408b4fa48d0c210734457d16_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_ca01b21a408b4fa48d0c210734457d16_data",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "models",
+            "name": "hb_ca01b21a408b4fa48d0c210734457d16_models",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 211,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 211s; page title \"Open WebUI\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "open-webui (external storage)",
+      "title": "Install, readiness, browser check and remove of open-webui (external storage)",
+      "status": "pass",
+      "at": "2026-09-15T00:33:29.472Z",
+      "details": {
+        "name": "open-webui-q0013x",
+        "instanceId": "9a5f3e85-3b95-48eb-baff-77b3cd514394",
+        "url": "http://localhost:18102/",
+        "title": "Open WebUI",
+        "healthStatus": 200,
+        "containers": [
+          "hb_9a5f3e853b9548ebbaff77b3cd514394-web-1 Up About a minute (healthy)",
+          "hb_9a5f3e853b9548ebbaff77b3cd514394-ollama-1 Up About a minute"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_9a5f3e853b9548ebbaff77b3cd514394_data/_data->/app/backend/data ",
+          "bind:/srv/harbor-test-storage/open-webui-models->/root/.ollama"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "models",
+            "name": "/srv/harbor-test-storage/open-webui-models",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "ollama",
+            "name": "hb_9a5f3e853b9548ebbaff77b3cd514394-ollama-1",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_9a5f3e853b9548ebbaff77b3cd514394-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_9a5f3e853b9548ebbaff77b3cd514394_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_9a5f3e853b9548ebbaff77b3cd514394_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 84,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 84s; page title \"Open WebUI\"; health 200",
+        "external storage: --storage models=/srv/harbor-test-storage/open-webui-models mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "uptime-kuma",
+      "title": "Install, readiness, browser check and remove of uptime-kuma",
+      "status": "fail",
+      "at": "2026-09-15T00:37:12.463Z",
+      "details": {
+        "error": "harbor install uptime-kuma --name uptime-kuma-q0013 --yes exited 1:  457\",\n      \"at\": \"2026-09-15T00:34:31Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 10: 302\"\n    },\n    {\n      \"cursor\": \"458\",\n      \"at\": \"2026-09-15T00:34:51Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 20: 302\"\n    },\n    {\n      \"cursor\": \"459\",\n      \"at\": \"2026-09-15T00:35:11Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 30: 302\"\n    },\n    {\n      \"cursor\": \"460\",\n      \"at\": \"2026-09-15T00:35:31Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 40: 302\"\n    },\n    {\n      \"cursor\": \"461\",\n      \"at\": \"2026-09-15T00:35:51Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 50: 302\"\n    },\n    {\n      \"cursor\": \"462\",\n      \"at\": \"2026-09-15T00:36:11Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 60: 302\"\n    },\n    {\n      \"cursor\": \"463\",\n      \"at\": \"2026-09-15T00:36:31Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 70: 302\"\n    },\n    {\n      \"cursor\": \"464\",\n      \"at\": \"2026-09-15T00:36:51Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 80: 302\"\n    },\n    {\n      \"cursor\": \"465\",\n      \"at\": \"2026-09-15T00:37:11Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 90: 302\"\n    },\n    {\n      \"cursor\": \"466\",\n      \"at\": \"2026-09-15T00:37:11Z\",\n      \"phase\": \"failed\",\n      \"message\": \"install failed: readiness check did not pass within 180s (last: 302); containers were kept for inspection\"\n    }\n  ]\n}\n"
+      },
+      "notes": [
+        "harbor install uptime-kuma --name uptime-kuma-q0013 --yes exited 1:  457\",\n      \"at\": \"2026-09-15T00:34:31Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 10: 302\"\n    },\n    {\n      \"cursor\": \"458\",\n      \"at\": \"2026-09-15T00:34:51Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 20: 302\"\n    },\n    {\n      \"cursor\": \"459\",\n      \"at\": \"2026-09-15T00:35:11Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 30: 302\"\n    },\n    {\n      \"cursor\": \"460\",\n      \"at\": \"2026-09-15T00:35:31Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 40: 302\"\n    },\n    {\n      \"cursor\": \"461\",\n      \"at\": \"2026-09-15T00:35:51Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 50: 302\"\n    },\n    {\n      \"cursor\": \"462\",\n      \"at\": \"2026-09-15T00:36:11Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 60: 302\"\n    },\n    {\n      \"cursor\": \"463\",\n      \"at\": \"2026-09-15T00:36:31Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 70: 302\"\n    },\n    {\n      \"cursor\": \"464\",\n      \"at\": \"2026-09-15T00:36:51Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 80: 302\"\n    },\n    {\n      \"cursor\": \"465\",\n      \"at\": \"2026-09-15T00:37:11Z\",\n      \"phase\": \"checking\",\n      \"message\": \"readiness attempt 90: 302\"\n    },\n    {\n      \"cursor\": \"466\",\n      \"at\": \"2026-09-15T00:37:11Z\",\n      \"phase\": \"failed\",\n      \"message\": \"install failed: readiness check did not pass within 180s (last: 302); containers were kept for inspection\"\n    }\n  ]\n}\n"
+      ]
+    },
+    {
+      "id": "vaultwarden",
+      "title": "Install, readiness, browser check and remove of vaultwarden",
+      "status": "pass",
+      "at": "2026-09-15T00:38:43.519Z",
+      "details": {
+        "name": "vaultwarden-q0013",
+        "instanceId": "5bdce757-0526-4455-85dd-ccb3b42962b3",
+        "url": "http://localhost:18104/",
+        "title": "Vaultwarden Web",
+        "healthStatus": 200,
+        "containers": [
+          "hb_5bdce7570526445585ddccb3b42962b3-web-1 Up About a minute (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_5bdce7570526445585ddccb3b42962b3_data/_data->/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_5bdce7570526445585ddccb3b42962b3-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_5bdce7570526445585ddccb3b42962b3_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_5bdce7570526445585ddccb3b42962b3_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 85,
+        "consoleErrors": [
+          "Unable to fetch ServerConfig from http://localhost:18104/api Hi: Insecure URL not allowed. All URLs must use HTTPS.\n    at rd.<anonymous> (http://localhost:18104/app/main.a46e2355765814789865.js:312:1"
+        ]
+      },
+      "notes": [
+        "healthy after 85s; page title \"Vaultwarden Web\"; health 200",
         "removed after the check; volumes and folders retained"
       ]
     }

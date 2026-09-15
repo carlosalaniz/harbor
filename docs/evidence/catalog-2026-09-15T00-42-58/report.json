@@ -1,0 +1,158 @@
+{
+  "runId": "catalog-2026-09-15T00-42-58",
+  "target": "digitalocean droplet 600403086",
+  "versions": {
+    "node": "v24.12.0",
+    "docker": "29.8.0",
+    "compose": "5.5.1",
+    "ubuntu": "Ubuntu 24.04.4 LTS",
+    "arch": "x86_64"
+  },
+  "results": {
+    "jellyfin": "passed"
+  },
+  "results_detail": [
+    {
+      "id": "HOST",
+      "title": "Host prepared: Harbor bootstrapped from the release archive",
+      "status": "pass",
+      "at": "2026-09-15T00:43:27.414Z",
+      "details": {
+        "versions": {
+          "node": "v24.12.0",
+          "docker": "29.8.0",
+          "compose": "5.5.1",
+          "ubuntu": "Ubuntu 24.04.4 LTS",
+          "arch": "x86_64"
+        },
+        "installationId": "b4da4e7f-2bda-47fa-8697-3736e656a130",
+        "fresh": false,
+        "rebuilt": false
+      },
+      "notes": [
+        "Docker 29.8.0, Compose 5.5.1, Node v24.12.0, Ubuntu 24.04.4 LTS x86_64"
+      ]
+    },
+    {
+      "id": "jellyfin",
+      "title": "Install, readiness, browser check and remove of jellyfin",
+      "status": "pass",
+      "at": "2026-09-15T00:43:59.676Z",
+      "details": {
+        "name": "jellyfin-q0042",
+        "instanceId": "3e2e0e4a-9167-420b-8d1e-1419571c641d",
+        "url": "http://localhost:18107/",
+        "title": "ddcb45c82584",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_3e2e0e4a9167420b8d1e1419571c641d-web-1 Up 24 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_3e2e0e4a9167420b8d1e1419571c641d_cache/_data->/cache volume:/var/lib/docker/volumes/hb_3e2e0e4a9167420b8d1e1419571c641d_config/_data->/config volume:/var/lib/docker/volumes/hb_3e2e0e4a9167420b8d1e1419571c641d_media/_data->/media"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_3e2e0e4a9167420b8d1e1419571c641d-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_3e2e0e4a9167420b8d1e1419571c641d_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "cache",
+            "name": "hb_3e2e0e4a9167420b8d1e1419571c641d_cache",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_3e2e0e4a9167420b8d1e1419571c641d_config",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "media",
+            "name": "hb_3e2e0e4a9167420b8d1e1419571c641d_media",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 31,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 31s; page title \"ddcb45c82584\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "jellyfin (external storage)",
+      "title": "Install, readiness, browser check and remove of jellyfin (external storage)",
+      "status": "pass",
+      "at": "2026-09-15T00:44:33.081Z",
+      "details": {
+        "name": "jellyfin-q0042x",
+        "instanceId": "883aa47e-1551-4718-9524-26b7b896c4ad",
+        "url": "http://localhost:18108/",
+        "title": "6aad5ee64d56",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_883aa47e15514718952426b7b896c4ad-web-1 Up 24 seconds (healthy)"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_883aa47e15514718952426b7b896c4ad_cache/_data->/cache volume:/var/lib/docker/volumes/hb_883aa47e15514718952426b7b896c4ad_config/_data->/config bind:/srv/harbor-test-storage/jellyfin-media-q0042->/media"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "media",
+            "name": "/srv/harbor-test-storage/jellyfin-media-q0042",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_883aa47e15514718952426b7b896c4ad-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_883aa47e15514718952426b7b896c4ad_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "cache",
+            "name": "hb_883aa47e15514718952426b7b896c4ad_cache",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_883aa47e15514718952426b7b896c4ad_config",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 32,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 32s; page title \"6aad5ee64d56\"; health 200",
+        "external storage: --storage media=/srv/harbor-test-storage/jellyfin-media-q0042 mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    }
+  ]
+}

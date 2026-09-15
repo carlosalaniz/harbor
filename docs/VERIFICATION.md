@@ -98,6 +98,36 @@ Run **vm-2026-09-14T23-36-24** (`--only B04,B05,B07,B10,B09` on the same host af
 | B10 | Negative: invalid hostname, duplicate hostname, unknown provider state → clear errors, no partial config | **FAIL** | harbor expose 546ed117-61b5-47fc-8d22-d6d517e042d5 --via public --host harbor-dup-mu1vv2c4.apein.space --protect none --yes exited 3:  {
 | B09 | Reconfigure primary back to loopback; n8n works locally again; unexpose withdraws routes | **PASS** | primary back to loopback: base URL env re-rendered, workflow ran locally<br>unexpose removed Caddy routes (2 -> 0) |
 
+### Live catalog qualification (`node scripts/vm/qualify-catalog.mjs --fresh`)
+
+Every bundled package is installed with the CLI on the designated droplet (fresh Ubuntu 24.04.4 x86-64; Docker 29.8.0, Compose 5.5.1, Node v24.12.0), waited for until Harbor reports it healthy, opened in headless Chromium (title, screenshot, health probe through the SSH tunnel), inspected (containers, mounts, resources) and removed. Packages with external storage claims are installed a second time with host folders under `/srv/harbor-test-storage` and the bind mounts are verified. 23 of 23 steps passed; reports and screenshots: `docs/evidence/catalog-2026-09-15T00-13-13/`, `docs/evidence/catalog-2026-09-15T00-40-44/`, `docs/evidence/catalog-2026-09-15T00-42-58/`.
+
+| Step | Result | Run | Notes |
+|---|---|---|---|
+| actual | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 24s; page title "Actual"; health 200<br>removed after the check; volumes and folders retained |
+| anythingllm | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 41s; page title "AnythingLLM / Your personal LLM trained on anything"; health 200<br>removed after the check; volumes and folders retained |
+| audiobookshelf | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 31s; page title "Audiobookshelf"; health 200<br>removed after the check; volumes and folders retained |
+| audiobookshelf (external storage) | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 20s; page title "Audiobookshelf"; health 200<br>external storage: --storage audiobooks=/srv/harbor-test-storage/audiobookshelf-audiobooks --storage podcasts=/srv/harbor-test-storage/audiobookshelf-podcasts mounted as bind<br>removed after the check; volumes and folders retained |
+| bentopdf | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 30s; page title "BentoPDF - PDF Tools"; health 200<br>removed after the check; volumes and folders retained |
+| excalidraw | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 52s; page title "Excalidraw Whiteboard"; health 200<br>removed after the check; volumes and folders retained |
+| forgejo | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 28s; page title "Installation - Forgejo: Beyond coding. We forge."; health 200<br>removed after the check; volumes and folders retained |
+| freshrss | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 25s; page title "Installation · FreshRSS: step 1"; health 200<br>removed after the check; volumes and folders retained |
+| immich | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 131s; page title "Welcome 🎉 - Immich"; health 200<br>removed after the check; volumes and folders retained |
+| immich (external storage) | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 55s; page title "Welcome 🎉 - Immich"; health 200<br>external storage: --storage library=/srv/harbor-test-storage/immich-library mounted as bind<br>removed after the check; volumes and folders retained |
+| jellyfin | **PASS** | catalog-2026-09-15T00-42-58 | healthy after 31s; page title "ddcb45c82584"; health 200<br>removed after the check; volumes and folders retained |
+| jellyfin (external storage) | **PASS** | catalog-2026-09-15T00-42-58 | healthy after 32s; page title "6aad5ee64d56"; health 200<br>external storage: --storage media=/srv/harbor-test-storage/jellyfin-media-q0042 mounted as bind<br>removed after the check; volumes and folders retained |
+| mealie | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 81s; page title "Login"; health 200<br>removed after the check; volumes and folders retained |
+| memos | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 19s; page title "Memos"; health 200<br>removed after the check; volumes and folders retained |
+| n8n | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 104s; page title "n8n.io - Workflow Automation"; health 200<br>removed after the check; volumes and folders retained |
+| navidrome | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 25s; page title "Navidrome"; health 200<br>removed after the check; volumes and folders retained |
+| navidrome (external storage) | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 20s; page title "Navidrome"; health 200<br>external storage: --storage music=/srv/harbor-test-storage/navidrome-music mounted as bind<br>removed after the check; volumes and folders retained |
+| nextcloud | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 65s; page title "Nextcloud"; health 200<br>removed after the check; volumes and folders retained |
+| nextcloud (external storage) | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 32s; page title "Nextcloud"; health 200<br>external storage: --storage data=/srv/harbor-test-storage/nextcloud-data mounted as bind<br>removed after the check; volumes and folders retained |
+| open-webui | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 211s; page title "Open WebUI"; health 200<br>removed after the check; volumes and folders retained |
+| open-webui (external storage) | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 84s; page title "Open WebUI"; health 200<br>external storage: --storage models=/srv/harbor-test-storage/open-webui-models mounted as bind<br>removed after the check; volumes and folders retained |
+| uptime-kuma | **PASS** | catalog-2026-09-15T00-40-44 | healthy after 23s; page title "Uptime Kuma"; health 302<br>removed after the check; volumes and folders retained |
+| vaultwarden | **PASS** | catalog-2026-09-15T00-13-13 | healthy after 85s; page title "Vaultwarden Web"; health 200<br>removed after the check; volumes and folders retained |
+
 ## 4. Qualified versions
 
 | Component | Version | Source |
@@ -113,6 +143,28 @@ Run **vm-2026-09-14T23-36-24** (`--only B04,B05,B07,B10,B09` on the same host af
 | PostgreSQL | `postgres@sha256:f1c3376c…` (16.15) | catalog/n8n/release.json |
 | Portainer CE | `portainer/portainer-ce@sha256:0e3c8bc8…` (2.39.7) | src/bootstrap/tools.ts |
 | Cockpit | Ubuntu 24.04 `cockpit` package (universe) at run time | apt |
+
+### Catalog images and qualification (from `catalog/*/release.json`)
+
+| Package | Images (tag → index digest) | Qualification |
+|---|---|---|
+| actual | web: `actualbudget/actual-server:26.9.0` → `sha256:552beab3dec8…` | passed (2026-09-15) |
+| anythingllm | web: `mintplexlabs/anythingllm:1.16.1` → `sha256:05617e7bece7…` | passed (2026-09-15) |
+| audiobookshelf | web: `ghcr.io/advplyr/audiobookshelf:2.36.0` → `sha256:180acad33d69…` | passed (2026-09-15) |
+| bentopdf | web: `ghcr.io/alam00000/bentopdf-simple:v2.8.8` → `sha256:3d62b8f8eece…` | passed (2026-09-15) |
+| excalidraw | web: `excalidraw/excalidraw:latest` → `sha256:f7ee194addd6…` | passed (2026-09-15) |
+| forgejo | web: `codeberg.org/forgejo/forgejo:16.0.4` → `sha256:a3e33d03e771…` | passed (2026-09-15) |
+| freshrss | web: `freshrss/freshrss:1.30.0` → `sha256:258b8edfc8a7…` | passed (2026-09-15) |
+| immich | database: `ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0` → `sha256:bcf63357191b…`<br>redis: `valkey/valkey:8.1.3-bookworm` → `sha256:fea8b3e67b15…`<br>machine-learning: `ghcr.io/immich-app/immich-machine-learning:v3.2.1` → `sha256:4f879e40da49…`<br>server: `ghcr.io/immich-app/immich-server:v3.2.1` → `sha256:2ab6a6273755…` | passed (2026-09-15) |
+| jellyfin | web: `jellyfin/jellyfin:10.11.11` → `sha256:aefb67e6a7ff…` | passed (2026-09-15) |
+| mealie | web: `ghcr.io/mealie-recipes/mealie:v3.26.0` → `sha256:a4d12ab3a009…` | passed (2026-09-15) |
+| memos | web: `neosmemo/memos:0.30.0` → `sha256:71a5b4738d1b…` | passed (2026-09-15) |
+| n8n | web: `n8nio/n8n:2.38.7` → `sha256:a8c95f75c6fd…`<br>postgres: `postgres:16.15` → `sha256:f1c3376c26f2…` | passed (2026-09-15) |
+| navidrome | web: `deluan/navidrome:0.64.0` → `sha256:a384948b81bd…` | passed (2026-09-15) |
+| nextcloud | db: `postgres:17.11` → `sha256:67f41722b7a8…`<br>redis: `redis:8.10.1-alpine` → `sha256:becdda6c7f4b…`<br>app: `nextcloud:34.0.4-apache` → `sha256:de4ad9389386…` | passed (2026-09-15) |
+| open-webui | ollama: `ollama/ollama:0.34.0` → `sha256:684d8674b431…`<br>web: `ghcr.io/open-webui/open-webui:v0.11.3` → `sha256:41daa0cf2561…` | passed (2026-09-15) |
+| uptime-kuma | web: `louislam/uptime-kuma:2.5.4` → `sha256:917318f9d7be…` | passed (2026-09-15) |
+| vaultwarden | web: `vaultwarden/server:1.37.3-alpine` → `sha256:9a905c5cf5df…` | passed (2026-09-15) |
 
 ## 5. Limitations and honest notes
 

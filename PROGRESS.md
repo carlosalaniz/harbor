@@ -78,12 +78,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] New console: Home (system strip, app tiles, attention list), App Store (cards, categories, search, app page), Publishing, Platform, Settings; app drawer; install/publish wizards over the same plan → approve → operation flow; operation tray with one-time credentials; phone layout (bottom tabs); dark by default
 - [x] Playwright suite rewritten (9 tests incl. phone viewport); VM runner selectors updated
 
-## Phase 8 — one-click catalog + bring your own folder (2026-09-14) 🔄
+## Phase 8 — one-click catalog + bring your own folder (2026-09-14/15) ✅ (final fresh run pending)
 - [x] docs/design/CATALOG.md; decisions 39–43
 - [x] External storage: manifest `storage[].external`, install request `storage`, plan-time validation (denylist, existence, overlap), bind-mount rendering, `bind` resources, reinstall/start verification, schema v3 migration, CLI `--storage claim=/path`, console choice per claim; 6 integration + 8 unit tests
 - [x] `configuration[].format` (url/origin/authority/host/scheme); mixed-case env keys
 - [x] 14 new packages pinned by digest with `scripts/catalog-pin.mjs` (Open WebUI+Ollama, AnythingLLM, Jellyfin, Immich, Nextcloud, Vaultwarden, Uptime Kuma, Forgejo, FreshRSS, Actual, Audiobookshelf, Navidrome, Memos, Mealie); all 17 load and validate (`pnpm tsx scripts/catalog-verify.ts`)
-- [ ] Live qualification of all 17 on a fresh droplet (`scripts/vm/qualify-catalog.mjs --fresh`) — running; results go to release.json and docs/VERIFICATION.md
+- [x] Live qualification of all 17 on a fresh droplet (`scripts/vm/qualify-catalog.mjs --fresh`): runs catalog-2026-09-15T00-13-13 (15/17 + all folder variants), 00-40-44 and 00-42-58 (Jellyfin and Uptime Kuma after fixes: Uptime Kuma redirects to /setup on first run; the script needed probe retries and per-run folder names) → **17/17 passed**, recorded in every release.json and docs/VERIFICATION.md
 - [ ] Final fresh acceptance run with the console and the enlarged catalog; merge `exposure` → `main`
 
 ## Test results (latest local run)

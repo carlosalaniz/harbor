@@ -163,7 +163,7 @@ async function main() {
       let storageArgs = [];
       if (variant) {
         for (const c of ext) {
-          const dir = `${EXT_ROOT}/${id}-${c}`;
+          const dir = `${EXT_ROOT}/${id}-${c}-${SUFFIX}`; // retained instances keep their folders reserved, so each pass gets fresh ones
           ssh(`mkdir -p ${dir} && chmod 777 ${dir} && touch ${dir}/.harbor-test-marker`);
           storageArgs.push('--storage', `${c}=${dir}`);
         }
@@ -175,7 +175,7 @@ async function main() {
         if (variant) {
           const mountsOk = r.details.mounts.some((l) => l.includes(`bind:${EXT_ROOT}/${id}-`));
           if (!mountsOk) throw new Error(`no bind mount of ${EXT_ROOT} observed: ${r.details.mounts.join(' ')}`);
-          const marker = sshTry(`ls ${EXT_ROOT}/${id}-${ext[0]}/.harbor-test-marker`).code === 0;
+          const marker = sshTry(`ls ${EXT_ROOT}/${id}-${ext[0]}-${SUFFIX}/.harbor-test-marker`).code === 0;
           if (!marker) throw new Error('external folder marker disappeared');
         }
         results[id] = results[id] ?? 'passed';
