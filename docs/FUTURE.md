@@ -62,3 +62,12 @@ Reviewed the implementation against the four points; no code change was needed.
 - **App updates**: no update engine yet; a new package revision is a manual reinstall today.
 - **Cross-app links**: AnythingLLM could use the Ollama bundled with Open WebUI if instances could
   address each other; today every package is its own private network.
+
+## Umbrel features reviewed on 2026-09-15 (v0.7.0)
+
+Adopted: terminal, troubleshoot/logs, two-factor login, device name (Settings), plus earlier rounds' wallpapers,
+launcher arranging, updates, own apps. Not adopted, on purpose: home widgets with live app data (needs a per-app
+widget contract), a files app (a large product on its own; Nextcloud covers it), factory reset (destructive;
+`harbor purge` per app exists), external disk formatting/mounting (TDD exclusion; the folder picker sees mounted
+disks), Harbor self-update from the console (TDD excludes an installer auto-update; the release archive +
+`bootstrap` is the update path), migration assistant, language settings.

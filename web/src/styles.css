@@ -1981,3 +1981,105 @@ button.vital:hover {
     left: 22px;
   }
 }
+
+/* ---- advanced access: terminal, commands, logs; two-factor ---- */
+.settings-body,
+.card {
+  min-width: 0;
+}
+pre.code.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  margin: 0;
+  flex: 1;
+}
+.cmd {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+.ports > li {
+  gap: 10px;
+  padding: 6px 0;
+}
+.cli-list {
+  margin: 4px 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+.cli-list code,
+.tfa-setup code {
+  overflow-wrap: anywhere;
+}
+.terminal-wrap {
+  margin-top: 12px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: #0b1016;
+}
+.terminal {
+  height: min(60vh, 520px);
+  padding: 8px 4px 4px 8px;
+}
+.terminal .xterm {
+  height: 100%;
+}
+.terminal-bar {
+  padding: 6px 10px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--card-solid) 80%, transparent);
+}
+.logbox {
+  max-height: min(60vh, 560px);
+  overflow: auto;
+  white-space: pre;
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 10px;
+}
+.tfa-setup {
+  display: grid;
+  grid-template-columns: 196px 1fr;
+  gap: 18px;
+  align-items: start;
+  margin-top: 10px;
+}
+.qr {
+  border-radius: 12px;
+  background: #fff;
+  padding: 6px;
+  width: 196px;
+  height: 196px;
+}
+.secret {
+  letter-spacing: 0.08em;
+  font-size: 13px;
+}
+.device-name .rename {
+  margin-left: 6px;
+  opacity: 0.6;
+  font-size: 14px;
+  vertical-align: middle;
+}
+.device-name .rename:hover {
+  opacity: 1;
+}
+.device-name.named::after {
+  content: '';
+}
+.device-rename {
+  justify-content: center;
+}
+@media (max-width: 760px) {
+  .tfa-setup {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .terminal {
+    height: 50vh;
+  }
+}

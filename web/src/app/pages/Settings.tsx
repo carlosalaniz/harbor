@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { AppearanceDto, DomainsDto, HostStorageDto, PlatformToolDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import QRCode from 'qrcode';
+import { Terminal } from '../Terminal';
+import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, PlatformToolDto, SecurityDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
-import { Dialog, FolderPicker, Pill } from '../components';
+import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
 import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
 import { WALLPAPERS, applyTheme, applyWallpaper, hasExplicitWallpaper, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'access' | 'about';
+type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'access' | 'troubleshoot' | 'about';
 const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] = [
   { id: 'overview', label: 'Overview', glyph: '◉', blurb: 'This machine at a glance' },
   { id: 'account', label: 'Account', glyph: '👤', blurb: 'Password and session' },
@@ -14,7 +16,8 @@ const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] =
   { id: 'public', label: 'Public addresses', glyph: '🌐', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', glyph: '💽', blurb: 'Disks and folders your apps use' },
   { id: 'appearance', label: 'Appearance', glyph: '🎨', blurb: 'Theme and wallpapers' },
-  { id: 'access', label: 'Advanced access', glyph: '🔧', blurb: 'SSH forwarding, CLI' },
+  { id: 'access', label: 'Advanced access', glyph: '⌨️', blurb: 'Terminal, SSH forwarding, CLI' },
+  { id: 'troubleshoot', label: 'Troubleshoot', glyph: '🩺', blurb: 'Harbor and app logs' },
   { id: 'about', label: 'About', glyph: 'ℹ️', blurb: 'Version and trust boundary' },
 ];
 
@@ -55,6 +58,7 @@ export function Settings({ c, onLogout, initialSection, onSection }: { c: Consol
         {section === 'storage' && <Storage />}
         {section === 'appearance' && <Appearance c={c} />}
         {section === 'access' && <Access c={c} />}
+        {section === 'troubleshoot' && <Troubleshoot c={c} />}
         {section === 'about' && <About c={c} />}
       </div>
     </div>
@@ -72,7 +76,15 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
     api.systemHost().then(setHost, () => setHost(null));
   }, []);
   const pct = (used: number, total: number) => (total ? Math.min(100, Math.round((used / total) * 100)) : 0);
-  const name = host?.hostname ?? m?.host.hostname ?? 'this machine';
+  const hostname = host?.hostname ?? m?.host.hostname ?? 'this machine';
+  const name = c.data.system?.deviceName ?? hostname;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const saveName = async () => {
+    const sys = await api.setDeviceName(draft.trim() || null).catch(() => null);
+    if (sys) c.patchData((d) => ({ ...d, system: sys }));
+    setEditing(false);
+  };
   const temp = m?.temperatureC ?? null;
   const tempTone = temp === null ? 'muted' : temp < 70 ? 'ok' : temp < 85 ? 'warn' : 'bad';
   const doPower = async (a: 'reboot' | 'poweroff') => {
@@ -118,10 +130,45 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
             {powerMsg}
           </p>
         )}
-        <h2 id="dev-h" className="device-name">
-          {name}
-        </h2>
+        {editing ? (
+          <form
+            className="row wrap device-rename"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveName();
+            }}
+          >
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={40} placeholder={hostname} aria-label="Device name" autoFocus />
+            <button className="btn primary" type="submit">
+              Save
+            </button>
+            <button className="btn ghost" type="button" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <h2 id="dev-h" className={`device-name ${c.data.system?.deviceName ? 'named' : ''}`}>
+            {name}
+            <button
+              className="btn ghost icon rename"
+              onClick={() => {
+                setDraft(c.data.system?.deviceName ?? '');
+                setEditing(true);
+              }}
+              aria-label="Rename this machine"
+              title="Rename"
+            >
+              ✎
+            </button>
+          </h2>
+        )}
         <dl className="kv device-facts">
+          {c.data.system?.deviceName && (
+            <>
+              <dt>Hostname</dt>
+              <dd>{hostname}</dd>
+            </>
+          )}
           <dt>Running on</dt>
           <dd>
             {host ? `${host.os} · ${host.arch}` : m ? `${m.host.os} · ${m.host.arch}` : '—'}
@@ -233,6 +280,7 @@ function Account({ onLogout }: { onLogout: () => void }) {
   };
   return (
     <>
+      <TwoFactor />
       <section className="card" aria-labelledby="pw-h">
         <h2 id="pw-h">Change password</h2>
         <p className="muted small">Use at least 12 characters. Every other logged-in browser or CLI is signed out when you change it.</p>
@@ -269,6 +317,110 @@ function Account({ onLogout }: { onLogout: () => void }) {
         </button>
       </section>
     </>
+  );
+}
+
+// Two-factor login with any authenticator app (TOTP). Setup shows a QR code and the typed secret; a live
+// code confirms it; the password turns it off. Recovery without the app: `harbor account totp reset --local` on the machine.
+function TwoFactor() {
+  const [sec, setSec] = useState<SecurityDto | null>(null);
+  const [setup, setSetup] = useState<{ secret: string; otpauthUrl: string; qr: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => api.security().then(setSec, () => setSec(null)), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const run = async (fn: () => Promise<unknown>, ok?: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await fn();
+      await load();
+      if (ok) setMsg({ tone: 'ok', text: ok });
+    } catch (e) {
+      setMsg({ tone: 'bad', text: e instanceof ApiError ? `${e.message}. ${e.nextAction}` : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const start = () =>
+    run(async () => {
+      const r = await api.totpSetup();
+      const qr = await QRCode.toDataURL(r.otpauthUrl, { margin: 1, width: 196, color: { dark: '#000000', light: '#ffffff' } });
+      setSetup({ ...r, qr });
+      setCode('');
+    });
+  return (
+    <section className="card" aria-labelledby="tfa-h">
+      <div className="row between wrap">
+        <div>
+          <h2 id="tfa-h">Two-factor login</h2>
+          <p className="muted small">A 6-digit code from an authenticator app (1Password, Google Authenticator, Authy…) is asked at every login, on top of the password.</p>
+        </div>
+        {sec && (
+          <Pill tone={sec.twoFactor ? 'ok' : 'muted'}>
+            <span className="dot" aria-hidden="true" />
+            {sec.twoFactor ? 'On' : 'Off'}
+          </Pill>
+        )}
+      </div>
+      {sec && !sec.twoFactor && !setup && (
+        <button className="btn primary" disabled={busy} onClick={() => void start()}>
+          Turn on two-factor login
+        </button>
+      )}
+      {setup && !sec?.twoFactor && (
+        <div className="tfa-setup">
+          <img src={setup.qr} alt="QR code for your authenticator app" className="qr" width={196} height={196} />
+          <div className="stack">
+            <p className="small">
+              <strong>1.</strong> Scan this with your authenticator app, or type the key: <code className="secret">{setup.secret}</code> <Copy text={setup.secret} />
+            </p>
+            <form
+              className="row wrap"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run(async () => (await api.totpEnable(code), setSetup(null), setCode('')), 'Two-factor login is on. Keep your authenticator safe; without it you need access to the machine to recover.');
+              }}
+            >
+              <label className="small">
+                <strong>2.</strong> Enter the code it shows now
+                <input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" pattern="[0-9 ]{6,7}" placeholder="123 456" aria-label="Authenticator code" autoComplete="one-time-code" />
+              </label>
+              <button className="btn primary" type="submit" disabled={busy || code.replace(/\s/g, '').length !== 6}>
+                Confirm and turn on
+              </button>
+              <button className="btn ghost" type="button" onClick={() => setSetup(null)}>
+                Cancel
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+      {sec?.twoFactor && (
+        <form
+          className="row wrap"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => (await api.totpDisable(password), setPassword('')), 'Two-factor login is off.');
+          }}
+        >
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Your password" aria-label="Password to turn off two-factor" autoComplete="current-password" />
+          <button className="btn danger" type="submit" disabled={busy || !password}>
+            Turn off
+          </button>
+          <span className="muted small">Lost the authenticator? On the machine: <code>sudo /opt/harbor/bin/harbor account totp reset --local --config /etc/harbor/harbor.json</code></span>
+        </form>
+      )}
+      {msg && (
+        <p className={`${msg.tone === 'ok' ? 'notice' : 'error'} small`} role={msg.tone === 'ok' ? 'status' : 'alert'}>
+          {msg.text}
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -868,21 +1020,160 @@ function OwnPicture({ c }: { c: Console }) {
 
 function Access({ c }: { c: Console }) {
   const port = c.data.system ? new URL(c.data.system.managementOrigin).port : '18000';
-  const appPorts = [...new Set(c.data.instances.flatMap((i) => i.endpoints.map((e) => e.hostPort)))].sort();
-  const forwards = [Number(port), ...appPorts, 9090, 9443].map((p) => `-L ${p}:127.0.0.1:${p}`).join(' ');
+  const apps = c.data.instances.filter((i) => i.installState !== 'retained');
+  const appPorts = [...new Set(apps.flatMap((i) => i.endpoints.map((e) => e.hostPort)))].sort((a, b) => a - b);
+  const fwd = (ports: number[]) => ports.map((p) => `-L ${p}:127.0.0.1:${p}`).join(' ');
+  const consoleLine = `ssh ${fwd([Number(port)])} <user>@<this-machine>`;
+  const everything = `ssh ${fwd([Number(port), ...appPorts, 9090, 9443])} <user>@<this-machine>`;
+  const [showTerminal, setShowTerminal] = useState(false);
   return (
     <>
+      <section className="card" aria-labelledby="term-h">
+        <div className="row between wrap">
+          <div>
+            <h2 id="term-h">Terminal</h2>
+            <p className="muted small">A shell on this machine, right here. It runs as Harbor's own service account (it can use <code>docker</code> and the <code>harbor</code> command; it cannot change the system). Closes after 30 minutes of inactivity.</p>
+          </div>
+          {!showTerminal && (
+            <button className="btn primary" onClick={() => setShowTerminal(true)}>
+              Open terminal
+            </button>
+          )}
+        </div>
+        {showTerminal && <Terminal />}
+      </section>
       <section className="card" aria-labelledby="access-h">
         <h2 id="access-h">SSH port forwarding</h2>
-        <p className="muted small">Without Tailscale, Harbor and its apps answer only on this machine. From another computer, forward the same port numbers over SSH and open them locally.</p>
-        <pre className="code">ssh {forwards} user@this-host</pre>
-        <p className="muted small">
-          If a local port is busy, pick another local port for that entry (for example <code>-L 28080:127.0.0.1:18080</code>) and open it at that local port.
-        </p>
+        <p className="muted small">Without Tailscale, Harbor and its apps answer only on this machine. From another computer, forward the same port numbers over SSH and open <code>http://localhost:{port}</code>. Keep the port numbers identical on both sides: Harbor rejects other addresses.</p>
+        <h4>Just the console</h4>
+        <div className="cmd">
+          <pre className="code wrap">{consoleLine}</pre>
+          <Copy text={consoleLine} />
+        </div>
+        <h4>Console, every app, Cockpit and Portainer</h4>
+        <div className="cmd">
+          <pre className="code wrap">{everything}</pre>
+          <Copy text={everything} />
+        </div>
+        {apps.length > 0 && (
+          <ul className="plain ports">
+            {apps.map((i) => (
+              <li key={i.id} className="row wrap">
+                <InstanceIcon inst={i} size={28} />
+                <span>
+                  <strong>{appLabel(i)}</strong> <span className="muted small">{i.endpoints.map((e) => `port ${e.hostPort}`).join(', ')}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="muted small">Replace <code>&lt;user&gt;@&lt;this-machine&gt;</code> with your SSH login. If a local port is busy on your computer, free it first.</p>
       </section>
       <section className="card" aria-labelledby="cli-h">
         <h2 id="cli-h">Command line</h2>
-        <p className="muted small">Everything the console does is also a command: <code>harbor catalog</code>, <code>harbor install immich --storage library=/srv/harbor/Photos</code>, <code>harbor expose n8n --via tailnet</code>, <code>harbor storage</code>, <code>harbor account set-password</code>. See the operator guide in the repository.</p>
+        <p className="muted small">Everything the console does is also a command on the machine (or in the terminal above):</p>
+        <ul className="cli-list">
+          {[
+            ['harbor list', 'apps, state, addresses, updates'],
+            ['harbor install immich --storage library=/srv/harbor/Photos', 'install with your own folder'],
+            ['harbor update <app>', 'update to the newest package revision'],
+            ['harbor expose <app> --via tailnet', 'publish on your tailnet'],
+            ['harbor packages add my-app.zip', 'upload your own app'],
+            ['harbor wallpaper set --on --source bing', 'rotating wallpapers'],
+            ['harbor logs <app>', 'container logs'],
+          ].map(([cmd, what]) => (
+            <li key={cmd}>
+              <code>{cmd}</code> <span className="muted small">{what}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="muted small">The full list: <code>harbor --help</code>, and the operator guide in the repository.</p>
+      </section>
+    </>
+  );
+}
+
+// Troubleshoot: Harbor's own log and each app's container logs, copyable.
+function Troubleshoot({ c }: { c: Console }) {
+  const apps = c.data.instances.filter((i) => i.installState !== 'retained');
+  const [target, setTarget] = useState<string>('harbor');
+  const [lines, setLines] = useState(300);
+  const [text, setText] = useState<string>('');
+  const [source, setSource] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (target === 'harbor') {
+        const r: LogsDto = await api.harborLogs(lines);
+        setText(r.lines.join('\n'));
+        setSource(r.source === 'journal' ? 'systemd journal' : 'daemon memory (since the last start)');
+      } else {
+        const r: InstanceLogsDto = await api.instanceLogs(target, lines);
+        setText(r.containers.map((k) => `== ${k.service} (${k.name})\n${k.lines.join('\n') || '(no output)'}`).join('\n\n') || 'No containers recorded for this app.');
+        setSource('docker logs');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [target, lines]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  return (
+    <>
+      <section className="card" aria-labelledby="logs-h">
+        <div className="row between wrap">
+          <div>
+            <h2 id="logs-h">Logs</h2>
+            <p className="muted small">When something misbehaves, this is where it says why. Copy and share when asking for help; the lines contain no passwords.</p>
+          </div>
+          <div className="row wrap">
+            <select value={target} onChange={(e) => setTarget(e.target.value)} aria-label="Log source">
+              <option value="harbor">Harbor itself</option>
+              {apps.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {appLabel(i)}
+                </option>
+              ))}
+            </select>
+            <select value={lines} onChange={(e) => setLines(Number(e.target.value))} aria-label="How many lines">
+              <option value={100}>last 100</option>
+              <option value={300}>last 300</option>
+              <option value={1000}>last 1000</option>
+            </select>
+            <button className="btn" onClick={() => void load()} disabled={busy}>
+              {busy ? 'Loading…' : 'Refresh'}
+            </button>
+            <Copy text={text} />
+          </div>
+        </div>
+        {error && (
+          <p className="error small" role="alert">
+            {error}
+          </p>
+        )}
+        <pre className="code logbox" aria-label="Log output">
+          {text || (busy ? '' : '(nothing yet)')}
+        </pre>
+        <p className="muted small">Source: {source || '—'}</p>
+      </section>
+      <section className="card" aria-labelledby="engine-h">
+        <h2 id="engine-h">Apps engine</h2>
+        <dl className="kv">
+          <dt>Docker</dt>
+          <dd>{c.data.system?.docker.available ? `online · ${c.data.system.docker.version ?? ''}` : `offline${c.data.system?.docker.error ? ` · ${c.data.system.docker.error}` : ''}`}</dd>
+          <dt>Containers</dt>
+          <dd>{c.data.metrics ? `${c.data.metrics.docker.containersRunning} of ${c.data.metrics.docker.containersTotal} running` : '—'}</dd>
+          <dt>Harbor</dt>
+          <dd>
+            {c.data.system?.version ?? '—'} · installation <code>{c.data.system?.installationId.slice(0, 8) ?? '—'}</code>
+          </dd>
+        </dl>
       </section>
     </>
   );

@@ -100,7 +100,15 @@ wallpaper, surfaces are translucent (`backdrop-filter`), one accent colour, 8pt 
   (confirmation dialogs; logind via a polkit rule), machine facts, storage/memory/temperature/live usage,
   wallpaper picker, then the section list.
 
-## 8. Out of scope now
+## 8. Advanced access, troubleshoot, security (added 2026-09-15, v0.7.0)
+
+Advanced access hosts a real terminal (xterm.js over a WebSocket, shell of the service account), the SSH
+forwarding lines (copyable, per app) and the CLI cheat sheet. Troubleshoot shows Harbor's journal and app
+container logs. Account gains two-factor login (QR + live code; password to turn off). Overview lets the
+operator name the machine; the name is the tab title and the TOTP issuer. Login shows the code field only
+after the password was accepted.
+
+## 9. Out of scope now
 
 Widgets with live app data, multi-user, notifications center, app updates UI (no update engine yet),
 folders/pages on the launcher.

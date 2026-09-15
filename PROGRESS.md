@@ -120,6 +120,15 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit (zip incl. zip-slip/CRC, image refs, revisions, store import rules), integration (upload → install → update with kept port/exposure → failed update rolls back → added volume/endpoint → remove; bundled revision bump shows an update), Playwright (upload + update from the console)
 - [x] docs/DEVELOPER_PACKAGES.md (template + rules), operator guide 4d, decisions 60–63
 
+## Phase 13 — advanced access, troubleshoot, two-factor, Tailscale self-heal (2026-09-15, v0.7.0) ✅
+- [x] Tailscale: `harbor-tailscale-operator.service` oneshot + polkit start grant; daemon restores the operator before login / after logout; clear next action on old installs
+- [x] Terminal: `/v1/terminal` WebSocket (first-message auth), Python pty bridge, xterm.js UI, idle timeout, 4 sessions max
+- [x] Troubleshoot: `GET /v1/logs/harbor` (journal or memory), `GET /v1/instances/{id}/logs` (docker), unit joins `systemd-journal`
+- [x] Two-factor login: TOTP setup/enable/disable, `TOTP_REQUIRED` on login, replay refusal, CLI `login --code`, `account totp …`, local `totp reset`
+- [x] Device name: `PUT /v1/system/name`, Overview rename, tab title, `harbor name`
+- [x] Advanced access page redesigned (no overflow, copy buttons, per-app ports, CLI list); CLI `harbor logs [app]`
+- [x] Tests: unit (RFC 6238 vectors, base32, systemd/polkit text, docker log demux), integration (2FA lifecycle, logs, terminal echo + resize over WebSocket), Playwright (terminal, troubleshoot, rename, 2FA login)
+
 ## Test results (latest local run)
 
 | Command | Result |

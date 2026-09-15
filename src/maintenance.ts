@@ -45,3 +45,22 @@ export async function enrollAdministrator(config: DaemonConfig, username: string
     lock.release();
   }
 }
+
+// Recovery when the authenticator is lost: run on the machine itself; removes the second factor.
+export function resetTwoFactor(config: DaemonConfig): { wasEnabled: boolean } {
+  const lock = acquireLock(config.stateDir, 'enroll');
+  try {
+    const db = openState(config.stateDir);
+    try {
+      const repo = new Repo(db, systemClock);
+      const was = repo.setting('security.totp') !== null;
+      repo.deleteSetting('security.totp');
+      repo.deleteSetting('security.totp.pending');
+      return { wasEnabled: was };
+    } finally {
+      db.close();
+    }
+  } finally {
+    lock.release();
+  }
+}

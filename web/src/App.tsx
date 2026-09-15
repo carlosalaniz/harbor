@@ -62,6 +62,8 @@ function LockClock() {
 function Login({ onDone, notice }: { onDone: () => void; notice: string | null }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [needCode, setNeedCode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
@@ -69,11 +71,13 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
     setBusy(true);
     setError(null);
     try {
-      await api.login(username, password);
+      await api.login(username, password, needCode ? code.replace(/\s/g, '') : undefined);
       setPassword('');
+      setCode('');
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? `${err.message}. ${err.nextAction}` : 'Cannot reach the Harbor daemon.');
+      if (err instanceof ApiError && err.code === 'TOTP_REQUIRED') setNeedCode(true);
+      else setError(err instanceof ApiError ? `${err.message}. ${err.nextAction}` : 'Cannot reach the Harbor daemon.');
     } finally {
       setBusy(false);
     }
@@ -98,6 +102,12 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
           Password
           <input name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
         </label>
+        {needCode && (
+          <label>
+            Two-factor code
+            <input name="code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="6 digits from your authenticator" required autoFocus />
+          </label>
+        )}
         {error && (
           <p className="error" role="alert">
             {error}
@@ -132,6 +142,11 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const openPalette = useCallback(() => setPalette(true), []);
   usePaletteShortcut(openPalette);
+
+  // the browser tab carries the machine's name
+  useEffect(() => {
+    document.title = c.data.system?.deviceName ? `${c.data.system.deviceName} · Harbor` : 'Harbor';
+  }, [c.data.system?.deviceName]);
 
   // The wallpaper picture follows the daemon (uploaded or rotating); the version busts the cache when it changes.
   const wp = c.data.appearance?.wallpaper;

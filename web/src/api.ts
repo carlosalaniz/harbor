@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, PackageImportResultDto, RotationPatch, SystemHostDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -40,11 +40,13 @@ async function call<T>(method: string, url: string, body?: unknown, headers: Rec
 }
 
 export const api = {
-  async login(username: string, password: string): Promise<SessionDto> {
-    const s = await call<SessionDto>('POST', '/v1/sessions', { username, password });
+  async login(username: string, password: string, code?: string): Promise<SessionDto> {
+    const s = await call<SessionDto>('POST', '/v1/sessions', { username, password, ...(code ? { code } : {}) });
     token = s.token;
     return s;
   },
+  // the terminal authenticates with the session token in its first WebSocket message
+  currentToken: (): string | null => token,
   async logout(): Promise<void> {
     try {
       await call<void>('DELETE', '/v1/sessions/current');
@@ -82,6 +84,14 @@ export const api = {
   setHomeOrder: (order: string[]) => call<AppearanceDto>('PUT', '/v1/appearance/home', { order }),
   setInstanceAppearance: (id: string, patch: InstanceAppearancePatch) => call<InstanceSummary>('PUT', `/v1/instances/${id}/appearance`, patch),
   systemHost: () => call<SystemHostDto>('GET', '/v1/system/host'),
+  // security, device, logs
+  security: () => call<SecurityDto>('GET', '/v1/account/security'),
+  totpSetup: () => call<TotpSetupDto>('POST', '/v1/account/totp/setup', {}),
+  totpEnable: (code: string) => call<void>('POST', '/v1/account/totp/enable', { code }),
+  totpDisable: (password: string) => call<void>('POST', '/v1/account/totp/disable', { password }),
+  setDeviceName: (name: string | null) => call<SystemDto>('PUT', '/v1/system/name', { name }),
+  harborLogs: (lines = 300) => call<LogsDto>('GET', `/v1/logs/harbor?lines=${lines}`),
+  instanceLogs: (id: string, lines = 300) => call<InstanceLogsDto>('GET', `/v1/instances/${id}/logs?lines=${lines}`),
   // your own apps
   uploadPackage: (fileName: string, dataUrl: string) => call<PackageImportResultDto>('POST', '/v1/packages', { fileName, dataUrl }),
   removePackage: (id: string) => call<void>('DELETE', `/v1/packages/${encodeURIComponent(id)}`),

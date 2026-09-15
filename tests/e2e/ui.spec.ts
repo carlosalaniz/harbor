@@ -571,3 +571,67 @@ ${notes ? `  releaseNotes: ${JSON.stringify(notes)}\n` : ''}`;
   await expect(page.getByRole('heading', { name: '1 update available' })).toHaveCount(0);
   await expect(tile.getByRole('link', { name: 'Open hello-e2e' })).toHaveAttribute('href', href!); // same address after the update
 });
+
+test('advanced access: the terminal runs a shell and echoes; troubleshoot shows Harbor and app logs; the machine can be renamed', async ({ page }) => {
+  await login(page);
+  await page.goto('/#/settings/access');
+  await expect(page.getByRole('heading', { name: 'Terminal' })).toBeVisible();
+  await expect(page.locator('pre.code.wrap').first()).toContainText('-L 18500:127.0.0.1:18500');
+  await page.getByRole('button', { name: 'Open terminal' }).click();
+  await expect(page.getByText(/Connected · shell/)).toBeVisible({ timeout: 15_000 });
+  await page.locator('.terminal-wrap textarea').focus();
+  await page.keyboard.type('echo e2e-shell-$((20+22))');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.terminal-wrap')).toContainText('e2e-shell-42', { timeout: 15_000 });
+  await page.keyboard.type('exit');
+  await page.keyboard.press('Enter');
+  await expect(page.getByText(/^Closed/)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'New session' })).toBeVisible();
+  // troubleshoot
+  await page.getByRole('button', { name: /Troubleshoot/ }).click();
+  await expect(page.getByRole('heading', { name: 'Logs' })).toBeVisible();
+  await expect(page.getByLabel('Log output')).toContainText(/"level"/, { timeout: 10_000 });
+  await expect(page.getByText(/Source: daemon memory/)).toBeVisible();
+  await page.getByLabel('Log source').selectOption({ label: 'Hello E2E' });
+  await expect(page.getByLabel('Log output')).toContainText('== web', { timeout: 10_000 });
+  await expect(page.getByLabel('Log output')).toContainText('created from nginx@sha256');
+  // rename the machine
+  await page.getByRole('button', { name: /Overview/ }).click();
+  await page.getByRole('button', { name: 'Rename this machine' }).click();
+  await page.getByLabel('Device name').fill('Test Box');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Test Box' })).toBeVisible();
+  await expect(page).toHaveTitle('Test Box · Harbor');
+  await expect(page.getByText('Hostname')).toBeVisible();
+});
+
+test('two-factor login: set up with a live code, log in again with password + code, turn it off with the password', async ({ page }) => {
+  const { totpCode } = await import('../../src/auth/totp.js');
+  await login(page);
+  await page.goto('/#/settings/account');
+  await expect(page.getByRole('heading', { name: 'Two-factor login' })).toBeVisible();
+  await page.getByRole('button', { name: 'Turn on two-factor login' }).click();
+  await expect(page.getByAltText('QR code for your authenticator app')).toBeVisible();
+  const secret = (await page.locator('code.secret').textContent())!.trim();
+  expect(secret).toMatch(/^[A-Z2-7]{32}$/);
+  await page.getByLabel('Authenticator code').fill(totpCode(secret, Date.now()));
+  await page.getByRole('button', { name: 'Confirm and turn on' }).click();
+  await expect(page.getByRole('status')).toContainText('Two-factor login is on');
+  // log out, log in: the code field appears only after a correct password
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
+  await page.getByLabel('Username').fill(ADMIN.username);
+  await page.getByLabel('Password').fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page.getByLabel('Two-factor code')).toBeVisible();
+  await page.getByLabel('Two-factor code').fill('000000');
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page.getByRole('alert')).toContainText('invalid two-factor code');
+  await page.getByLabel('Two-factor code').fill(totpCode(secret, Date.now() + 30_000)); // next step: never used before
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page.getByRole('heading', { name: 'Two-factor login' })).toBeVisible(); // back where we were (settings/account)
+  // off again so later tests log in with the password alone
+  await page.getByLabel('Password to turn off two-factor').fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Turn off' }).click();
+  await expect(page.getByRole('status')).toContainText('Two-factor login is off');
+});

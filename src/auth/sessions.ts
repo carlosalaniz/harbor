@@ -3,6 +3,7 @@ import type { Repo } from '../state/repo.js';
 import { HarborError } from '../errors.js';
 import { addSeconds, rfc3339, type Clock, type Ids } from '../util.js';
 import { hashPassword, validatePasswordPolicy, verifyPassword } from './password.js';
+import { newTotpSecret, otpauthUrl, verifyTotp } from './totp.js';
 
 export interface Session {
   actor: string;
@@ -54,7 +55,7 @@ export class SessionService {
     return w;
   }
 
-  async login(username: string, password: string, client: string): Promise<{ token: string; expiresAt: string }> {
+  async login(username: string, password: string, client: string, code?: string): Promise<{ token: string; expiresAt: string }> {
     const nowMs = this.clock.now().getTime();
     const w = this.windowFor(client);
     if (w.blocked(nowMs) || this.global.blocked(nowMs)) {
@@ -69,6 +70,18 @@ export class SessionService {
       w.record(nowMs);
       this.global.record(nowMs);
       throw new HarborError('UNAUTHENTICATED', 'invalid username or password', { nextAction: 'Check the credentials and retry.' });
+    }
+    // second factor: only after the password is right, so the code prompt never reveals a valid password
+    const totp = this.repo.setting<{ secret: string; enabledAt: string; lastStep?: number }>('security.totp');
+    if (totp) {
+      if (!code) throw new HarborError('TOTP_REQUIRED', 'a two-factor code is required', { nextAction: 'Enter the 6-digit code from your authenticator app.' });
+      const step = verifyTotp(totp.secret, code, nowMs);
+      if (step === null || (totp.lastStep !== undefined && step <= totp.lastStep)) {
+        w.record(nowMs);
+        this.global.record(nowMs);
+        throw new HarborError('UNAUTHENTICATED', step === null ? 'invalid two-factor code' : 'that two-factor code was already used', { nextAction: 'Wait for the next code in your authenticator app and retry.' });
+      }
+      this.repo.setSetting('security.totp', { ...totp, lastStep: step });
     }
     const token = this.ids.token(32).toString('base64url');
     const expiresAt = rfc3339(addSeconds(this.clock.now(), this.ttlSeconds));
@@ -90,6 +103,36 @@ export class SessionService {
 
   // Password change by the logged-in administrator: current password required, policy applied,
   // every other session revoked so a stolen token does not outlive the change.
+  // ---- two-factor (TOTP): setup creates a pending secret; enable confirms it with a live code; disable needs the password.
+  security(): { twoFactor: boolean; pending: boolean } {
+    return { twoFactor: this.repo.setting('security.totp') !== null, pending: this.repo.setting('security.totp.pending') !== null };
+  }
+  setupTotp(issuer: string): { secret: string; otpauthUrl: string } {
+    if (this.repo.setting('security.totp')) throw new HarborError('INVALID_STATE', 'two-factor authentication is already on', { nextAction: 'Turn it off first to set up a new authenticator.' });
+    const admin = this.repo.administrator();
+    const secret = newTotpSecret();
+    this.repo.setSetting('security.totp.pending', { secret, createdAt: rfc3339(this.clock.now()) });
+    return { secret, otpauthUrl: otpauthUrl(secret, admin?.username ?? 'admin', issuer) };
+  }
+  enableTotp(code: string): void {
+    const pending = this.repo.setting<{ secret: string }>('security.totp.pending');
+    if (!pending) throw new HarborError('INVALID_STATE', 'no two-factor setup in progress', { nextAction: 'Start the setup again.' });
+    const step = verifyTotp(pending.secret, code, this.clock.now().getTime());
+    if (step === null) throw new HarborError('INVALID_REQUEST', 'that code does not match the new authenticator', { nextAction: 'Scan the QR code again and type the current 6-digit code.' });
+    this.repo.transaction(() => {
+      this.repo.setSetting('security.totp', { secret: pending.secret, enabledAt: rfc3339(this.clock.now()), lastStep: step });
+      this.repo.deleteSetting('security.totp.pending');
+    });
+  }
+  async disableTotp(password: string): Promise<void> {
+    const admin = this.repo.administrator();
+    if (!admin) throw new HarborError('STATE_UNAVAILABLE', 'no administrator enrolled');
+    const ok = await verifyPassword(password, { hash: admin.passwordHash, salt: admin.salt, params: admin.params });
+    if (!ok) throw new HarborError('UNAUTHENTICATED', 'password is wrong', { nextAction: 'Type your password again.' });
+    this.repo.deleteSetting('security.totp');
+    this.repo.deleteSetting('security.totp.pending');
+  }
+
   async changePassword(token: string, currentPassword: string, newPassword: string): Promise<{ revokedSessions: number }> {
     const admin = this.repo.administrator();
     if (!admin) throw new HarborError('STATE_UNAVAILABLE', 'no administrator enrolled');

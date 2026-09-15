@@ -54,10 +54,13 @@ describe('wallpaper sources', () => {
 describe('power rule and host facts', () => {
   it('grants only reboot/power-off to the harbor user', () => {
     const r = polkitPowerRule();
-    expect(r).toContain('subject.user === "harbor"');
+    expect(r).toContain(`subject.user !== "harbor"`);
     expect(r).toContain('org.freedesktop.login1.reboot');
     expect(r).toContain('org.freedesktop.login1.power-off');
-    expect(r).not.toMatch(/manage-units|systemd1/);
+    // the only systemd unit the harbor user may start is the Tailscale operator oneshot (v0.7)
+    expect(r).toContain('org.freedesktop.systemd1.manage-units');
+    expect(r).toContain('"harbor-tailscale-operator.service"');
+    expect(r).not.toMatch(/stop|restart|manage-unit-files/);
   });
   it('reports hostname, OS, architecture and CPU model', () => {
     const h = hostFacts();

@@ -121,7 +121,21 @@ export class TailscaleCli implements TailscaleProvider {
     if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale serve failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`, { nextAction: 'Check `tailscale status` and that HTTPS certificates are enabled for the tailnet.' });
   }
 
+  // `tailscale logout` clears the operator grant; a root oneshot unit (installed by bootstrap, startable by
+  // the harbor user through polkit) puts it back. Best effort: an old bootstrap without the unit just skips it.
+  private async ensureOperator(): Promise<void> {
+    try {
+      await run('/usr/bin/systemctl', ['start', 'harbor-tailscale-operator.service'], 20_000);
+    } catch {
+      /* systemctl missing (tests) */
+    }
+  }
+  private denied(text: string): boolean {
+    return /access denied|checkprefs/i.test(text);
+  }
+
   async login(authKey: string | null, keyFile: string): Promise<{ loginUrl: string | null }> {
+    await this.ensureOperator();
     if (authKey) {
       // key via a private file (`--auth-key=file:`), never on the command line
       writeFileSync(keyFile, authKey.trim() + '\n', { mode: 0o600 });
@@ -137,13 +151,18 @@ export class TailscaleCli implements TailscaleProvider {
     // Interactive path: tailscale prints a login URL and waits; we only need the URL.
     const r = await run(this.bin, ['up', '--ssh=false', '--timeout=8s'], 20_000);
     const url = /(https:\/\/login\.tailscale\.com\/\S+)/.exec(r.stdout + r.stderr)?.[1] ?? null;
-    if (!url && r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+    if (!url && r.code !== 0) {
+      const text = (r.stderr || r.stdout).trim();
+      if (this.denied(text)) throw new HarborError('OPERATION_FAILED', 'Harbor is not allowed to operate Tailscale on this machine right now', { nextAction: 'Run once on the machine: sudo /opt/harbor/bin/harbor bootstrap --yes --with-tailscale (it restores the permission and installs the fix for the future).' });
+      throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${text.slice(0, 300)}`);
+    }
     return { loginUrl: url };
   }
 
   async logout(): Promise<void> {
     const r = await run(this.bin, ['logout'], 60_000);
     if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale logout failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+    await this.ensureOperator(); // logout wiped the prefs; put the grant back so the next login works
   }
 
   async unserve(port: number, target: string): Promise<void> {

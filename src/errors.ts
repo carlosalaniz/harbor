@@ -17,6 +17,7 @@ export type ErrorCode =
   | 'INVALID_REQUEST'
   | 'MALFORMED_JSON'
   | 'UNAUTHENTICATED'
+  | 'TOTP_REQUIRED'
   | 'FORBIDDEN_ORIGIN'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
@@ -44,6 +45,7 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   DOCKER_UNAVAILABLE: 503,
   STATE_UNAVAILABLE: 503,
   UNAUTHENTICATED: 401,
+  TOTP_REQUIRED: 401,
   FORBIDDEN_ORIGIN: 403,
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
@@ -74,6 +76,7 @@ const EXIT_CODE: Record<ErrorCode, number> = {
   DOCKER_UNAVAILABLE: 4,
   STATE_UNAVAILABLE: 4,
   UNAUTHENTICATED: 5,
+  TOTP_REQUIRED: 5,
   FORBIDDEN_ORIGIN: 5,
   RATE_LIMITED: 5,
   INTERNAL: 1,
@@ -135,6 +138,7 @@ function defaultNextAction(code: ErrorCode): string {
     case 'STATE_UNAVAILABLE': return 'Repair the state directory; Harbor never replaces a corrupt database.';
     case 'MALFORMED_JSON': return 'Send a valid JSON body.';
     case 'INVALID_REQUEST': return 'Correct the request and retry.';
+    case 'TOTP_REQUIRED': return 'Enter the 6-digit code from your authenticator app.';
     case 'UNAUTHENTICATED': return 'Log in and retry.';
     case 'FORBIDDEN_ORIGIN': return 'Use the configured local origin.';
     case 'NOT_FOUND': return 'Check the identifier.';

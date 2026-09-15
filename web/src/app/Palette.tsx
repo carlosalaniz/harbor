@@ -24,12 +24,13 @@ const PAGES: { route: Route; title: string; glyph: string; words: string }[] = [
   { route: { page: 'publishing' }, title: 'Publishing', glyph: '⇗', words: 'publish addresses tailnet public expose' },
   { route: { page: 'platform' }, title: 'Platform', glyph: '⚙', words: 'docker cockpit portainer tools system' },
   { route: { page: 'settings' }, title: 'Settings', glyph: '⚙', words: 'settings overview restart shut down device machine wallpaper' },
-  { route: { page: 'settings', section: 'account' }, title: 'Settings · Account', glyph: '👤', words: 'password session log out' },
+  { route: { page: 'settings', section: 'account' }, title: 'Settings · Account', glyph: '👤', words: 'password session log out two-factor 2fa authenticator' },
   { route: { page: 'settings', section: 'remote' }, title: 'Settings · Remote access', glyph: '🛰', words: 'tailscale tailnet vpn remote key' },
   { route: { page: 'settings', section: 'public' }, title: 'Settings · Public addresses', glyph: '🌐', words: 'domain dns certificate https letsencrypt caddy public internet' },
   { route: { page: 'settings', section: 'storage' }, title: 'Settings · Storage', glyph: '💽', words: 'disks folders data volumes' },
   { route: { page: 'settings', section: 'appearance' }, title: 'Settings · Appearance', glyph: '🎨', words: 'theme wallpaper dark light picture rotating reddit bing wikimedia' },
-  { route: { page: 'settings', section: 'access' }, title: 'Settings · Advanced access', glyph: '🔧', words: 'ssh cli command line' },
+  { route: { page: 'settings', section: 'access' }, title: 'Settings · Advanced access', glyph: '⌨️', words: 'ssh cli command line terminal shell console' },
+  { route: { page: 'settings', section: 'troubleshoot' }, title: 'Settings · Troubleshoot', glyph: '🩺', words: 'logs errors debug journal docker' },
   { route: { page: 'settings', section: 'about' }, title: 'Settings · About', glyph: 'ℹ️', words: 'version about' },
 ];
 

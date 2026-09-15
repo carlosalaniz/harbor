@@ -1,3 +1,4 @@
+import type { LogBuffer } from '../system/logs.js';
 import type { DaemonConfig } from '../config.js';
 import type { ComposeRunner, DockerAdapter } from '../docker/adapter.js';
 import type { PortObserver } from '../docker/ports.js';
@@ -34,13 +35,16 @@ export interface Ctx {
   verify: UrlVerifier;
   net: NetProvider;
   packages: PackageStore;
+  logBuffer: LogBuffer;
 }
 
-export function jsonLogger(level: 'debug' | 'info' | 'warn' | 'error', sink: (line: string) => void = (l) => process.stderr.write(l + '\n')): Logger {
-  const order = { debug: 0, info: 1, warn: 2, error: 3 };
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export const LOG_ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
+export function jsonLogger(level: LogLevel, sink: (line: string, level: LogLevel) => void = (l) => process.stderr.write(l + '\n')): Logger {
+  const order = LOG_ORDER;
   const emit = (lvl: keyof typeof order, msg: string, data?: Record<string, unknown>) => {
     if (order[lvl] < order[level]) return;
-    sink(JSON.stringify({ time: new Date().toISOString(), level: lvl, msg, ...(data ?? {}) }));
+    sink(JSON.stringify({ time: new Date().toISOString(), level: lvl, msg, ...(data ?? {}) }), lvl);
   };
   return {
     debug: (m, d) => emit('debug', m, d),

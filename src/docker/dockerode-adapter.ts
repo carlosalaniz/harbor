@@ -1,5 +1,6 @@
 import Docker from 'dockerode';
 import type { ContainerInfo, DockerAdapter, EngineInfo, NetworkInfo, VolumeInfo } from './adapter.js';
+import { demuxDockerLogs } from '../system/logs.js';
 
 type InspectInfo = Docker.ContainerInspectInfo;
 
@@ -139,6 +140,16 @@ export class DockerodeAdapter implements DockerAdapter {
       await this.docker.getNetwork(id).remove();
     } catch (e) {
       if (isNotFound(e)) return;
+      throw e;
+    }
+  }
+
+  async containerLogs(id: string, tail: number): Promise<string> {
+    try {
+      const raw = (await this.docker.getContainer(id).logs({ stdout: true, stderr: true, timestamps: true, tail })) as unknown as Buffer;
+      return demuxDockerLogs(Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw)));
+    } catch (e) {
+      if (isNotFound(e)) return '';
       throw e;
     }
   }

@@ -4,7 +4,7 @@ import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
-import { enrollAdministrator, initState } from '../maintenance.js';
+import { enrollAdministrator, initState, resetTwoFactor } from '../maintenance.js';
 import { productVersion } from '../daemon.js';
 import { ApiClient, clearCliState, readCliState, writeCliState } from './client.js';
 import path from 'node:path';
@@ -135,12 +135,22 @@ program
   .command('login')
   .description('log in to the local daemon (password prompted without echo)')
   .option('--username <name>')
-  .option('--password-stdin', 'read the password from stdin (protected automation pipe only)')
-  .action(async (opts: { username?: string; passwordStdin?: boolean }) => {
+  .option('--password-stdin', 'read the password from stdin (protected automation pipe only; a second line may carry the two-factor code)')
+  .option('--code <digits>', 'two-factor code when it is turned on')
+  .action(async (opts: { username?: string; passwordStdin?: boolean; code?: string }) => {
     const api = client(false);
     const username = opts.username ?? (await promptVisible('Username: '));
-    const password = opts.passwordStdin ? await readStdinAll() : await promptHidden('Password: ');
-    const session = await api.post<{ token: string; expiresAt: string }>('/v1/sessions', { username, password });
+    const stdinLines = opts.passwordStdin ? (await readStdinAll()).split('\n') : null;
+    const password = stdinLines ? (stdinLines[0] ?? '') : await promptHidden('Password: ');
+    let code = opts.code ?? (stdinLines?.[1]?.trim() || undefined);
+    let session: { token: string; expiresAt: string };
+    try {
+      session = await api.post<{ token: string; expiresAt: string }>('/v1/sessions', { username, password, ...(code ? { code } : {}) });
+    } catch (e) {
+      if (!(e instanceof HarborError) || e.code !== 'TOTP_REQUIRED' || stdinLines) throw e;
+      code = (await promptVisible('Two-factor code: ')).trim();
+      session = await api.post<{ token: string; expiresAt: string }>('/v1/sessions', { username, password, code });
+    }
     writeCliState({ url: api.baseUrl, token: session.token, expiresAt: session.expiresAt });
     out({ loggedIn: true, expiresAt: session.expiresAt }, () => `Logged in to ${api.baseUrl} (session expires ${session.expiresAt}).`);
   });
@@ -464,6 +474,72 @@ account
     }
     const r = await api.post<{ revokedSessions: number }>('/v1/account/password', { currentPassword: current, newPassword: next }, {}, 'PUT');
     out(r, () => `Password changed. ${r.revokedSessions} other session(s) logged out.`);
+  });
+
+const totp = account.command('totp').description('two-factor login (authenticator app)');
+totp
+  .command('status')
+  .action(async () => {
+    const s = await client().get<{ twoFactor: boolean; pending: boolean }>('/v1/account/security');
+    out(s, () => (s.twoFactor ? 'Two-factor login is ON.' : s.pending ? 'Setup started but not confirmed; run: harbor account totp enable <code>' : 'Two-factor login is off.'));
+  });
+totp
+  .command('setup')
+  .description('start: prints the secret and otpauth URL to add to your authenticator, then confirm with `enable <code>`')
+  .action(async () => {
+    const r = await client().post<{ secret: string; otpauthUrl: string }>('/v1/account/totp/setup', {});
+    out(r, () => `Add this to your authenticator app (or scan it in the console):\n  secret: ${r.secret}\n  ${r.otpauthUrl}\nThen confirm with the current code: harbor account totp enable <code>`);
+  });
+totp
+  .command('enable <code>')
+  .action(async (code: string) => {
+    await client().post('/v1/account/totp/enable', { code });
+    out({ twoFactor: true }, () => 'Two-factor login is on. Every login now needs the current code from your authenticator.');
+  });
+totp
+  .command('off')
+  .description('turn two-factor login off (asks for the password)')
+  .option('--password-stdin', 'read the password from stdin', false)
+  .action(async (opts: { passwordStdin: boolean }) => {
+    const password = opts.passwordStdin ? (await readStdinAll()).trim() : await promptHidden('Password: ');
+    await client().post('/v1/account/totp/disable', { password });
+    out({ twoFactor: false }, () => 'Two-factor login is off.');
+  });
+totp
+  .command('reset')
+  .description('LOST YOUR AUTHENTICATOR? Run on the machine itself (root): removes the second factor without a session')
+  .requiredOption('--local', 'confirm this is a local recovery on the machine')
+  .requiredOption('--config <file>', 'daemon config JSON (usually /etc/harbor/harbor.json)')
+  .action(async (opts: { config: string }) => {
+    const config = loadConfig(opts.config);
+    const r = resetTwoFactor(config);
+    out(r, () => (r.wasEnabled ? 'Two-factor login removed. Log in with your password and set it up again when ready.' : 'Two-factor login was not on.'));
+  });
+
+program
+  .command('name [name]')
+  .description('show or set this machine\'s name in Harbor (empty string resets to the hostname)')
+  .action(async (name?: string) => {
+    const api = client();
+    const s = name === undefined ? await api.get<SystemDto>('/v1/system') : await api.post<SystemDto>('/v1/system/name', { name }, {}, 'PUT');
+    out({ deviceName: s.deviceName }, () => (s.deviceName ? `This machine is called "${s.deviceName}" in Harbor.` : 'No name set; Harbor shows the hostname.'));
+  });
+
+program
+  .command('logs [instance]')
+  .description('recent Harbor logs, or the container logs of one app')
+  .option('-n, --lines <n>', 'how many lines', '200')
+  .action(async (ref: string | undefined, opts: { lines: string }) => {
+    const api = client();
+    const n = Math.max(10, Math.min(2000, Number(opts.lines) || 200));
+    if (!ref) {
+      const r = await api.get<{ source: string; lines: string[] }>(`/v1/logs/harbor?lines=${n}`);
+      out(r, () => (r.lines.length ? r.lines.join('\n') : '(no log lines)') + `\n-- source: ${r.source}`);
+      return;
+    }
+    const inst = await resolveInstance(api, ref);
+    const r = await api.get<{ containers: { name: string; service: string; lines: string[] }[] }>(`/v1/instances/${inst.id}/logs?lines=${n}`);
+    out(r, () => r.containers.map((c) => `== ${c.service} (${c.name})\n${c.lines.join('\n') || '(no output)'}`).join('\n\n') || 'No containers recorded for this app.');
   });
 
 const tailscaleCmd = program.command('tailscale').description('remote access: log this host into or out of your tailnet');

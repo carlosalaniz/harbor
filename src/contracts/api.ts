@@ -164,6 +164,7 @@ export interface SystemMetricsDto {
 export interface SystemDto {
   version: string;
   profile: 'local-preview';
+  deviceName: string | null; // operator-chosen name for this machine (Settings → Overview); null = use the hostname
   docker: { available: boolean; observedAt: string | null; version: string | null; error: string | null };
   busyOperationId: string | null;
   installationId: string;
@@ -286,3 +287,24 @@ export interface PackageImportResultDto {
   // instances that can now be updated to this package
   updatable: { instanceId: string; name: string; fromRevision: string }[];
 }
+
+// ---- account security, logs, terminal
+export interface SecurityDto {
+  twoFactor: boolean;
+  pending: boolean;
+}
+export interface TotpSetupDto {
+  secret: string; // base32, for typing into an authenticator
+  otpauthUrl: string; // for the QR code
+}
+export interface LogsDto {
+  source: 'journal' | 'memory' | 'docker';
+  lines: string[];
+}
+export interface InstanceLogsDto {
+  containers: { name: string; service: string; lines: string[] }[];
+}
+// WebSocket /v1/terminal: first client message {type:'auth', token, cols, rows}; then {type:'input', data} /
+// {type:'resize', cols, rows}; server sends binary frames (terminal bytes) and JSON {type:'ready'|'exit'|'error'}.
+export type TerminalClientMessage = { type: 'auth'; token: string; cols: number; rows: number } | { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number };
+export type TerminalServerMessage = { type: 'ready' } | { type: 'exit'; code: number | null; reason: string } | { type: 'error'; message: string };

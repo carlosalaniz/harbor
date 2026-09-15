@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import fastifySwagger from '@fastify/swagger';
+import fastifyWebsocket from '@fastify/websocket';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { DaemonConfig } from '../config.js';
@@ -12,6 +13,8 @@ import type { Logger } from '../lifecycle/context.js';
 import type { PlatformToolsService } from '../tools/service.js';
 import type { AppearanceService } from '../appearance/service.js';
 import type { PowerControl } from '../system/power.js';
+import type { TerminalService, TerminalSession } from '../system/terminal.js';
+import type { TerminalClientMessage } from '../contracts/api.js';
 import { hostFacts } from '../system/metrics.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
@@ -26,6 +29,7 @@ export interface ApiDeps {
   tools: PlatformToolsService;
   appearance: AppearanceService;
   power: PowerControl;
+  terminals: TerminalService;
   log: Logger;
   version: string;
 }
@@ -38,7 +42,8 @@ declare module 'fastify' {
 }
 
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
-const UI_CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+// style-src allows inline styles for the terminal (xterm.js injects a stylesheet); scripts stay strict.
+const UI_CSP = "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 const errorBodySchema = {
   type: 'object',
@@ -59,7 +64,7 @@ const errorBodySchema = {
 } as const;
 
 export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
-  const { config, service, sessions, tools, log, appearance, power } = deps;
+  const { config, service, sessions, tools, log, appearance, power, terminals } = deps;
   const origin = managementOrigin(config);
   const allowedOrigins = new Set([origin, `http://127.0.0.1:${config.listen.port}`]);
   const allowedHosts = new Set([`localhost:${config.listen.port}`, `127.0.0.1:${config.listen.port}`]);
@@ -80,6 +85,8 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       security: [{ bearer: [] }],
     },
   });
+
+  await app.register(fastifyWebsocket, { options: { maxPayload: 1024 * 1024 } });
 
   // --- request guards
   app.addHook('onRequest', async (req, reply) => {
@@ -147,13 +154,13 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       schema: {
         description: 'Log in the local administrator. Rate limited.',
         security: [],
-        body: { type: 'object', additionalProperties: false, required: ['username', 'password'], properties: { username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 } } },
+        body: { type: 'object', additionalProperties: false, required: ['username', 'password'], properties: { username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, code: { type: 'string', minLength: 6, maxLength: 12 } } },
         response: { 201: { type: 'object', properties: { token: { type: 'string' }, expiresAt: { type: 'string' } }, required: ['token', 'expiresAt'] }, 401: errorBodySchema, 429: errorBodySchema },
       },
     },
     async (req, reply) => {
-      const { username, password } = req.body as { username: string; password: string };
-      const result = await sessions.login(username, password, req.ip);
+      const { username, password, code } = req.body as { username: string; password: string; code?: string };
+      const result = await sessions.login(username, password, req.ip, code);
       return reply.status(201).send(result);
     },
   );
@@ -203,6 +210,100 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       return sessions.changePassword(req.bearer!, b.currentPassword, b.newPassword);
     },
   );
+
+  // --- two-factor authentication (TOTP)
+  app.get('/v1/account/security', { preHandler: requireAuth, schema: { description: 'Whether two-factor login is on.' } }, async () => sessions.security());
+  app.post('/v1/account/totp/setup', { preHandler: requireAuth, schema: { description: 'Start two-factor setup: returns a fresh secret (base32) and an otpauth URL for a QR code. Not active until enabled with a live code.' } }, async () => sessions.setupTotp(`Harbor${service.system().deviceName ? ` (${service.system().deviceName})` : ''}`));
+  app.post(
+    '/v1/account/totp/enable',
+    { preHandler: requireAuth, schema: { description: 'Confirm the new authenticator with its current code; two-factor login is on from now.', body: { type: 'object', additionalProperties: false, required: ['code'], properties: { code: { type: 'string', minLength: 6, maxLength: 12 } } } } },
+    async (req, reply) => {
+      sessions.enableTotp((req.body as { code: string }).code);
+      return reply.status(204).send();
+    },
+  );
+  app.post(
+    '/v1/account/totp/disable',
+    { preHandler: requireAuth, schema: { description: 'Turn two-factor login off (password required).', body: { type: 'object', additionalProperties: false, required: ['password'], properties: { password: { type: 'string', minLength: 1, maxLength: 1024 } } } } },
+    async (req, reply) => {
+      await sessions.disableTotp((req.body as { password: string }).password);
+      return reply.status(204).send();
+    },
+  );
+
+  // --- device name
+  app.put(
+    '/v1/system/name',
+    { preHandler: requireAuth, schema: { description: 'Name this machine (shown in Settings and on the login page); empty resets to the hostname.', body: { type: 'object', additionalProperties: false, required: ['name'], properties: { name: { type: ['string', 'null'], maxLength: 80 } } } } },
+    async (req) => service.setDeviceName((req.body as { name: string | null }).name),
+  );
+
+  // --- troubleshoot: logs
+  app.get(
+    '/v1/logs/harbor',
+    { preHandler: requireAuth, schema: { description: "Harbor's own recent log lines (systemd journal on a real host).", querystring: { type: 'object', additionalProperties: false, properties: { lines: { type: 'string', pattern: '^([1-9][0-9]|[1-9][0-9]{2}|1[0-9]{3}|2000)$' } } } } },
+    async (req) => service.harborLogs(Number((req.query as { lines?: string }).lines ?? 300)),
+  );
+  app.get(
+    '/v1/instances/:id/logs',
+    { preHandler: requireAuth, schema: { description: 'Recent container logs of one app.', params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } }, querystring: { type: 'object', additionalProperties: false, properties: { lines: { type: 'string', pattern: '^([1-9][0-9]|[1-9][0-9]{2}|1[0-9]{3}|2000)$' } } } } },
+    async (req) => service.instanceLogs((req.params as { id: string }).id, Number((req.query as { lines?: string }).lines ?? 300)),
+  );
+
+  // --- terminal (WebSocket). Auth by the first message, never by URL. Same-origin/Host guards above apply to the upgrade.
+  app.get('/v1/terminal', { websocket: true, schema: { hide: true } }, (socket, req) => {
+    let session: TerminalSession | null = null;
+    const authTimer = setTimeout(() => {
+      if (!session) socket.close(4401, 'no auth');
+    }, 10_000);
+    const sendJson = (m: unknown) => {
+      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(m));
+    };
+    socket.on('message', (raw: Buffer | ArrayBuffer | Buffer[], isBinary: boolean) => {
+      const bytes = Buffer.isBuffer(raw) ? raw : Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw);
+      if (!session) {
+        clearTimeout(authTimer);
+        try {
+          const m = JSON.parse(bytes.toString('utf8')) as TerminalClientMessage;
+          if (m.type !== 'auth') throw new HarborError('UNAUTHENTICATED', 'first message must authenticate');
+          const who = sessions.authenticate(m.token);
+          const s = terminals.start(
+            { cols: Number(m.cols) || 80, rows: Number(m.rows) || 24 },
+            (chunk) => {
+              if (socket.readyState === socket.OPEN) socket.send(chunk, { binary: true });
+            },
+            (code, reason) => {
+              sendJson({ type: 'exit', code, reason });
+              setTimeout(() => socket.close(1000, 'shell exited'), 50);
+            },
+          );
+          session = s;
+          log.info('terminal session started', { actor: who.actor, ip: req.ip });
+          sendJson({ type: 'ready' });
+        } catch (e) {
+          sendJson({ type: 'error', message: e instanceof HarborError ? `${e.message}. ${e.nextAction}` : 'terminal unavailable' });
+          socket.close(4401, 'unauthorized');
+        }
+        return;
+      }
+      if (isBinary) {
+        session.write(bytes);
+        return;
+      }
+      try {
+        const m = JSON.parse(bytes.toString('utf8')) as TerminalClientMessage;
+        if (m.type === 'input' && typeof m.data === 'string') session.write(m.data);
+        else if (m.type === 'resize') session.resize(Number(m.cols), Number(m.rows));
+      } catch {
+        /* ignore malformed frames */
+      }
+    });
+    socket.on('close', () => {
+      clearTimeout(authTimer);
+      session?.close('connection closed');
+    });
+    socket.on('error', () => session?.close('connection error'));
+  });
 
   // --- host storage (for the folder picker; read-only except creating one named folder in a writable parent)
   const writable = (p: string) => {

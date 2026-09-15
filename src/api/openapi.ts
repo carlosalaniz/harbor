@@ -8,6 +8,7 @@ import type { SessionService } from '../auth/sessions.js';
 import type { PlatformToolsService } from '../tools/service.js';
 import type { AppearanceService } from '../appearance/service.js';
 import type { PowerControl } from '../system/power.js';
+import type { TerminalService } from '../system/terminal.js';
 
 // Generate the OpenAPI document from the real route schemas. Handlers are never invoked.
 export async function generateOpenApi(version = '0.0.0-doc'): Promise<Record<string, unknown>> {
@@ -15,7 +16,7 @@ export async function generateOpenApi(version = '0.0.0-doc'): Promise<Record<str
   try {
     const config = normalizeConfig({ stateDir: dir, catalogDir: dir, docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port: 18000 } }, dir);
     const noop = { debug() {}, info() {}, warn() {}, error() {} };
-    const app = await buildApi({ config, service: {} as ApplicationService, sessions: {} as SessionService, tools: {} as PlatformToolsService, appearance: {} as AppearanceService, power: {} as PowerControl, log: noop, version });
+    const app = await buildApi({ config, service: {} as ApplicationService, sessions: {} as SessionService, tools: {} as PlatformToolsService, appearance: {} as AppearanceService, power: {} as PowerControl, terminals: {} as TerminalService, log: noop, version });
     await app.ready();
     const doc = app.swagger() as Record<string, unknown>;
     await app.close();

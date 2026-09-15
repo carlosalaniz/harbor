@@ -177,7 +177,10 @@ The console's **Settings** page covers what a household operator needs after boo
 | Storage | disks with free space, the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
 | Overview | the landing page: your machine's name, what it runs on, Harbor version, uptime, storage/memory/temperature, *Log out*, *Restart* and *Shut down* (each asks first), and the wallpaper picker |
 | Appearance | theme (match device / dark / light), wallpaper presets, your own picture (PNG/JPEG/WebP up to 6 MB), or **rotating wallpapers**: Harbor itself fetches a new picture on a schedule from Bing or Wikimedia Commons (no account) or from your favourite subreddits (needs a free Reddit "script" app key; Settings walks you through it). The picture and its credit show on Home. |
-| Advanced access | the exact SSH forwarding line and the CLI equivalents |
+| Advanced access | a **terminal** on the machine (shell of the Harbor service account: `docker`, `harbor …`), the SSH forwarding lines with copy buttons, and the CLI equivalents |
+| Troubleshoot | Harbor's own log (systemd journal) and each app's container logs, copyable |
+| Account (two-factor) | turn on a 6-digit authenticator code at login (QR code or typed key); turn off with the password; lost the app? on the machine: `sudo /opt/harbor/bin/harbor account totp reset --local --config /etc/harbor/harbor.json` |
+| Overview (name) | rename the machine (shown in Settings and the browser tab) |
 
 The same actions exist as commands: `harbor account set-password`, `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor storage`, `harbor domains [add|check|forget]`, `harbor purge`.
 
@@ -191,6 +194,10 @@ Search everything with **⌘K / Ctrl+K** (or `/`): installed apps open on Enter,
 - **Restart / Shut down** work because bootstrap installs a small polkit rule that lets the Harbor service account ask the system for exactly those two actions. On an installation bootstrapped before v0.5.0, run `sudo /opt/harbor/bin/harbor bootstrap --yes` once to add it; Settings tells you when it is missing.
 
 Two things still need root on the machine, once: installing Tailscale (`bootstrap --with-tailscale`) and the public proxy (`bootstrap --with-public-proxy`). Settings shows the exact command when they are missing.
+
+### If "Log in with Tailscale" says Harbor is not allowed to operate Tailscale
+
+Disconnecting from the tailnet (`tailscale logout`) used to wipe the permission bootstrap gave the Harbor service account. Since v0.7.0 Harbor restores it by itself (a small root oneshot unit it may start). On an installation bootstrapped before that, run once: `sudo /opt/harbor/bin/harbor bootstrap --yes --with-tailscale`.
 
 ## 4d. Your own apps and updates
 

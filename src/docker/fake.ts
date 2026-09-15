@@ -126,6 +126,14 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     this.networks.delete(id);
     this.log.push(`network rm ${n.name}`);
   }
+  async containerLogs(id: string, tail: number): Promise<string> {
+    this.assertUp();
+    const c = this.containers.get(id);
+    if (!c) return '';
+    const lines = [`${c.createdAt} [fake] container ${c.name} created from ${c.image}`, ...(c.startedAt ? [`${c.startedAt} [fake] ${c.service} listening on ${c.ports.map((p) => p.hostPort).join(',') || 'no ports'}`] : []), `${rfc3339(this.clock.now())} [fake] state ${c.state}`];
+    return lines.slice(-tail).join('\n') + '\n';
+  }
+
   async publishedHostPorts(): Promise<number[]> {
     this.assertUp();
     const ports = new Set<number>();

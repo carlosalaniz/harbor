@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import { journalTail } from '../system/logs.js';
 import { dnsState } from '../system/net.js';
 import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
@@ -49,7 +50,35 @@ export class ApplicationService {
       busyOperationId: active?.id ?? null,
       installationId: this.ctx.installationId,
       managementOrigin: managementOrigin(this.ctx.config),
+      deviceName: this.ctx.repo.setting<string>('device.name'),
     };
+  }
+  setDeviceName(name: string | null): SystemDto {
+    const clean = name?.trim().replace(/\s+/g, ' ') ?? '';
+    if (clean.length > 40) throw new HarborError('INVALID_REQUEST', 'the name can be at most 40 characters');
+    if (clean) this.ctx.repo.setSetting('device.name', clean);
+    else this.ctx.repo.deleteSetting('device.name');
+    return this.system();
+  }
+  // Troubleshoot: the daemon's own log (journal on a systemd host, in-memory otherwise) and app container logs.
+  async harborLogs(lines: number): Promise<LogsDto> {
+    const fromJournal = this.ctx.config.docker.mode === 'socket' ? await journalTail('harbor', lines) : null;
+    if (fromJournal) return { source: 'journal', lines: fromJournal };
+    return { source: 'memory', lines: this.ctx.logBuffer.tail(lines) };
+  }
+  async instanceLogs(id: string, lines: number): Promise<InstanceLogsDto> {
+    const row = this.instanceRow(id);
+    const out: InstanceLogsDto['containers'] = [];
+    for (const r of this.ctx.repo.resources(row.id).filter((x) => x.kind === 'container')) {
+      let text: string;
+      try {
+        text = await this.ctx.docker.containerLogs(r.dockerId ?? r.name, lines);
+      } catch (e) {
+        text = `(logs unavailable: ${e instanceof Error ? e.message : String(e)})`;
+      }
+      out.push({ name: r.name, service: r.role, lines: text.replace(/\r/g, '').trimEnd().split('\n').filter(Boolean) });
+    }
+    return { containers: out };
   }
 
   async metrics(): Promise<SystemMetricsDto> {

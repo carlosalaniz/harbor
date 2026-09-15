@@ -57,6 +57,8 @@ export interface DockerAdapter {
   removeNetwork(id: string): Promise<void>;
   // Host ports published by any container on this engine (for allocation conflict checks).
   publishedHostPorts(): Promise<number[]>;
+  // Last N log lines of one container (stdout+stderr, timestamps), for the Troubleshoot page.
+  containerLogs(id: string, tail: number): Promise<string>;
 }
 
 export interface ComposeInvocation {

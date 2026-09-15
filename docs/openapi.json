@@ -64,6 +64,11 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 12
                   }
                 }
               }
@@ -375,6 +380,172 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/account/security": {
+      "get": {
+        "description": "Whether two-factor login is on.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/account/totp/setup": {
+      "post": {
+        "description": "Start two-factor setup: returns a fresh secret (base32) and an otpauth URL for a QR code. Not active until enabled with a live code.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/account/totp/enable": {
+      "post": {
+        "description": "Confirm the new authenticator with its current code; two-factor login is on from now.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 12
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/account/totp/disable": {
+      "post": {
+        "description": "Turn two-factor login off (password required).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/name": {
+      "put": {
+        "description": "Name this machine (shown in Settings and on the login page); empty resets to the hostname.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/logs/harbor": {
+      "get": {
+        "description": "Harbor's own recent log lines (systemd journal on a real host).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^([1-9][0-9]|[1-9][0-9]{2}|1[0-9]{3}|2000)$"
+            },
+            "in": "query",
+            "name": "lines",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/instances/{id}/logs": {
+      "get": {
+        "description": "Recent container logs of one app.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^([1-9][0-9]|[1-9][0-9]{2}|1[0-9]{3}|2000)$"
+            },
+            "in": "query",
+            "name": "lines",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response"

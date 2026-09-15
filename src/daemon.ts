@@ -10,7 +10,7 @@ import { DockerodeAdapter } from './docker/dockerode-adapter.js';
 import { FakeDocker } from './docker/fake.js';
 import { realPortObserver, type PortObserver } from './docker/ports.js';
 import { HarborError } from './errors.js';
-import { jsonLogger, type Ctx, type Logger } from './lifecycle/context.js';
+import { jsonLogger, LOG_ORDER, type Ctx, type Logger, type LogLevel } from './lifecycle/context.js';
 import { Observer } from './lifecycle/observer.js';
 import { OperationRunner } from './lifecycle/runner.js';
 import { ApplicationService } from './lifecycle/service.js';
@@ -28,6 +28,8 @@ import { AppearanceService } from './appearance/service.js';
 import { FakeFetcher, RealFetcher, json as fakeJson, type Fetcher } from './appearance/fetcher.js';
 import { FakePower, SystemdPower, type PowerControl } from './system/power.js';
 import { PackageStore } from './packages/store.js';
+import { LogBuffer } from './system/logs.js';
+import { TerminalService } from './system/terminal.js';
 import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/registry.js';
 
 export function productVersion(): string {
@@ -76,7 +78,13 @@ export function findDockerBinary(): string | null {
 }
 
 export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrides = {}): Promise<Daemon> {
-  const log = overrides.log ?? jsonLogger(config.logLevel);
+  // stderr honours the configured level; the Troubleshoot buffer always keeps info and above
+  const logBuffer = new LogBuffer();
+  const bufferLevel: LogLevel = LOG_ORDER[config.logLevel] > LOG_ORDER.info ? 'info' : config.logLevel;
+  const log = overrides.log ?? jsonLogger(bufferLevel, (line, lvl) => {
+    if (LOG_ORDER[lvl] >= LOG_ORDER[config.logLevel]) process.stderr.write(line + '\n');
+    logBuffer.push(line);
+  });
   const clock = overrides.clock ?? systemClock;
   const ids = overrides.ids ?? systemIds;
   let lock: ProcessLock | null = null;
@@ -112,7 +120,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const net = overrides.net ?? (fakeMode ? new FakeNet() : new RealNet());
     const registry = overrides.registry ?? (fakeMode ? demoRegistry() : new RegistryResolver());
     const packages = new PackageStore(config.catalogDir, config.localPackagesDir, registry, clock);
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify, net, packages };
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify, net, packages, logBuffer };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
@@ -121,13 +129,15 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const fetcher = overrides.fetcher ?? (fakeMode ? demoFetcher() : new RealFetcher());
     const power = overrides.power ?? (fakeMode ? new FakePower() : new SystemdPower());
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
+    // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode
+    const terminals = new TerminalService(log, fakeMode ? { shell: [process.env['SHELL'] ?? '/bin/bash', '-il'], env: { HOME: process.env['HOME'] ?? config.stateDir, USER: process.env['USER'] ?? 'harbor' }, cwd: config.stateDir } : { shell: ['/bin/bash', '-il'], env: { HOME: config.stateDir, USER: 'harbor', LOGNAME: 'harbor' }, cwd: config.stateDir });
     service.onSubmit(() => runner.wake());
 
     const recovered = runner.recoverOnStartup();
     if (recovered) log.warn(`marked ${recovered} interrupted operation(s) needs_action`);
     repo.purgeExpiredSessions();
 
-    const app = await buildApi({ config, service, sessions, tools, appearance, power, log, version: ctx.version });
+    const app = await buildApi({ config, service, sessions, tools, appearance, power, terminals, log, version: ctx.version });
     await app.listen({ host: config.listen.host, port: config.listen.port });
     observer.start();
     appearance.start();
@@ -140,6 +150,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       closed = true;
       observer.stop();
       appearance.stop();
+      terminals.closeAll();
       const graceful = runner.shutdown();
       await Promise.race([graceful, new Promise((r) => setTimeout(r, 20_000))]);
       await app.close();
@@ -160,7 +171,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
 export function demoFetcher(): FakeFetcher {
   const f = new FakeFetcher();
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhQGAWjR9awAAAABJRU5ErkJggg==', 'base64');
-  const days = ['Fort Union National Monument, New Mexico (© zrfphoto/Getty Images)', 'Aurora over Lofoten, Norway (© Demo Photographer)', 'Dunes at dusk, Namibia (© Demo Photographer)'];
+  const days = ['Fort Union National Monument, New Mexico (© Demo Photographer/Getty Images)', 'Aurora over Lofoten, Norway (© Demo Photographer)', 'Dunes at dusk, Namibia (© Demo Photographer)'];
   f.on('https://www.bing.com/HPImageArchive.aspx', fakeJson({ images: days.map((c, i) => ({ urlbase: `/th?id=OHR.Demo${i}`, copyright: c, copyrightlink: 'https://www.bing.com/' })) }));
   f.on('https://www.bing.com/th?id=', { status: 200, contentType: 'image/png', body: png });
   f.on('https://api.wikimedia.org/feed/v1/wikipedia/en/featured/', fakeJson({ image: { title: 'File:Demo.jpg', image: { source: 'https://upload.wikimedia.org/wikipedia/commons/d/d0/Demo.jpg', width: 2400, height: 1600 }, artist: { text: 'Demo Artist' }, file_page: 'https://commons.wikimedia.org/wiki/File:Demo.jpg', description: { text: 'A demo picture of the day' } } }));

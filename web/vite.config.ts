@@ -10,7 +10,7 @@ const daemon = process.env['HARBOR_DEV_URL'] ?? 'http://localhost:18000';
 export default defineConfig({
   root: path.resolve(import.meta.dirname),
   plugins: [react()],
-  build: { outDir: 'dist', emptyOutDir: true, sourcemap: false, target: 'es2022' },
+  build: { outDir: 'dist', emptyOutDir: true, sourcemap: false, target: 'es2022', chunkSizeWarningLimit: 800 },
   server: {
     host: '127.0.0.1',
     port: 5173,

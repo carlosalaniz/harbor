@@ -17,7 +17,7 @@ Wants=network-online.target docker.service
 Type=simple
 User=${PRODUCT.serviceUser}
 Group=${PRODUCT.serviceUser}
-SupplementaryGroups=docker
+SupplementaryGroups=docker systemd-journal
 ExecStart=${PRODUCT.paths.opt}/bin/harbor-daemon --config ${PRODUCT.paths.etc}/harbor.json
 Restart=on-failure
 RestartSec=3
@@ -55,14 +55,35 @@ ListenStream=127.0.0.1:${port}
 export function polkitPowerRule(): string {
   return `// ${UNIT_MARKER.replace(/^# /, '')}
 polkit.addRule(function (action, subject) {
-  if (subject.user === "${PRODUCT.serviceUser}" &&
-      (action.id === "org.freedesktop.login1.reboot" ||
-       action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
-       action.id === "org.freedesktop.login1.power-off" ||
-       action.id === "org.freedesktop.login1.power-off-multiple-sessions")) {
+  if (subject.user !== "${PRODUCT.serviceUser}") return polkit.Result.NOT_HANDLED;
+  if (action.id === "org.freedesktop.login1.reboot" ||
+      action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
+      action.id === "org.freedesktop.login1.power-off" ||
+      action.id === "org.freedesktop.login1.power-off-multiple-sessions") {
     return polkit.Result.YES;
   }
+  // restore "tailscale set --operator=harbor" after a logout wiped Tailscale's preferences (one oneshot unit, start only)
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      action.lookup("unit") === "${TAILSCALE_OPERATOR_UNIT}" &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
 });
 `;
 }
 export const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-harbor-power.rules';
+export const TAILSCALE_OPERATOR_UNIT = 'harbor-tailscale-operator.service';
+
+// `tailscale logout` resets tailscaled's preferences, including the operator grant bootstrap made; this
+// root oneshot puts it back and the harbor user may start it (polkit rule above).
+export function tailscaleOperatorUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Let the ${PRODUCT.serviceUser} service account operate Tailscale (restored after logout)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/tailscale set --operator=${PRODUCT.serviceUser}
+`;
+}
