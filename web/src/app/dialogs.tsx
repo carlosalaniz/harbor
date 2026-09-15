@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DomainsDto } from '../../../src/contracts/api';
-import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
-import { api } from '../api';
+import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
+import { ApiError, api } from '../api';
 import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel } from './components';
 import { categoryLabel, fmtTime } from './format';
 import type { Action, Console } from './store';
@@ -13,7 +13,7 @@ export function PlanDialog({ c }: { c: Console }) {
   const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
-  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : capitalize(plan.kind);
+  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
       {planError && (
@@ -57,6 +57,18 @@ export function PlanDialog({ c }: { c: Console }) {
                 <span className="fact-k">Secrets</span>
                 <span>
                   {plan.secrets.length} generated for the app{plan.secrets.some((s) => s.state === 'existing') ? ' (existing ones kept)' : ''} <span className="muted small">· never shown</span>
+                </span>
+              </li>
+            )}
+            {plan.update && (
+              <li>
+                <span className="fact-k">Changes</span>
+                <span>
+                  {plan.update.images.length ? `${plan.update.images.length} image${plan.update.images.length === 1 ? '' : 's'} change` : 'Same images, new package files'}
+                  {plan.update.newSecrets.length ? ` · ${plan.update.newSecrets.length} new secret${plan.update.newSecrets.length === 1 ? '' : 's'}` : ''}
+                  {plan.update.newStorage.length ? ` · new storage: ${plan.update.newStorage.join(', ')}` : ''}
+                  {plan.update.newEndpoints.length ? ` · new address${plan.update.newEndpoints.length === 1 ? '' : 'es'}: ${plan.update.newEndpoints.join(', ')}` : ''}
+                  {plan.update.releaseNotes ? <span className="muted small"> · {plan.update.releaseNotes}</span> : null}
                 </span>
               </li>
             )}
@@ -105,7 +117,7 @@ export function PlanDialog({ c }: { c: Console }) {
   );
 }
 
-export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogItemDto; busy: boolean; onClose: () => void; onStart: (a: Action) => void }) {
+export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onRemovePackage }: { item: CatalogItemDto; busy: boolean; installed?: number; onClose: () => void; onStart: (a: Action) => void; onRemovePackage?: () => void }) {
   const [name, setName] = useState('');
   const [gallery, setGallery] = useState(0);
   // storage claim id -> host folder ('' = managed volume)
@@ -132,7 +144,9 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
               </>
             ) : null}
             {' · rev '}
-            {item.revision} · qualification {item.qualification}
+            {item.revision}
+            {item.version ? ` · version ${item.version}` : ''}
+            {item.origin === 'local' ? ' · your own upload' : ` · qualification ${item.qualification}`}
           </p>
         </div>
       </div>
@@ -192,6 +206,18 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
         Instance name (optional)
         <input value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z][a-z0-9-]{0,62}" placeholder={item.id} aria-label={`Instance name for ${item.name}`} />
       </label>
+      {item.origin === 'local' && onRemovePackage && (
+        <p className="muted small">
+          This package was uploaded to this Harbor.{' '}
+          {installed > 0 ? (
+            'Uninstall its apps completely before removing it.'
+          ) : (
+            <button className="btn ghost danger" onClick={onRemovePackage} aria-label={`Remove package ${item.name}`}>
+              Remove package
+            </button>
+          )}
+        </p>
+      )}
       {picking && (
         <FolderPicker
           title={`Folder for ${external.find((c) => c.id === picking)?.purpose ?? 'this app'}`}
@@ -330,6 +356,7 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
 }
 
 export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void }) {
+  const upd = inst.updateAvailable;
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmPurge, setConfirmPurge] = useState('');
@@ -361,6 +388,23 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           <span className="muted small"> · observed {fmtTime(inst.observedAt)}</span>
         </div>
       </div>
+      {upd && !retained && (
+        <div className="update-banner" role="status">
+          <div>
+            <strong>Update available</strong>
+            <span className="muted small">
+              {' '}
+              revision {inst.revision} → {upd.revision}
+              {upd.version ? ` (${upd.version})` : ''}
+              {upd.releaseNotes ? ` · ${upd.releaseNotes}` : ''}
+            </span>
+            <p className="muted small">Your data, addresses and ports stay. If the new version does not start, Harbor puts the current one back.</p>
+          </div>
+          <button className="btn primary" disabled={busy || inst.installState !== 'installed'} onClick={() => onAction({ kind: 'update', instance: inst })} aria-label={`Update ${inst.name}`}>
+            Update
+          </button>
+        </div>
+      )}
       <div className="row wrap actions">
         {canOpen && primary && (
           <a className="btn primary" href={primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`}>
@@ -517,11 +561,13 @@ function humanSummary(plan: PlanDto, n: string): string {
       return `Harbor will switch which address ${n} treats as its own, then restart it with the same data.`;
     case 'purge':
       return `Harbor will uninstall ${n} completely: containers, its data volumes, secrets and stored release. Folders of yours are left alone. This cannot be undone.`;
+    case 'update':
+      return `Harbor will update ${n} to revision ${plan.update?.toRevision ?? plan.revision}${plan.update?.toVersion ? ` (${plan.update.toVersion})` : ''}. Data, ports and addresses stay; if the new release does not start, the previous one is put back automatically.`;
   }
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -624,6 +670,132 @@ export function CustomizeDialog({ inst, onClose, onSaved }: { inst: InstanceSumm
         </button>
         <button className="btn primary" disabled={busy || (mode === 'image' && !dataUrl && inst.customIcon?.kind !== 'image')} onClick={() => void save()}>
           Save
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+// Upload your own app: a zip with manifest.yaml, compose.yaml (and README.md, icon, screenshots).
+export function UploadPackageDialog({ onClose, onDone }: { onClose: () => void; onDone: (r: PackageImportResultDto) => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<{ message: string; next?: string; details?: string[] } | null>(null);
+  const [result, setResult] = useState<PackageImportResultDto | null>(null);
+  const [drag, setDrag] = useState(false);
+  const send = (f: File | undefined) => {
+    setError(null);
+    if (!f) return;
+    if (!/\.zip$/i.test(f.name)) return setError({ message: 'Choose a .zip file.' });
+    if (f.size > 50 * 1024 * 1024) return setError({ message: 'The package must be 50 MB or smaller.' });
+    setBusy(true);
+    const r = new FileReader();
+    r.onload = async () => {
+      try {
+        const dataUrl = String(r.result).replace(/^data:[^;]*;base64,/, 'data:application/zip;base64,');
+        const res = await api.uploadPackage(f.name, dataUrl);
+        setResult(res);
+        onDone(res);
+      } catch (e) {
+        setError(e instanceof ApiError ? { message: e.message, next: e.nextAction, details: (e as ApiError & { details?: string[] }).details } : { message: String(e) });
+      } finally {
+        setBusy(false);
+      }
+    };
+    r.readAsDataURL(f);
+  };
+  return (
+    <Dialog title="Your own app" onClose={onClose}>
+      {!result ? (
+        <>
+          <p className="muted small">Bring an app of your own (or one you are developing) as a package zip. Harbor checks it the way it checks the built-in catalog, pins the images by digest for you and puts it in your App Store. Upload a higher revision later to update the apps installed from it.</p>
+          <div
+            className={`dropzone ${drag ? 'drag' : ''}`}
+            onDragOver={(e) => (e.preventDefault(), setDrag(true))}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              send(e.dataTransfer.files[0]);
+            }}
+          >
+            <input ref={file} type="file" accept=".zip,application/zip" hidden onChange={(e) => send(e.target.files?.[0])} aria-label="Package zip file" />
+            <p className="empty-title">{busy ? 'Checking the package…' : 'Drop a package .zip here'}</p>
+            <button className="btn primary" disabled={busy} onClick={() => file.current?.click()}>
+              Choose a zip…
+            </button>
+          </div>
+          <details>
+            <summary className="muted small">What goes in the zip</summary>
+            <ul className="steps">
+              <li>
+                <code>manifest.yaml</code>: id, name, description, <code>release.revision</code> (raise it for every new version), services, the endpoint people open, a health path.
+              </li>
+              <li>
+                <code>compose.yaml</code>: the services with <code>image:</code> (tags are fine, Harbor pins them), environment, named volumes. No host ports, no privileged flags.
+              </li>
+              <li>
+                Optional: <code>README.md</code>, <code>icon.svg</code>/<code>.png</code>, screenshots named in <code>presentation.gallery</code>.
+              </li>
+            </ul>
+            <p className="muted small">The full guide with a copy-paste template is docs/DEVELOPER_PACKAGES.md in the Harbor repository.</p>
+          </details>
+          {error && (
+            <div className="error small" role="alert">
+              <p>{error.message}</p>
+              {error.next && <p className="muted">{error.next}</p>}
+              {error.details && error.details.length > 1 && (
+                <ul>
+                  {error.details.slice(0, 6).map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="stack" role="status">
+          <div className="app-head">
+            <AppIcon packageId={result.item.id} icon={result.item.presentation.icon} name={result.item.name} size={56} />
+            <div>
+              <p className="lead">
+                <strong>{result.item.name}</strong> is in your App Store
+              </p>
+              <p className="muted small">
+                revision {result.item.revision}
+                {result.item.version ? ` · version ${result.item.version}` : ''}
+                {result.replacedRevision ? ` · replaces revision ${result.replacedRevision}` : ''}
+              </p>
+            </div>
+          </div>
+          {result.pinned.length > 0 && (
+            <div>
+              <h4>Images pinned for you</h4>
+              <ul className="steps">
+                {result.pinned.map((p) => (
+                  <li key={p.service}>
+                    {p.service}: <code>{p.from}</code> → <code>{p.to.slice(0, p.to.indexOf('@') + 20)}…</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {result.notes.map((n, i) => (
+            <p key={i} className="muted small">
+              {n}
+            </p>
+          ))}
+          {result.updatable.length > 0 && (
+            <p className="small">
+              <strong>Updates available</strong> for {result.updatable.map((u) => u.name).join(', ')}: open the app from Home and press Update.
+            </p>
+          )}
+        </div>
+      )}
+      <div className="row end">
+        <button className="btn" onClick={onClose}>
+          {result ? 'Done' : 'Cancel'}
         </button>
       </div>
     </Dialog>

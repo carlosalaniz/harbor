@@ -14,6 +14,8 @@ export interface DaemonConfig {
   uiDir: string | null;
   // "Harbor data folder": the one place the service account may create folders for apps (bring your own folder)
   userDataDir: string;
+  // packages uploaded by the operator ("your own apps"); default <stateDir>/packages
+  localPackagesDir: string;
   listen: { host: '127.0.0.1'; port: number };
   docker: DockerConfig;
   appPortRange: { from: number; to: number };
@@ -33,6 +35,7 @@ const CONFIG_SCHEMA = {
     catalogDir: { type: 'string', minLength: 1 },
     uiDir: { type: ['string', 'null'] },
     userDataDir: { type: 'string', minLength: 1 },
+    localPackagesDir: { type: 'string', minLength: 1 },
     listen: {
       type: 'object',
       additionalProperties: false,
@@ -93,6 +96,7 @@ export function normalizeConfig(raw: unknown, baseDir: string): DaemonConfig {
     catalogDir: abs(raw.catalogDir),
     uiDir: raw.uiDir ? abs(raw.uiDir) : null,
     userDataDir: abs(raw.userDataDir ?? CONFIG_DEFAULTS.userDataDir),
+    localPackagesDir: raw.localPackagesDir ? abs(raw.localPackagesDir) : path.join(abs(raw.stateDir), 'packages'),
     listen: { host: '127.0.0.1', port: raw.listen?.port ?? CONFIG_DEFAULTS.listen.port },
     docker: raw.docker.mode === 'socket' ? { mode: 'socket', socketPath: raw.docker.socketPath, cliPluginDirs: (raw.docker as { cliPluginDirs?: string[] }).cliPluginDirs ?? [] } : { mode: 'fake' },
     appPortRange: raw.appPortRange ?? { ...CONFIG_DEFAULTS.appPortRange },

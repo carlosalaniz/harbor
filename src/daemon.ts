@@ -27,6 +27,8 @@ import type { UrlVerifier } from './lifecycle/context.js';
 import { AppearanceService } from './appearance/service.js';
 import { FakeFetcher, RealFetcher, json as fakeJson, type Fetcher } from './appearance/fetcher.js';
 import { FakePower, SystemdPower, type PowerControl } from './system/power.js';
+import { PackageStore } from './packages/store.js';
+import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/registry.js';
 
 export function productVersion(): string {
   try {
@@ -52,6 +54,7 @@ export interface DaemonOverrides {
   net?: NetProvider;
   fetcher?: Fetcher;
   power?: PowerControl;
+  registry?: ImageResolver;
 }
 
 export interface Daemon {
@@ -107,7 +110,9 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const caddy = overrides.caddy ?? (fakeMode ? new FakeCaddyAdmin() : new CaddyAdminClient());
     const verify = overrides.verify ?? (fakeMode ? new FakeVerifier().fn : httpsVerifier);
     const net = overrides.net ?? (fakeMode ? new FakeNet() : new RealNet());
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify, net };
+    const registry = overrides.registry ?? (fakeMode ? demoRegistry() : new RegistryResolver());
+    const packages = new PackageStore(config.catalogDir, config.localPackagesDir, registry, clock);
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify, net, packages };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
@@ -167,6 +172,18 @@ export function demoFetcher(): FakeFetcher {
   });
   f.on('https://i.redd.it/', { status: 200, contentType: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]) });
   return f;
+}
+
+// Fake mode: a registry that knows a few demo tags so uploaded packages can be pinned without the internet.
+export function demoRegistry(): FakeRegistry {
+  const r = new FakeRegistry();
+  r.add('nginx:1.27-alpine', 'sha256:' + '1'.repeat(64), { created: '2026-05-01T00:00:00Z' });
+  r.add('nginx:1.28-alpine', 'sha256:' + '2'.repeat(64), { created: '2026-08-01T00:00:00Z' });
+  r.add('nginx:alpine', 'sha256:' + '3'.repeat(64));
+  r.add('hello/hello:1.0.0', 'sha256:' + '4'.repeat(64));
+  r.add('hello/hello:1.1.0', 'sha256:' + '5'.repeat(64));
+  r.add('excalidraw/excalidraw:latest', 'sha256:f7ee194addd607bf831d2af0f0a34463dd4225e426cf35199ef0b12a803398e9');
+  return r;
 }
 
 // `node dist/daemon.js --config /etc/harbor/harbor.json`

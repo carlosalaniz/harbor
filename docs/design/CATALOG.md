@@ -129,3 +129,15 @@ droplet, waits for readiness, opens the UI in headless Chromium (title + screens
 inspects mounts and resources, removes the instance, and repeats once with host folders for every
 package that has external claims. Results land in `docs/evidence/catalog-<timestamp>/` and in each
 package's `release.json` qualification (`passed` or `blocked` with the reason).
+
+## 6. Your own apps and updates (added 2026-09-15, v0.6.0)
+
+Two package roots behind one `PackageStore`: the bundled catalog (hash-verified, shipped with Harbor)
+and `localPackagesDir` for packages the operator uploads as a zip. Uploads are validated exactly like
+bundled packages; Harbor writes `release.json` itself and pins tag images by digest through the registry
+API at upload (decision 61). The console shows them with a *Your app* badge and a *Your apps* filter.
+
+Updates (decision 62): a `PackageStore` revision higher than an instance's revision is an available
+update, offered on Home, in the drawer and by `harbor list`/`harbor update`. The `update` plan keeps the
+instance identity and swaps the release; the runner keeps `release-previous/` and rolls back automatically
+when the new release does not start or answer. Developer guide: docs/DEVELOPER_PACKAGES.md.

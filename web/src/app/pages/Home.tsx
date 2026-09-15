@@ -47,6 +47,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   const byId = new Map(active.map((i) => [i.id, i]));
   const tiles = re.order.map((id) => byId.get(id)).filter((i): i is InstanceSummary => Boolean(i));
   const picture = data.appearance?.wallpaper.kind === 'rotating' ? data.appearance.wallpaper.current : null;
+  const updates = active.filter((i) => i.updateAvailable && i.installState === 'installed');
 
   return (
     <>
@@ -68,6 +69,34 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
         </div>
       </header>
       <SystemStrip m={data.metrics} dockerAvailable={data.system?.docker.available ?? null} />
+      {updates.length > 0 && (
+        <section className="card updates" aria-labelledby="upd-h">
+          <div className="row between wrap">
+            <div>
+              <h2 id="upd-h">
+                {updates.length} update{updates.length === 1 ? '' : 's'} available
+              </h2>
+              <p className="muted small">Your data, addresses and ports stay. If a new version does not start, Harbor puts the current one back.</p>
+            </div>
+          </div>
+          <ul className="plain">
+            {updates.map((i) => (
+              <li key={i.id} className="row between wrap">
+                <span className="row">
+                  <InstanceIcon inst={i} size={28} />
+                  <span>
+                    <strong>{appLabel(i)}</strong> <span className="muted small">{i.revision} → {i.updateAvailable!.revision}{i.updateAvailable!.version ? ` (${i.updateAvailable!.version})` : ''}</span>
+                    {i.updateAvailable!.releaseNotes && <span className="muted small"> · {i.updateAvailable!.releaseNotes}</span>}
+                  </span>
+                </span>
+                <button className="btn primary" disabled={c.busy} onClick={() => c.start({ kind: 'update', instance: i })} aria-label={`Update ${i.name}`}>
+                  Update
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {(attention.length > 0 || degraded.length > 0) && (
         <section className="card attention" aria-labelledby="att-h">
           <h2 id="att-h">Needs attention</h2>
@@ -219,6 +248,11 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
         <button className="btn ghost icon more" onClick={onDetails} aria-label={`Details of ${inst.name}`} title="Details and actions">
           ⋯
         </button>
+      )}
+      {inst.updateAvailable && !arranging && (
+        <span className="update-dot" title={`Update available: revision ${inst.updateAvailable.revision}`} aria-label={`Update available for ${inst.name}`}>
+          ↑
+        </span>
       )}
     </li>
   );

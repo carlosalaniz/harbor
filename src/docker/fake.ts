@@ -21,6 +21,7 @@ export interface FakeBehaviour {
   respond?: (service: string, path: string) => number | 'hang' | 'refuse';
   failPull?: string | null; // error message
   failUp?: string | null;
+  failUpImage?: string | null; // fail `up` only when a service image contains this text (update rollback tests)
   engineDown?: boolean;
 }
 
@@ -163,6 +164,9 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
       if (v.external && v.name && !this.volumes.has(v.name)) {
         throw new ComposeError(`external volume "${v.name}" not found`, { command: ['up'], exitCode: 1, stderrTail: `external volume "${v.name}" not found`, timedOut: false });
       }
+    }
+    if (this.behaviour.failUpImage && Object.values(doc.services).some((svc) => svc.image.includes(this.behaviour.failUpImage!))) {
+      throw new ComposeError(`docker compose up failed: image ${this.behaviour.failUpImage} refuses to start (simulated)`, { command: ['up'], exitCode: 1, stderrTail: 'simulated failure', timedOut: false });
     }
     const netName = doc.networks?.['default']?.name ?? `${inv.projectName}_default`;
     let net = [...this.networks.values()].find((n) => n.name === netName);

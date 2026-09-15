@@ -86,6 +86,7 @@ export function StoreCard({ item, installed = 0, onOpen, onInstall, disabled }: 
           <p className="muted small">{item.presentation.tagline ?? item.description}</p>
           <p className="row wrap badges">
             {installed > 0 && <Pill tone="ok">{installed === 1 ? 'Installed' : `${installed} installed`}</Pill>}
+            {item.origin === 'local' && <Pill tone="info">Your app{item.version ? ` · ${item.version}` : ''}</Pill>}
             {item.qualification !== 'passed' && item.availability === 'available' && (
               <Pill tone={item.qualification === 'blocked' ? 'warn' : 'muted'}>{item.qualification === 'blocked' ? 'Live check failed' : 'Not yet live-checked'}</Pill>
             )}

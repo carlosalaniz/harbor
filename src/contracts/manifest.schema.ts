@@ -30,7 +30,8 @@ export const MANIFEST_SCHEMA = {
       type: 'object',
       additionalProperties: false,
       required: ['revision'],
-      properties: { revision: { type: 'string', pattern: REVISION_PATTERN } },
+      // `version` is the human app version shown in the console ("1.2.3"); `revision` orders package releases
+      properties: { revision: { type: 'string', pattern: REVISION_PATTERN }, version: plainText(64) },
     },
     deployment: {
       type: 'object',

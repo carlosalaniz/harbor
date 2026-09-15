@@ -6,7 +6,7 @@ export type InstallState = 'installing' | 'installed' | 'failed' | 'needs_action
 export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unknown';
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'expose' | 'unexpose' | 'reconfigure';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure';
 export type ExposureVia = 'tailnet' | 'public';
 export type PrimaryExposure = 'loopback' | ExposureVia;
 
@@ -52,6 +52,8 @@ export interface InstanceSummary {
   primaryEndpoint: string;
   operationId: string | null;
   hasRetainedData: boolean;
+  // a newer revision of this app's package is available (bundled catalog after a Harbor upgrade, or an uploaded package)
+  updateAvailable: { revision: string; version: string | null; releaseNotes: string | null } | null;
   // launcher customisation (Customize… in the app drawer); null = package defaults
   displayName: string | null;
   customIcon: { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; url: string } | null;
@@ -112,6 +114,8 @@ export interface PlanDto {
   storage: StorageDto[];
   secrets: { id: string; state: 'new' | 'existing' }[];
   warnings: string[];
+  // update plans: what changes between the installed release and the new one
+  update?: { fromRevision: string; toRevision: string; fromVersion: string | null; toVersion: string | null; images: { service: string; from: string; to: string }[]; newSecrets: string[]; newStorage: string[]; newEndpoints: string[]; releaseNotes: string | null };
   exposure?: { endpointId: string; via: ExposureVia; url: string; protection: 'none' | 'basic'; makePrimary: boolean; credentials?: { username: string; password: string } };
 }
 
@@ -135,6 +139,8 @@ export interface CatalogItemDto {
   name: string;
   description: string;
   revision: string;
+  version: string | null;
+  origin: 'bundled' | 'local'; // local = uploaded by the operator ("your own apps")
   availability: 'available' | 'unavailable';
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
@@ -189,6 +195,7 @@ export interface ApiErrorBody {
 export type PlanRequest =
   | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }> }
   | { kind: 'start' | 'stop' | 'remove' | 'reinstall' | 'purge'; instanceId: string }
+  | { kind: 'update'; instanceId: string; storage?: Record<string, { hostPath: string }> }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean }
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
   | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };
@@ -267,4 +274,15 @@ export interface SystemHostDto {
   arch: string;
   cpuModel: string | null;
   power: { available: boolean; note: string | null };
+}
+
+// ---- your own apps: uploaded packages
+export interface PackageImportResultDto {
+  item: CatalogItemDto;
+  // images Harbor pinned for you at upload time (tag -> digest)
+  pinned: { service: string; from: string; to: string }[];
+  notes: string[];
+  replacedRevision: string | null; // when a package with the same id already existed
+  // instances that can now be updated to this package
+  updatable: { instanceId: string; name: string; fromRevision: string }[];
 }

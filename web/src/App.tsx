@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken } from './api';
 import { EventList } from './app/components';
-import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard } from './app/dialogs';
+import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
 import { Home } from './app/pages/Home';
 import { Platform } from './app/pages/Platform';
 import { Publishing } from './app/pages/Publishing';
@@ -122,12 +122,14 @@ const NAV: { route: Route; label: string; glyph: string }[] = [
 
 function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   const c = useConsole(onAuthLost);
+  const [noticeError, setNoticeError] = useState<string | null>(null);
   const [route, go] = useRoute();
   const [storeItem, setStoreItem] = useState<CatalogItemDto | null>(null);
   const [drawer, setDrawer] = useState<InstanceSummary | null>(null);
   const [publishing, setPublishing] = useState<InstanceSummary | null>(null);
   const [palette, setPalette] = useState(false);
   const [customizing, setCustomizing] = useState<InstanceSummary | null>(null);
+  const [uploading, setUploading] = useState(false);
   const openPalette = useCallback(() => setPalette(true), []);
   usePaletteShortcut(openPalette);
 
@@ -201,17 +203,43 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             Cannot load: {c.loadError}
           </p>
         )}
+        {noticeError && (
+          <p className="error banner" role="alert">
+            {noticeError}{' '}
+            <button className="btn ghost icon" onClick={() => setNoticeError(null)} aria-label="Dismiss">
+              ×
+            </button>
+          </p>
+        )}
         {page === 'home' && <Home c={c} onOpenApp={setDrawer} onGoStore={() => go({ page: 'store' })} onPick={setStoreItem} />}
-        {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} />}
+        {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} onUpload={() => setUploading(true)} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
         {page === 'settings' && <Settings c={c} onLogout={() => void logout()} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go(s === 'overview' ? { page: 'settings' } : { page: 'settings', section: s })} />}
       </main>
 
+      {uploading && (
+        <UploadPackageDialog
+          onClose={() => setUploading(false)}
+          onDone={() => {
+            void c.refresh();
+          }}
+        />
+      )}
       {storeItem && !c.pending && (
         <InstallWizard
           item={storeItem}
           busy={c.busy}
+          installed={c.data.instances.filter((i) => i.packageId === storeItem.id).length}
+          onRemovePackage={() => {
+            void api.removePackage(storeItem.id).then(
+              () => {
+                setStoreItem(null);
+                void c.refresh();
+              },
+              (e: Error) => setNoticeError(e.message),
+            );
+          }}
           onClose={() => {
             setStoreItem(null);
             if (route.page === 'store' && route.packageId) go({ page: 'store' });
@@ -280,9 +308,9 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   );
 }
 
-const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', purge: 'Uninstalling', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of' };
-const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', purge: 'was uninstalled completely', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched' };
-const PHASE: Record<string, string> = { purging: 'deleting its data', queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
+const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', purge: 'Uninstalling', update: 'Updating', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of' };
+const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', purge: 'was uninstalled completely', update: 'is up to date', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched' };
+const PHASE: Record<string, string> = { rollback: 'putting the previous version back', purging: 'deleting its data', queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
 
 // Bottom-right operation tray: progress while running, one-shot result (with credentials) when done.
 function Tray({ c }: { c: ReturnType<typeof useConsole> }) {

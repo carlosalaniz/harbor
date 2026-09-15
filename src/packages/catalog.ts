@@ -92,11 +92,14 @@ export function loadPackage(catalogDir: string, id: string, expectedRevision?: s
   return pkg;
 }
 
+export type PackageOrigin = 'bundled' | 'local';
 export interface CatalogItem {
   id: string;
   name: string;
   description: string;
   revision: string;
+  version: string | null;
+  origin: PackageOrigin;
   availability: 'available' | 'unavailable';
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
@@ -107,7 +110,7 @@ export interface CatalogItem {
 }
 
 // Catalog listing never throws for one bad package: it reports it as unavailable with the reason.
-export function listCatalog(catalogDir: string): CatalogItem[] {
+export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled'): CatalogItem[] {
   const index = readCatalogIndex(catalogDir);
   const items: CatalogItem[] = [];
   for (const id of Object.keys(index.packages).sort()) {
@@ -118,6 +121,8 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
         name: pkg.manifest.metadata.name,
         description: pkg.manifest.metadata.description,
         revision: pkg.revision,
+        version: pkg.manifest.release.version ?? null,
+        origin,
         availability: 'available',
         reason: null,
         qualification: pkg.release.qualification.status,
@@ -132,6 +137,8 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
         name: id,
         description: '',
         revision: index.packages[id]!.revision,
+        version: null,
+        origin,
         availability: 'unavailable',
         reason: e instanceof HarborError ? e.message : 'invalid package',
         qualification: 'invalid',

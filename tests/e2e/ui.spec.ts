@@ -18,7 +18,7 @@ async function approve(page: Page, label: string | RegExp) {
   await dlg.getByRole('button', { name: label }).click();
 }
 // Tray titles are human sentences; map the operation kind to the wording that proves success.
-const DONE_RE: Record<string, RegExp> = { Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
+const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
 const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
 async function installFromStore(page: Page, pkgName: string) {
@@ -488,4 +488,86 @@ test('rotating wallpapers: turn on from Settings, a picture with credit appears,
   await page.goto('/#/settings/appearance');
   await page.getByRole('switch', { name: 'Rotating wallpapers' }).uncheck();
   await expect(page.getByRole('button', { name: 'Next picture' })).toHaveCount(0);
+});
+
+test('your own app: upload a package zip, it appears under Your apps, installs; a higher revision offers an Update that keeps the address', async ({ page }) => {
+  const { writeZip } = await import('../../src/packages/zip.js');
+  const manifest = (rev: string, notes = '') => `apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: hello-e2e
+  name: Hello E2E
+  description: A tiny page
+release:
+  revision: "${rev}"
+  version: "1.${rev}"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 30
+ui:
+  primaryEndpoint: web
+presentation:
+  tagline: Says hello
+  category: developer
+  icon: icon.svg
+${notes ? `  releaseNotes: ${JSON.stringify(notes)}\n` : ''}`;
+  const zip = (rev: string, image: string, notes = '') => writeZip({ 'manifest.yaml': manifest(rev, notes), 'compose.yaml': `services:\n  web:\n    image: ${image}\n`, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>' }, { folder: 'hello-e2e' });
+  await login(page);
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'Add your own app' }).click();
+  const dlg = page.getByRole('dialog', { name: 'Your own app' });
+  await dlg.getByLabel('Package zip file').setInputFiles({ name: 'hello-e2e.zip', mimeType: 'application/zip', buffer: zip('1', 'nginx:1.27-alpine') });
+  await expect(dlg).toContainText('Hello E2E is in your App Store');
+  await expect(dlg).toContainText('nginx:1.27-alpine');
+  await dlg.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('tab', { name: 'Your apps' }).click();
+  const card = page.locator('.tile.store').filter({ hasText: 'Hello E2E' });
+  await expect(card).toContainText('Your app · 1.1');
+  await card.getByRole('button', { name: 'Install Hello E2E', exact: true }).click();
+  const plan = page.getByRole('dialog');
+  await expect(plan).toContainText('your own uploaded app');
+  await plan.getByRole('button', { name: 'Install' }).click();
+  await trayDone(page, 'Install');
+  await page.getByRole('link', { name: 'Home' }).click();
+  const tile = page.locator('.icon-tile[data-instance="hello-e2e"]');
+  await expect(tile).toBeVisible();
+  const href = await tile.getByRole('link', { name: 'Open hello-e2e' }).getAttribute('href');
+  // revision 2 with a new image: the console offers an update
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'Add your own app' }).click();
+  const dlg2 = page.getByRole('dialog', { name: 'Your own app' });
+  await dlg2.getByLabel('Package zip file').setInputFiles({ name: 'hello-e2e-2.zip', mimeType: 'application/zip', buffer: zip('2', 'nginx:1.28-alpine', 'Shinier hello') });
+  await expect(dlg2).toContainText('replaces revision 1');
+  await expect(dlg2).toContainText('Updates available for hello-e2e');
+  await dlg2.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('link', { name: 'Home' }).click();
+  await expect(page.getByRole('heading', { name: '1 update available' })).toBeVisible();
+  await expect(tile.getByLabel('Update available for hello-e2e')).toBeVisible();
+  await page.getByRole('button', { name: 'Details of hello-e2e' }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toContainText('Update available');
+  await expect(drawer).toContainText('Shinier hello');
+  await drawer.getByRole('button', { name: 'Update hello-e2e' }).click();
+  const review = page.getByRole('dialog');
+  await expect(review).toContainText('Review update');
+  await expect(review).toContainText('1 image change');
+  await review.getByRole('button', { name: 'Update now' }).click();
+  await expect(page.getByRole('heading', { name: /Hello E2E is up to date/ })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: '1 update available' })).toHaveCount(0);
+  await expect(tile.getByRole('link', { name: 'Open hello-e2e' })).toHaveAttribute('href', href!); // same address after the update
 });

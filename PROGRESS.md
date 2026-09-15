@@ -113,6 +113,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] CLI: `harbor wallpaper [set|next]`, `harbor look`, `harbor power restart|shutdown`
 - [x] Tests: unit (sources, polkit rule, host facts, migration v5, OpenAPI routes), integration (rotation lifecycle, Reddit credentials, order/look/purge cleanup, power), Playwright (customize, drag + keyboard arrange, rotation + Reddit key, overview + restart confirm)
 
+## Phase 12 — your own apps and updates (2026-09-15, v0.6.0) ✅
+- [x] `PackageStore` (bundled + uploaded), strict zip reader, registry resolver (tag → digest at upload), generated release.json, revision rules; `POST/DELETE /v1/packages`; App Store upload dialog with pin report; *Your apps* filter and badge; CLI `harbor packages [add|remove]`
+- [x] `update` plan kind: identity kept, new claims created, images swapped, `release-previous/` + automatic rollback; `updateAvailable` on instances; Home updates card, tile ↑ badge, drawer banner, plan review facts; CLI `harbor update`, `harbor list` UPDATE column
+- [x] Manifest `release.version`; catalog `origin`/`version`
+- [x] Tests: unit (zip incl. zip-slip/CRC, image refs, revisions, store import rules), integration (upload → install → update with kept port/exposure → failed update rolls back → added volume/endpoint → remove; bundled revision bump shows an update), Playwright (upload + update from the console)
+- [x] docs/DEVELOPER_PACKAGES.md (template + rules), operator guide 4d, decisions 60–63
+
 ## Test results (latest local run)
 
 | Command | Result |

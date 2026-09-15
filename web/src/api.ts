@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, RotationPatch, SystemHostDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, PackageImportResultDto, RotationPatch, SystemHostDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -82,6 +82,9 @@ export const api = {
   setHomeOrder: (order: string[]) => call<AppearanceDto>('PUT', '/v1/appearance/home', { order }),
   setInstanceAppearance: (id: string, patch: InstanceAppearancePatch) => call<InstanceSummary>('PUT', `/v1/instances/${id}/appearance`, patch),
   systemHost: () => call<SystemHostDto>('GET', '/v1/system/host'),
+  // your own apps
+  uploadPackage: (fileName: string, dataUrl: string) => call<PackageImportResultDto>('POST', '/v1/packages', { fileName, dataUrl }),
+  removePackage: (id: string) => call<void>('DELETE', `/v1/packages/${encodeURIComponent(id)}`),
   power: (action: 'reboot' | 'poweroff') => call<{ action: string; accepted: boolean }>('POST', '/v1/system/power', { action }),
   setWallpaper: (dataUrl: string) => call<void>('PUT', '/v1/appearance/wallpaper', { dataUrl }),
   clearWallpaper: () => call<void>('DELETE', '/v1/appearance/wallpaper'),

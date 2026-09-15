@@ -7,7 +7,7 @@ export interface Manifest {
   apiVersion: 'harbor/v1alpha1';
   kind: 'Application';
   metadata: { id: string; name: string; description: string };
-  release: { revision: string };
+  release: { revision: string; version?: string };
   deployment: { compose: 'compose.yaml'; multiInstance: boolean; services: Record<string, ServiceRole> };
   endpoints: Record<string, ManifestEndpoint>;
   health: { endpoint: string; path: string; expectedStatus: number[]; timeoutSeconds: number; deadlineSeconds: number };

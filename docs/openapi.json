@@ -833,6 +833,64 @@
         }
       }
     },
+    "/v1/packages": {
+      "post": {
+        "description": "Upload a package zip. Harbor validates it like a bundled package, pins tag images by digest at the registry and writes release.json. A higher revision of an already uploaded id becomes an update for its instances.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "fileName",
+                  "dataUrl"
+                ],
+                "properties": {
+                  "fileName": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "dataUrl": {
+                    "type": "string",
+                    "minLength": 32,
+                    "maxLength": 73400320
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/packages/{id}": {
+      "delete": {
+        "description": "Remove an uploaded package (refused while an app installed from it exists).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/system/host": {
       "get": {
         "description": "Hostname, OS, CPU and whether Harbor may restart or shut down this machine.",
@@ -1090,6 +1148,46 @@
                       "instanceId": {
                         "type": "string",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "instanceId"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "update"
+                        ]
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "storage": {
+                        "type": "object",
+                        "maxProperties": 16,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "hostPath"
+                          ],
+                          "properties": {
+                            "hostPath": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          }
+                        }
                       }
                     }
                   },

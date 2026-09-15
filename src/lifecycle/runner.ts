@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { rmSync } from 'node:fs';
+import { cpSync, existsSync, readdirSync, rmSync } from 'node:fs';
 import type { Ctx } from './context.js';
 import { HarborError, type ErrorCode } from '../errors.js';
 import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
@@ -7,7 +7,6 @@ import { LABELS } from '../naming.js';
 import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type InstanceIdentity } from '../planner/identity.js';
 import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory } from '../storage/host-path.js';
-import { loadPackage } from '../packages/catalog.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
@@ -111,6 +110,7 @@ export class OperationRunner {
         case 'stop': await this.stop(op, inst); break;
         case 'remove': await this.remove(op, inst); break;
         case 'purge': await this.purge(op, inst); break;
+        case 'update': await this.update(op, plan, inst, secretValues); break;
         case 'expose': await this.expose(op, plan, inst, secretValues); break;
         case 'unexpose': await this.unexpose(op, plan, inst, secretValues); break;
         case 'reconfigure': await this.reconfigure(op, plan, inst, secretValues); break;
@@ -129,14 +129,18 @@ export class OperationRunner {
         return;
       }
       const { code, message, nextAction, state } = classify(e, secretValues);
+      // a failed update that was rolled back leaves the app installed and running on the previous release
+      const rolledBack = op.kind === 'update' && this.opResult?.['rolledBack'] === true;
+      const result = rolledBack ? { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) } : undefined;
+      this.opResult = null;
       this.ctx.log.warn(`${op.kind} ${state}: ${message}`, { operationId: op.id, instanceId: inst.id, code });
       repo.transaction(() => {
-        repo.finishOperation(op.id, state, { errorCode: code, errorMessage: message, nextAction });
+        repo.finishOperation(op.id, state, { errorCode: code, errorMessage: message, nextAction, ...(result ? { result } : {}) });
         repo.updateInstance(inst.id, {
           activeOperationId: null,
           lastOperationId: op.id,
-          installState: installStateAfterFailure(op.kind, repo.resources(inst.id).some((r) => r.kind === 'container'), inst.installState),
-          readiness: 'unknown',
+          installState: rolledBack ? 'installed' : installStateAfterFailure(op.kind, repo.resources(inst.id).some((r) => r.kind === 'container'), inst.installState),
+          readiness: rolledBack ? 'healthy' : 'unknown',
         });
         repo.bumpGeneration(inst.id);
         repo.addEvent({ operationId: op.id, instanceId: inst.id, phase: state, message: `${op.kind} ${state}: ${message}` });
@@ -436,9 +440,9 @@ export class OperationRunner {
     const { repo, config } = this.ctx;
     this.phase(op, 'applying', 'preparing', 'revalidating package and plan');
     await this.engineOrThrow();
-    const pkg = loadPackage(config.catalogDir, inst.packageId, inst.revision);
+    const pkg = this.ctx.packages.load(inst.packageId, inst.revision);
     for (const [f, h] of Object.entries(plan.proposal.releaseHashes)) {
-      if (pkg.hashes[f as keyof typeof pkg.hashes] !== h) throw new HarborError('STATE_CHANGED', `bundled package ${f} changed since the plan was created`);
+      if (pkg.hashes[f as keyof typeof pkg.hashes] !== h) throw new HarborError('STATE_CHANGED', `package ${f} changed since the plan was created`);
     }
     const identity = identityFor(this.ctx.installationId, inst.id);
     const dirs = this.dirs(inst);
@@ -590,6 +594,114 @@ export class OperationRunner {
     // archived name keeps the row unique while freeing the name for a fresh install
     repo.purgeInstance(inst.id, `${inst.name}~purged~${inst.id.slice(0, 8)}`);
     this.event(op, 'purging', `${inst.name} fully uninstalled; name and ports are free again`);
+  }
+
+
+  // Update: new release, same instance. Containers are recreated from the new release; volumes, folders,
+  // secrets, ports and addresses stay. The previous release is kept next to the new one and put back
+  // automatically if the new one fails to start or answer, so a bad update leaves the app running as before.
+  private async update(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo, config } = this.ctx;
+    const u = plan.proposal.update;
+    if (!u) throw new HarborError('STATE_CHANGED', 'plan carries no update');
+    this.phase(op, 'applying', 'preparing', `loading revision ${u.toRevision} and verifying the installed app`);
+    await this.engineOrThrow();
+    const next = this.ctx.packages.load(inst.packageId, u.toRevision);
+    for (const [f, h] of Object.entries(plan.proposal.releaseHashes)) {
+      if (next.hashes[f as keyof typeof next.hashes] !== h) throw new HarborError('STATE_CHANGED', `package ${f} changed since the plan was created`);
+    }
+    const dirs = this.dirs(inst);
+    const previousDir = path.join(dirs.root, 'release-previous');
+    const current = loadReleaseSnapshot(dirs.release, inst.packageId);
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    await this.verifyOwnedVolumes(op, current, identity, inst);
+    // keep the old release for rollback (and a record of what ran before)
+    rmSync(previousDir, { recursive: true, force: true });
+    cpSync(dirs.release, previousDir, { recursive: true });
+    this.event(op, 'preparing', `kept revision ${inst.revision} at release-previous for rollback`);
+    const before = { revision: inst.revision, releaseHashes: inst.releaseHashes, endpoints: inst.endpoints, desired: inst.desired };
+
+    this.phase(op, 'applying', 'stopping', 'stopping and deleting the current containers (data stays)');
+    await this.teardownContainers(op, inst, 'stopping');
+    // from here on a failure must roll back
+    try {
+      this.phase(op, 'applying', 'preparing', `storing revision ${u.toRevision}`);
+      for (const f of readdirSync(dirs.release)) rmSync(path.join(dirs.release, f), { force: true, recursive: true });
+      writeReleaseSnapshot(dirs.release, next);
+      for (const ep of plan.proposal.endpoints) if (!inst.endpoints.some((e) => e.id === ep.id)) repo.claimPort(ep.hostPort, inst.id, ep.id);
+      const updated: InstanceRow = { ...inst, revision: next.revision, releaseHashes: next.hashes, endpoints: plan.proposal.endpoints };
+      repo.updateInstanceRelease(inst.id, { revision: next.revision, releaseHashes: next.hashes, endpoints: plan.proposal.endpoints });
+      repo.updateInstance(inst.id, { installState: 'installing', desired: 'running' });
+      // storage: new claims get volumes/folders; existing ones were verified above
+      const newClaims = (next.manifest.storage ?? []).filter((c) => !(current.manifest.storage ?? []).some((o) => o.composeVolume === c.composeVolume));
+      await this.createOwnedVolumes(op, { ...next, manifest: { ...next.manifest, storage: newClaims } }, identity, updated, plan.proposal.storage);
+      // secrets: only the ones this release adds
+      const refs = [...inst.secrets];
+      for (const sec of next.manifest.secrets ?? []) {
+        if (refs.some((r) => r.id === sec.id)) continue;
+        generateSecretOnce(dirs.secrets, sec.id, this.ctx.ids);
+        refs.push({ id: sec.id, file: path.join('secrets', sec.id) });
+        this.event(op, 'preparing', `generated retained secret ${sec.id}`);
+      }
+      repo.updateInstance(inst.id, { secrets: refs });
+      const values = this.readSecrets(next, dirs.secrets, sink);
+      const file = await this.renderAndValidate(op, next, identity, updated, dirs.runtime, values);
+      const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
+      this.phase(op, 'applying', 'pulling', `pulling ${u.images.length || Object.keys(next.release.images).length} image(s) by digest`);
+      await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+      this.phase(op, 'applying', 'starting', `starting ${next.manifest.metadata.name} revision ${next.revision}`);
+      repo.updateInstance(inst.id, { runtime: 'starting' });
+      const containers = await this.upAndRecord(op, inv, identity, updated);
+      await this.checkReadiness(op, next, updated, containers);
+      repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+      this.event(op, 'checking', `${inst.name} now runs revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`);
+      this.opResult = { fromRevision: u.fromRevision, toRevision: u.toRevision, rolledBack: false };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      this.event(op, 'rollback', `update to revision ${u.toRevision} failed: ${reason}; putting revision ${before.revision} back`);
+      this.phase(op, 'applying', 'rollback', `restoring revision ${before.revision}`);
+      try {
+        await this.teardownContainers(op, { ...inst, endpoints: plan.proposal.endpoints }, 'rollback');
+        for (const f of readdirSync(dirs.release)) rmSync(path.join(dirs.release, f), { force: true, recursive: true });
+        cpSync(previousDir, dirs.release, { recursive: true });
+        repo.updateInstanceRelease(inst.id, { revision: before.revision, releaseHashes: before.releaseHashes, endpoints: before.endpoints });
+        const restored: InstanceRow = { ...inst, revision: before.revision, releaseHashes: before.releaseHashes, endpoints: before.endpoints };
+        const values = this.readSecrets(current, dirs.secrets, sink);
+        const file = await this.renderAndValidate(op, current, identity, restored, dirs.runtime, values);
+        const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
+        repo.updateInstance(inst.id, { runtime: 'starting' });
+        const containers = await this.upAndRecord(op, inv, identity, restored);
+        await this.checkReadiness(op, current, restored, containers);
+        repo.updateInstance(inst.id, { installState: 'installed', desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+        this.event(op, 'rollback', `${inst.name} is back on revision ${before.revision}; your data was not changed by Harbor`);
+        this.opResult = { fromRevision: u.fromRevision, toRevision: u.toRevision, rolledBack: true };
+        throw new HarborError('OPERATION_FAILED', `the update to revision ${u.toRevision} failed (${reason}); ${inst.name} was rolled back to revision ${before.revision} and is running`, { nextAction: 'Check the new release (images, health path); the app keeps running on the previous revision until you try again.' });
+      } catch (re) {
+        if (re instanceof HarborError && re.code === 'OPERATION_FAILED' && re.message.includes('rolled back')) throw re;
+        this.event(op, 'rollback', `rollback failed too: ${re instanceof Error ? re.message : String(re)}`);
+        throw new HarborError('OPERATION_FAILED', `the update failed (${reason}) and the rollback did not complete (${re instanceof Error ? re.message : String(re)})`, { nextAction: 'Inspect the app (Details → Technical details). Its data volumes and secrets are intact; Remove then Reinstall restores the last stored release.' });
+      }
+    } finally {
+      // leave the previous release around for one more look when the update succeeded; delete when it rolled back
+      if (existsSync(previousDir) && this.opResult?.['rolledBack'] === true) rmSync(previousDir, { recursive: true, force: true });
+    }
+  }
+
+  // Stop and delete the recorded containers of an instance; keep exposures, network, volumes, secrets, ports.
+  private async teardownContainers(op: OperationRow, inst: InstanceRow, phase: string): Promise<void> {
+    const { repo, docker } = this.ctx;
+    for (const r of repo.resources(inst.id).filter((x) => x.kind === 'container')) {
+      const c = await docker.inspectContainer(r.dockerId ?? r.name);
+      if (!c) {
+        repo.deleteResource(inst.id, 'container', r.role);
+        continue;
+      }
+      if (c.labels[LABELS.instance] !== inst.id) throw new HarborError('OWNERSHIP_CONFLICT', `container ${r.name} is not owned by this instance; refusing to touch it`);
+      if (c.state !== 'exited' && c.state !== 'created' && c.state !== 'dead') await docker.stopContainer(c.id, 15);
+      await docker.removeContainer(c.id);
+      repo.deleteResource(inst.id, 'container', r.role);
+      this.event(op, phase, `removed container ${c.name}`);
+    }
   }
 
   private async remove(op: OperationRow, inst: InstanceRow): Promise<void> {

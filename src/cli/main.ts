@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -8,6 +8,7 @@ import { enrollAdministrator, initState } from '../maintenance.js';
 import { productVersion } from '../daemon.js';
 import { ApiClient, clearCliState, readCliState, writeCliState } from './client.js';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { confirm, promptHidden, promptVisible, readStdinAll } from './prompt.js';
 
@@ -166,7 +167,7 @@ program
   .action(async () => {
     const { items } = await client().get<{ items: CatalogItemDto[] }>('/v1/catalog');
     const folders = (i: CatalogItemDto) => i.claims.filter((c) => c.external).map((c) => `${c.id}${c.external?.required ? ' (required)' : ''}${c.external?.readOnly ? ' (ro)' : ''}`).join(', ') || '-';
-    out(items, () => table([['ID', 'NAME', 'REV', 'AVAILABILITY', 'QUALIFICATION', 'OWN-FOLDER CLAIMS', 'DESCRIPTION'], ...items.map((i) => [i.id, i.name, i.revision, i.availability + (i.reason ? ` (${i.reason})` : ''), i.qualification, folders(i), i.description])]));
+    out(items, () => table([['ID', 'NAME', 'REV', 'VERSION', 'ORIGIN', 'AVAILABILITY', 'QUALIFICATION', 'OWN-FOLDER CLAIMS', 'DESCRIPTION'], ...items.map((i) => [i.id, i.name, i.revision, i.version ?? '-', i.origin === 'local' ? 'yours' : 'built-in', i.availability + (i.reason ? ` (${i.reason})` : ''), i.qualification, folders(i), i.description])]));
   });
 
 program
@@ -176,7 +177,7 @@ program
     const { items } = await client().get<{ items: InstanceSummary[] }>('/v1/instances');
     out(items, () =>
       items.length
-        ? table([['NAME', 'PACKAGE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'URL', 'ID'], ...items.map((i) => { const ep = i.endpoints.find((e) => e.id === i.primaryEndpoint); const u = ep ? (ep.urls[ep.primary as keyof typeof ep.urls] ?? ep.urls.loopback) : '-'; return [i.name, `${i.packageId}@${i.revision}`, i.installState, i.desired, i.runtime, i.readiness, u, i.id]; })])
+        ? table([['NAME', 'PACKAGE', 'UPDATE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'URL', 'ID'], ...items.map((i) => { const ep = i.endpoints.find((e) => e.id === i.primaryEndpoint); const u = ep ? (ep.urls[ep.primary as keyof typeof ep.urls] ?? ep.urls.loopback) : '-'; return [i.name, `${i.packageId}@${i.revision}`, i.updateAvailable ? `-> ${i.updateAvailable.revision}${i.updateAvailable.version ? ` (${i.updateAvailable.version})` : ''}` : '-', i.installState, i.desired, i.runtime, i.readiness, u, i.id]; })])
         : 'No instances.',
     );
   });
@@ -217,7 +218,7 @@ program
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
-  if (!['start', 'stop', 'remove', 'reinstall', 'purge', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
@@ -251,6 +252,54 @@ program
     }
     const plan = await createPlan(api, 'install', pkg, opts.name, Object.keys(storage).length ? { storage } : {});
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+
+program
+  .command('update <instance>')
+  .description('update an installed app to the newest revision of its package (bundled after a Harbor upgrade, or uploaded); keeps data, ports and addresses; rolls back automatically if the new release does not start')
+  .option('--storage <claim=/host/path>', 'folder for a storage claim the new release adds (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--yes', 'approve the shown plan non-interactively', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { storage: string[]; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const storage: Record<string, { hostPath: string }> = {};
+    for (const s of opts.storage) {
+      const eq = s.indexOf('=');
+      if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--storage expects <claim>=<path>, got ${s}`);
+      storage[s.slice(0, eq)] = { hostPath: s.slice(eq + 1) };
+    }
+    const plan = await createPlan(api, 'update', ref, undefined, Object.keys(storage).length ? { storage } : {});
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+
+const packagesCmd = program.command('packages').description('your own apps: list, add a package zip, remove one');
+packagesCmd.action(async () => {
+  const { items } = await client().get<{ items: CatalogItemDto[] }>('/v1/catalog');
+  const mine = items.filter((i) => i.origin === 'local');
+  out(mine, () => (mine.length ? table([['ID', 'NAME', 'REV', 'VERSION', 'AVAILABILITY'], ...mine.map((i) => [i.id, i.name, i.revision, i.version ?? '-', i.availability + (i.reason ? ` (${i.reason})` : '')])]) : 'No uploaded packages. Add one with: harbor packages add <file.zip>'));
+});
+packagesCmd
+  .command('add <zip>')
+  .description('upload a package zip (manifest.yaml, compose.yaml, README.md, icon…); tag images are pinned by digest for you')
+  .action(async (file: string) => {
+    const bytes = readFileSync(file);
+    const r = await client().post<PackageImportResultDto>('/v1/packages', { fileName: path.basename(file), dataUrl: `data:application/zip;base64,${bytes.toString('base64')}` });
+    out(r, () =>
+      [
+        `${r.item.name} (${r.item.id}) revision ${r.item.revision}${r.item.version ? ` version ${r.item.version}` : ''} is in your App Store${r.replacedRevision ? ` (replaces revision ${r.replacedRevision})` : ''}.`,
+        ...r.pinned.map((p) => `  pinned ${p.service}: ${p.from} -> ${p.to}`),
+        ...r.notes.map((n) => `  note: ${n}`),
+        ...(r.updatable.length ? [`  updates available for: ${r.updatable.map((u) => `${u.name} (rev ${u.fromRevision})`).join(', ')} — run: harbor update <name>`] : []),
+        `Install with: harbor install ${r.item.id}`,
+      ].join('\n'),
+    );
+  });
+packagesCmd
+  .command('remove <id>')
+  .description('remove an uploaded package (refused while an app installed from it exists)')
+  .action(async (id: string) => {
+    await client().delete(`/v1/packages/${encodeURIComponent(id)}`);
+    out({ removed: id }, () => `Removed uploaded package ${id}.`);
   });
 
 program

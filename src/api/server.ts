@@ -347,6 +347,35 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     return reply.send(icon.bytes);
   });
 
+  // --- your own apps: uploaded packages (zip with manifest.yaml, compose.yaml, README.md, icon…)
+  app.post(
+    '/v1/packages',
+    {
+      preHandler: requireAuth,
+      bodyLimit: 72 * 1024 * 1024,
+      schema: {
+        description: 'Upload a package zip. Harbor validates it like a bundled package, pins tag images by digest at the registry and writes release.json. A higher revision of an already uploaded id becomes an update for its instances.',
+        body: { type: 'object', additionalProperties: false, required: ['fileName', 'dataUrl'], properties: { fileName: { type: 'string', minLength: 1, maxLength: 200 }, dataUrl: { type: 'string', minLength: 32, maxLength: 70 * 1024 * 1024 } } },
+      },
+    },
+    async (req, reply) => {
+      const b = req.body as { fileName: string; dataUrl: string };
+      const m = /^data:(?:application\/(?:zip|x-zip-compressed|octet-stream));base64,([A-Za-z0-9+/=]+)$/.exec(b.dataUrl);
+      if (!m) throw new HarborError('INVALID_REQUEST', 'send the zip as a data URL (application/zip, base64)');
+      const bytes = Buffer.from(m[1]!, 'base64');
+      if (bytes.length > 50 * 1024 * 1024) throw new HarborError('INVALID_REQUEST', 'the package zip must be 50 MB or smaller');
+      return reply.status(201).send(await service.importPackage(bytes, b.fileName, req.actor!));
+    },
+  );
+  app.delete(
+    '/v1/packages/:id',
+    { preHandler: requireAuth, schema: { description: 'Remove an uploaded package (refused while an app installed from it exists).', params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: ID_PATTERN } } } } },
+    async (req, reply) => {
+      service.removePackage((req.params as { id: string }).id);
+      return reply.status(204).send();
+    },
+  );
+
   // --- the machine: facts for the Settings overview, restart / shut down
   app.get('/v1/system/host', { preHandler: requireAuth, schema: { description: 'Hostname, OS, CPU and whether Harbor may restart or shut down this machine.' } }, async () => {
     const p = await power.available();
@@ -433,6 +462,17 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
               },
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'instanceId'],
+              properties: {
+                kind: { const: 'update' },
+                instanceId: { type: 'string', pattern: UUID_PATTERN },
+                // folders for storage claims the new release adds (same shape as install)
+                storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
+              },
+            },
             {
               type: 'object',
               additionalProperties: false,

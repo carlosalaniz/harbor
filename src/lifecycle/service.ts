@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
 import { dnsState } from '../system/net.js';
 import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
+import { compareRevisions, type PackageStore } from '../packages/store.js';
 import { browserUrlFor, managementOrigin } from '../config.js';
 import { HarborError } from '../errors.js';
-import { listCatalog, loadPackage } from '../packages/catalog.js';
 import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from '../planner/identity.js';
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
@@ -69,7 +69,7 @@ export class ApplicationService {
   }
 
   catalog(): CatalogItemDto[] {
-    return listCatalog(this.ctx.config.catalogDir);
+    return this.ctx.packages.list();
   }
 
   private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string } {
@@ -78,16 +78,16 @@ export class ApplicationService {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
-        return from(loadPackage(this.ctx.config.catalogDir, i.packageId));
+        return from(this.ctx.packages.load(i.packageId));
       } catch {
         return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other' };
       }
     }
   }
 
-  // Package asset bytes for the console (icon/gallery), from the bundled package only.
+  // Package asset bytes for the console (icon/gallery), from the bundled or uploaded package.
   asset(packageId: string, name: string): { bytes: Buffer; contentType: string } {
-    const pkg = loadPackage(this.ctx.config.catalogDir, packageId);
+    const pkg = this.ctx.packages.load(packageId);
     const bytes = pkg.assets[name];
     if (!bytes) throw new HarborError('NOT_FOUND', `no asset ${name} in package ${packageId}`);
     const ext = name.split('.').pop();
@@ -96,10 +96,41 @@ export class ApplicationService {
   }
 
   instances(): InstanceSummary[] {
+    const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current) });
     });
+  }
+  private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
+    try {
+      return this.ctx.packages.currentRevisions();
+    } catch {
+      return new Map();
+    }
+  }
+  // An update exists when the package store holds a newer revision than the one this instance runs.
+  private updateFor(i: InstanceRow, current: ReturnType<PackageStore['currentRevisions']>): InstanceSummary['updateAvailable'] {
+    if (i.purgedAt || i.installState === 'installing') return null;
+    const cur = current.get(i.packageId);
+    if (!cur || compareRevisions(cur.revision, i.revision) <= 0) return null;
+    return { revision: cur.revision, version: cur.version, releaseNotes: cur.releaseNotes };
+  }
+
+  // ---- your own apps
+  async importPackage(zip: Buffer, fileName: string, actor: string): Promise<PackageImportResultDto> {
+    const r = await this.ctx.packages.importZip(zip, { fileName, actor });
+    const updatable = this.ctx.repo
+      .listInstances()
+      .filter((i) => i.packageId === r.item.id && i.installState !== 'installing' && compareRevisions(r.item.revision, i.revision) > 0)
+      .map((i) => ({ instanceId: i.id, name: i.name, fromRevision: i.revision }));
+    this.ctx.log.info('package imported', { id: r.item.id, revision: r.item.revision, actor, pinned: r.pinned.length });
+    return { item: r.item, pinned: r.pinned, notes: r.notes, replacedRevision: r.replacedRevision, updatable };
+  }
+  removePackage(id: string): void {
+    const users = this.ctx.repo.listInstances().filter((i) => i.packageId === id);
+    if (users.length) throw new HarborError('INVALID_STATE', `${id} is still used by ${users.map((i) => i.name).join(', ')}`, { nextAction: 'Uninstall those apps completely first (their data is deleted only when you choose that).' });
+    this.ctx.packages.removeLocal(id);
   }
 
   exposuresList(): ExposureDto[] {
@@ -219,7 +250,7 @@ export class ApplicationService {
     const now = clock.now();
     const expiresAt = rfc3339(addSeconds(now, config.planTtlSeconds));
     if (req.kind === 'install') {
-      const pkg = loadPackage(config.catalogDir, req.packageId);
+      const pkg = this.ctx.packages.load(req.packageId);
       const instances = repo.listInstances();
       const taken = new Set(instances.map((i) => i.name));
       if (!pkg.manifest.deployment.multiInstance && instances.some((i) => i.packageId === pkg.id)) {
@@ -248,7 +279,7 @@ export class ApplicationService {
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
         ],
         warnings: [
-          ...(pkg.release.qualification.status !== 'passed' ? [`Package qualification is ${pkg.release.qualification.status}`] : []),
+          ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
         ],
         releaseHashes: pkg.hashes,
@@ -263,6 +294,7 @@ export class ApplicationService {
     if (inst.activeOperationId) throw new HarborError('BUSY', `instance ${inst.name} has an active operation`, { operationId: inst.activeOperationId });
     const pkgName = this.packageMeta(inst).name;
     if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
+    if (req.kind === 'update') return this.updatePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
     switch (req.kind) {
       case 'start':
@@ -315,6 +347,66 @@ export class ApplicationService {
       releaseHashes: inst.releaseHashes,
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: req.kind, instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Update: same instance (name, ports, volumes, secrets, addresses), new release. New claims get new
+  // volumes/secrets/ports; removed claims keep their data (never deleted); images change to the new digests.
+  private async updatePlan(req: Extract<PlanRequest, { kind: 'update' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `update requires an installed app; ${inst.name} is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? 'Reinstall it first, then update.' : 'Fix the app first (Details shows the last error).' });
+    const next = this.ctx.packages.load(inst.packageId);
+    if (compareRevisions(next.revision, inst.revision) <= 0) throw new HarborError('INVALID_STATE', `${inst.name} already runs revision ${inst.revision}; the ${next.origin === 'local' ? 'uploaded' : 'built-in'} package is revision ${next.revision}`, { nextAction: next.origin === 'local' ? 'Upload a package with a higher release.revision.' : 'Nothing to do.' });
+    const releaseDir = path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release');
+    const current = loadReleaseSnapshot(releaseDir, inst.packageId);
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    const instances = repo.listInstances().filter((i) => i.id !== inst.id);
+    const resources = repo.resources(inst.id);
+    // storage: existing claims keep their volume/folder; new claims are resolved like an install
+    const existingClaims = new Set((current.manifest.storage ?? []).map((c) => c.composeVolume));
+    const newClaims = (next.manifest.storage ?? []).filter((c) => !existingClaims.has(c.composeVolume));
+    const newStorage = this.resolveStorage({ ...next, manifest: { ...next.manifest, storage: newClaims } }, identity, req.storage ?? {}, instances);
+    const keptStorage: PlanProposal['storage'] = resources
+      .filter((r) => (r.kind === 'volume' || r.kind === 'bind') && (next.manifest.storage ?? []).some((c) => c.composeVolume === r.role))
+      .map((r) => (r.kind === 'bind' ? { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: null, purpose: '', hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) } : { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: r.name, purpose: '' }));
+    const droppedVolumes = resources.filter((r) => r.kind === 'volume' && !(next.manifest.storage ?? []).some((c) => c.composeVolume === r.role)).map((r) => r.name);
+    // endpoints: keep allocations for ids that still exist (container port may change), allocate the new ones
+    const kept = inst.endpoints.filter((e) => next.manifest.endpoints[e.id]).map((e) => ({ ...e, service: next.manifest.endpoints[e.id]!.service, containerPort: next.manifest.endpoints[e.id]!.containerPort }));
+    const missing = Object.keys(next.manifest.endpoints).filter((id) => !inst.endpoints.some((e) => e.id === id));
+    const fresh = missing.length ? (await this.allocatePorts({ ...next, manifest: { ...next.manifest, endpoints: Object.fromEntries(missing.map((id) => [id, next.manifest.endpoints[id]!])) } }, new Set(kept.map((e) => e.hostPort)))) : [];
+    const endpoints = [...kept, ...fresh];
+    const newSecrets = (next.manifest.secrets ?? []).filter((s) => !inst.secrets.some((r) => r.id === s.id)).map((s) => s.id);
+    const images = Object.keys(next.release.images).map((svc) => ({ service: svc, from: current.release.images[svc]?.reference ?? '(new service)', to: next.release.images[svc]!.reference })).filter((x) => x.from !== x.to);
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: next.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints,
+      storage: [...keptStorage, ...newStorage],
+      secrets: (next.manifest.secrets ?? []).map((s) => ({ id: s.id })),
+      changes: [
+        `Update ${pkgName} "${inst.name}" from revision ${inst.revision}${current.manifest.release.version ? ` (${current.manifest.release.version})` : ''} to revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`,
+        'Keep the name, addresses, ports, data volumes, your folders and secrets',
+        'Stop and delete the current containers (the previous release is kept for an automatic rollback)',
+        ...images.map((i) => `Image ${i.service}: ${i.from} -> ${i.to}`),
+        ...newStorage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
+        ...newSecrets.map((id) => `Generate retained secret ${id}`),
+        ...fresh.map((e) => `Publish new endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
+        ...droppedVolumes.map((v) => `Volume ${v} is no longer used by this release; it is kept, not deleted`),
+        'Pull the new images by digest, start the new containers, check readiness',
+        'If the new release does not become healthy, put the previous release back and start it again',
+      ],
+      warnings: [
+        ...(next.origin === 'local' ? ['This is your own uploaded package; Harbor has not checked it on a real machine.'] : []),
+        'Apps usually migrate their own data forward on first start. Going back to the old release afterwards is only as safe as the app makes it; Harbor keeps your data as it is.',
+        ...(next.manifest.presentation?.releaseNotes ? [`Release notes: ${next.manifest.presentation.releaseNotes}`] : []),
+      ],
+      releaseHashes: next.hashes,
+      update: { fromRevision: inst.revision, toRevision: next.revision, fromVersion: current.manifest.release.version ?? null, toVersion: next.manifest.release.version ?? null, images, newSecrets, newStorage: newStorage.map((s) => s.id), newEndpoints: fresh.map((e) => e.id), releaseNotes: next.manifest.presentation?.releaseNotes ?? null },
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'update', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
   }
@@ -434,9 +526,9 @@ export class ApplicationService {
     return this.plan(plan.id);
   }
 
-  private async allocatePorts(pkg: LoadedPackage) {
+  private async allocatePorts(pkg: LoadedPackage, alsoUnavailable: Set<number> = new Set()) {
     const { repo, docker, ports, config } = this.ctx;
-    const unavailable = new Set<number>([config.listen.port, ...repo.claimedPorts().map((c) => c.port)]);
+    const unavailable = new Set<number>([config.listen.port, ...repo.claimedPorts().map((c) => c.port), ...alsoUnavailable]);
     try {
       for (const p of await docker.publishedHostPorts()) unavailable.add(p);
     } catch (e) {
