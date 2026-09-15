@@ -102,6 +102,13 @@ export const MANIFEST_SCHEMA = {
           composeVolume: idString,
           purpose: plainText(120),
           retention: { const: 'retain' },
+          // "Bring your own folder": the operator may (or must) bind this claim to a host directory at install time.
+          external: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['hint'],
+            properties: { hint: plainText(200), required: { type: 'boolean' }, readOnly: { type: 'boolean' } },
+          },
         },
       },
     },
@@ -138,7 +145,8 @@ export const MANIFEST_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         required: ['service', 'environment', 'endpoint'],
-        properties: { service: idString, environment: envKey, endpoint: idString },
+        // format: which part of the endpoint's primary URL is handed to the variable (default: the full URL with trailing slash)
+        properties: { service: idString, environment: envKey, endpoint: idString, format: { enum: ['url', 'origin', 'authority', 'host', 'scheme'] } },
       },
     },
     setup: {
@@ -152,7 +160,7 @@ export const MANIFEST_SCHEMA = {
       additionalProperties: false,
       properties: {
         tagline: plainText(80),
-        category: { enum: ['productivity', 'media', 'files', 'automation', 'network', 'developer', 'other'] },
+        category: { enum: ['productivity', 'media', 'files', 'automation', 'network', 'developer', 'ai', 'security', 'finance', 'home', 'other'] },
         icon: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png)$' },
         gallery: { type: 'array', maxItems: 6, items: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(png|jpg|jpeg|webp)$' } },
         developer: plainText(80),

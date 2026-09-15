@@ -1,0 +1,43 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: uptime-kuma
+  name: "Uptime Kuma"
+  description: "Self-hosted monitoring: watch websites, ports and services and get notified when they go down."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 3001
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 180
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Uptime Kuma and create the admin account, then add your first monitor."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Monitors, history and settings"
+    retention: retain
+presentation:
+  tagline: "Know when your services go down"
+  category: network
+  icon: icon.svg
+  developer: "Louis Lam"
+  website: https://uptime.kuma.pet
+  releaseNotes: "Uptime Kuma 2.5.4."

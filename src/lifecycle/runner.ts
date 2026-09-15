@@ -5,6 +5,7 @@ import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
 import { LABELS } from '../naming.js';
 import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type InstanceIdentity } from '../planner/identity.js';
 import { renderCompose } from '../planner/render.js';
+import { checkHostDirectory } from '../storage/host-path.js';
 import { loadPackage } from '../packages/catalog.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
@@ -152,9 +153,17 @@ export class OperationRunner {
     if (!ping.available) throw new HarborError('DOCKER_UNAVAILABLE', `Docker Engine is not reachable: ${ping.error ?? 'unknown error'}`);
   }
 
-  private async createOwnedVolumes(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow): Promise<void> {
+  private async createOwnedVolumes(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, planned: PlanRow['proposal']['storage']): Promise<void> {
     const { docker, repo, ids } = this.ctx;
     for (const claim of pkg.manifest.storage ?? []) {
+      const choice = planned.find((s) => s.id === claim.id);
+      if (choice?.hostPath) {
+        // Operator-chosen folder: re-checked now (the plan may be minutes old); recorded as a 'bind' resource. Never created or chowned.
+        const { path: hostPath } = checkHostDirectory(choice.hostPath);
+        repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: claim.composeVolume, dockerId: null, name: hostPath, token: null, metadata: { storageId: claim.id, readOnly: choice.readOnly ?? false } });
+        this.event(op, 'preparing', `using your folder ${hostPath} for ${claim.purpose}${choice.readOnly ? ' (read-only)' : ''}`);
+        continue;
+      }
       const name = ownedVolumeName(identity, claim.composeVolume);
       const existing = await docker.inspectVolume(name);
       if (existing) {
@@ -171,8 +180,19 @@ export class OperationRunner {
 
   private async verifyOwnedVolumes(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow): Promise<void> {
     const { docker, repo } = this.ctx;
-    const resources = repo.resources(inst.id).filter((r) => r.kind === 'volume');
+    const all = repo.resources(inst.id);
+    const resources = all.filter((r) => r.kind === 'volume');
     for (const claim of pkg.manifest.storage ?? []) {
+      const bind = all.find((r) => r.kind === 'bind' && r.role === claim.composeVolume);
+      if (bind) {
+        try {
+          checkHostDirectory(bind.name);
+        } catch (e) {
+          throw new HarborError('DATA_MISSING', `your folder ${bind.name} (${claim.purpose}) is not available: ${e instanceof Error ? e.message : String(e)}`, { nextAction: 'Mount or restore the folder at the same path, then retry. Harbor will not start the app against a missing folder.' });
+        }
+        this.event(op, 'preparing', `verified your folder ${bind.name}`);
+        continue;
+      }
       const rec = resources.find((r) => r.role === claim.composeVolume);
       const name = ownedVolumeName(identity, claim.composeVolume);
       if (!rec) throw new HarborError('DATA_MISSING', `no ownership record for volume ${name}`);
@@ -215,7 +235,8 @@ export class OperationRunner {
   }
 
   private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure): Promise<string> {
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary) });
+    const externalStorage = Object.fromEntries(this.ctx.repo.resources(inst.id).filter((r) => r.kind === 'bind').map((r) => [r.role, { hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) }]));
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage });
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
       await this.ctx.compose.config({ projectDir: runtimeDir, projectName: identity.project, file }, 60_000);
@@ -421,7 +442,7 @@ export class OperationRunner {
     const dirs = this.dirs(inst);
     writeReleaseSnapshot(dirs.release, pkg);
     this.event(op, 'preparing', `stored release snapshot for ${pkg.id} revision ${pkg.revision}`);
-    await this.createOwnedVolumes(op, pkg, identity, inst);
+    await this.createOwnedVolumes(op, pkg, identity, inst, plan.proposal.storage);
     this.generateSecrets(op, pkg, inst, dirs.secrets);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values);
@@ -577,6 +598,8 @@ export class OperationRunner {
     }
     const kept = resources.filter((x) => x.kind === 'volume').map((x) => x.name);
     this.event(op, 'removing', kept.length ? `retained volume(s): ${kept.join(', ')}` : 'no volumes to retain');
+    const folders = resources.filter((x) => x.kind === 'bind').map((x) => x.name);
+    if (folders.length) this.event(op, 'removing', `your folder(s) untouched: ${folders.join(', ')}`);
     repo.updateInstance(inst.id, { installState: 'retained', desired: 'retained', runtime: 'stopped', readiness: 'unknown', observedAt: repo.now() });
   }
 }

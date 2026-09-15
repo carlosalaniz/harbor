@@ -1,0 +1,62 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: anythingllm
+  name: "AnythingLLM"
+  description: "All-in-one AI workspace: chat with your documents, build agents and connect any model provider, including a local Ollama."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 3001
+    scheme: http
+    exposure: direct
+    browserContext: secure
+health:
+  endpoint: web
+  path: /api/ping
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 300
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open AnythingLLM and follow the onboarding: pick an LLM provider (for example an OpenAI-compatible endpoint or an Ollama URL) and create your first workspace."
+storage:
+  - id: storage
+    composeVolume: storage
+    purpose: "Documents, vector database, users and settings"
+    retention: retain
+secrets:
+  - id: jwt-secret
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: web, environment: JWT_SECRET}
+  - id: sig-key
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: web, environment: SIG_KEY}
+  - id: sig-salt
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: web, environment: SIG_SALT}
+presentation:
+  tagline: "Chat with your documents and build AI agents"
+  category: ai
+  icon: icon.png
+  developer: "Mintplex Labs"
+  website: https://anythingllm.com
+  releaseNotes: "AnythingLLM 1.16.1; telemetry disabled. Uses its built-in LanceDB vector store."

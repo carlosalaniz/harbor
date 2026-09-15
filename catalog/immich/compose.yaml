@@ -1,0 +1,43 @@
+services:
+  database:
+    image: ghcr.io/immich-app/postgres@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23 # tag: 14-vectorchord0.4.3-pgvectors0.2.0
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_DB: "immich"
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -d, immich]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - {type: volume, source: database, target: /var/lib/postgresql/data}
+  redis:
+    image: valkey/valkey@sha256:fea8b3e67b15729d4bb70589eb03367bab9ad1ee89c876f54327fc7c6e618571 # tag: 8.1.3-bookworm
+    healthcheck:
+      test: [CMD, valkey-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning@sha256:4f879e40da4910a174ce83c94f717e672dd5f0cb0b8cc2e6b0f47500d788b47e # tag: v3.2.1
+    volumes:
+      - {type: volume, source: model-cache, target: /cache}
+  server:
+    image: ghcr.io/immich-app/immich-server@sha256:2ab6a6273755d9b8a5c4f25dbaa2d097fc4a2cc261b70bc73621e6405cc106fe # tag: v3.2.1
+    environment:
+      DB_HOSTNAME: "database"
+      DB_USERNAME: "postgres"
+      DB_DATABASE_NAME: "immich"
+      REDIS_HOSTNAME: "redis"
+      IMMICH_MACHINE_LEARNING_URL: "http://machine-learning:3003"
+      TZ: "UTC"
+    depends_on:
+      database: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - {type: volume, source: library, target: /data}
+volumes:
+  database: {}
+  library: {}
+  model-cache: {}

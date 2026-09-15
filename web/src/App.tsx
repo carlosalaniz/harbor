@@ -162,7 +162,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           </p>
         )}
         {page === 'home' && <Home c={c} onOpenApp={setDrawer} onGoStore={() => go({ page: 'store' })} />}
-        {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => void c.start({ kind: 'install', packageId: item.id, name: '' })} />}
+        {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
         {page === 'settings' && <Settings c={c} onLogout={() => void logout()} />}

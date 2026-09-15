@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "uptime-kuma",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "310920ae68dca34404ffd90714dc5454795d88c270e64a7e8da19d121ec08872"
+    },
+    "compose.yaml": {
+      "sha256": "df7fbf4c47316ce45c709fa619b0bb6a8f9ed8d7660509f5efe3bbe618c8739a"
+    },
+    "README.md": {
+      "sha256": "805276192b82b95ca6be9fe43ca7a686d1eca873d87af3887325f6e8cade3101"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "louislam/uptime-kuma@sha256:917318f9d7be5257f43ba412c766a473be336eb451d70744f3b482d0c3997c0e",
+      "repository": "louislam/uptime-kuma",
+      "tag": "2.5.4",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:50a107108f28ee2f761b6a9a7063f8a53af10c318af8ef64a14e34d95cbc57a3",
+      "appVersion": "2.5.4",
+      "imageCreated": "2026-09-11T10:10:09Z",
+      "source": "https://hub.docker.com/r/louislam/uptime-kuma"
+    }
+  },
+  "qualification": {
+    "status": "pending",
+    "date": "2026-09-14",
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; louislam/uptime-kuma:2.5.4); image config: ExposedPorts 3001/tcp, Volumes none, User root."
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "ff97ddeaf88b06142df87bcf597b28cbe76656f6a3aa688a9acc4ee47f53e25c"
+    }
+  }
+}

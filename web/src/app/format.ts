@@ -47,5 +47,5 @@ export function monogram(name: string): string {
 }
 
 export function categoryLabel(c: string): string {
-  return { productivity: 'Productivity', media: 'Media', files: 'Files', automation: 'Automation', network: 'Network', developer: 'Developer', other: 'Other' }[c] ?? 'Other';
+  return { productivity: 'Productivity', media: 'Media', files: 'Files', automation: 'Automation', network: 'Network', developer: 'Developer', ai: 'AI', security: 'Security', finance: 'Finance', home: 'Home', other: 'Other' }[c] ?? 'Other';
 }

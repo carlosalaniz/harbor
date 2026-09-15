@@ -62,7 +62,8 @@ export interface EventDto {
 }
 
 export interface ResourceDto {
-  kind: 'container' | 'volume' | 'network';
+  // bind: an operator-chosen host directory (name = path); never created or deleted by Harbor
+  kind: 'container' | 'volume' | 'network' | 'bind';
   role: string;
   name: string;
   present: boolean | null;
@@ -78,9 +79,20 @@ export interface InstanceDetail extends InstanceSummary {
 
 export interface StorageDto {
   id: string;
-  volumeName: string;
+  mode: 'managed' | 'external';
+  // managed: the retained Docker volume; external: null
+  volumeName: string | null;
+  // external: the host directory bound into the container
+  hostPath: string | null;
+  readOnly: boolean;
   purpose: string;
   state: 'new' | 'existing';
+}
+
+export interface StorageClaimDto {
+  id: string;
+  purpose: string;
+  external: { hint: string; required: boolean; readOnly: boolean } | null;
 }
 
 export interface PlanDto {
@@ -126,6 +138,7 @@ export interface CatalogItemDto {
   presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; releaseNotes: string | null };
   setup: boolean;
   storage: number;
+  claims: StorageClaimDto[];
 }
 
 export interface SystemMetricsDto {
@@ -169,7 +182,7 @@ export interface ApiErrorBody {
 }
 
 export type PlanRequest =
-  | { kind: 'install'; packageId: string; name?: string }
+  | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }> }
   | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instanceId: string }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean }
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }

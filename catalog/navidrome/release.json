@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "navidrome",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "a00c0ee9460c0afbc5bbcdc0eb67c72d4637e18d19c3c724fa3247d8a8e50702"
+    },
+    "compose.yaml": {
+      "sha256": "402140f16591092022152e166466aa40873e2c0fce9a69b6e9cac2478d5c0915"
+    },
+    "README.md": {
+      "sha256": "d223af28264e750869559a2cfde38d07799b631f3d2c1aee2345f158d0f36a01"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "deluan/navidrome@sha256:a384948b81bd1529986c5960169e7fc4fa00f46bde6bd517971a4c36671db2af",
+      "repository": "deluan/navidrome",
+      "tag": "0.64.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:1a64cbb2603cec5d2615c3a27e91442436b2229583408a55cdc8d85705b95e65",
+      "appVersion": "0.64.0",
+      "imageCreated": "2026-09-12T18:23:49Z",
+      "source": "https://hub.docker.com/r/deluan/navidrome"
+    }
+  },
+  "qualification": {
+    "status": "pending",
+    "date": "2026-09-14",
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; deluan/navidrome:0.64.0); image config: ExposedPorts 4533/tcp, Volumes /data,/music, User root."
+    ]
+  },
+  "assets": {
+    "icon.png": {
+      "sha256": "91d4a1d192bf18694a7c49b0966de9a83480492b5930e23e6a9d1e32ef0741a0"
+    }
+  }
+}

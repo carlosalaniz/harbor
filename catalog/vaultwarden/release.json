@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "vaultwarden",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "1f9d72aae59e78c989b5772aeb6788c2c1426a08e55c510a200cf8dea067048e"
+    },
+    "compose.yaml": {
+      "sha256": "5f1a4cb746782561ebc1f997b6684ca60e5f49d0bc9476104de5db8e4e350f86"
+    },
+    "README.md": {
+      "sha256": "fb0854b9e13d98919f2af8ab60c78a6f2767c23378d15f099939bbdef2475662"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "vaultwarden/server@sha256:9a905c5cf5df61bb827da3805e160170741c0b53b0c63bb07e1afd3d2e21b1c8",
+      "repository": "vaultwarden/server",
+      "tag": "1.37.3-alpine",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:c7af321414c589e30d547f1daa467dce59d10763e953d8d9b800ca38459e2cf2",
+      "appVersion": "1.37.3-alpine",
+      "imageCreated": "2026-09-13T14:54:30Z",
+      "source": "https://hub.docker.com/r/vaultwarden/server"
+    }
+  },
+  "qualification": {
+    "status": "pending",
+    "date": "2026-09-14",
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; vaultwarden/server:1.37.3-alpine); image config: ExposedPorts 80/tcp, Volumes /data, User root."
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "a8bb40e50299035b4d043bb4fbaccb86c888ce4a27dccafd37334e23a6b8c369"
+    }
+  }
+}

@@ -1,0 +1,57 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: audiobookshelf
+  name: "Audiobookshelf"
+  description: "Self-hosted audiobook and podcast server with progress sync, mobile apps and a beautiful web player."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /healthcheck
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 240
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Audiobookshelf and create the root user, then add a library pointing at /audiobooks or /podcasts."
+storage:
+  - id: config
+    composeVolume: config
+    purpose: "Users, libraries and settings"
+    retention: retain
+  - id: metadata
+    composeVolume: metadata
+    purpose: "Covers, cached metadata and backups"
+    retention: retain
+  - id: audiobooks
+    composeVolume: audiobooks
+    purpose: "Your audiobooks"
+    retention: retain
+    external: {hint: "The folder with your audiobooks, mounted at /audiobooks."}
+  - id: podcasts
+    composeVolume: podcasts
+    purpose: "Podcast downloads"
+    retention: retain
+    external: {hint: "Where downloaded podcast episodes go, mounted at /podcasts."}
+presentation:
+  tagline: "Audiobooks and podcasts, streamed from home"
+  category: media
+  icon: icon.svg
+  developer: "advplyr"
+  website: https://www.audiobookshelf.org
+  releaseNotes: "Audiobookshelf 2.36.0."

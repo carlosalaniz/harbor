@@ -35,7 +35,7 @@ export function PlanDialog({ c }: { c: Console }) {
           )}
           {plan.storage.length > 0 && (
             <p>
-              <strong>Storage:</strong> {plan.storage.map((s) => `${s.volumeName} (${s.state})`).join(', ')}
+              <strong>Storage:</strong> {plan.storage.map((s) => (s.mode === 'external' ? `your folder ${s.hostPath}${s.readOnly ? ' (read-only)' : ''}` : `${s.volumeName} (${s.state})`)).join(', ')}
             </p>
           )}
           {plan.secrets.length > 0 && (
@@ -72,6 +72,11 @@ export function PlanDialog({ c }: { c: Console }) {
 export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogItemDto; busy: boolean; onClose: () => void; onStart: (a: Action) => void }) {
   const [name, setName] = useState('');
   const [gallery, setGallery] = useState(0);
+  // storage claim id -> host folder ('' = managed volume)
+  const [folders, setFolders] = useState<Record<string, string>>({});
+  const external = item.claims.filter((c) => c.external);
+  const missingRequired = external.some((c) => c.external!.required && !(folders[c.id] ?? '').trim());
+  const storage = Object.fromEntries(Object.entries(folders).filter(([, v]) => v.trim()).map(([k, v]) => [k, { hostPath: v.trim() }]));
   return (
     <Dialog title={item.name} onClose={onClose} wide>
       <div className="app-head">
@@ -115,6 +120,35 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
         <li>{item.setup ? 'Has its own account setup after install' : 'No account setup needed'}</li>
         <li>Runs on 127.0.0.1 only until you publish it</li>
       </ul>
+      {external.length > 0 && (
+        <fieldset className="storage-choices">
+          <legend>Where should the data live?</legend>
+          {external.map((c) => (
+            <div key={c.id} className="claim">
+              <p className="claim-title">
+                <strong>{c.purpose}</strong>
+                {c.external!.readOnly && <span className="muted small"> · read-only</span>}
+                {c.external!.required && <span className="warn small"> · a folder is required</span>}
+              </p>
+              {!c.external!.required && (
+                <label className="check">
+                  <input type="radio" name={`st-${c.id}`} checked={!(c.id in folders)} onChange={() => setFolders(({ [c.id]: _drop, ...rest }) => rest)} /> Managed by Harbor (Docker volume on this machine)
+                </label>
+              )}
+              <label className="check">
+                <input type="radio" name={`st-${c.id}`} checked={c.id in folders || Boolean(c.external!.required)} onChange={() => setFolders((f) => ({ ...f, [c.id]: f[c.id] ?? '' }))} /> Use a folder on this machine
+              </label>
+              {(c.id in folders || c.external!.required) && (
+                <label className="small">
+                  Folder path (must already exist)
+                  <input value={folders[c.id] ?? ''} onChange={(e) => setFolders((f) => ({ ...f, [c.id]: e.target.value }))} placeholder="/mnt/photos" aria-label={`Folder for ${c.purpose}`} />
+                  <span className="muted small">{c.external!.hint}</span>
+                </label>
+              )}
+            </div>
+          ))}
+        </fieldset>
+      )}
       <label className="small">
         Instance name (optional)
         <input value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z][a-z0-9-]{0,62}" placeholder={item.id} aria-label={`Instance name for ${item.name}`} />
@@ -123,7 +157,7 @@ export function InstallWizard({ item, busy, onClose, onStart }: { item: CatalogI
         <button className="btn" onClick={onClose}>
           Close
         </button>
-        <button className="btn primary" disabled={busy || item.availability !== 'available'} onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim() })} aria-label={`Install ${item.name} now`}>
+        <button className="btn primary" disabled={busy || item.availability !== 'available' || missingRequired} onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage })} aria-label={`Install ${item.name} now`}>
           Install
         </button>
       </div>

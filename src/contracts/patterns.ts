@@ -1,5 +1,5 @@
 export const ID_PATTERN = '^[a-z][a-z0-9-]{0,62}$';
-export const ENV_KEY_PATTERN = '^[A-Z_][A-Z0-9_]*$';
+export const ENV_KEY_PATTERN = '^[A-Za-z_][A-Za-z0-9_]*$'; // POSIX names; mixed case is common (JELLYFIN_PublishedServerUrl, FORGEJO__server__ROOT_URL)
 export const REVISION_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$';
 export const DIGEST_PATTERN = '^sha256:[a-f0-9]{64}$';
 // repository@sha256:<64 hex>; repositories are lowercase with optional registry host and path.

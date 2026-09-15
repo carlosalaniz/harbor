@@ -215,7 +215,7 @@ program
 
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
-  if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}) });
+  if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
   if (!['start', 'stop', 'remove', 'reinstall', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
@@ -237,11 +237,18 @@ program
   .command('install <package>')
   .description('plan and install a package (shows the plan and asks for confirmation)')
   .option('--name <slug>', 'instance name')
+  .option('--storage <claim=/host/path>', 'use your own folder for a storage claim the package marks as external (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return the operation ID instead of waiting')
-  .action(async (pkg: string, opts: { name?: string; yes: boolean; wait: boolean }) => {
+  .action(async (pkg: string, opts: { name?: string; storage: string[]; yes: boolean; wait: boolean }) => {
     const api = client();
-    const plan = await createPlan(api, 'install', pkg, opts.name);
+    const storage: Record<string, { hostPath: string }> = {};
+    for (const s of opts.storage) {
+      const eq = s.indexOf('=');
+      if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--storage expects <claim>=<path>, got ${s}`);
+      storage[s.slice(0, eq)] = { hostPath: s.slice(eq + 1) };
+    }
+    const plan = await createPlan(api, 'install', pkg, opts.name, Object.keys(storage).length ? { storage } : {});
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 

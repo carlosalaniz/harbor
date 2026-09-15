@@ -14,6 +14,8 @@ export interface RenderInput {
   secretValues: Record<string, string> | null;
   // endpoint id -> URL handed to `configuration` bindings (defaults to the loopback URL)
   endpointUrls?: Record<string, string>;
+  // compose volume name -> host directory chosen by the operator (rendered as a bind mount; no Docker volume)
+  externalStorage?: Record<string, { hostPath: string; readOnly: boolean }>;
 }
 
 export interface RenderedCompose {
@@ -32,8 +34,25 @@ export function secretPlaceholder(secretId: string): string {
   return `<<secret:${secretId}>>`;
 }
 
+// Which part of an endpoint URL a `configuration` binding receives.
+export function formatUrl(url: string, format: 'url' | 'origin' | 'authority' | 'host' | 'scheme'): string {
+  if (format === 'url') return url;
+  const u = new URL(url);
+  switch (format) {
+    case 'origin':
+      return u.origin;
+    case 'authority':
+      return u.host;
+    case 'host':
+      return u.hostname;
+    case 'scheme':
+      return u.protocol.replace(/:$/, '');
+  }
+}
+
 export function renderCompose(input: RenderInput): RenderedCompose {
   const { manifest, compose, identity, endpoints, secretValues, endpointUrls } = input;
+  const external = input.externalStorage ?? {};
   const labels = instanceLabels(identity);
   const generatedEnv: Record<string, string[]> = {};
   const services: Record<string, unknown> = {};
@@ -58,7 +77,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       if (c.service !== service) continue;
       const ep = endpointById.get(c.endpoint);
       if (!ep) throw new Error(`configuration references unallocated endpoint ${c.endpoint}`);
-      env[c.environment] = escapeCompose(endpointUrls?.[c.endpoint] ?? browserUrlFor(ep.hostPort));
+      env[c.environment] = escapeCompose(formatUrl(endpointUrls?.[c.endpoint] ?? browserUrlFor(ep.hostPort), c.format ?? 'url'));
       generated.push(c.environment);
     }
     generatedEnv[service] = generated.sort();
@@ -81,13 +100,18 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       def['healthcheck'] = { ...src.healthcheck, test: src.healthcheck.test.map(escapeCompose) };
     }
     if (src.volumes?.length) {
-      def['volumes'] = src.volumes.map((m) => ({ type: 'volume', source: m.source, target: m.target, ...(m.read_only ? { read_only: true } : {}) }));
+      def['volumes'] = src.volumes.map((m) => {
+        const ext = external[m.source];
+        if (ext) return { type: 'bind', source: ext.hostPath, target: m.target, ...(m.read_only || ext.readOnly ? { read_only: true } : {}), bind: { create_host_path: false } };
+        return { type: 'volume', source: m.source, target: m.target, ...(m.read_only ? { read_only: true } : {}) };
+      });
     }
     services[service] = def;
   }
 
   const volumes: Record<string, unknown> = {};
   for (const claim of [...(manifest.storage ?? [])].sort((a, b) => a.composeVolume.localeCompare(b.composeVolume))) {
+    if (external[claim.composeVolume]) continue; // bound to a host directory: no Docker volume at all
     // Generated `external`: Harbor created this volume explicitly; Compose must never create it.
     volumes[claim.composeVolume] = { name: ownedVolumeName(identity, claim.composeVolume), external: true };
   }

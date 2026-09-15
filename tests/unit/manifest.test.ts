@@ -160,7 +160,10 @@ describe('compose source subset', () => {
     expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      A: "$$HOME"\n'), 'INVALID_PACKAGE', /interpolation/);
     expect(composeOf(MINIMAL_COMPOSE + '    environment:\n      PRICE: "5$ or $ 5"\n').services['web']?.environment?.['PRICE']).toBe('5$ or $ 5');
     expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      A: 1\n'), 'INVALID_PACKAGE', /string/);
-    expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      lower: x\n'), 'INVALID_PACKAGE', /lower|propertyNames|pattern/);
+    // mixed case is legal (POSIX names); a key starting with a digit or containing '-' is not
+    expect(composeOf(MINIMAL_COMPOSE + '    environment:\n      Mixed_case: x\n').services['web']?.environment?.['Mixed_case']).toBe('x');
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      1BAD: x\n'), 'INVALID_PACKAGE', /1BAD|propertyNames|pattern/);
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      BAD-KEY: x\n'), 'INVALID_PACKAGE', /BAD-KEY|propertyNames|pattern/);
   });
   it('bounds healthcheck values and requires CMD arrays', () => {
     const hc = (body: string) => composeOf(MINIMAL_COMPOSE + '    healthcheck:\n' + body);

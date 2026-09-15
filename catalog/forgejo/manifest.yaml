@@ -1,0 +1,46 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: forgejo
+  name: "Forgejo"
+  description: "Lightweight, self-hosted Git forge with issues, pull requests, wikis and CI hooks. Community fork of Gitea."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 3000
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /api/healthz
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 240
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Forgejo and finish the installer: database settings are pre-filled (SQLite); create the administrator account at the bottom of the page."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Repositories, database and configuration"
+    retention: retain
+configuration:
+  - {service: web, environment: FORGEJO__server__ROOT_URL, endpoint: web, format: url}
+  - {service: web, environment: FORGEJO__server__DOMAIN, endpoint: web, format: host}
+presentation:
+  tagline: "Your own Git hosting, light and fast"
+  category: developer
+  icon: icon.svg
+  developer: "Forgejo (Codeberg e.V.)"
+  website: https://forgejo.org
+  releaseNotes: "Forgejo 16.0.4 with SQLite; HTTPS clone only (SSH disabled in this profile)."

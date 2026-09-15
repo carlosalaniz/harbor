@@ -42,7 +42,7 @@ error codes, next action) lives in the drawer.
 ```yaml
 presentation:
   tagline: Whiteboard for quick sketches          # ≤ 80 chars, plain text
-  category: productivity                          # one of: productivity, media, files, automation, network, developer, other
+  category: productivity                          # one of: productivity, media, files, automation, network, developer, ai, security, finance, home, other
   icon: icon.svg                                  # file inside the package dir, svg or png, ≤ 256 KiB
   gallery: [shot-1.png, shot-2.png]               # files inside the package dir, ≤ 1 MiB each, ≤ 6
   developer: Excalidraw contributors

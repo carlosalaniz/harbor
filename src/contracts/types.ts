@@ -19,7 +19,7 @@ export interface Manifest {
   presentation?: PackagePresentation;
 }
 
-export type PackageCategory = 'productivity' | 'media' | 'files' | 'automation' | 'network' | 'developer' | 'other';
+export type PackageCategory = 'productivity' | 'media' | 'files' | 'automation' | 'network' | 'developer' | 'ai' | 'security' | 'finance' | 'home' | 'other';
 export interface PackagePresentation {
   tagline?: string;
   category?: PackageCategory;
@@ -38,7 +38,14 @@ export interface ManifestEndpoint {
   browserContext: 'secure' | 'ordinary';
 }
 
-export interface StorageClaim { id: string; composeVolume: string; purpose: string; retention: 'retain' }
+export interface StorageClaim {
+  id: string;
+  composeVolume: string;
+  purpose: string;
+  retention: 'retain';
+  // present when the operator may bind the claim to a host directory ("bring your own folder")
+  external?: { hint: string; required?: boolean; readOnly?: boolean };
+}
 export interface SecretClaim {
   id: string;
   bytes: 32;
@@ -46,7 +53,8 @@ export interface SecretClaim {
   retention: 'retain';
   bindings: { service: string; environment: string }[];
 }
-export interface ConfigurationBinding { service: string; environment: string; endpoint: string }
+export type ConfigurationFormat = 'url' | 'origin' | 'authority' | 'host' | 'scheme';
+export interface ConfigurationBinding { service: string; environment: string; endpoint: string; format?: ConfigurationFormat }
 
 export interface ComposeSourceService {
   image: string;

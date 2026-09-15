@@ -41,7 +41,7 @@ export function planDto(p: PlanRow, storageStates: Record<string, 'new' | 'exist
     expectedGeneration: p.expectedGeneration,
     changes: p.proposal.changes,
     endpoints: p.proposal.endpoints.map((e) => ({ id: e.id, containerPort: e.containerPort, hostPort: e.hostPort, browserUrl: browserUrlFor(e.hostPort), urls: { loopback: browserUrlFor(e.hostPort) }, primary: 'loopback' as const })),
-    storage: p.proposal.storage.map((s) => ({ id: s.id, volumeName: s.volumeName, purpose: s.purpose, state: storageStates[s.id] ?? 'new' })),
+    storage: p.proposal.storage.map((s) => ({ id: s.id, mode: s.hostPath ? ('external' as const) : ('managed' as const), volumeName: s.hostPath ? null : s.volumeName, hostPath: s.hostPath ?? null, readOnly: s.readOnly ?? false, purpose: s.purpose, state: storageStates[s.id] ?? 'new' })),
     secrets: p.proposal.secrets.map((s) => ({ id: s.id, state: secretStates[s.id] ?? 'new' })),
     warnings: p.proposal.warnings,
     ...(p.proposal.exposure

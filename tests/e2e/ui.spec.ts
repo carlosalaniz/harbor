@@ -52,8 +52,12 @@ test('home shows the system strip and an empty launcher; store lists real packag
   expect(res.headers()['content-type']).toContain('image/svg+xml');
   expect(res.headers()['content-security-policy']).toContain('sandbox');
   // category chips filter the grid
+  const all = await page.locator('.tile.store').count();
   await page.getByRole('tab', { name: 'Productivity' }).click();
-  await expect(page.locator('.tile.store')).toHaveCount(1);
+  const filtered = page.locator('.tile.store');
+  expect(await filtered.count()).toBeGreaterThan(0);
+  expect(await filtered.count()).toBeLessThan(all);
+  await expect(filtered.filter({ hasText: 'Excalidraw' })).toHaveCount(1);
   await page.getByRole('tab', { name: 'All' }).click();
   await page.getByLabel('Search apps').fill('pdf');
   await expect(page.locator('.tile.store')).toHaveCount(1);

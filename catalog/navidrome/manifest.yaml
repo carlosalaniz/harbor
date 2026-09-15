@@ -1,0 +1,48 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: navidrome
+  name: "Navidrome"
+  description: "Modern music server and streamer compatible with Subsonic and Airsonic apps. Point it at your music folder and play anywhere."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 4533
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /ping
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 180
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Navidrome and create the admin user. Your music folder is scanned automatically."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Database, cache and settings"
+    retention: retain
+  - id: music
+    composeVolume: music
+    purpose: "Your music library"
+    retention: retain
+    external: {hint: "The folder with your music, mounted read-only at /music.", readOnly: true}
+presentation:
+  tagline: "Stream your music collection anywhere"
+  category: media
+  icon: icon.png
+  developer: "Navidrome contributors"
+  website: https://www.navidrome.org
+  releaseNotes: "Navidrome 0.64.0; scans hourly."

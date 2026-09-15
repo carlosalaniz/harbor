@@ -13,7 +13,7 @@ export interface Data {
 }
 
 export type Action =
-  | { kind: 'install'; packageId: string; name: string }
+  | { kind: 'install'; packageId: string; name: string; storage?: Record<string, { hostPath: string }> }
   | { kind: 'start' | 'stop' | 'remove' | 'reinstall'; instance: InstanceSummary }
   | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean }
   | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' }
@@ -22,7 +22,7 @@ export type Action =
 export function planRequestFor(a: Action): PlanRequest {
   switch (a.kind) {
     case 'install':
-      return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}) };
+      return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}), ...(a.storage && Object.keys(a.storage).length ? { storage: a.storage } : {}) };
     case 'expose':
       return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), makePrimary: a.makePrimary };
     case 'unexpose':

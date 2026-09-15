@@ -6,9 +6,10 @@ import type { LoadedPackage } from '../contracts/types.js';
 import { browserUrlFor, managementOrigin } from '../config.js';
 import { HarborError } from '../errors.js';
 import { listCatalog, loadPackage } from '../packages/catalog.js';
-import { identityFor, ownedVolumeName, proposeName } from '../planner/identity.js';
+import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from '../planner/identity.js';
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
+import { checkHostDirectory, hostPathsOverlap } from '../storage/host-path.js';
 import type { InstanceRow, OperationRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
 import { ComposeError } from '../docker/adapter.js';
@@ -121,6 +122,7 @@ export class ApplicationService {
       try {
         if (r.kind === 'container') presence.push((await this.ctx.docker.inspectContainer(r.dockerId ?? r.name)) !== null);
         else if (r.kind === 'volume') presence.push((await this.ctx.docker.inspectVolume(r.name)) !== null);
+        else if (r.kind === 'bind') presence.push(existsSync(r.name));
         else presence.push((await this.ctx.docker.inspectNetwork(r.dockerId ?? r.name)) !== null);
       } catch {
         presence.push(null);
@@ -150,7 +152,7 @@ export class ApplicationService {
     const secretStates: Record<string, 'new' | 'existing'> = {};
     if (inst && p.kind !== 'install') {
       const resources = this.ctx.repo.resources(inst.id);
-      for (const s of p.proposal.storage) storageStates[s.id] = resources.some((r) => r.kind === 'volume' && r.role === s.composeVolume) ? 'existing' : 'new';
+      for (const s of p.proposal.storage) storageStates[s.id] = resources.some((r) => (r.kind === 'volume' || r.kind === 'bind') && r.role === s.composeVolume) ? 'existing' : 'new';
       const secretsDir = path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'secrets');
       for (const s of p.proposal.secrets) secretStates[s.id] = secretExists(secretsDir, s.id) ? 'existing' : 'new';
     }
@@ -181,19 +183,20 @@ export class ApplicationService {
       const instanceId = ids.uuid();
       const identity = identityFor(this.ctx.installationId, instanceId);
       const endpoints = await this.allocatePorts(pkg);
+      const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
       const proposal: PlanProposal = {
         packageId: pkg.id,
         revision: pkg.revision,
         name: proposed.name,
         project: identity.project,
         endpoints,
-        storage: (pkg.manifest.storage ?? []).map((s) => ({ id: s.id, composeVolume: s.composeVolume, volumeName: ownedVolumeName(identity, s.composeVolume), purpose: s.purpose })),
+        storage,
         secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
         changes: [
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
-          ...(pkg.manifest.storage ?? []).map((s) => `Create retained volume ${ownedVolumeName(identity, s.composeVolume)} (${s.purpose})`),
+          ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
         ],
@@ -241,7 +244,10 @@ export class ApplicationService {
       name: inst.name,
       project: inst.project,
       endpoints: inst.endpoints,
-      storage: resources.filter((r) => r.kind === 'volume').map((r) => ({ id: r.role, composeVolume: r.role, volumeName: r.name, purpose: '' })),
+      storage: resources
+        .filter((r) => r.kind === 'volume' || r.kind === 'bind')
+        .sort((a, b) => a.role.localeCompare(b.role))
+        .map((r) => (r.kind === 'bind' ? { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: null, purpose: '', hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) } : { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: r.name, purpose: '' })),
       secrets: inst.secrets.map((s) => ({ id: s.id })),
       changes,
       warnings: req.kind === 'remove' ? ['Data volumes and secrets are retained; nothing is deleted except containers and the private network.'] : [],
@@ -250,6 +256,32 @@ export class ApplicationService {
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: req.kind, instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
+  }
+
+  // Storage claims: managed Docker volumes by default; claims the manifest marks `external` may (or must)
+  // be bound to an operator-chosen host directory. Validation happens here so a bad folder never reaches Docker.
+  private resolveStorage(pkg: LoadedPackage, identity: InstanceIdentity, choices: Record<string, { hostPath: string }>, instances: InstanceRow[]): PlanProposal['storage'] {
+    const claims = pkg.manifest.storage ?? [];
+    for (const id of Object.keys(choices)) {
+      const claim = claims.find((c) => c.id === id);
+      if (!claim) throw new HarborError('INVALID_REQUEST', `package ${pkg.id} has no storage claim ${id}`);
+      if (!claim.external) throw new HarborError('INVALID_REQUEST', `storage claim ${id} of ${pkg.id} cannot be bound to a host folder`, { nextAction: 'Only claims the package marks as external accept a folder.' });
+    }
+    const inUse = instances.flatMap((i) => this.ctx.repo.resources(i.id).filter((r) => r.kind === 'bind').map((r) => ({ path: r.name, instance: i.name })));
+    const chosen: string[] = [];
+    return claims.map((claim) => {
+      const choice = choices[claim.id];
+      if (!choice) {
+        if (claim.external?.required) throw new HarborError('INVALID_REQUEST', `${pkg.manifest.metadata.name} needs a folder for ${claim.purpose} (storage claim ${claim.id})`, { nextAction: `Pass storage.${claim.id}.hostPath (CLI: --storage ${claim.id}=/path). ${claim.external.hint}` });
+        return { id: claim.id, composeVolume: claim.composeVolume, volumeName: ownedVolumeName(identity, claim.composeVolume), purpose: claim.purpose };
+      }
+      const { path: hostPath } = checkHostDirectory(choice.hostPath);
+      const clash = inUse.find((u) => hostPathsOverlap(u.path, hostPath));
+      if (clash) throw new HarborError('OWNERSHIP_CONFLICT', `${hostPath} overlaps ${clash.path}, already used by instance ${clash.instance}`, { nextAction: 'Choose a different folder; two apps must not share or nest their storage.' });
+      if (chosen.some((c) => hostPathsOverlap(c, hostPath))) throw new HarborError('INVALID_REQUEST', `folder ${hostPath} is used by two storage claims of the same install`);
+      chosen.push(hostPath);
+      return { id: claim.id, composeVolume: claim.composeVolume, volumeName: null, purpose: claim.purpose, hostPath, readOnly: claim.external?.readOnly ?? false };
+    });
   }
 
   private async exposurePlan(req: Extract<PlanRequest, { kind: 'expose' | 'unexpose' | 'reconfigure' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {

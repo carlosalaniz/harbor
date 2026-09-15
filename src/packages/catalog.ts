@@ -103,6 +103,7 @@ export interface CatalogItem {
   presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; releaseNotes: string | null };
   setup: boolean;
   storage: number;
+  claims: { id: string; purpose: string; external: { hint: string; required: boolean; readOnly: boolean } | null }[];
 }
 
 // Catalog listing never throws for one bad package: it reports it as unavailable with the reason.
@@ -123,6 +124,7 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
         presentation: presentationOf(pkg),
         setup: Boolean(pkg.manifest.setup),
         storage: (pkg.manifest.storage ?? []).length,
+        claims: (pkg.manifest.storage ?? []).map((s) => ({ id: s.id, purpose: s.purpose, external: s.external ? { hint: s.external.hint, required: s.external.required ?? false, readOnly: s.external.readOnly ?? false } : null })),
       });
     } catch (e) {
       items.push({
@@ -136,6 +138,7 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
         presentation: { tagline: null, category: 'other', icon: null, gallery: [], developer: null, website: null, releaseNotes: null },
         setup: false,
         storage: 0,
+        claims: [],
       });
     }
   }

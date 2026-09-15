@@ -870,13 +870,16 @@ const B09 = step('B09', 'Reconfigure primary back to loopback; n8n works locally
 });
 
 const B10 = step('B10', 'Negative: invalid hostname, duplicate hostname, unknown provider state → clear errors, no partial config', async () => {
-  const b = byName('bentopdf');
+  // Use instances that have no public address at this point (B04/B05 published n8n and bentopdf).
+  const b = byName('excalidraw');
+  const other = byName('excalidraw-2');
+  if (other.desired === 'stopped') cliOk(target, ['start', other.id, '--yes'], { timeoutMs: 300_000 });
   const bad = cli(target, ['expose', b.id, '--via', 'public', '--host', 'not a host', '--yes']);
   const routes0 = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
   const host = publicHost('dup');
   dnsSet(host);
   const first = cliOk(target, ['expose', b.id, '--via', 'public', '--host', host, '--protect', 'none', '--yes'], { timeoutMs: 600_000 });
-  const dup = cli(target, ['expose', 'excalidraw', '--via', 'public', '--host', host, '--yes']);
+  const dup = cli(target, ['expose', other.id, '--via', 'public', '--host', host, '--yes']);
   const again = cli(target, ['expose', b.id, '--via', 'public', '--host', `x-${host}`, '--yes']);
   const routes1 = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
   cliOk(target, ['unexpose', b.id, '--via', 'public', '--yes'], { timeoutMs: 300_000 });

@@ -225,7 +225,18 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
         description: 'Create an immutable plan. Install: {kind, packageId, name?}. Others: {kind, instanceId}.',
         body: {
           oneOf: [
-            { type: 'object', additionalProperties: false, required: ['kind', 'packageId'], properties: { kind: { const: 'install' }, packageId: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', pattern: ID_PATTERN } } },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'packageId'],
+              properties: {
+                kind: { const: 'install' },
+                packageId: { type: 'string', pattern: ID_PATTERN },
+                name: { type: 'string', pattern: ID_PATTERN },
+                // storage claim id -> host directory ("bring your own folder"); only claims the manifest marks `external`
+                storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
+              },
+            },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
             {
               type: 'object',

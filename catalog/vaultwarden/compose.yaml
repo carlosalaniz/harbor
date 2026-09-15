@@ -1,0 +1,11 @@
+services:
+  web:
+    image: vaultwarden/server@sha256:9a905c5cf5df61bb827da3805e160170741c0b53b0c63bb07e1afd3d2e21b1c8 # tag: 1.37.3-alpine
+    environment:
+      SIGNUPS_ALLOWED: "true"
+      SHOW_PASSWORD_HINT: "false"
+      LOG_LEVEL: "warn"
+    volumes:
+      - {type: volume, source: data, target: /data}
+volumes:
+  data: {}

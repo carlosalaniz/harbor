@@ -1,0 +1,63 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: immich
+  name: "Immich"
+  description: "High-performance photo and video backup for your phone, with search, faces, maps and sharing. Your own Google Photos."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    server: application
+    machine-learning: infrastructure
+    database: infrastructure
+    redis: infrastructure
+endpoints:
+  web:
+    service: server
+    containerPort: 2283
+    scheme: http
+    exposure: direct
+    browserContext: secure
+health:
+  endpoint: web
+  path: /api/server/ping
+  expectedStatus: [200]
+  timeoutSeconds: 10
+  deadlineSeconds: 600
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Immich and create the admin account. Then install the Immich mobile app, enter the published address as the server URL and log in to start backing up."
+storage:
+  - id: library
+    composeVolume: library
+    purpose: "Photos and videos (originals, thumbnails, encoded video)"
+    retention: retain
+    external: {hint: "Pick a folder with plenty of room, for example /mnt/photos. Immich creates its own subfolders inside it."}
+  - id: database
+    composeVolume: database
+    purpose: "PostgreSQL database (metadata, faces, search index)"
+    retention: retain
+  - id: model-cache
+    composeVolume: model-cache
+    purpose: "Downloaded machine-learning models"
+    retention: retain
+secrets:
+  - id: database-password
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: database, environment: POSTGRES_PASSWORD}
+      - {service: server, environment: DB_PASSWORD}
+presentation:
+  tagline: "Back up every photo from your phone, privately"
+  category: media
+  icon: icon.svg
+  developer: "Immich (FUTO)"
+  website: https://immich.app
+  releaseNotes: "Immich v3.2.1 server and machine learning with the upstream PostgreSQL (VectorChord) and Valkey images."

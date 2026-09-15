@@ -478,6 +478,27 @@
                       "name": {
                         "type": "string",
                         "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      },
+                      "storage": {
+                        "type": "object",
+                        "maxProperties": 16,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "hostPath"
+                          ],
+                          "properties": {
+                            "hostPath": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          }
+                        }
                       }
                     }
                   },
