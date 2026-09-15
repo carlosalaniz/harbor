@@ -173,6 +173,10 @@ Every bundled package is installed with the CLI on the designated droplet (fresh
 - Cockpit is exercised in two ways: the recorded `--fresh` run binds a **pre-installed** Cockpit (fixture) without reconfiguring it; the managed install path (apt install + loopback socket drop-in) ran in the manual checkpoint (`docs/evidence/manual-2026-09-14/bootstrap-1.log`).
 - The archive is reproducible modulo file modification times.
 - No real personal accounts or production credentials were used: all logins are synthetic fixtures created for the run.
+- Tailnet exposure (B02/B03) has no live evidence: it needs a Tailscale auth key (`HARBOR_TS_AUTHKEY`) and MagicDNS + HTTPS enabled in the tailnet, which were not available. The provider client and the engine path are covered by `tests/integration/exposure.test.ts` with a fake Tailscale CLI; the public path (Caddy, Let's Encrypt, real DNS) has live evidence.
+- Catalog qualification is an install → healthy → browser → remove pass per package on a fresh host, plus a second pass with host folders where a package offers them. It proves the package installs, answers and mounts what it promised; it does not exercise each app's full feature set (the MVP demos in A03/A11 do that for three apps). First-run pages that need an account were left at the account form.
+- Retained (removed) instances keep their names and ports by design; there is no purge yet (docs/FUTURE.md). The qualification script therefore uses per-run instance names and folders.
+- External folders: Harbor validates and mounts them but does not manage permissions. The packaged apps either run as root in their container or take ownership on first start; a folder shared with other software is the operator's responsibility.
 
 ## 6. Archive provenance
 
