@@ -100,6 +100,20 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     log('stopping running daemon for the release update');
     await execOk('/usr/bin/systemctl', ['stop', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
   }
+  try {
+    return await bootstrapAfterStop(opts, { facts, release, log, unitActive });
+  } catch (e) {
+    if (unitActive) {
+      // Never leave Harbor down because an upgrade step failed: bring the previous (or new) release back up.
+      log(`bootstrap failed (${e instanceof Error ? e.message : String(e)}); restarting the daemon`);
+      await exec('/usr/bin/systemctl', ['start', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
+    }
+    throw e;
+  }
+}
+
+async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<ReturnType<typeof gatherHostFacts>>; release: ReturnType<typeof readReleaseManifest>; log: (m: string) => void; unitActive: boolean }): Promise<BootstrapResult> {
+  const { facts, release, log } = s;
   if (path.resolve(opts.releaseDir) !== PRODUCT.paths.opt) {
     replaceReleaseFiles(opts.releaseDir, PRODUCT.paths.opt);
     log(`installed release ${release.version} to ${PRODUCT.paths.opt}`);
@@ -153,16 +167,23 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     installationId = initState(config).installationId;
     log(`initialized state (installation ${installationId})`);
   } else {
-    const db = openState(config.stateDir, { readonly: true });
-    installationId = new Repo(db, systemClock).installation().id;
-    db.close();
+    // Read-write on purpose: an older schema is migrated here (the daemon is stopped), a read-only open would refuse it.
+    const lock = acquireLock(config.stateDir, 'bootstrap-state');
+    try {
+      const db = openState(config.stateDir);
+      installationId = new Repo(db, systemClock).installation().id;
+      db.close();
+    } finally {
+      lock.release();
+    }
+    chownTree(config.stateDir, uid, gid);
     log(`existing state found (installation ${installationId}); apps, keys and administrator preserved`);
   }
 
   // 9. Administrator
   let adminCreated = false;
   {
-    const db = openState(config.stateDir, { readonly: true });
+    const db = openState(config.stateDir);
     const hasAdmin = new Repo(db, systemClock).administrator() !== null;
     db.close();
     if (!hasAdmin) {
