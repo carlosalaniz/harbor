@@ -9,6 +9,7 @@ import { loopbackPortFree } from '../docker/ports.js';
 import type { PlatformToolRow } from '../state/repo.js';
 import { exec, execOk, httpGetStatus } from './exec.js';
 import { cockpitSocketDropIn } from './systemd.js';
+import { suggestedUpArgs } from '../exposure/tailscale.js';
 
 // Platform tool recipes (host infrastructure; deliberately specialized, unlike app packages).
 export const PORTAINER_IMAGE = {
@@ -200,6 +201,9 @@ export async function setupTailscale(log: (m: string) => void, existing: { insta
     await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'tailscale'], { timeoutMs: 20 * 60_000 });
     await execOk('/usr/bin/systemctl', ['enable', '--now', 'tailscaled'], { timeoutMs: 60_000 });
   }
+  // the operator grant first: `tailscale up` below must mention it (the CLI insists on all non-default flags)
+  await execOk('/usr/bin/tailscale', ['set', `--operator=${PRODUCT.serviceUser}`], { timeoutMs: 30_000 });
+  const upBase = ['--ssh=false', `--operator=${PRODUCT.serviceUser}`];
   let state = existing.backendState;
   if (state !== 'Running') {
     if (authKey) {
@@ -210,7 +214,9 @@ export async function setupTailscale(log: (m: string) => void, existing: { insta
       writeFileSync(keyFile, authKey.trim() + '\n', { mode: 0o600 });
       let r;
       try {
-        r = await exec('/usr/bin/tailscale', ['up', `--auth-key=file:${keyFile}`, '--ssh=false', '--timeout=120s'], { timeoutMs: 180_000 });
+        r = await exec('/usr/bin/tailscale', ['up', `--auth-key=file:${keyFile}`, ...upBase, '--timeout=120s'], { timeoutMs: 180_000 });
+        const again = suggestedUpArgs(r.stderr + r.stdout);
+        if (r.code !== 0 && again) r = await exec('/usr/bin/tailscale', ['up', `--auth-key=file:${keyFile}`, ...again, '--timeout=120s'], { timeoutMs: 180_000 });
       } finally {
         rmSync(keyFile, { force: true });
       }
@@ -218,12 +224,11 @@ export async function setupTailscale(log: (m: string) => void, existing: { insta
       state = 'Running';
       log('tailscale node logged in with the provided auth key');
     } else {
-      const r = await exec('/usr/bin/tailscale', ['up', '--timeout=10s'], { timeoutMs: 30_000 });
+      const r = await exec('/usr/bin/tailscale', ['up', ...upBase, '--timeout=25s'], { timeoutMs: 40_000 });
       const url = /(https:\/\/login\.tailscale\.com\/\S+)/.exec(r.stdout + r.stderr)?.[1] ?? null;
       log(url ? `tailscale login required: open ${url} in a browser, then re-run bootstrap --with-tailscale (or run: sudo tailscale up)` : 'tailscale login required: run `sudo tailscale up` and approve the URL it prints');
     }
   }
-  await execOk('/usr/bin/tailscale', ['set', `--operator=${PRODUCT.serviceUser}`], { timeoutMs: 30_000 });
   const st = await exec('/usr/bin/tailscale', ['status', '--json'], { timeoutMs: 15_000 });
   let dnsName: string | null = null;
   let httpsEnabled = false;

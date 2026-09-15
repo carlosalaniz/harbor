@@ -180,6 +180,23 @@ Live on the droplet (in-place upgrade 0.5.0 → 0.6.0; real Docker Hub registry;
 | cleanup | `harbor purge`, `harbor packages remove hello-nginx`, re-upload revision 2 and install: left running for Carlos to look at |
 | Console screenshots (6) | `docs/evidence/ui-2026-09-15-v0.6.0/` |
 
+### v0.7.0: terminal, troubleshoot, two-factor, device name, Tailscale self-heal (2026-09-15)
+
+Automated: `tests/unit/totp.test.ts` (RFC 6238 SHA-1 vectors, base32 round trip, drift window, otpauth URL, systemd unit/polkit text, Docker log demux), `tests/integration/security-terminal.test.ts` (two-factor: setup → enable with a live code → login needs the code → wrong/replayed codes refused → password disables; device name; Harbor and app logs; terminal over WebSocket: refused without a session, echoes a command, honours the requested size, exits cleanly), Playwright (terminal typing and exit, Troubleshoot Harbor and app logs, rename with tab title, two-factor setup + login with the code field appearing only after the password). Local run: unit 74 passed, integration 72 passed + 3 skipped, e2e 19 passed.
+
+Live on the droplet (in-place upgrade 0.6.0 → 0.7.0):
+
+| Check | Result |
+|---|---|
+| Tailscale operator grant | root wiped it (`tailscale set --operator=""`); `sudo -u harbor systemctl start harbor-tailscale-operator.service` restored `OperatorUser: harbor` through the polkit rule |
+| *Log in with Tailscale* after a disconnect (the bug Carlos hit) | grant wiped again, then `harbor tailscale login` (same path as the console button): Harbor restored the grant and returned a `https://login.tailscale.com/a/…` link; a second click while the first login was still pending returned the link again (from `status --json` `AuthURL`) |
+| Terminal (console, through an SSH tunnel) | `whoami` → `harbor`, `hostname` → `harbor-test`, `docker ps` lists the app containers; screenshot `02-terminal.png` |
+| `harbor logs` | systemd journal lines of `harbor.service` (source `journal`), read by the daemon as the harbor user (unit joins `systemd-journal`) |
+| `harbor logs hello-nginx` | nginx access log lines from the container (readiness probes) |
+| `harbor name "Lab box"` / `harbor name ""` | name shown, then reset to the hostname |
+| Two-factor (API, code computed locally) | setup 200 → enable 204 → login without code `401 TOTP_REQUIRED` → wrong code `401 UNAUTHENTICATED` → login with the next code 201 → disable 204 |
+| Console screenshots (6) | `docs/evidence/ui-2026-09-15-v0.7.0/` |
+
 ### Live catalog qualification (`node scripts/vm/qualify-catalog.mjs --fresh`)
 
 Every bundled package is installed with the CLI on the designated droplet (fresh Ubuntu 24.04.4 x86-64; Docker 29.8.0, Compose 5.5.1, Node v24.12.0), waited for until Harbor reports it healthy, opened in headless Chromium (title, screenshot, health probe through the SSH tunnel), inspected (containers, mounts, resources) and removed. Packages with external storage claims are installed a second time with host folders under `/srv/harbor-test-storage` and the bind mounts are verified. 23 of 23 steps passed; reports and screenshots: `docs/evidence/catalog-2026-09-15T00-13-13/`, `docs/evidence/catalog-2026-09-15T00-40-44/`, `docs/evidence/catalog-2026-09-15T00-42-58/`.

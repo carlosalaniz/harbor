@@ -59,6 +59,25 @@ describe('troubleshoot logs', () => {
   });
 });
 
+describe('tailnet addresses survive a Tailscale logout/login', () => {
+  it('the observer re-applies missing serve entries and follows a renamed node', async () => {
+    const inst = (await h.api.instances()).find((i) => i.packageId === 'excalidraw')!;
+    expect((await h.api.run({ kind: 'expose', instanceId: inst.id, via: 'tailnet' })).op.state).toBe('succeeded');
+    const port = inst.endpoints[0]!.hostPort;
+    expect(h.tailscale.entries.some((e) => e.port === port)).toBe(true);
+    // a logout wipes the serve config; the node comes back under a new name
+    h.tailscale.entries = [];
+    h.tailscale.statusValue = { ...h.tailscale.statusValue!, dnsName: 'harbor-renamed.tail1234.ts.net' };
+    const until = Date.now() + 8000;
+    while (Date.now() < until && !h.tailscale.entries.some((e) => e.port === port)) await new Promise((r) => setTimeout(r, 200));
+    expect(h.tailscale.entries.some((e) => e.port === port && e.target === `http://127.0.0.1:${port}`)).toBe(true);
+    const detail = await h.api.expect<{ events: { message: string }[]; endpoints: { urls: { tailnet?: string } }[] }>(200, 'GET', `/v1/instances/${inst.id}`);
+    expect(detail.events.map((e) => e.message).join('\n')).toMatch(/tailnet address restored after Tailscale reconnected/);
+    expect(detail.endpoints[0]!.urls.tailnet).toContain('harbor-renamed.tail1234.ts.net');
+    h.tailscale.statusValue = { ...h.tailscale.statusValue!, dnsName: 'harbor-test.tail1234.ts.net' };
+  });
+});
+
 describe('terminal over WebSocket', () => {
   const connect = () => new WebSocket(h.baseUrl.replace(/^http/, 'ws') + '/v1/terminal', { headers: { host: new URL(h.baseUrl).host } } as unknown as string[]);
   it('refuses without a valid token, runs a shell for a valid session, relays output and exits cleanly', async () => {

@@ -53,6 +53,47 @@ async function run(bin: string, args: string[], timeoutMs = 30_000): Promise<{ c
   });
 }
 
+// `tailscale up` without an auth key blocks until the browser login completes; we only need the URL it prints,
+// so read its output until the URL appears (or the process ends), then let go of the CLI. The backend keeps the
+// login attempt open, and `status` reports Running once the operator approves it in the browser.
+function runUntilUrl(bin: string, args: string[], timeoutMs: number): Promise<{ code: number | null; output: string; url: string | null }> {
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin', LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'pipe'], shell: false });
+    let output = '';
+    let done = false;
+    const finish = (code: number | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      resolve({ code, output, url: /(https:\/\/login\.tailscale\.com\/\S+)/.exec(output)?.[1] ?? null });
+    };
+    const onData = (d: Buffer) => {
+      output += d.toString();
+      if (/https:\/\/login\.tailscale\.com\/\S+/.test(output)) {
+        child.kill('SIGTERM');
+        finish(0);
+      }
+    };
+    const t = setTimeout(() => {
+      child.kill('SIGTERM');
+      finish(null);
+    }, timeoutMs);
+    child.stdout.on('data', onData);
+    child.stderr.on('data', onData);
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code));
+  });
+}
+
+// "changing settings via 'tailscale up' requires mentioning all non-default flags … use the command below":
+// the CLI prints the exact command that preserves the current settings; take its flags.
+export function suggestedUpArgs(text: string): string[] | null {
+  if (!/mentioning all\s+non-default flags/i.test(text)) return null;
+  const m = /tailscale up ((?:--\S+\s*)+)/.exec(text.replace(/\n/g, ' '));
+  if (!m) return null;
+  return m[1]!.trim().split(/\s+/).filter((a) => a.startsWith('--') && !a.startsWith('--timeout') && !a.startsWith('--auth-key') && !a.startsWith('--reset'));
+}
+
 export class TailscaleCli implements TailscaleProvider {
   readonly description: string;
   constructor(private readonly bin = '/usr/bin/tailscale') {
@@ -136,27 +177,39 @@ export class TailscaleCli implements TailscaleProvider {
 
   async login(authKey: string | null, keyFile: string): Promise<{ loginUrl: string | null }> {
     await this.ensureOperator();
+    const base = ['--ssh=false', '--operator=harbor'];
     if (authKey) {
       // key via a private file (`--auth-key=file:`), never on the command line
       writeFileSync(keyFile, authKey.trim() + '\n', { mode: 0o600 });
-      let r;
       try {
-        r = await run(this.bin, ['up', `--auth-key=file:${keyFile}`, '--ssh=false', '--timeout=90s'], 120_000);
+        let r = await run(this.bin, ['up', `--auth-key=file:${keyFile}`, ...base, '--timeout=90s'], 120_000);
+        const again = suggestedUpArgs(r.stderr + r.stdout);
+        if (r.code !== 0 && again) r = await run(this.bin, ['up', `--auth-key=file:${keyFile}`, ...again, '--timeout=90s'], 120_000);
+        if (r.code !== 0) {
+          const text = (r.stderr || r.stdout).trim().replace(/tskey-[A-Za-z0-9-]+/g, '<key>');
+          if (this.denied(text)) throw this.deniedError();
+          throw new HarborError('OPERATION_FAILED', `tailscale login failed: ${text.slice(0, 300)}`, { nextAction: 'Check the auth key (not expired, not already used) and try again.' });
+        }
       } finally {
         rmSync(keyFile, { force: true });
       }
-      if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale login failed: ${(r.stderr || r.stdout).trim().replace(/tskey-[A-Za-z0-9-]+/g, '<key>').slice(0, 300)}`, { nextAction: 'Check the auth key (not expired, not already used) and try again.' });
       return { loginUrl: null };
     }
-    // Interactive path: tailscale prints a login URL and waits; we only need the URL.
-    const r = await run(this.bin, ['up', '--ssh=false', '--timeout=8s'], 20_000);
-    const url = /(https:\/\/login\.tailscale\.com\/\S+)/.exec(r.stdout + r.stderr)?.[1] ?? null;
-    if (!url && r.code !== 0) {
-      const text = (r.stderr || r.stdout).trim();
-      if (this.denied(text)) throw new HarborError('OPERATION_FAILED', 'Harbor is not allowed to operate Tailscale on this machine right now', { nextAction: 'Run once on the machine: sudo /opt/harbor/bin/harbor bootstrap --yes --with-tailscale (it restores the permission and installs the fix for the future).' });
-      throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${text.slice(0, 300)}`);
-    }
-    return { loginUrl: url };
+    // Interactive path: read the login URL as soon as the CLI prints it (the control server can take a while).
+    let r = await runUntilUrl(this.bin, ['up', ...base], 45_000);
+    const again = suggestedUpArgs(r.output);
+    if (!r.url && again) r = await runUntilUrl(this.bin, ['up', ...again], 45_000);
+    if (r.url) return { loginUrl: r.url };
+    // an earlier attempt may still be pending inside tailscaled
+    const st = await run(this.bin, ['status', '--json']).catch(() => null);
+    const pending = st ? (/"AuthURL":\s*"([^"]+)"/.exec(st.stdout)?.[1] ?? null) : null;
+    if (pending) return { loginUrl: pending };
+    const text = r.output.trim();
+    if (this.denied(text)) throw this.deniedError();
+    throw new HarborError('OPERATION_FAILED', `tailscale did not produce a login link${text ? `: ${text.slice(0, 300)}` : ''}`, { nextAction: 'Try again in a minute; if it keeps failing, run `sudo tailscale up` on the machine and open the link it prints.' });
+  }
+  private deniedError(): HarborError {
+    return new HarborError('OPERATION_FAILED', 'Harbor is not allowed to operate Tailscale on this machine right now', { nextAction: 'Run once on the machine: sudo /opt/harbor/bin/harbor bootstrap --yes --with-tailscale (it restores the permission and installs the fix for the future).' });
   }
 
   async logout(): Promise<void> {

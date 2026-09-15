@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { base32Decode, base32Encode, otpauthUrl, totpCode, verifyTotp } from '../../src/auth/totp.js';
 import { polkitPowerRule, harborUnit, tailscaleOperatorUnit } from '../../src/bootstrap/systemd.js';
 import { demuxDockerLogs } from '../../src/system/logs.js';
+import { suggestedUpArgs } from '../../src/exposure/tailscale.js';
 
 describe('TOTP (RFC 6238)', () => {
   // RFC 6238 appendix B, SHA-1 vectors with the 20-byte ASCII secret "12345678901234567890" (8 digits in the RFC; we use 6, i.e. the last six)
@@ -45,5 +46,19 @@ describe('systemd pieces for v0.7', () => {
     };
     expect(demuxDockerLogs(Buffer.concat([frame(1, 'hello\n'), frame(2, 'oops\n')]))).toBe('hello\noops\n');
     expect(demuxDockerLogs(Buffer.from('plain tty output\n'))).toBe('plain tty output\n');
+  });
+});
+
+describe('tailscale up flag recovery', () => {
+  it('extracts the flags from the "mention all non-default flags" error and ignores other errors', () => {
+    const text = `Error: changing settings via 'tailscale up' requires mentioning all
+non-default flags. To proceed, either re-run your command with --reset or
+use the command below to explicitly mention the current value of
+all non-default settings:
+
+\ttailscale up --ssh=false --timeout=8s --operator=harbor --accept-routes
+`;
+    expect(suggestedUpArgs(text)).toEqual(['--ssh=false', '--operator=harbor', '--accept-routes']);
+    expect(suggestedUpArgs('Access denied: checkprefs access denied')).toBeNull();
   });
 });

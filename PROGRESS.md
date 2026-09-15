@@ -135,10 +135,10 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 70 passed |
-| `pnpm test:integration` (fake adapter) | 69 passed (install, lifecycle, auth, tools, exposure, storage, settings, purge/domains, appearance, packages/updates); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 75 passed |
+| `pnpm test:integration` (fake adapter) | 72 passed (install, lifecycle, auth, tools, exposure, storage, settings, purge/domains, appearance, packages/updates, security/terminal); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 17 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, own folder, settings, uninstall, domains + palette, customize, arrange, rotating wallpapers, upload + update) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 19 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, own folder, settings, uninstall, domains + palette, customize, arrange, rotating wallpapers, upload + update, terminal/troubleshoot/rename, two-factor) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |
@@ -149,7 +149,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 None.
 
 ## Status
-**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette; `v0.5.0` adds rotating wallpapers (Bing / Wikimedia / Reddit with the operator's key), per-app names and icons, drag-to-arrange, the Settings Overview with Restart/Shut down, and the macOS-style visual pass; `v0.6.0` adds your own apps (package zip upload with digest pinning) and app updates with automatic rollback (both verified live on the droplet against Docker Hub). `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette; `v0.5.0` adds rotating wallpapers (Bing / Wikimedia / Reddit with the operator's key), per-app names and icons, drag-to-arrange, the Settings Overview with Restart/Shut down, and the macOS-style visual pass; `v0.6.0` adds your own apps (package zip upload with digest pinning) and app updates with automatic rollback (both verified live on the droplet against Docker Hub); `v0.7.0` adds a terminal, troubleshoot logs, two-factor login, the device name and the Tailscale re-login self-heal. `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
-Nothing pending from the requests so far. The droplet stays running for Carlos's testing (~$0.07/h) with Harbor 0.6.0, rotating Bing wallpapers on, and an uploaded example app (Hello Nginx) installed.
+Nothing pending from the requests so far. The droplet stays running for Carlos's testing (~$0.07/h) with Harbor 0.7.0; it is logged out of the tailnet until Carlos approves the login link from Settings → Remote access.

@@ -81,7 +81,10 @@ export class Observer {
   }
 
   // Published addresses are re-checked every tick; a degraded exposure recovers when DNS/certificates settle.
+  // Tailnet addresses are also re-applied: a `tailscale logout`/login cycle drops the serve entries (and may
+  // rename the node), so the recorded exposures are put back as soon as the node is Running again.
   private async verifyExposures(now: string): Promise<void> {
+    await this.reconcileTailnet();
     for (const e of this.ctx.repo.exposures()) {
       if (e.state === 'removing') continue;
       const inst = this.ctx.repo.instance(e.instanceId);
@@ -90,6 +93,45 @@ export class Observer {
       const state = r.ok ? 'active' : 'degraded';
       if (state !== e.state || r.ok) this.ctx.repo.updateExposure(e.id, { state, observedAt: now, note: r.ok ? `answered HTTP ${r.status}` : `not reachable: ${r.error ?? `HTTP ${r.status}`}` });
       else this.ctx.repo.updateExposure(e.id, { observedAt: now });
+    }
+  }
+
+  private async reconcileTailnet(): Promise<void> {
+    const tailnet = this.ctx.repo.exposures().filter((e) => e.via === 'tailnet' && e.state !== 'removing');
+    if (!tailnet.length) return;
+    let st;
+    try {
+      st = await this.ctx.tailscale.status();
+    } catch {
+      return;
+    }
+    if (!st || st.backendState !== 'Running' || !st.dnsName) return;
+    let entries;
+    try {
+      entries = await this.ctx.tailscale.serveEntries();
+    } catch {
+      return;
+    }
+    for (const e of tailnet) {
+      const target = `http://127.0.0.1:${e.port}`;
+      const fixes: string[] = [];
+      if (!entries.some((x) => x.port === e.port && x.target === target)) {
+        try {
+          await this.ctx.tailscale.serve(e.port, target);
+          fixes.push('serve entry re-applied');
+        } catch (err) {
+          this.ctx.log.warn(`could not re-apply tailnet serve for port ${e.port}: ${(err as Error).message}`);
+          continue;
+        }
+      }
+      if (e.hostname !== st.dnsName) {
+        this.ctx.repo.updateExposureHostname(e.id, st.dnsName);
+        fixes.push(`node name ${e.hostname} -> ${st.dnsName}`);
+      }
+      if (fixes.length) {
+        this.ctx.repo.addEvent({ instanceId: e.instanceId, phase: 'observer', message: `tailnet address restored after Tailscale reconnected (${fixes.join('; ')})` });
+        this.ctx.log.info('tailnet exposure reconciled', { instanceId: e.instanceId, port: e.port, fixes });
+      }
     }
   }
 
