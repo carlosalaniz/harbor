@@ -14,6 +14,9 @@ describe('host storage', () => {
       'overlay /var/lib/docker/overlay2/abc/merged overlay rw 0 0',
       '/dev/sdb1 /mnt/photos ext4 rw 0 0',
       '/dev/sdb1 /mnt/photos ext4 rw 0 0',
+      '/dev/vda1 /tmp ext4 rw 0 0',
+      '/dev/vda1 /var/lib/harbor ext4 rw 0 0',
+      '/dev/vda1 /home/data ext4 rw 0 0',
       '//nas/media /media/nas cifs rw 0 0',
       '/dev/loop3 /snap/core/1 squashfs ro 0 0',
       'tmpfs /run tmpfs rw 0 0',
@@ -21,8 +24,8 @@ describe('host storage', () => {
     ].join('\n');
     expect(parseMounts(text)).toEqual([
       { device: '/dev/vda1', mountpoint: '/', fsType: 'ext4' },
-      { device: '/dev/sdb1', mountpoint: '/mnt/photos', fsType: 'ext4' },
       { device: '//nas/media', mountpoint: '/media/nas', fsType: 'cifs' },
+      { device: '/dev/sdb1', mountpoint: '/mnt/photos', fsType: 'ext4' },
       { device: '/dev/sdc1', mountpoint: '/mnt/with space', fsType: 'exfat' },
     ]);
   });

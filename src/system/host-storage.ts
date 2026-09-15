@@ -31,7 +31,8 @@ export interface FolderListing {
 }
 
 const REAL_FS = new Set(['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs', 'vfat', 'exfat', 'ntfs', 'ntfs3', 'fuseblk', 'nfs', 'nfs4', 'cifs', 'smb3', 'apfs', 'hfs']);
-const HIDDEN_PREFIXES = ['/boot', '/snap', '/var/lib/docker', '/var/snap', '/run', '/dev', '/proc', '/sys', '/System', '/private'];
+// hidden: boot/snap/docker internals, and the paths systemd hardening bind-mounts into the service's namespace
+const HIDDEN_PREFIXES = ['/boot', '/snap', '/var/lib/docker', '/var/snap', '/run', '/dev', '/proc', '/sys', '/System', '/private', '/tmp', '/var/tmp', '/var/lib/harbor', '/etc/harbor', '/opt/harbor'];
 
 export function parseMounts(procMountsText: string): { mountpoint: string; device: string; fsType: string }[] {
   const out: { mountpoint: string; device: string; fsType: string }[] = [];
@@ -45,9 +46,15 @@ export function parseMounts(procMountsText: string): { mountpoint: string; devic
     if (HIDDEN_PREFIXES.some((p) => mountpoint === p || mountpoint.startsWith(p + '/'))) continue;
     out.push({ device, mountpoint, fsType });
   }
-  // dedupe by mountpoint (bind mounts appear twice)
-  const seen = new Set<string>();
-  return out.filter((m) => (seen.has(m.mountpoint) ? false : (seen.add(m.mountpoint), true)));
+  // dedupe: the same device mounted at several places (bind mounts, systemd namespaces) is one disk;
+  // keep the shortest mountpoint. Network shares are keyed by device too.
+  const byDevice = new Map<string, { mountpoint: string; device: string; fsType: string }>();
+  for (const m of out) {
+    const key = `${m.device}|${m.fsType}`;
+    const prev = byDevice.get(key);
+    if (!prev || m.mountpoint.length < prev.mountpoint.length) byDevice.set(key, m);
+  }
+  return [...byDevice.values()].sort((a, b) => a.mountpoint.localeCompare(b.mountpoint));
 }
 
 function isWritable(p: string): boolean {
