@@ -18,6 +18,10 @@ export interface Manifest {
   setup?: { endpoint: string; instructions: string };
   presentation?: PackagePresentation;
   defaultCredentials?: { username: string; password: string; note?: string };
+  // Harbor provisions the admin account at first install (decision 79): a generated
+  // password (and username unless fixed) is injected via env vars on `service`,
+  // shown once in the operation result and retained as instance secrets.
+  provisionedCredentials?: { service: string; passwordEnv: string; usernameEnv?: string; username?: string; note?: string };
 }
 
 export type PackageCategory = 'productivity' | 'media' | 'files' | 'automation' | 'network' | 'developer' | 'ai' | 'security' | 'finance' | 'home' | 'other';

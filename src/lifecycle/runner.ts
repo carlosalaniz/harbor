@@ -17,6 +17,9 @@ import { lanHostnames, machineAddresses } from '../system/lan.js';
 import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
 import bcrypt from 'bcryptjs';
 
+// Reserved secret id for the admin credential Harbor provisions at first install (decision 79).
+export const PROVISIONED_SECRET = 'provisioned-password';
+
 // Thrown when the daemon is shutting down while an operation waits. The operation is left in
 // its in-flight state on purpose; the next daemon start marks it needs_action without replay.
 export class InterruptedError extends Error {
@@ -232,6 +235,12 @@ export class OperationRunner {
       if (!refs.some((r) => r.id === s.id)) refs.push({ id: s.id, file: path.join('secrets', s.id) });
       this.event(op, 'preparing', `generated retained secret ${s.id}`);
     }
+    // decision 79: the admin credential Harbor provisions is a retained secret like any other
+    if (pkg.manifest.provisionedCredentials) {
+      const created = generateSecretOnce(secretsDir, PROVISIONED_SECRET, this.ctx.ids);
+      if (created) this.event(op, 'preparing', 'generated the admin credential for this app (shown once when the install finishes)');
+      if (!refs.some((r) => r.id === PROVISIONED_SECRET)) refs.push({ id: PROVISIONED_SECRET, file: path.join('secrets', PROVISIONED_SECRET) });
+    }
     this.ctx.repo.updateInstance(inst.id, { secrets: refs });
   }
 
@@ -244,15 +253,31 @@ export class OperationRunner {
     return values;
   }
 
+  // The credential provisioned at first install (decision 79); stable across reinstall/update/reconfigure.
+  private readProvisioned(pkg: LoadedPackage, secretsDir: string, sink: string[]): { username: string; password: string } | null {
+    const pc = pkg.manifest.provisionedCredentials;
+    if (!pc) return null;
+    const password = readSecret(secretsDir, PROVISIONED_SECRET);
+    sink.push(password);
+    return { username: pc.username ?? 'admin', password };
+  }
+
+  // Same, resolved from the instance directory (render paths that did not read it explicitly).
+  private provisionedFor(pkg: LoadedPackage, inst: InstanceRow): { username: string; password: string } | null {
+    const pc = pkg.manifest.provisionedCredentials;
+    if (!pc) return null;
+    return { username: pc.username ?? 'admin', password: readSecret(this.dirs(inst).secrets, PROVISIONED_SECRET) };
+  }
+
   // URLs handed to `configuration` bindings follow the instance's primary exposure.
   private endpointUrlsFor(inst: InstanceRow, primary: PrimaryExposure = inst.primaryExposure): Record<string, string> {
     const exposures = this.ctx.repo.exposures(inst.id);
     return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary)]));
   }
 
-  private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure): Promise<string> {
+  private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure, provisioned?: { username: string; password: string } | null): Promise<string> {
     const externalStorage = Object.fromEntries(this.ctx.repo.resources(inst.id).filter((r) => r.kind === 'bind').map((r) => [r.role, { hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) }]));
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1' });
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1', provisioned: provisioned ?? this.provisionedFor(pkg, inst) });
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
       await this.ctx.compose.config({ projectDir: runtimeDir, projectName: identity.project, file }, 60_000);
@@ -448,7 +473,8 @@ export class OperationRunner {
     await this.createOwnedVolumes(op, pkg, identity, inst, plan.proposal.storage);
     this.generateSecrets(op, pkg, inst, dirs.secrets);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
-    const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values);
+    const provisioned = this.readProvisioned(pkg, dirs.secrets, sink);
+    const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values, undefined, provisioned);
     const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
 
     this.phase(op, 'applying', 'pulling', `pulling ${Object.keys(pkg.release.images).length} image(s) by digest`);
@@ -459,6 +485,8 @@ export class OperationRunner {
     const containers = await this.upAndRecord(op, inv, identity, inst);
     await this.checkReadiness(op, pkg, inst, containers);
     repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+    // The provisioned admin credential appears once, in this operation's result (same UX as exposure basic-auth).
+    if (provisioned) this.opResult = { ...(this.opResult ?? {}), credentials: provisioned, ...(pkg.manifest.provisionedCredentials?.note ? { credentialsNote: pkg.manifest.provisionedCredentials.note } : {}) };
   }
 
   // `compose up`, then record what exists under our labels. On failure, still record (best effort)

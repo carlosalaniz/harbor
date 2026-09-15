@@ -90,6 +90,15 @@ export function validateManifestReferences(manifest: Manifest, compose: ComposeS
     requireEndpoint(c.endpoint, `configuration ${c.service}.${c.environment}`);
     claimTarget(c.service, c.environment, `configuration.${c.endpoint}`);
   }
+  // Provisioned admin credential (decision 79): same uniqueness rules as other generated env.
+  if (manifest.provisionedCredentials) {
+    const pc = manifest.provisionedCredentials;
+    claimTarget(pc.service, pc.passwordEnv, 'provisionedCredentials.passwordEnv');
+    if (pc.usernameEnv) claimTarget(pc.service, pc.usernameEnv, 'provisionedCredentials.usernameEnv');
+    if (!pc.usernameEnv && !pc.username) problems.push('provisionedCredentials needs usernameEnv (Harbor injects the name) or username (documented fixed name)');
+    if (secretIds.has('provisioned-password')) problems.push('secret id provisioned-password is reserved for provisionedCredentials');
+    if (manifest.defaultCredentials) problems.push('defaultCredentials and provisionedCredentials are mutually exclusive');
+  }
 
   for (const text of [manifest.metadata.name, manifest.metadata.description, manifest.setup?.instructions ?? '']) {
     if (INTERPOLATION_RE.test(text)) problems.push('metadata/setup text must not contain interpolation expressions');

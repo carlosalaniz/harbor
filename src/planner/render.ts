@@ -18,6 +18,8 @@ export interface RenderInput {
   endpointUrls?: Record<string, string>;
   // compose volume name -> host directory chosen by the operator (rendered as a bind mount; no Docker volume)
   externalStorage?: Record<string, { hostPath: string; readOnly: boolean }>;
+  // decision 79: the admin credential Harbor provisioned for this instance (placeholders when null)
+  provisioned?: { username: string; password: string } | null;
 }
 
 export interface RenderedCompose {
@@ -81,6 +83,15 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       if (!ep) throw new Error(`configuration references unallocated endpoint ${c.endpoint}`);
       env[c.environment] = escapeCompose(formatUrl(endpointUrls?.[c.endpoint] ?? browserUrlFor(ep.hostPort), c.format ?? 'url'));
       generated.push(c.environment);
+    }
+    const pc = manifest.provisionedCredentials;
+    if (pc && pc.service === service) {
+      env[pc.passwordEnv] = escapeCompose(input.provisioned?.password ?? secretPlaceholder('provisioned-password'));
+      generated.push(pc.passwordEnv);
+      if (pc.usernameEnv) {
+        env[pc.usernameEnv] = escapeCompose(input.provisioned?.username ?? pc.username ?? 'admin');
+        generated.push(pc.usernameEnv);
+      }
     }
     generatedEnv[service] = generated.sort();
 

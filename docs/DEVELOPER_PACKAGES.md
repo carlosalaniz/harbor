@@ -77,6 +77,14 @@ defaultCredentials:              # optional: ONLY if the image ships a fixed log
   username: admin
   password: changeme
   note: Change it under Settings → Users right after signing in.
+provisionedCredentials:          # optional: Harbor creates the admin account through env vars at first install
+  service: web                   # the service that reads them
+  passwordEnv: ADMIN_PASSWORD    # Harbor injects a generated password here
+  usernameEnv: ADMIN_USER        # either: Harbor injects the username ("admin" or `username`) here…
+  username: admin                # …or the image uses a fixed name (then omit usernameEnv)
+  note: Shown next to the one-time credentials after the install.
+                                 # Mutually exclusive with defaultCredentials. The credential is shown
+                                 # once in the install result and retained as an instance secret.
 presentation:
   tagline: Short line shown on the card
   category: productivity         # productivity media files automation network developer ai security finance home other

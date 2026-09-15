@@ -33,6 +33,20 @@ export const MANIFEST_SCHEMA = {
       required: ['username', 'password'],
       properties: { username: plainText(64), password: plainText(128), note: plainText(200) },
     },
+    // apps whose admin account Harbor provisions at first install through environment variables
+    // (decision 79): the generated credential is shown once and retained as instance secrets.
+    provisionedCredentials: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['service', 'passwordEnv'],
+      properties: {
+        service: idString,
+        passwordEnv: envKey,
+        usernameEnv: envKey,
+        username: plainText(64),
+        note: plainText(200),
+      },
+    },
     release: {
       type: 'object',
       additionalProperties: false,
