@@ -211,7 +211,12 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     try {
       const db = openState(config.stateDir);
       const repo = new Repo(db, systemClock);
-      for (const t of tools) repo.upsertPlatformTool(t);
+      for (const t of tools) {
+        // A re-run must not forget what the daemon recorded on the tool since (e.g. the console's tailnet
+        // exposure lives in the tailscale record's resources): merge, bootstrap's facts win on conflict.
+        const prev = repo.platformTool(t.id);
+        repo.upsertPlatformTool({ ...t, resources: prev?.resources || t.resources ? { ...(prev?.resources ?? {}), ...(t.resources ?? {}) } : null });
+      }
       db.close();
     } finally {
       lock.release();
