@@ -875,7 +875,8 @@ const B10 = step('B10', 'Negative: invalid hostname, duplicate hostname, unknown
   // Use instances that have no public address at this point (B04/B05 published n8n and bentopdf).
   const b = byName('excalidraw');
   const other = byName('excalidraw-2');
-  if (other.desired === 'stopped') cliOk(target, ['start', other.id, '--yes'], { timeoutMs: 300_000 });
+  const otherWasStopped = other.desired === 'stopped';
+  if (otherWasStopped) cliOk(target, ['start', other.id, '--yes'], { timeoutMs: 300_000 });
   const bad = cli(target, ['expose', b.id, '--via', 'public', '--host', 'not a host', '--yes']);
   const routes0 = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
   const host = publicHost('dup');
@@ -885,6 +886,7 @@ const B10 = step('B10', 'Negative: invalid hostname, duplicate hostname, unknown
   const again = cli(target, ['expose', b.id, '--via', 'public', '--host', `x-${host}`, '--yes']);
   const routes1 = JSON.parse(ssh('curl -s http://127.0.0.1:2019/config/')).apps.http.servers.harbor.routes.length;
   cliOk(target, ['unexpose', b.id, '--via', 'public', '--yes'], { timeoutMs: 300_000 });
+  if (otherWasStopped) cliOk(target, ['stop', other.id, '--yes'], { timeoutMs: 300_000 }); // A09 relies on excalidraw-2 staying intentionally stopped
   if (bad.code === 0 || bad.json?.error?.code !== 'INVALID_REQUEST' || first.state !== 'succeeded' || dup.json?.error?.code !== 'NAME_CONFLICT' || again.json?.error?.code !== 'INVALID_STATE' || routes1 !== routes0 + 1) {
     throw new Error(`negative cases wrong: ${JSON.stringify({ bad: bad.json?.error?.code, dup: dup.json?.error?.code, again: again.json?.error?.code, routes0, routes1 })}`);
   }
