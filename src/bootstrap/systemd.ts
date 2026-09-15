@@ -107,7 +107,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=${PRODUCT.paths.opt}/bin/harbor self-update apply --version %i
+ExecStart=${PRODUCT.paths.opt}/bin/harbor self-update apply --to %i
 TimeoutStartSec=1800
 `;
 }

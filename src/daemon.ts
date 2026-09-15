@@ -168,7 +168,9 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
         lanServer!.once('error', reject);
         lanServer!.listen({ host: '::', port: config.lan.port }, () => resolve());
       }).catch((e: Error) => {
-        log.error(`LAN listener on port ${config.lan.port} failed: ${e.message}; the console stays reachable on 127.0.0.1:${config.listen.port}`);
+        // Caddy owns port 80 when the public proxy is installed: it proxies the console for LAN names instead (observer)
+        if (/EADDRINUSE/.test(e.message)) log.info(`port ${config.lan.port} is taken (Caddy): the LAN console is served through the proxy`);
+        else log.error(`LAN listener on port ${config.lan.port} failed: ${e.message}; the console stays reachable on 127.0.0.1:${config.listen.port}`);
         lanServer = null;
       });
       if (lanServer) log.info('LAN listener up', { port: config.lan.port });

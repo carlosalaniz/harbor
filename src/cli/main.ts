@@ -840,11 +840,12 @@ selfUpdateCmd
 selfUpdateCmd
   .command('apply')
   .description('ROOT, run by harbor-self-update@<version>.service: download the release, verify SHA256SUMS, install it in place (bootstrap --yes)')
-  .requiredOption('--version <version>', 'release version, e.g. 0.8.0')
+  .requiredOption('--to <version>', 'release version, e.g. 0.8.0')
   .option('--repo <owner/name>', 'GitHub repository', 'carlosalaniz/harbor')
-  .action(async (opts: { version: string; repo: string }) => {
+  .option('--archive <file>', 'use a local archive instead of downloading (SHA256SUMS must sit next to it)')
+  .action(async (opts: { to: string; repo: string; archive?: string }) => {
     const { applySelfUpdate } = await import('../bootstrap/selfupdate-apply.js');
-    await applySelfUpdate(opts.version, opts.repo, (m) => process.stderr.write(`[self-update] ${m}\n`));
+    await applySelfUpdate(opts.to, opts.repo, (m) => process.stderr.write(`[self-update] ${m}\n`), opts.archive ? { archive: opts.archive, sums: path.join(path.dirname(opts.archive), 'SHA256SUMS') } : undefined);
   });
 
 function selfUpdateText(s: SelfUpdateStatusDto): string {

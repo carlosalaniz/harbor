@@ -12,7 +12,8 @@ import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
 import { exposureUrl, primaryUrlFor } from '../exposure/urls.js';
-import { renderCaddyConfig, type CaddyRoute } from '../exposure/caddy.js';
+import { renderCaddyConfig, type CaddyLanConsole, type CaddyRoute } from '../exposure/caddy.js';
+import { lanHostnames, machineAddresses } from '../system/lan.js';
 import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
 import bcrypt from 'bcryptjs';
 
@@ -307,27 +308,13 @@ export class OperationRunner {
   // ---------- exposure
 
   private basicSecretId(endpointId: string): string {
-    return `exposure-basic-${endpointId}`;
+    return basicSecretIdFor(endpointId);
   }
 
-  // Full Caddy reconcile from state: every public exposure becomes one route; nothing else exists in the config.
+  // Full Caddy reconcile from state: every public exposure becomes one route (+ the LAN console server in LAN mode).
   private async reconcileCaddy(op: OperationRow, sink: string[]): Promise<void> {
-    const { repo } = this.ctx;
-    const routes: CaddyRoute[] = [];
-    for (const e of repo.exposures().filter((x) => x.via === 'public' && x.state !== 'removing')) {
-      const inst = repo.instance(e.instanceId);
-      const alloc = inst?.endpoints.find((a) => a.id === e.endpointId);
-      if (!inst || !alloc) continue;
-      let basicAuth: CaddyRoute['basicAuth'] = null;
-      if (e.protection === 'basic') {
-        const secretsDir = path.join(this.ctx.config.stateDir, 'instances', inst.id, 'secrets');
-        const raw = readSecret(secretsDir, this.basicSecretId(e.endpointId));
-        sink.push(raw);
-        basicAuth = { username: 'harbor', bcryptHash: bcrypt.hashSync(raw, 10) };
-      }
-      routes.push({ id: e.id, hostname: e.hostname, upstreamPort: alloc.hostPort, basicAuth });
-    }
-    await this.ctx.caddy.load(renderCaddyConfig(routes));
+    const routes = caddyRoutesFromState(this.ctx, sink);
+    await this.ctx.caddy.load(renderCaddyConfig(routes, { lan: caddyLanConsole(this.ctx.config) }));
     this.event(op, 'applying', `reconciled ${routes.length} public route(s) in Caddy`);
   }
 
@@ -751,6 +738,38 @@ export class OperationRunner {
     if (folders.length) this.event(op, 'removing', `your folder(s) untouched: ${folders.join(', ')}`);
     repo.updateInstance(inst.id, { installState: 'retained', desired: 'retained', runtime: 'stopped', readiness: 'unknown', observedAt: repo.now() });
   }
+}
+
+export function basicSecretIdFor(endpointId: string): string {
+  return `exposure-basic-${endpointId}`;
+}
+// Desired Caddy routes from state (basic-auth hashes are computed here, so call only when something changed).
+export function caddyRoutesFromState(ctx: Ctx, sink: string[]): CaddyRoute[] {
+  const routes: CaddyRoute[] = [];
+  for (const e of ctx.repo.exposures().filter((x) => x.via === 'public' && x.state !== 'removing')) {
+    const inst = ctx.repo.instance(e.instanceId);
+    const alloc = inst?.endpoints.find((a) => a.id === e.endpointId);
+    if (!inst || !alloc) continue;
+    let basicAuth: CaddyRoute['basicAuth'] = null;
+    if (e.protection === 'basic') {
+      const secretsDir = path.join(ctx.config.stateDir, 'instances', inst.id, 'secrets');
+      const raw = readSecret(secretsDir, basicSecretIdFor(e.endpointId));
+      sink.push(raw);
+      basicAuth = { username: 'harbor', bcryptHash: bcrypt.hashSync(raw, 10) };
+    }
+    routes.push({ id: e.id, hostname: e.hostname, upstreamPort: alloc.hostPort, basicAuth });
+  }
+  return routes;
+}
+// A cheap fingerprint of the desired Caddy state (no hashing): the observer re-applies only when it changes.
+export function caddySignature(ctx: Ctx): string {
+  const parts = ctx.repo.exposures().filter((x) => x.via === 'public' && x.state !== 'removing').map((e) => `${e.id}:${e.hostname}:${e.port}:${e.protection}`);
+  const lan = caddyLanConsole(ctx.config);
+  return JSON.stringify({ parts: parts.sort(), lan });
+}
+export function caddyLanConsole(config: Ctx['config']): CaddyLanConsole | null {
+  if (!config.lan.enabled) return null;
+  return { hosts: [...lanHostnames(), '*.local', ...machineAddresses().filter((a) => !a.includes(':'))], consolePort: config.listen.port };
 }
 
 // ---------- exposure helpers (module scope; used by the class below via prototype extension)

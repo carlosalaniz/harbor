@@ -31,7 +31,7 @@ async function download(url: string, dest: string, maxBytes: number): Promise<vo
   writeFileSync(dest, bytes, { mode: 0o600 });
 }
 
-export async function applySelfUpdate(version: string, repo: string, log: (m: string) => void): Promise<void> {
+export async function applySelfUpdate(version: string, repo: string, log: (m: string) => void, local?: { archive: string; sums: string }): Promise<void> {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new HarborError('INVALID_REQUEST', `not a release version: ${version}`);
   if (typeof process.getuid === 'function' && process.getuid() !== 0) throw new HarborError('INVALID_REQUEST', 'self-update apply must run as root (it is started by harbor-self-update@.service)');
   const name = archiveName(version);
@@ -40,10 +40,16 @@ export async function applySelfUpdate(version: string, repo: string, log: (m: st
   const archive = path.join(WORK, name);
   const sums = path.join(WORK, `SHA256SUMS-${version}`);
   try {
-    writeStatus(version, 'downloading', `downloading ${name} from GitHub`);
-    log(`downloading ${base}/${name}`);
-    await download(`${base}/${name}`, archive, 400 * 1024 * 1024);
-    await download(`${base}/SHA256SUMS`, sums, 64 * 1024);
+    if (local) {
+      writeStatus(version, 'downloading', `using local archive ${local.archive}`);
+      writeFileSync(archive, readFileSync(local.archive), { mode: 0o600 });
+      writeFileSync(sums, readFileSync(local.sums), { mode: 0o600 });
+    } else {
+      writeStatus(version, 'downloading', `downloading ${name} from GitHub`);
+      log(`downloading ${base}/${name}`);
+      await download(`${base}/${name}`, archive, 400 * 1024 * 1024);
+      await download(`${base}/SHA256SUMS`, sums, 64 * 1024);
+    }
     const expected = readFileSync(sums, 'utf8')
       .split('\n')
       .map((l) => l.trim().split(/\s+/))

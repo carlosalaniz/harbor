@@ -14,6 +14,7 @@
 #   HARBOR_LAN=auto|on|off   LAN mode (default auto: on when the machine has a private-network address)
 #   HARBOR_TOOLS=1           also set up Cockpit and Portainer
 #   HARBOR_REPO=owner/name   GitHub repository (default carlosalaniz/harbor)
+#   HARBOR_ARCHIVE=/path/harbor-X.Y.Z-linux-x64.tar.gz   install from a local archive (with SHA256SUMS next to it) instead of GitHub
 set -euo pipefail
 
 REPO="${HARBOR_REPO:-carlosalaniz/harbor}"
@@ -38,28 +39,40 @@ FREE_KB=$(df --output=avail -k / | tail -1)
 [ "$FREE_KB" -ge 8000000 ] || die "at least 8 GB of free disk space is needed on / (have $((FREE_KB/1024/1024)) GB)"
 MEM_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
 [ "$MEM_KB" -ge 1800000 ] || warn "less than 2 GB of memory; small apps only"
-curl -fsS --max-time 15 -o /dev/null "https://api.github.com/repos/$REPO/releases" || die "cannot reach GitHub (api.github.com)"
 echo "    ${PRETTY_NAME}, x86-64, $((MEM_KB/1024/1024)) GB memory, $((FREE_KB/1024/1024)) GB free"
 
-say "Finding the newest Harbor release"
-if [ -n "${HARBOR_VERSION:-}" ]; then
-  VERSION="$HARBOR_VERSION"
+mkdir -p "$WORK"
+if [ -n "${HARBOR_ARCHIVE:-}" ]; then
+  say "Using local archive $HARBOR_ARCHIVE"
+  [ -f "$HARBOR_ARCHIVE" ] || die "$HARBOR_ARCHIVE not found"
+  [ -f "$(dirname "$HARBOR_ARCHIVE")/SHA256SUMS" ] || die "SHA256SUMS must sit next to $HARBOR_ARCHIVE"
+  ARCHIVE=$(basename "$HARBOR_ARCHIVE")
+  VERSION=$(echo "$ARCHIVE" | sed -E 's/^harbor-([0-9.]+)-linux-x64\.tar\.gz$/\1/')
+  [ "$VERSION" != "$ARCHIVE" ] || die "archive name must look like harbor-X.Y.Z-linux-x64.tar.gz"
+  cp -f "$HARBOR_ARCHIVE" "$WORK/$ARCHIVE"; cp -f "$(dirname "$HARBOR_ARCHIVE")/SHA256SUMS" "$WORK/SHA256SUMS"
 else
-  VERSION=$(curl -fsSL --max-time 20 "https://api.github.com/repos/$REPO/releases?per_page=10" | grep -o '"tag_name": *"v[0-9][0-9.]*"' | grep -o 'v[0-9][0-9.]*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
-  [ -n "$VERSION" ] || die "no release found in $REPO"
+  curl -fsS --max-time 15 -o /dev/null "https://api.github.com/repos/$REPO/releases" || die "cannot reach GitHub (api.github.com) or the repository is not public"
+  say "Finding the newest Harbor release"
+  if [ -n "${HARBOR_VERSION:-}" ]; then
+    VERSION="$HARBOR_VERSION"
+  else
+    VERSION=$(curl -fsSL --max-time 20 "https://api.github.com/repos/$REPO/releases?per_page=10" | grep -o '"tag_name": *"v[0-9][0-9.]*"' | grep -o 'v[0-9][0-9.]*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+    [ -n "$VERSION" ] || die "no release found in $REPO"
+  fi
+  ARCHIVE="harbor-${VERSION}-linux-x64.tar.gz"
+  BASE="https://github.com/$REPO/releases/download/v${VERSION}"
+  echo "    Harbor $VERSION"
+  say "Downloading $ARCHIVE"
+  cd "$WORK"
+  curl -fSL --progress-bar -o "$ARCHIVE" "$BASE/$ARCHIVE"
+  curl -fsSL -o SHA256SUMS "$BASE/SHA256SUMS"
 fi
-ARCHIVE="harbor-${VERSION}-linux-x64.tar.gz"
-BASE="https://github.com/$REPO/releases/download/v${VERSION}"
-echo "    Harbor $VERSION"
-
-say "Downloading and verifying $ARCHIVE"
-mkdir -p "$WORK"; cd "$WORK"
-curl -fSL --progress-bar -o "$ARCHIVE" "$BASE/$ARCHIVE"
-curl -fsSL -o SHA256SUMS "$BASE/SHA256SUMS"
+cd "$WORK"
+say "Verifying $ARCHIVE"
 grep " $ARCHIVE\$" SHA256SUMS | sha256sum -c - >/dev/null || die "checksum mismatch for $ARCHIVE"
 rm -rf "harbor-${VERSION}-linux-x64"
 tar -xzf "$ARCHIVE"
-echo "    checksum OK"
+echo "    checksum OK, Harbor $VERSION"
 
 # LAN mode: on when there is a private-network address (home/office); a cloud server would expose everything
 HAS_PRIVATE=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | grep -Ec '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' || true)

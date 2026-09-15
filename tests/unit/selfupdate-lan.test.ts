@@ -7,6 +7,7 @@ import { readSetupCode, writeSetupCode } from '../../src/auth/setup.js';
 import { harborUnit, polkitPowerRule, selfUpdateUnit } from '../../src/bootstrap/systemd.js';
 import { isPrivateIPv4, lanHostAllowed } from '../../src/system/lan.js';
 import { GitHubReleaseFeed, compareVersions } from '../../src/system/selfupdate.js';
+import { renderCaddyConfig } from '../../src/exposure/caddy.js';
 
 describe('self-update pieces', () => {
   it('orders versions and picks the newest stable GitHub release with its assets', async () => {
@@ -24,7 +25,7 @@ describe('self-update pieces', () => {
     expect(latest).toEqual({ version: '0.8.0', tag: 'v0.8.0', publishedAt: '2026-09-16T00:00:00Z', notes: 'newer', url: 'https://github.com/o/r/releases/tag/v0.8.0', archiveUrl: 'https://github.com/o/r/releases/download/v0.8.0/harbor-0.8.0-linux-x64.tar.gz', sumsUrl: 'https://github.com/o/r/releases/download/v0.8.0/SHA256SUMS' });
   });
   it('systemd: template unit for the root apply step, polkit grants only its start; LAN unit binds port 80 without root', () => {
-    expect(selfUpdateUnit()).toContain('ExecStart=/opt/harbor/bin/harbor self-update apply --version %i');
+    expect(selfUpdateUnit()).toContain('ExecStart=/opt/harbor/bin/harbor self-update apply --to %i');
     expect(polkitPowerRule()).toContain('indexOf("harbor-self-update@") === 0');
     expect(harborUnit({ lan: true })).toContain('AmbientCapabilities=CAP_NET_BIND_SERVICE');
     expect(harborUnit()).not.toContain('AmbientCapabilities');
@@ -48,6 +49,15 @@ describe('LAN mode', () => {
     expect(lanHostAllowed('192.168.1.99', 80, 18000, addrs)).toBe(false);
     expect(lanHostAllowed('evil.example.com', 80, 18000, addrs)).toBe(false);
     expect(lanHostAllowed('harbor.local:8443', 80, 18000, addrs)).toBe(false);
+  });
+  it('Caddy config gains a :80 server that proxies LAN names to the console; :443 keeps the public routes', () => {
+    const cfg = renderCaddyConfig([{ id: 'e1', hostname: 'photos.example.com', upstreamPort: 18089, basicAuth: null }], { lan: { hosts: ['harbor.local', '*.local', '192.168.1.20', 'harbor.local'], consolePort: 18000 } }) as { apps: { http: { servers: Record<string, { listen: string[]; routes: { match: { host: string[] }[]; handle: { handler: string; upstreams?: { dial: string }[] }[] }[] }> } } };
+    const lan = cfg.apps.http.servers['harbor_lan']!;
+    expect(lan.listen).toEqual([':80']);
+    expect(lan.routes[0]!.match[0]!.host).toEqual(['*.local', '192.168.1.20', 'harbor.local']);
+    expect(lan.routes[0]!.handle[0]).toMatchObject({ handler: 'reverse_proxy', upstreams: [{ dial: '127.0.0.1:18000' }] });
+    expect(cfg.apps.http.servers['harbor']!.listen).toEqual([':443']);
+    expect(renderCaddyConfig([]).apps).not.toHaveProperty(['http', 'servers', 'harbor_lan']);
   });
   it('setup code: six digits, written 0600, read back', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'harbor-setup-'));

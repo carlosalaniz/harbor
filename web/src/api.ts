@@ -119,6 +119,10 @@ export const api = {
   },
 };
 
+// crypto.randomUUID needs a secure context; LAN mode serves the console over plain http://harbor.local, where
+// only getRandomValues is available. Same entropy, hand-formatted.
 export function newIdempotencyKey(): string {
-  return `ui-${crypto.randomUUID()}`;
+  if (typeof crypto.randomUUID === 'function') return `ui-${crypto.randomUUID()}`;
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return `ui-${[...b].map((x) => x.toString(16).padStart(2, '0')).join('')}`;
 }

@@ -6,11 +6,14 @@ import { probeOnce } from './readiness.js';
 import { LABELS } from '../naming.js';
 import type { Readiness, Runtime } from '../state/repo.js';
 import { exposureUrl } from '../exposure/urls.js';
+import { renderCaddyConfig } from '../exposure/caddy.js';
+import { caddyLanConsole, caddyRoutesFromState, caddySignature } from './runner.js';
 
 // Periodic observation of what actually exists. Never mutates Docker.
 export class Observer {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
+  private caddyApplied: string | null = null;
 
   constructor(
     private readonly ctx: Ctx,
@@ -85,6 +88,7 @@ export class Observer {
   // rename the node), so the recorded exposures are put back as soon as the node is Running again.
   private async verifyExposures(now: string): Promise<void> {
     await this.reconcileTailnet();
+    await this.reconcileCaddy();
     for (const e of this.ctx.repo.exposures()) {
       if (e.state === 'removing') continue;
       const inst = this.ctx.repo.instance(e.instanceId);
@@ -93,6 +97,28 @@ export class Observer {
       const state = r.ok ? 'active' : 'degraded';
       if (state !== e.state || r.ok) this.ctx.repo.updateExposure(e.id, { state, observedAt: now, note: r.ok ? `answered HTTP ${r.status}` : `not reachable: ${r.error ?? `HTTP ${r.status}`}` });
       else this.ctx.repo.updateExposure(e.id, { observedAt: now });
+    }
+  }
+
+  // Caddy runs with whatever config it resumed with (the package's stock file server on a fresh machine, or an
+  // older Harbor state). Put the desired config in place at startup and whenever the desired state changes.
+  private async reconcileCaddy(): Promise<void> {
+    const want = caddySignature(this.ctx);
+    if (want === this.caddyApplied) return;
+    const publicRoutes = this.ctx.repo.exposures().some((e) => e.via === 'public');
+    if (!publicRoutes && !this.ctx.config.lan.enabled) {
+      this.caddyApplied = want; // nothing to manage; leave Caddy alone
+      return;
+    }
+    try {
+      if (!(await this.ctx.caddy.available())) return;
+      const sink: string[] = [];
+      const routes = caddyRoutesFromState(this.ctx, sink);
+      await this.ctx.caddy.load(renderCaddyConfig(routes, { lan: caddyLanConsole(this.ctx.config) }));
+      this.caddyApplied = want;
+      this.ctx.log.info('caddy config reconciled', { publicRoutes: routes.length, lan: this.ctx.config.lan.enabled });
+    } catch (e) {
+      this.ctx.log.warn(`caddy reconcile failed: ${(e as Error).message}`);
     }
   }
 

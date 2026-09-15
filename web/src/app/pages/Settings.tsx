@@ -296,7 +296,7 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
           <dt>Harbor version</dt>
           <dd>
             {c.data.system?.version ?? '—'}
-            {c.data.system?.update.available && c.data.system.update.latest ? <span className="notice"> · {c.data.system.update.latest.version} is available (below)</span> : c.data.system?.update.checkedAt ? <span className="muted"> · up to date</span> : null}
+            {c.data.system?.update.available && c.data.system.update.latest ? <span className="notice"> · {c.data.system.update.latest.version} is available (below)</span> : c.data.system?.update.latest && !c.data.system.update.error ? <span className="muted"> · up to date</span> : null}
           </dd>
           <dt>Up for</dt>
           <dd>{m ? fmtUptime(m.uptimeSeconds) : '—'}</dd>

@@ -183,7 +183,7 @@ export class SelfUpdateService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.writeApplying({ version, state: 'failed', message: `could not start the update: ${msg}`, at: rfc3339(this.clock.now()) });
-      throw new HarborError('OPERATION_FAILED', `Harbor could not start the update (${msg})`, { nextAction: 'On the machine, run: sudo /opt/harbor/bin/harbor self-update apply --version ' + version });
+      throw new HarborError('OPERATION_FAILED', `Harbor could not start the update (${msg})`, { nextAction: 'On the machine, run: sudo /opt/harbor/bin/harbor self-update apply --to ' + version });
     }
     return this.status();
   }

@@ -14,14 +14,37 @@ export interface CaddyRoute {
 
 export const CADDY_MARKER = 'harbor-managed';
 
-export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: string; email?: string | null } = {}): Record<string, unknown> {
+// LAN mode with Caddy installed: Caddy owns port 80 (ACME challenges, redirects), so it also serves the console
+// to LAN names and addresses by proxying to the management port. Public hostnames still get HTTPS on :443.
+export interface CaddyLanConsole {
+  hosts: string[]; // harbor.local, <hostname>.local, *.local, the machine's addresses
+  consolePort: number;
+}
+export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: string; email?: string | null; lan?: CaddyLanConsole | null } = {}): Record<string, unknown> {
   const sorted = [...routes].sort((a, b) => a.hostname.localeCompare(b.hostname));
+  const lanServer = opts.lan
+    ? {
+        harbor_lan: {
+          '@id': `${CADDY_MARKER}-lan`,
+          listen: [':80'],
+          routes: [
+            {
+              '@id': 'lan-console',
+              match: [{ host: [...new Set(opts.lan.hosts)].sort() }],
+              handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `127.0.0.1:${opts.lan.consolePort}` }] }],
+              terminal: true,
+            },
+          ],
+        },
+      }
+    : {};
   return {
     admin: { listen: opts.adminListen ?? '127.0.0.1:2019' },
     logging: { logs: { default: { level: 'INFO' } } },
     apps: {
       http: {
         servers: {
+          ...lanServer,
           harbor: {
             '@id': CADDY_MARKER,
             listen: [':443'],

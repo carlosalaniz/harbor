@@ -123,7 +123,22 @@ export function Copy({ text }: { text: string }) {
       aria-label={`Copy ${text}`}
       title="Copy"
       onClick={() => {
-        void navigator.clipboard?.writeText(text);
+        // navigator.clipboard needs a secure context; on http://harbor.local fall back to the selection trick
+        if (navigator.clipboard && window.isSecureContext) void navigator.clipboard.writeText(text);
+        else {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+          } finally {
+            ta.remove();
+          }
+        }
       }}
     >
       ⧉

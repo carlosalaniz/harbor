@@ -46,6 +46,8 @@ installed before it was turned on keep answering on the machine only until they 
 
 ### 2b. Manual install (bootstrap)
 
+Running `bootstrap` without `--password-stdin` on a machine that has no administrator yet leaves it in setup mode: it prints the setup code and the wizard creates the account in the browser.
+
 ```sh
 # on your workstation
 scp release/harbor-<version>-linux-x64.tar.gz release/SHA256SUMS user@host:

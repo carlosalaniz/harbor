@@ -68,6 +68,10 @@ describe('first-run setup in the browser (no administrator yet)', () => {
     expect(await rawGet(h.baseUrl, '/healthz', { host: 'evil.example.com' })).toBe(403);
     expect(await rawGet(h.baseUrl, '/v1/setup', { host: 'harbor.local', origin: 'http://harbor.local' })).toBe(200);
     expect(await rawGet(h.baseUrl, '/v1/setup', { host: 'harbor.local', origin: 'http://evil.example.com' })).toBe(403);
+    // the observer put a LAN console server into Caddy at startup (Caddy owns :80 when the proxy is installed)
+    const until = Date.now() + 5000;
+    while (Date.now() < until && !h.caddy.routes().includes('harbor.local')) await new Promise((r) => setTimeout(r, 200));
+    expect(h.caddy.routes()).toEqual(expect.arrayContaining(['harbor.local', '*.local']));
   });
 });
 

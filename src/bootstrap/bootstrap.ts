@@ -200,10 +200,14 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     log(`hostname set to ${opts.hostname}`);
   }
   if (config.lan.enabled) {
-    const avahi = await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', 'avahi-daemon'], { timeoutMs: 10_000 });
-    if (!avahi.stdout.includes('install ok installed')) {
+    const missing = [];
+    for (const pkg of ['avahi-daemon', 'avahi-utils', 'libnss-mdns']) {
+      const q = await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', pkg], { timeoutMs: 10_000 });
+      if (!q.stdout.includes('install ok installed')) missing.push(pkg);
+    }
+    if (missing.length) {
       log('installing avahi-daemon (mDNS: this machine answers as <hostname>.local on your network)');
-      await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'avahi-daemon', 'libnss-mdns'], { timeoutMs: 10 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
+      await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'avahi-daemon', 'avahi-utils', 'libnss-mdns'], { timeoutMs: 10 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
     }
     await execOk('/usr/bin/systemctl', ['enable', '--now', 'avahi-daemon'], { timeoutMs: 60_000 });
   }
@@ -235,8 +239,9 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     const hasAdmin = new Repo(db, systemClock).administrator() !== null;
     db.close();
     if (!hasAdmin) {
+      // No administrator and no password here means "finish in the browser": keep (or create) the setup code.
+      // This is also what an upgrade of a not-yet-claimed machine goes through.
       if (opts.setupInBrowser || !opts.passwordProvider) {
-        if (!opts.setupInBrowser) throw new HarborError('INVALID_REQUEST', 'no administrator enrolled and no password source', { nextAction: 'Run interactively, pass --password-stdin, or use --setup-in-browser to finish in the setup wizard.' });
         setupCode = readSetupCode(config.stateDir) ?? writeSetupCode(config.stateDir);
         log('administrator will be created in the browser (setup wizard)');
       } else {
