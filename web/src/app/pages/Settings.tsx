@@ -595,7 +595,7 @@ function RemoteAccess({ c }: { c: Console }) {
             <details>
               <summary className="muted small">I have an auth key instead</summary>
               <div className="row wrap">
-                <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="tskey-auth-…" aria-label="Tailscale auth key" />
+                <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste the auth key" aria-label="Tailscale auth key" />
                 <button className="btn" disabled={busy || !key.trim()} onClick={() => void run(async () => (await api.tailscaleLogin(key.trim()), setKey('')))}>
                   Connect with key
                 </button>

@@ -29,7 +29,9 @@ const ONLY = opt('--only', null)?.split(',').map((s) => s.trim());
 const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const ARCHIVE = path.resolve(opt('--archive', path.join(ROOT, 'release', `harbor-${pkg.version}-linux-x64.tar.gz`)));
 const ARCHIVE_DIR = path.basename(ARCHIVE).replace(/\.tar\.gz$/, '');
-const ADMIN = { username: 'admin', password: 'vm-suite-FIXTURE-password' };
+// Test fixtures only — not real credentials. Override the admin password with
+// HARBOR_VM_ADMIN_PASSWORD when targeting a box enrolled with a different one.
+const ADMIN = { username: 'admin', password: process.env.HARBOR_VM_ADMIN_PASSWORD ?? 'vm-suite-FIXTURE-password' };
 const N8N_OWNER = { email: 'harbor-test@example.invalid', firstName: 'Harbor', lastName: 'Tester', password: 'n8n-owner-FIXTURE-password' };
 const PORTAINER_ADMIN = { username: 'admin', password: 'portainer-FIXTURE-password' };
 const OS_TEST_USER = { name: 'harbor-cockpit-test', password: 'cockpit-FIXTURE-password' };
