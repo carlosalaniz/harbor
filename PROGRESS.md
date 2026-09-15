@@ -123,7 +123,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 None.
 
 ## Status
-**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder. `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette. `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
 Nothing for the build: every acceptance and exposure check has live evidence. decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).
