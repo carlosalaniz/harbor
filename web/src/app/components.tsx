@@ -3,14 +3,32 @@ import type { CatalogItemDto, FolderListingDto, HostStorageDto, InstanceSummary,
 import { api } from '../api';
 import { fmtBytes, fmtTime, monogram, plainStatus } from './format';
 
-export function AppIcon({ packageId, icon, name, size = 44 }: { packageId: string; icon: string | null; name: string; size?: number }) {
+export type CustomIcon = InstanceSummary['customIcon'];
+export function AppIcon({ packageId, icon, name, size = 44, custom = null }: { packageId: string; icon: string | null; name: string; size?: number; custom?: CustomIcon }) {
   const cls = size >= 64 ? 'appicon large' : size <= 28 ? 'appicon small' : 'appicon';
-  if (icon) return <img className={cls} src={`/v1/catalog/${packageId}/asset/${icon}`} alt="" width={size} height={size} />;
+  // a picture that fails to load (asset gone, icon file missing) falls back to the monogram instead of a broken image
+  const [broken, setBroken] = useState<string | null>(null);
+  const src = custom?.kind === 'image' ? custom.url : icon ? `/v1/catalog/${packageId}/asset/${icon}` : null;
+  if (custom?.kind === 'glyph')
+    return (
+      <span className={`${cls} monogram glyph-icon`} aria-hidden="true" style={{ background: `linear-gradient(145deg, ${custom.color}, color-mix(in srgb, ${custom.color} 55%, black))` }}>
+        {custom.glyph}
+      </span>
+    );
+  if (src && broken !== src) return <img className={cls} src={src} alt="" width={size} height={size} onError={() => setBroken(src)} />;
   return (
     <span className={`${cls} monogram`} aria-hidden="true">
       {monogram(name)}
     </span>
   );
+}
+// The icon of an installed app, honouring its customisation.
+export function InstanceIcon({ inst, size = 44 }: { inst: InstanceSummary; size?: number }) {
+  return <AppIcon packageId={inst.packageId} icon={inst.icon} name={inst.packageName} size={size} custom={inst.customIcon} />;
+}
+// What the launcher calls an app: the custom name, else the package name (plus the instance name when it differs).
+export function appLabel(inst: InstanceSummary): string {
+  return inst.displayName ?? (inst.name === inst.packageId ? inst.packageName : `${inst.packageName} · ${inst.name}`);
 }
 
 export function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'bad' | 'muted' | 'busy' | 'info'; children: ReactNode }) {

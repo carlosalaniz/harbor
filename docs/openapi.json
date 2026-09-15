@@ -532,9 +532,19 @@
         }
       }
     },
+    "/v1/appearance": {
+      "get": {
+        "description": "Wallpaper state (uploaded/rotating with attribution), rotation settings (no secrets) and the launcher order.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/appearance/wallpaper": {
       "get": {
-        "description": "The operator's wallpaper picture (open: it is background art, loaded by <img>/CSS which cannot send a token).",
+        "description": "The current wallpaper picture (open: background art loaded by <img>/CSS, which cannot send a token).",
         "security": [],
         "responses": {
           "200": {
@@ -543,7 +553,7 @@
         }
       },
       "put": {
-        "description": "Set the wallpaper: a PNG, JPEG or WebP picture as a data URL (max 6 MB).",
+        "description": "Set your own wallpaper: a PNG, JPEG or WebP picture as a data URL (max 6 MB).",
         "requestBody": {
           "required": true,
           "content": {
@@ -572,7 +582,292 @@
         }
       },
       "delete": {
-        "description": "Remove the wallpaper picture.",
+        "description": "Remove your uploaded wallpaper picture.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/appearance/rotation": {
+      "put": {
+        "description": "Rotating wallpapers: turn on/off, choose the source (reddit needs your own Reddit app credentials; bing and wikimedia need none), subreddits and how often. Fetches the first picture right away when turning on.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "enum": [
+                      "reddit",
+                      "bing",
+                      "wikimedia"
+                    ]
+                  },
+                  "subreddits": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32
+                    }
+                  },
+                  "everyHours": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 720
+                  },
+                  "reddit": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "clientId"
+                        ],
+                        "properties": {
+                          "clientId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "clientSecret": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/appearance/rotation/next": {
+      "post": {
+        "description": "Skip to the next rotating wallpaper now.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/appearance/home": {
+      "put": {
+        "description": "Launcher order (instance ids, first to last). Unknown ids are dropped; missing ones keep their default position.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "order"
+                ],
+                "properties": {
+                  "order": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/instances/{id}/appearance": {
+      "put": {
+        "description": "Customise how an app appears on the launcher: display name and icon (default, an emoji/letters on a colour, or an uploaded picture up to 1 MB).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "displayName": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 80
+                  },
+                  "icon": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "default"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "glyph",
+                          "color"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "glyph"
+                            ]
+                          },
+                          "glyph": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          "color": {
+                            "type": "string",
+                            "pattern": "^#[0-9a-fA-F]{6}$"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "dataUrl"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "enum": [
+                              "image"
+                            ]
+                          },
+                          "dataUrl": {
+                            "type": "string",
+                            "minLength": 32,
+                            "maxLength": 1536000
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/instances/{id}/icon": {
+      "get": {
+        "description": "Custom launcher icon picture of an app (open: loaded by <img>).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/host": {
+      "get": {
+        "description": "Hostname, OS, CPU and whether Harbor may restart or shut down this machine.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/power": {
+      "post": {
+        "description": "Restart or shut down the machine (apps come back on their own after a restart).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "action"
+                ],
+                "properties": {
+                  "action": {
+                    "enum": [
+                      "reboot",
+                      "poweroff"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Default Response"

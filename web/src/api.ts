@@ -1,4 +1,4 @@
-import type { ApiErrorBody, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, RotationPatch, SystemHostDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -75,6 +75,14 @@ export const api = {
   addDomain: (hostname: string) => call<DomainDto>('POST', '/v1/domains', { hostname }),
   checkDomain: (hostname: string) => call<DomainDto>('POST', `/v1/domains/${encodeURIComponent(hostname)}/check`, {}),
   forgetDomain: (hostname: string) => call<void>('DELETE', `/v1/domains/${encodeURIComponent(hostname)}`),
+  // appearance
+  appearance: () => call<AppearanceDto>('GET', '/v1/appearance'),
+  setRotation: (patch: RotationPatch) => call<AppearanceDto>('PUT', '/v1/appearance/rotation', patch),
+  nextWallpaper: () => call<AppearanceDto>('POST', '/v1/appearance/rotation/next', {}),
+  setHomeOrder: (order: string[]) => call<AppearanceDto>('PUT', '/v1/appearance/home', { order }),
+  setInstanceAppearance: (id: string, patch: InstanceAppearancePatch) => call<InstanceSummary>('PUT', `/v1/instances/${id}/appearance`, patch),
+  systemHost: () => call<SystemHostDto>('GET', '/v1/system/host'),
+  power: (action: 'reboot' | 'poweroff') => call<{ action: string; accepted: boolean }>('POST', '/v1/system/power', { action }),
   setWallpaper: (dataUrl: string) => call<void>('PUT', '/v1/appearance/wallpaper', { dataUrl }),
   clearWallpaper: () => call<void>('DELETE', '/v1/appearance/wallpaper'),
   hasWallpaper: async (): Promise<boolean> => {

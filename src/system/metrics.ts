@@ -1,5 +1,5 @@
-import { readFileSync, statfsSync } from 'node:fs';
-import { cpus, freemem, loadavg, totalmem, uptime } from 'node:os';
+import { readdirSync, readFileSync, statfsSync } from 'node:fs';
+import { arch, cpus, freemem, hostname, loadavg, totalmem, uptime } from 'node:os';
 import type { SystemMetricsDto } from '../contracts/api.js';
 
 // Host metrics for the console's system strip. /proc on Linux for accurate "used" memory; os fallbacks
@@ -32,6 +32,8 @@ export function sampleMetrics(now: Date, docker: { available: boolean; version: 
   return {
     sampledAt: now.toISOString(),
     uptimeSeconds: Math.round(uptime()),
+    host: hostFacts(),
+    temperatureC: readTemperature(),
     cpu: { cores: cpus().length, load1: round(load1 ?? 0), load5: round(load5 ?? 0), load15: round(load15 ?? 0) },
     memory: { totalBytes: total, usedBytes: Math.max(0, used) },
     disk,
@@ -40,3 +42,36 @@ export function sampleMetrics(now: Date, docker: { available: boolean; version: 
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;
+
+// Plain facts for the Settings overview ("Running on"). /etc/os-release on Linux; os module elsewhere.
+export function hostFacts(): SystemMetricsDto['host'] {
+  let os = `${process.platform} ${arch()}`;
+  try {
+    const m = /^PRETTY_NAME="?([^"\n]+)"?$/m.exec(readFileSync('/etc/os-release', 'utf8'));
+    if (m) os = m[1]!;
+  } catch {
+    /* not linux */
+  }
+  const model = cpus()[0]?.model?.replace(/\s+/g, ' ').trim() ?? null;
+  return { hostname: hostname(), os, arch: arch(), cpuModel: model || null };
+}
+
+// Highest CPU/package temperature the kernel exposes, or null (VMs and many boards report none).
+export function readTemperature(): number | null {
+  const candidates: number[] = [];
+  try {
+    for (const zone of readdirSync('/sys/class/thermal')) {
+      if (!zone.startsWith('thermal_zone')) continue;
+      try {
+        const type = readFileSync(`/sys/class/thermal/${zone}/type`, 'utf8').trim().toLowerCase();
+        const raw = Number(readFileSync(`/sys/class/thermal/${zone}/temp`, 'utf8').trim());
+        if (Number.isFinite(raw) && raw > 0 && /cpu|x86_pkg|soc|acpitz|core/.test(type)) candidates.push(raw / 1000);
+      } catch {
+        /* zone without readable temp */
+      }
+    }
+  } catch {
+    return null;
+  }
+  return candidates.length ? Math.round(Math.max(...candidates) * 10) / 10 : null;
+}

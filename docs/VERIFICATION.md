@@ -142,6 +142,27 @@ Password change, Tailscale login/logout, host storage and the folder picker are 
 
 Covered by `tests/integration/purge-domains.test.ts` (purge deletes only Harbor-created volumes, keeps the operator's folders, frees name and ports, skips a foreign volume; domains lifecycle with a fake resolver; wallpaper upload/serve/remove) and Playwright (typed-confirmation uninstall, domains wizard feeding the publish dropdown, ⌘K palette). Live on the droplet: the in-place upgrade to schema v4 first failed in bootstrap (decision 53) and passed after the fix with the daemon back up; `harbor purge interrupted --yes` removed the acceptance suite's failed test instance; `harbor domains add harbor-demo.apein.space` (a real A record created for the check) reported *points here* against the detected public address; the console stayed published on the tailnet.
 
+### v0.5.0: rotating wallpapers, personal launcher, the machine (2026-09-15)
+
+Automated: `tests/unit/wallpaper-sources.test.ts` (Reddit OAuth + listing filters, Bing credit parsing, Wikimedia 1920px rendition, polkit rule scope, host facts), migration v1→v5, OpenAPI route list; `tests/integration/appearance.test.ts` (rotation on/off/next/schedule/failure with the fake fetcher, Reddit credentials never returned, launcher order, display name + glyph/picture icon served openly, purge cleanup, power control); Playwright `tests/e2e/ui.spec.ts` (customize name/emoji/picture icon, mouse drag + keyboard arrange persisted across reload, rotation switch + Reddit key flow + credit line, Settings overview + restart confirmation). Local run: unit 65 passed, integration 64 passed + 3 live-Docker skipped, e2e 16 passed.
+
+Live on the droplet (in-place upgrade 0.4.0 → 0.5.0 by `bootstrap --yes --with-tools --with-tailscale --with-public-proxy`; schema migrated to v5; polkit rule `/etc/polkit-1/rules.d/49-harbor-power.rules` installed):
+
+| Check | Result |
+|---|---|
+| Reddit anonymous listing (`www.reddit.com/r/EarthPorn/top.json`, `api.reddit.com`, `old.reddit.com`) from laptop and droplet | HTTP 403 / "Blocked" everywhere → Reddit source requires the operator's own app credentials (decision 55) |
+| `PUT /v1/appearance/rotation {enabled:true, source:bing}` | picture fetched at once: *Field of kochia plants, China* (lingqi xie/Getty Images), 3.7 MB JPEG stored 0600 under `/var/lib/harbor`, `nextAt` +24 h |
+| `GET /v1/appearance/wallpaper` (no token) | 200 `image/jpeg`, `content-security-policy: default-src 'none'; sandbox`, `nosniff` |
+| `POST /v1/appearance/rotation/next` | a different Bing picture each time (Gabit Keni Beach; Flight 93 Memorial) |
+| `source: wikimedia` | first attempt failed (HTTP 400: Wikimedia only serves standard thumbnail widths) → fixed to the 1920px rendition; redeployed; *Breil-Brigels reservoir* (Agnes Monkelbaan) 596 KB and *Oregon Trail reenactment* (BLM) fetched fine |
+| `GET /v1/system/host` | `harbor-test`, Ubuntu 24.04.4 LTS, x64, DO-Regular, `power.available: true` |
+| `GET /v1/system/metrics` | host facts present; `temperatureC: null` (VM exposes no thermal zone; UI says "Not reported by this machine") |
+| `harbor wallpaper` (CLI on the droplet) | prints the current picture, source, interval and next change |
+| `POST /v1/system/power {action:"reboot"}` from the console's session (harbor user, no root) | 202; boot id changed; ~20 s later Harbor `healthz` 200, Caddy and Tailscale active, all 11 containers running again |
+| Console screenshots (12) | `docs/evidence/ui-2026-09-15-v0.5.0/` (login clock, launcher with credit, drawer, customize, arrange, overview, restart dialog, appearance, palette, phone, light) |
+
+Not verified live: a real Reddit fetch (needs Reddit app credentials I do not have; the OAuth flow and listing parsing are covered by unit and integration tests against Reddit's documented shapes, and a bad key surfaces as "Reddit refused the app credentials" in Settings). Shut down was not exercised on the droplet (same code path as restart with `poweroff`; the user is testing on it).
+
 ### Live catalog qualification (`node scripts/vm/qualify-catalog.mjs --fresh`)
 
 Every bundled package is installed with the CLI on the designated droplet (fresh Ubuntu 24.04.4 x86-64; Docker 29.8.0, Compose 5.5.1, Node v24.12.0), waited for until Harbor reports it healthy, opened in headless Chromium (title, screenshot, health probe through the SSH tunnel), inspected (containers, mounts, resources) and removed. Packages with external storage claims are installed a second time with host folders under `/srv/harbor-test-storage` and the bind mounts are verified. 23 of 23 steps passed; reports and screenshots: `docs/evidence/catalog-2026-09-15T00-13-13/`, `docs/evidence/catalog-2026-09-15T00-40-44/`, `docs/evidence/catalog-2026-09-15T00-42-58/`.

@@ -83,7 +83,24 @@ About. Home is a launcher: icon grid with labels and a status dot, "⋯" for the
 The install page uses a folder picker (places = disks + Harbor data folder; navigate; create folder) with a
 "type a path" fallback.
 
-## 7. Out of scope now
+## 7. Personal launcher, rotating wallpapers, the machine (added 2026-09-15, v0.5.0)
 
-Widgets with live app data, wallpapers, multi-user, notifications center, command palette (a search
-box covers most of it), app updates UI (no update engine yet).
+macOS is the visual reference for this pass (Apple HIG: clarity, deference, depth): content sits on the
+wallpaper, surfaces are translucent (`backdrop-filter`), one accent colour, 8pt spacing, icon corners at
+22.5%, spring-like easing kept under 250 ms, a lock-screen clock over the login card.
+
+- **Launcher**: hold (touch) or drag (mouse) an icon to move it; *Arrange* toggles a jiggle mode with keyboard
+  moves (arrow keys) and *Done*. Order is saved on the daemon (`PUT /v1/appearance/home`).
+- **Customize…** in the app drawer: display name and icon (app's own, emoji/letters on a colour, or a
+  picture). Saved per installation (`PUT /v1/instances/{id}/appearance`), shown everywhere (tiles, drawer,
+  search, tray).
+- **Wallpapers**: presets, your own picture, or rotating pictures fetched by the daemon from Bing,
+  Wikimedia Commons or Reddit (with the operator's Reddit app key). Attribution is shown bottom-left on Home.
+- **Settings → Overview** (default): device card with a live wallpaper preview, Log out / Restart / Shut down
+  (confirmation dialogs; logind via a polkit rule), machine facts, storage/memory/temperature/live usage,
+  wallpaper picker, then the section list.
+
+## 8. Out of scope now
+
+Widgets with live app data, multi-user, notifications center, app updates UI (no update engine yet),
+folders/pages on the launcher.

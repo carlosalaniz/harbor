@@ -49,3 +49,20 @@ ListenStream=
 ListenStream=127.0.0.1:${port}
 `;
 }
+
+// polkit: let the harbor service account ask logind to reboot / power off (Settings → Restart, Shut down).
+// Nothing else is granted; the daemon still runs unprivileged.
+export function polkitPowerRule(): string {
+  return `// ${UNIT_MARKER.replace(/^# /, '')}
+polkit.addRule(function (action, subject) {
+  if (subject.user === "${PRODUCT.serviceUser}" &&
+      (action.id === "org.freedesktop.login1.reboot" ||
+       action.id === "org.freedesktop.login1.reboot-multiple-sessions" ||
+       action.id === "org.freedesktop.login1.power-off" ||
+       action.id === "org.freedesktop.login1.power-off-multiple-sessions")) {
+    return polkit.Result.YES;
+  }
+});
+`;
+}
+export const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-harbor-power.rules';

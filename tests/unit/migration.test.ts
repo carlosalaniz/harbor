@@ -43,6 +43,9 @@ describe('state migration v1 -> v2', () => {
     opened.prepare("INSERT INTO plans VALUES ('55555555-5555-4555-8555-555555555555', 'admin', 'expose', '22222222-2222-4222-8222-222222222222', '{}', 1, 't', 't', NULL)").run();
     expect((opened.prepare('SELECT COUNT(*) AS n FROM operations o JOIN plans p ON p.id = o.plan_id').get() as { n: number }).n).toBe(1);
     expect(opened.pragma('foreign_key_check')).toEqual([]);
+    // v5: settings table and per-app look columns
+    opened.prepare("INSERT INTO settings VALUES ('home.order', '[]', 't')").run();
+    expect(opened.prepare('SELECT display_name, icon_json FROM instances').get()).toEqual({ display_name: null, icon_json: null });
     opened.close();
     // second open: no migration, still fine
     const again = openState(dir);

@@ -2,14 +2,14 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken } from './api';
 import { EventList } from './app/components';
-import { AppDrawer, InstallWizard, PlanDialog, PublishWizard } from './app/dialogs';
+import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard } from './app/dialogs';
 import { Home } from './app/pages/Home';
 import { Platform } from './app/pages/Platform';
 import { Publishing } from './app/pages/Publishing';
 import { Settings } from './app/pages/Settings';
 import { Store } from './app/pages/Store';
 import { useRoute, type Route } from './app/router';
-import { applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper } from './app/theme';
+import { applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper, syncWallpaperPicture } from './app/theme';
 import { Palette, usePaletteShortcut } from './app/Palette';
 import { isFinal, useConsole } from './app/store';
 
@@ -30,6 +30,7 @@ export function App() {
   if (view.kind === 'login') {
     return (
       <main className="login-wrap">
+        <LockClock />
         <Login
           notice={notice}
           onDone={() => {
@@ -41,6 +42,21 @@ export function App() {
     );
   }
   return <ConsoleShell onAuthLost={onAuthLost} />;
+}
+
+// macOS lock-screen touch: a large, thin clock above the login card.
+function LockClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 15_000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="lock-clock" aria-hidden="true">
+      <div className="lock-date">{now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</div>
+      <div className="lock-time">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+    </div>
+  );
 }
 
 function Login({ onDone, notice }: { onDone: () => void; notice: string | null }) {
@@ -63,7 +79,7 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
     }
   };
   return (
-    <section className="card login" aria-labelledby="login-h">
+    <section className="card login glass" aria-labelledby="login-h">
       <div className="brand">
         <span className="logo" aria-hidden="true">
           ⚓
@@ -111,8 +127,15 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   const [drawer, setDrawer] = useState<InstanceSummary | null>(null);
   const [publishing, setPublishing] = useState<InstanceSummary | null>(null);
   const [palette, setPalette] = useState(false);
+  const [customizing, setCustomizing] = useState<InstanceSummary | null>(null);
   const openPalette = useCallback(() => setPalette(true), []);
   usePaletteShortcut(openPalette);
+
+  // The wallpaper picture follows the daemon (uploaded or rotating); the version busts the cache when it changes.
+  const wp = c.data.appearance?.wallpaper;
+  useEffect(() => {
+    if (wp) syncWallpaperPicture({ present: wp.kind !== 'none', version: wp.version });
+  }, [wp?.kind, wp?.version]);
 
   // Deep links: #/store/<id> opens the app page; #/app/<id> opens the drawer.
   useEffect(() => {
@@ -182,7 +205,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
         {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
-        {page === 'settings' && <Settings c={c} onLogout={() => void logout()} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go({ page: 'settings', section: s })} />}
+        {page === 'settings' && <Settings c={c} onLogout={() => void logout()} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go(s === 'overview' ? { page: 'settings' } : { page: 'settings', section: s })} />}
       </main>
 
       {storeItem && !c.pending && (
@@ -213,6 +236,17 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             void c.start(a);
           }}
           onPublish={() => setPublishing(liveDrawer)}
+          onCustomize={() => setCustomizing(liveDrawer)}
+        />
+      )}
+      {customizing && (
+        <CustomizeDialog
+          inst={c.data.instances.find((i) => i.id === customizing.id) ?? customizing}
+          onClose={() => setCustomizing(null)}
+          onSaved={(updated) => {
+            c.patchData((d) => ({ ...d, instances: d.instances.map((i) => (i.id === updated.id ? updated : i)) }));
+            void c.refresh();
+          }}
         />
       )}
       {livePublishing && !c.pending && (
@@ -266,7 +300,7 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
   if (!op) return null;
   const final = isFinal(op);
   const creds = op.result?.['credentials'] as { username: string; password: string } | undefined;
-  const who = inst ? (inst.name === inst.packageId ? inst.packageName : `${inst.packageName} (${inst.name})`) : 'the app';
+  const who = inst ? (inst.displayName ?? (inst.name === inst.packageId ? inst.packageName : `${inst.packageName} (${inst.name})`)) : 'the app';
   const title =
     op.state === 'succeeded'
       ? op.kind === 'unexpose' || op.kind === 'reconfigure'

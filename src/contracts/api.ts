@@ -52,6 +52,9 @@ export interface InstanceSummary {
   primaryEndpoint: string;
   operationId: string | null;
   hasRetainedData: boolean;
+  // launcher customisation (Customize… in the app drawer); null = package defaults
+  displayName: string | null;
+  customIcon: { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; url: string } | null;
 }
 
 export interface EventDto {
@@ -144,6 +147,8 @@ export interface CatalogItemDto {
 export interface SystemMetricsDto {
   sampledAt: string;
   uptimeSeconds: number;
+  host: { hostname: string; os: string; arch: string; cpuModel: string | null };
+  temperatureC: number | null;
   cpu: { cores: number; load1: number; load5: number; load15: number };
   memory: { totalBytes: number; usedBytes: number };
   disk: { path: string; totalBytes: number; usedBytes: number } | null;
@@ -223,4 +228,43 @@ export interface UiExposureDto {
   url: string;
   state: 'pending' | 'active' | 'degraded';
   note: string | null;
+}
+
+// ---- appearance: wallpaper (uploaded or rotating from a public source), launcher layout
+export type WallpaperSource = 'reddit' | 'bing' | 'wikimedia';
+export interface WallpaperPictureDto {
+  title: string;
+  author: string | null;
+  sourceName: string; // "r/EarthPorn", "Bing", "Wikimedia Commons"
+  link: string | null; // where the picture came from (post/page), for attribution
+  fetchedAt: string;
+}
+export interface RotationDto {
+  enabled: boolean;
+  source: WallpaperSource;
+  subreddits: string[];
+  everyHours: number;
+  nextAt: string | null;
+  lastError: string | null;
+  reddit: { clientId: string | null; hasSecret: boolean };
+}
+export interface AppearanceDto {
+  wallpaper: { kind: 'none' | 'uploaded' | 'rotating'; version: string | null; current: WallpaperPictureDto | null };
+  rotation: RotationDto;
+  home: { order: string[] };
+}
+export interface RotationPatch {
+  enabled?: boolean;
+  source?: WallpaperSource;
+  subreddits?: string[];
+  everyHours?: number;
+  reddit?: { clientId: string; clientSecret?: string } | null;
+}
+export type InstanceAppearancePatch = { displayName?: string | null; icon?: { kind: 'default' } | { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; dataUrl: string } };
+export interface SystemHostDto {
+  hostname: string;
+  os: string;
+  arch: string;
+  cpuModel: string | null;
+  power: { available: boolean; note: string | null };
 }

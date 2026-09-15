@@ -26,6 +26,8 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     primaryEndpoint,
     operationId: i.activeOperationId ?? i.lastOperationId,
     hasRetainedData: i.everInstalled || i.secrets.length > 0,
+    displayName: i.displayName,
+    customIcon: i.icon ? (i.icon.kind === 'glyph' ? { kind: 'glyph', glyph: i.icon.glyph, color: i.icon.color } : { kind: 'image', url: `/v1/instances/${i.id}/icon?v=${encodeURIComponent(i.icon.version)}` }) : null,
   };
 }
 

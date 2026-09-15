@@ -41,15 +41,24 @@ export function applyWallpaper(w: Wallpaper): void {
   }
   document.documentElement.dataset['wallpaper'] = w;
 }
-// The operator's uploaded picture (served by the daemon) becomes the 'photo' wallpaper; CSS reads the variable.
-export function applyWallpaperPhoto(present: boolean): void {
-  if (present) document.documentElement.style.setProperty('--wallpaper-url', `url(/v1/appearance/wallpaper?v=${Date.now()})`);
+// The daemon's picture (uploaded, or the rotating one) becomes the 'photo' wallpaper; CSS reads the
+// variable. `version` changes whenever the picture does, which busts the browser cache.
+let currentVersion: string | null | undefined;
+export function syncWallpaperPicture(picture: { present: boolean; version: string | null }): void {
+  const version = picture.present ? (picture.version ?? 'x') : null;
+  if (version === currentVersion) return;
+  currentVersion = version;
+  if (picture.present) document.documentElement.style.setProperty('--wallpaper-url', `url(/v1/appearance/wallpaper?v=${encodeURIComponent(version!)})`);
   else document.documentElement.style.removeProperty('--wallpaper-url');
   const pref = readWallpaper();
-  if (present && !hasExplicitWallpaper()) applyWallpaperRuntime('photo');
-  else if (!present && pref === 'photo') applyWallpaper('harbor');
+  if (picture.present && !hasExplicitWallpaper()) applyWallpaperRuntime('photo');
+  else if (!picture.present && pref === 'photo') applyWallpaper('harbor');
 }
-function hasExplicitWallpaper(): boolean {
+// compatibility for the login screen (no session yet): HEAD tells us whether a picture exists
+export function applyWallpaperPhoto(present: boolean): void {
+  syncWallpaperPicture({ present, version: present ? `login-${Date.now()}` : null });
+}
+export function hasExplicitWallpaper(): boolean {
   try {
     return localStorage.getItem('harbor.wallpaper') !== null;
   } catch {

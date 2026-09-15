@@ -1,6 +1,9 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CatalogItemDto, InstanceSummary, SystemMetricsDto } from '../../../../src/contracts/api';
-import { AppIcon, Pill } from '../components';
+import { api } from '../../api';
+import { AppIcon, InstanceIcon, Pill, appLabel } from '../components';
 import { fmtBytes, fmtUptime, plainStatus } from '../format';
+import { useReorder } from '../reorder';
 import type { Console } from '../store';
 
 const PICKS = ['nextcloud', 'immich', 'jellyfin', 'open-webui', 'vaultwarden', 'n8n'];
@@ -10,8 +13,8 @@ function greeting(): string {
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
-// Home is a launcher, the way a phone's home screen is: one icon per app, tap to open. Everything
-// else (status words, addresses, actions) lives one tap away in the app's drawer.
+// Home is a launcher, the way a phone's home screen is: one icon per app, tap to open, hold (or Arrange)
+// to move things around. Everything else lives one tap away in the app's drawer.
 export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenApp: (i: InstanceSummary) => void; onGoStore: () => void; onPick: (item: CatalogItemDto) => void }) {
   const { data, loaded } = c;
   const running = data.instances.filter((i) => i.installState === 'installed' && i.runtime === 'running').length;
@@ -20,7 +23,31 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   const picks = PICKS.map((id) => data.catalog.find((i) => i.id === id)).filter((i): i is CatalogItemDto => Boolean(i && i.availability === 'available'));
   const active = data.instances.filter((i) => i.installState !== 'retained');
   const retained = data.instances.filter((i) => i.installState === 'retained');
-  const now = new Date();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // launcher order: the saved order first, then anything new in install order
+  const saved = data.appearance?.home.order ?? [];
+  const sortedIds = useMemo(() => {
+    const ids = active.map((i) => i.id);
+    const rank = new Map(saved.map((id, i) => [id, i]));
+    return ids.slice().sort((a, b) => (rank.get(a) ?? 1e9) - (rank.get(b) ?? 1e9) || ids.indexOf(a) - ids.indexOf(b));
+  }, [active.map((i) => i.id).join('|'), saved.join('|')]);
+  const commit = useCallback(
+    (order: string[]) => {
+      c.patchData((d) => (d.appearance ? { ...d, appearance: { ...d.appearance, home: { order } } } : d));
+      void api.setHomeOrder(order).catch(() => c.refresh());
+    },
+    [c],
+  );
+  const re = useReorder(sortedIds, commit);
+  const byId = new Map(active.map((i) => [i.id, i]));
+  const tiles = re.order.map((id) => byId.get(id)).filter((i): i is InstanceSummary => Boolean(i));
+  const picture = data.appearance?.wallpaper.kind === 'rotating' ? data.appearance.wallpaper.current : null;
+
   return (
     <>
       <header className="page-head launcher-head">
@@ -29,9 +56,16 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           <h1>{greeting()}</h1>
           <p className="muted">{!loaded ? 'Loading your apps…' : data.instances.length === 0 ? 'Your own cloud, on this machine. Add your first app to get started.' : `${running} of ${active.length} app${active.length === 1 ? '' : 's'} running · ${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}`}</p>
         </div>
-        <button className="btn primary" onClick={onGoStore}>
-          + Add an app
-        </button>
+        <div className="row wrap head-actions">
+          {active.length > 1 && (
+            <button className={`btn ghost ${re.arranging ? 'active' : ''}`} onClick={() => re.setArranging(!re.arranging)} aria-pressed={re.arranging}>
+              {re.arranging ? 'Done' : 'Arrange'}
+            </button>
+          )}
+          <button className="btn primary" onClick={onGoStore}>
+            + Add an app
+          </button>
+        </div>
       </header>
       <SystemStrip m={data.metrics} dockerAvailable={data.system?.docker.available ?? null} />
       {(attention.length > 0 || degraded.length > 0) && (
@@ -41,8 +75,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
             {attention.map((i) => (
               <li key={i.id} className="row between">
                 <span>
-                  <strong>{i.packageName}</strong>
-                  {i.name !== i.packageId ? ` (${i.name})` : ''} — {plainStatus(i).label}
+                  <strong>{appLabel(i)}</strong> — {plainStatus(i).label}
                 </span>
                 <button className="btn" onClick={() => onOpenApp(i)}>
                   Details
@@ -59,10 +92,15 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           </ul>
         </section>
       )}
-      <section className="launcher" aria-labelledby="apps-h">
+      <section className={`launcher ${re.arranging ? 'arranging' : ''}`} aria-labelledby="apps-h">
         <h2 id="apps-h" className="visually-hidden">
           Your apps
         </h2>
+        {re.arranging && (
+          <p className="muted small arrange-hint" role="status">
+            Drag icons to arrange them. Arrow keys move the focused app. Press Done (or Esc) when you are happy.
+          </p>
+        )}
         {!loaded ? (
           <p className="muted">Loading…</p>
         ) : data.instances.length === 0 ? (
@@ -89,17 +127,19 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
         ) : (
           <>
             <ul className="icons" aria-label="Installed apps">
-              {active.map((i) => (
-                <AppIconTile key={i.id} inst={i} onDetails={() => onOpenApp(i)} />
+              {tiles.map((i) => (
+                <AppIconTile key={i.id} inst={i} onDetails={() => onOpenApp(i)} reorder={re} />
               ))}
-              <li className="icon-tile add">
-                <button className="icon-btn" onClick={onGoStore} aria-label="Add an app">
-                  <span className="appicon large add-glyph" aria-hidden="true">
-                    +
-                  </span>
-                  <span className="icon-label">Add app</span>
-                </button>
-              </li>
+              {!re.arranging && (
+                <li className="icon-tile add">
+                  <button className="icon-btn" onClick={onGoStore} aria-label="Add an app">
+                    <span className="appicon large add-glyph" aria-hidden="true">
+                      +
+                    </span>
+                    <span className="icon-label">Add app</span>
+                  </button>
+                </li>
+              )}
             </ul>
             {retained.length > 0 && (
               <details className="retained-list">
@@ -116,21 +156,50 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           </>
         )}
       </section>
+      {picture && (
+        <p className="wallpaper-credit small">
+          <span aria-hidden="true">◐ </span>
+          {picture.link ? (
+            <a href={picture.link} target="_blank" rel="noopener noreferrer">
+              {picture.title}
+            </a>
+          ) : (
+            picture.title
+          )}
+          {picture.author ? ` · ${picture.author}` : ''} · {picture.sourceName}
+        </p>
+      )}
     </>
   );
 }
 
-function AppIconTile({ inst, onDetails }: { inst: InstanceSummary; onDetails: () => void }) {
+function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDetails: () => void; reorder?: ReturnType<typeof useReorder> }) {
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
   const url = primary ? (primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback) : null;
-  const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && url;
+  const arranging = reorder?.arranging ?? false;
+  const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && url && !arranging;
   const status = plainStatus(inst);
-  const label = inst.name === inst.packageId ? inst.packageName : `${inst.packageName} · ${inst.name}`;
+  const label = appLabel(inst);
+  const tp = reorder?.tileProps(inst.id);
+  const guard = (e: React.MouseEvent) => {
+    if (reorder?.suppressClick(inst.id) || arranging) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
   return (
-    <li className={`icon-tile instance ${inst.installState} tone-${status.tone}`} aria-busy={inst.installState === 'installing'}>
+    <li
+      ref={tp?.ref}
+      className={`icon-tile instance ${inst.installState} tone-${status.tone} ${reorder?.dragging === inst.id ? 'dragging' : ''}`}
+      aria-busy={inst.installState === 'installing'}
+      onPointerDown={tp?.onPointerDown}
+      onKeyDown={tp?.onKeyDown}
+      style={tp?.style}
+      data-instance={inst.name}
+    >
       {canOpen ? (
-        <a className="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`} title={`${label} — ${status.label}`}>
-          <AppIcon packageId={inst.packageId} icon={inst.icon} name={inst.packageName} size={72} />
+        <a className="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`} title={`${label} — ${status.label}`} onClick={guard} draggable={false}>
+          <InstanceIcon inst={inst} size={72} />
           <span className="icon-label">{label}</span>
           <span className="icon-status">
             <span className={`dot tone-${status.tone}`} aria-hidden="true" />
@@ -138,17 +207,19 @@ function AppIconTile({ inst, onDetails }: { inst: InstanceSummary; onDetails: ()
           </span>
         </a>
       ) : (
-        <button className="icon-btn" onClick={onDetails} aria-label={`Manage ${inst.name}`} title={`${label} — ${status.label}`}>
-          <AppIcon packageId={inst.packageId} icon={inst.icon} name={inst.packageName} size={72} />
+        <button className="icon-btn" onClick={(e) => (arranging || reorder?.suppressClick(inst.id) ? guard(e) : onDetails())} aria-label={arranging ? `Move ${inst.name}` : `Manage ${inst.name}`} title={`${label} — ${status.label}`}>
+          <InstanceIcon inst={inst} size={72} />
           <span className="icon-label">{label}</span>
           <span className="icon-status small">
-            <span className={`dot tone-${status.tone}`} aria-hidden="true" /> {status.label}
+            <span className={`dot tone-${status.tone}`} aria-hidden="true" /> {arranging ? 'drag to move' : status.label}
           </span>
         </button>
       )}
-      <button className="btn ghost icon more" onClick={onDetails} aria-label={`Details of ${inst.name}`} title="Details and actions">
-        ⋯
-      </button>
+      {!arranging && (
+        <button className="btn ghost icon more" onClick={onDetails} aria-label={`Details of ${inst.name}`} title="Details and actions">
+          ⋯
+        </button>
+      )}
     </li>
   );
 }
@@ -174,7 +245,7 @@ function SystemStrip({ m, dockerAvailable }: { m: SystemMetricsDto | null; docke
   );
 }
 
-function Meter({ label, value, sub, pct }: { label: string; value: string; sub: string; pct: number }) {
+export function Meter({ label, value, sub, pct }: { label: string; value: string; sub: string; pct: number }) {
   const level = pct > 90 ? 'hot' : pct > 75 ? 'warm' : '';
   return (
     <div className="meter">

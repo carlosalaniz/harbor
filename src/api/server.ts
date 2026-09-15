@@ -10,17 +10,22 @@ import type { SessionService } from '../auth/sessions.js';
 import type { ApplicationService } from '../lifecycle/service.js';
 import type { Logger } from '../lifecycle/context.js';
 import type { PlatformToolsService } from '../tools/service.js';
+import type { AppearanceService } from '../appearance/service.js';
+import type { PowerControl } from '../system/power.js';
+import { hostFacts } from '../system/metrics.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
 import { PRODUCT } from '../naming.js';
 import { createFolder, listFolders, listMounts } from '../system/host-storage.js';
-import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 
 export interface ApiDeps {
   config: DaemonConfig;
   service: ApplicationService;
   sessions: SessionService;
   tools: PlatformToolsService;
+  appearance: AppearanceService;
+  power: PowerControl;
   log: Logger;
   version: string;
 }
@@ -54,7 +59,7 @@ const errorBodySchema = {
 } as const;
 
 export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
-  const { config, service, sessions, tools, log } = deps;
+  const { config, service, sessions, tools, log, appearance, power } = deps;
   const origin = managementOrigin(config);
   const allowedOrigins = new Set([origin, `http://127.0.0.1:${config.listen.port}`]);
   const allowedHosts = new Set([`localhost:${config.listen.port}`, `127.0.0.1:${config.listen.port}`]);
@@ -249,46 +254,115 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     },
   );
 
-  // --- appearance: one wallpaper picture per installation, chosen by the operator
-  const wallpaperFile = path.join(config.stateDir, 'wallpaper.bin');
-  const wallpaperMeta = path.join(config.stateDir, 'wallpaper.json');
-  const MAGIC: [string, number[]][] = [
-    ['image/png', [0x89, 0x50, 0x4e, 0x47]],
-    ['image/jpeg', [0xff, 0xd8, 0xff]],
-    ['image/webp', [0x52, 0x49, 0x46, 0x46]],
-  ];
-  app.get('/v1/appearance/wallpaper', { schema: { description: 'The operator\'s wallpaper picture (open: it is background art, loaded by <img>/CSS which cannot send a token).', security: [] } }, async (_req, reply) => {
-    if (!fsExists(wallpaperFile) || !fsExists(wallpaperMeta)) throw new HarborError('NOT_FOUND', 'no wallpaper set');
-    const meta = JSON.parse(readFileSync(wallpaperMeta, 'utf8')) as { contentType: string };
-    reply.header('content-type', meta.contentType);
+  // --- appearance: wallpaper (uploaded or rotating), launcher order, per-app look
+  const OPEN_IMAGE_CSP = "default-src 'none'; sandbox";
+  app.get('/v1/appearance', { preHandler: requireAuth, schema: { description: 'Wallpaper state (uploaded/rotating with attribution), rotation settings (no secrets) and the launcher order.' } }, async () => appearance.status());
+  app.get('/v1/appearance/wallpaper', { schema: { description: 'The current wallpaper picture (open: background art loaded by <img>/CSS, which cannot send a token).', security: [] } }, async (_req, reply) => {
+    const w = appearance.activeWallpaper();
+    if (!w) throw new HarborError('NOT_FOUND', 'no wallpaper set');
+    reply.header('content-type', w.contentType);
     reply.header('cache-control', 'private, max-age=60');
-    reply.header('content-security-policy', "default-src 'none'; sandbox");
-    return reply.send(readFileSync(wallpaperFile));
+    reply.header('content-security-policy', OPEN_IMAGE_CSP);
+    return reply.send(w.bytes);
   });
   app.put(
     '/v1/appearance/wallpaper',
     {
       preHandler: requireAuth,
       bodyLimit: 8 * 1024 * 1024,
-      schema: { description: 'Set the wallpaper: a PNG, JPEG or WebP picture as a data URL (max 6 MB).', body: { type: 'object', additionalProperties: false, required: ['dataUrl'], properties: { dataUrl: { type: 'string', minLength: 32, maxLength: 8 * 1024 * 1024 } } } },
+      schema: { description: 'Set your own wallpaper: a PNG, JPEG or WebP picture as a data URL (max 6 MB).', body: { type: 'object', additionalProperties: false, required: ['dataUrl'], properties: { dataUrl: { type: 'string', minLength: 32, maxLength: 8 * 1024 * 1024 } } } },
     },
     async (req, reply) => {
-      const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec((req.body as { dataUrl: string }).dataUrl);
-      if (!m) throw new HarborError('INVALID_REQUEST', 'wallpaper must be a PNG, JPEG or WebP data URL');
-      const bytes = Buffer.from(m[2]!, 'base64');
-      if (bytes.length > 6 * 1024 * 1024) throw new HarborError('INVALID_REQUEST', 'wallpaper must be 6 MB or smaller');
-      const sniffed = MAGIC.find(([, magic]) => magic.every((b, i) => bytes[i] === b))?.[0];
-      if (!sniffed || sniffed !== m[1]) throw new HarborError('INVALID_REQUEST', 'the picture bytes do not match the declared image type');
-      writeFileSync(wallpaperFile, bytes, { mode: 0o600 });
-      writeFileSync(wallpaperMeta, JSON.stringify({ contentType: sniffed, bytes: bytes.length, setAt: new Date().toISOString() }), { mode: 0o600 });
+      appearance.setUploaded((req.body as { dataUrl: string }).dataUrl);
       return reply.status(204).send();
     },
   );
-  app.delete('/v1/appearance/wallpaper', { preHandler: requireAuth, schema: { description: 'Remove the wallpaper picture.' } }, async (_req, reply) => {
-    rmSync(wallpaperFile, { force: true });
-    rmSync(wallpaperMeta, { force: true });
+  app.delete('/v1/appearance/wallpaper', { preHandler: requireAuth, schema: { description: 'Remove your uploaded wallpaper picture.' } }, async (_req, reply) => {
+    appearance.clearUploaded();
     return reply.status(204).send();
   });
+  app.put(
+    '/v1/appearance/rotation',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Rotating wallpapers: turn on/off, choose the source (reddit needs your own Reddit app credentials; bing and wikimedia need none), subreddits and how often. Fetches the first picture right away when turning on.',
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            enabled: { type: 'boolean' },
+            source: { enum: ['reddit', 'bing', 'wikimedia'] },
+            subreddits: { type: 'array', maxItems: 12, items: { type: 'string', minLength: 1, maxLength: 32 } },
+            everyHours: { type: 'integer', minimum: 1, maximum: 720 },
+            reddit: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['clientId'], properties: { clientId: { type: 'string', minLength: 1, maxLength: 128 }, clientSecret: { type: 'string', minLength: 1, maxLength: 256 } } }] },
+          },
+        },
+      },
+    },
+    async (req) => appearance.updateRotation(req.body as Parameters<AppearanceService['updateRotation']>[0]),
+  );
+  app.post('/v1/appearance/rotation/next', { preHandler: requireAuth, schema: { description: 'Skip to the next rotating wallpaper now.' } }, async () => appearance.next());
+  app.put(
+    '/v1/appearance/home',
+    { preHandler: requireAuth, schema: { description: 'Launcher order (instance ids, first to last). Unknown ids are dropped; missing ones keep their default position.', body: { type: 'object', additionalProperties: false, required: ['order'], properties: { order: { type: 'array', maxItems: 500, items: { type: 'string', pattern: UUID_PATTERN } } } } } },
+    async (req) => appearance.setHomeOrder((req.body as { order: string[] }).order),
+  );
+  app.put(
+    '/v1/instances/:id/appearance',
+    {
+      preHandler: requireAuth,
+      bodyLimit: 2 * 1024 * 1024,
+      schema: {
+        description: 'Customise how an app appears on the launcher: display name and icon (default, an emoji/letters on a colour, or an uploaded picture up to 1 MB).',
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } },
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            displayName: { type: ['string', 'null'], maxLength: 80 },
+            icon: {
+              oneOf: [
+                { type: 'object', additionalProperties: false, required: ['kind'], properties: { kind: { const: 'default' } } },
+                { type: 'object', additionalProperties: false, required: ['kind', 'glyph', 'color'], properties: { kind: { const: 'glyph' }, glyph: { type: 'string', minLength: 1, maxLength: 16 }, color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' } } },
+                { type: 'object', additionalProperties: false, required: ['kind', 'dataUrl'], properties: { kind: { const: 'image' }, dataUrl: { type: 'string', minLength: 32, maxLength: 1500 * 1024 } } },
+              ],
+            },
+          },
+        },
+      },
+    },
+    async (req) => {
+      const id = (req.params as { id: string }).id;
+      appearance.setInstanceAppearance(id, req.body as Parameters<AppearanceService['setInstanceAppearance']>[1]);
+      return service.instances().find((i) => i.id === id);
+    },
+  );
+  app.get('/v1/instances/:id/icon', { schema: { description: 'Custom launcher icon picture of an app (open: loaded by <img>).', security: [], params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } } } }, async (req, reply) => {
+    const icon = appearance.instanceIcon((req.params as { id: string }).id);
+    if (!icon) throw new HarborError('NOT_FOUND', 'no custom icon');
+    reply.header('content-type', icon.contentType);
+    reply.header('cache-control', 'private, max-age=300');
+    reply.header('content-security-policy', OPEN_IMAGE_CSP);
+    return reply.send(icon.bytes);
+  });
+
+  // --- the machine: facts for the Settings overview, restart / shut down
+  app.get('/v1/system/host', { preHandler: requireAuth, schema: { description: 'Hostname, OS, CPU and whether Harbor may restart or shut down this machine.' } }, async () => {
+    const p = await power.available();
+    return { ...hostFacts(), power: { available: p.ok, note: p.note } };
+  });
+  app.post(
+    '/v1/system/power',
+    { preHandler: requireAuth, schema: { description: 'Restart or shut down the machine (apps come back on their own after a restart).', body: { type: 'object', additionalProperties: false, required: ['action'], properties: { action: { enum: ['reboot', 'poweroff'] } } } } },
+    async (req, reply) => {
+      const { action } = req.body as { action: 'reboot' | 'poweroff' };
+      log.warn(`${action} requested from the console by ${req.actor}`);
+      if (action === 'reboot') await power.reboot();
+      else await power.powerOff();
+      return reply.status(202).send({ action, accepted: true });
+    },
+  );
 
   // --- remote access (Tailscale) from the console
   app.post(

@@ -175,12 +175,20 @@ The console's **Settings** page covers what a household operator needs after boo
 | Public addresses | the wizard for publishing on the internet: this machine's public address, your domains with a DNS check (*Points here* / *Points elsewhere* / *No DNS record yet*), which app uses each, re-check and forget; certificates are automatic |
 | Remote access (details) | tailnet addresses, node key expiry, link to the Tailscale admin console; the auth key you used is single-use and is not stored |
 | Storage | disks with free space, the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
-| Appearance | theme (match device / dark / light), wallpaper presets, or your own picture (PNG/JPEG/WebP up to 6 MB, stored on the machine) |
+| Overview | the landing page: your machine's name, what it runs on, Harbor version, uptime, storage/memory/temperature, *Log out*, *Restart* and *Shut down* (each asks first), and the wallpaper picker |
+| Appearance | theme (match device / dark / light), wallpaper presets, your own picture (PNG/JPEG/WebP up to 6 MB), or **rotating wallpapers**: Harbor itself fetches a new picture on a schedule from Bing or Wikimedia Commons (no account) or from your favourite subreddits (needs a free Reddit "script" app key; Settings walks you through it). The picture and its credit show on Home. |
 | Advanced access | the exact SSH forwarding line and the CLI equivalents |
 
 The same actions exist as commands: `harbor account set-password`, `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor storage`, `harbor domains [add|check|forget]`, `harbor purge`.
 
 Search everything with **⌘K / Ctrl+K** (or `/`): installed apps open on Enter, store apps show their page, settings sections jump straight there.
+
+### 4c. Make it yours: arrange and customise the launcher
+
+- **Arrange**: drag an icon with the mouse, or press and hold it on a phone, and drop it where you want it. *Arrange* (top right of Home) turns on a jiggle mode where the arrow keys also move the focused app; *Done* or Esc leaves it. The order is saved on the machine, so every device sees the same home screen.
+- **Customize…** (in an app's details): give the app the name you use for it ("Photos" instead of "Immich") and pick an icon: the app's own, an emoji or two letters on a colour, or a picture of yours (≤ 1 MB). Also shown in search and in progress messages.
+- CLI: `harbor look <app> --name Photos --glyph 📷 --color #3366ff`, `harbor look <app> --reset`; `harbor wallpaper`, `harbor wallpaper set --on --source bing|wikimedia|reddit [--subreddits a,b] [--every 24] [--reddit-client-id ID --reddit-secret-stdin]`, `harbor wallpaper next`; `harbor power restart|shutdown`.
+- **Restart / Shut down** work because bootstrap installs a small polkit rule that lets the Harbor service account ask the system for exactly those two actions. On an installation bootstrapped before v0.5.0, run `sudo /opt/harbor/bin/harbor bootstrap --yes` once to add it; Settings tells you when it is missing.
 
 Two things still need root on the machine, once: installing Tailscale (`bootstrap --with-tailscale`) and the public proxy (`bootstrap --with-public-proxy`). Settings shows the exact command when they are missing.
 

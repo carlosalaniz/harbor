@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DomainsDto } from '../../../src/contracts/api';
 import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { api } from '../api';
-import { AppIcon, Copy, Dialog, EventList, FolderPicker, Pill, StatusPill } from './components';
+import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel } from './components';
 import { categoryLabel, fmtTime } from './format';
 import type { Action, Console } from './store';
 
@@ -329,7 +329,7 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
   );
 }
 
-export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void }) {
+export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void }) {
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmPurge, setConfirmPurge] = useState('');
@@ -350,12 +350,12 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish 
   const canStop = (inst.installState === 'installed' || inst.installState === 'needs_action' || inst.installState === 'failed') && inst.runtime !== 'stopped';
   const canStart = inst.installState === 'installed' && inst.desired === 'stopped';
   return (
-    <Dialog title={inst.name} onClose={onClose} wide>
+    <Dialog title={appLabel(inst)} onClose={onClose} wide>
       <div className="app-head">
-        <AppIcon packageId={inst.packageId} icon={inst.icon} name={inst.packageName} size={72} />
+        <InstanceIcon inst={inst} size={72} />
         <div>
           <p className="lead">
-            {inst.packageName} <span className="muted small">· {inst.packageId} rev {inst.revision}</span>
+            {inst.packageName} <span className="muted small">· {inst.name} · rev {inst.revision}</span>
           </p>
           <StatusPill inst={inst} />
           <span className="muted small"> · observed {fmtTime(inst.observedAt)}</span>
@@ -370,6 +370,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish 
         {canOpen && (
           <button className="btn" disabled={busy} onClick={onPublish} aria-label={`Publish ${inst.name}`}>
             Publish…
+          </button>
+        )}
+        {!retained && (
+          <button className="btn" onClick={onCustomize} aria-label={`Customize ${inst.name}`}>
+            Customize…
           </button>
         )}
         {canStart && (
@@ -520,4 +525,107 @@ function verb(kind: PlanDto['kind']): string {
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Customize how an app looks on the launcher: its name and icon. Saved on the daemon, so every device sees it.
+const GLYPHS = ['📷', '🎬', '🎵', '📁', '☁️', '📝', '💬', '🔐', '🏠', '📚', '🧠', '⚡', '🛠', '🌐', '📈', '🎨', '🎮', '🧭'];
+const COLORS = ['#0a84ff', '#5e5ce6', '#bf5af2', '#ff375f', '#ff9f0a', '#ffd60a', '#30d158', '#64d2ff', '#8e8e93', '#1c1c1e'];
+export function CustomizeDialog({ inst, onClose, onSaved }: { inst: InstanceSummary; onClose: () => void; onSaved: (i: InstanceSummary) => void }) {
+  const [name, setName] = useState(inst.displayName ?? '');
+  const [mode, setMode] = useState<'default' | 'glyph' | 'image'>(inst.customIcon?.kind ?? 'default');
+  const [glyph, setGlyph] = useState(inst.customIcon?.kind === 'glyph' ? inst.customIcon.glyph : '📷');
+  const [color, setColor] = useState(inst.customIcon?.kind === 'glyph' ? inst.customIcon.color : '#0a84ff');
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  const preview: InstanceSummary = { ...inst, displayName: name.trim() || null, customIcon: mode === 'default' ? null : mode === 'glyph' ? { kind: 'glyph', glyph, color } : dataUrl ? { kind: 'image', url: dataUrl } : inst.customIcon?.kind === 'image' ? inst.customIcon : null };
+  const pickFile = (f: File | undefined) => {
+    setError(null);
+    if (!f) return;
+    if (f.size > 1024 * 1024) return setError('The picture must be 1 MB or smaller. A square PNG around 512×512 looks best.');
+    const r = new FileReader();
+    r.onload = () => setDataUrl(String(r.result));
+    r.readAsDataURL(f);
+  };
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const icon = mode === 'default' ? ({ kind: 'default' } as const) : mode === 'glyph' ? ({ kind: 'glyph', glyph, color } as const) : dataUrl ? ({ kind: 'image', dataUrl } as const) : undefined;
+      const r = await api.setInstanceAppearance(inst.id, { displayName: name.trim() || null, ...(icon ? { icon } : {}) });
+      onSaved(r);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title={`Customize ${inst.packageName}`} onClose={onClose}>
+      <div className="customize">
+        <div className="customize-preview" aria-label="Preview">
+          <InstanceIcon inst={preview} size={84} />
+          <span className="icon-label">{appLabel(preview)}</span>
+        </div>
+        <div className="stack">
+          <label>
+            Name on the launcher
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={inst.packageName} maxLength={40} aria-label="Name on the launcher" />
+          </label>
+          <div role="radiogroup" aria-label="Icon" className="seg">
+            {(['default', 'glyph', 'image'] as const).map((m) => (
+              <button key={m} type="button" role="radio" aria-checked={mode === m} className={`seg-btn ${mode === m ? 'active' : ''}`} onClick={() => setMode(m)}>
+                {m === 'default' ? "App's icon" : m === 'glyph' ? 'Emoji or letters' : 'My picture'}
+              </button>
+            ))}
+          </div>
+          {mode === 'glyph' && (
+            <>
+              <div className="glyphs" role="listbox" aria-label="Emoji">
+                {GLYPHS.map((g) => (
+                  <button key={g} type="button" role="option" aria-selected={glyph === g} className={`glyph-opt ${glyph === g ? 'active' : ''}`} onClick={() => setGlyph(g)}>
+                    {g}
+                  </button>
+                ))}
+              </div>
+              <label className="small">
+                Or type one emoji or up to two letters
+                <input value={glyph} onChange={(e) => setGlyph(e.target.value)} maxLength={4} aria-label="Icon glyph" className="glyph-input" />
+              </label>
+              <div className="swatches" role="listbox" aria-label="Colour">
+                {COLORS.map((c) => (
+                  <button key={c} type="button" role="option" aria-selected={color === c} className={`swatch-dot ${color === c ? 'active' : ''}`} style={{ background: c }} onClick={() => setColor(c)} aria-label={`Colour ${c}`} />
+                ))}
+                <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="Custom colour" className="color-input" />
+              </div>
+            </>
+          )}
+          {mode === 'image' && (
+            <div className="row wrap">
+              <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => pickFile(e.target.files?.[0])} aria-label="Icon picture file" />
+              <button type="button" className="btn" onClick={() => file.current?.click()}>
+                Choose a picture…
+              </button>
+              <span className="muted small">PNG, JPEG or WebP up to 1 MB. Square looks best.</span>
+            </div>
+          )}
+          {error && (
+            <p className="error small" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="row end">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="btn primary" disabled={busy || (mode === 'image' && !dataUrl && inst.customIcon?.kind !== 'image')} onClick={() => void save()}>
+          Save
+        </button>
+      </div>
+    </Dialog>
+  );
 }

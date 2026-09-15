@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -434,6 +434,83 @@ tailscaleCmd
   .action(async () => {
     await client().post('/v1/platform-tools/tailscale/logout', {});
     out({ loggedOut: true }, () => 'Logged out of the tailnet.');
+  });
+
+// --- appearance: rotating wallpapers and the look of an app, from the terminal
+const wallpaperCmd = program.command('wallpaper').description('rotating wallpapers: status, turn on/off, choose the source (bing, wikimedia, or reddit with your app credentials), skip to the next one');
+wallpaperCmd.action(async () => {
+  const a = await client().get<AppearanceDto>('/v1/appearance');
+  const r = a.rotation;
+  out(a, () =>
+    [
+      `Wallpaper: ${a.wallpaper.kind === 'none' ? 'presets only' : a.wallpaper.kind === 'uploaded' ? 'your uploaded picture' : `rotating — ${a.wallpaper.current?.title ?? ''} (${a.wallpaper.current?.sourceName ?? ''}${a.wallpaper.current?.author ? `, ${a.wallpaper.current.author}` : ''})`}`,
+      `Rotation: ${r.enabled ? 'on' : 'off'} · source ${r.source}${r.source === 'reddit' ? ` (${r.subreddits.map((x) => `r/${x}`).join(', ')}; credentials ${r.reddit.hasSecret ? 'set' : 'missing'})` : ''} · every ${r.everyHours}h${r.nextAt ? ` · next ${r.nextAt}` : ''}${r.lastError ? `\nLast error: ${r.lastError}` : ''}`,
+    ].join('\n'),
+  );
+});
+wallpaperCmd
+  .command('set')
+  .description('change rotation settings; e.g. `harbor wallpaper set --on --source bing`, `--source reddit --subreddits EarthPorn,wallpapers --reddit-client-id ID --reddit-secret-stdin`')
+  .option('--on', 'turn rotating wallpapers on')
+  .option('--off', 'turn rotating wallpapers off')
+  .option('--source <source>', 'bing | wikimedia | reddit')
+  .option('--subreddits <list>', 'comma-separated subreddits (reddit source)')
+  .option('--every <hours>', 'hours between pictures (1-720)')
+  .option('--reddit-client-id <id>', 'client id of your Reddit "script" app (reddit.com/prefs/apps)')
+  .option('--reddit-secret-stdin', 'read the Reddit app secret from stdin', false)
+  .action(async (opts: { on?: boolean; off?: boolean; source?: string; subreddits?: string; every?: string; redditClientId?: string; redditSecretStdin: boolean }) => {
+    const patch: Record<string, unknown> = {};
+    if (opts.on) patch['enabled'] = true;
+    if (opts.off) patch['enabled'] = false;
+    if (opts.source) patch['source'] = opts.source;
+    if (opts.subreddits) patch['subreddits'] = opts.subreddits.split(',');
+    if (opts.every) patch['everyHours'] = Number(opts.every);
+    if (opts.redditClientId) patch['reddit'] = { clientId: opts.redditClientId, ...(opts.redditSecretStdin ? { clientSecret: (await readStdinAll()).trim() } : {}) };
+    const a = await client().post<AppearanceDto>('/v1/appearance/rotation', patch, {}, 'PUT');
+    out(a, () => `Rotation ${a.rotation.enabled ? 'on' : 'off'} (${a.rotation.source}).${a.rotation.lastError ? ` Last error: ${a.rotation.lastError}` : a.wallpaper.current ? ` Now showing: ${a.wallpaper.current.title}` : ''}`);
+  });
+wallpaperCmd
+  .command('next')
+  .description('skip to the next picture now')
+  .action(async () => {
+    const a = await client().post<AppearanceDto>('/v1/appearance/rotation/next', {});
+    out(a, () => (a.rotation.lastError ? `Could not fetch a picture: ${a.rotation.lastError}` : `Now showing: ${a.wallpaper.current?.title ?? '?'} (${a.wallpaper.current?.sourceName ?? ''})`));
+  });
+
+program
+  .command('look <instance>')
+  .description('customise how an app appears on the launcher: --name "Photos", --glyph 📷 --color #3366ff, or --reset')
+  .option('--name <name>', 'display name (empty string resets)')
+  .option('--glyph <glyph>', 'one emoji or up to two letters for the icon')
+  .option('--color <hex>', 'icon colour, e.g. #3366ff (with --glyph)')
+  .option('--reset', 'back to the package name and icon', false)
+  .action(async (ref: string, opts: { name?: string; glyph?: string; color?: string; reset: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const patch: Record<string, unknown> = {};
+    if (opts.reset) Object.assign(patch, { displayName: null, icon: { kind: 'default' } });
+    if (opts.name !== undefined) patch['displayName'] = opts.name || null;
+    if (opts.glyph) patch['icon'] = { kind: 'glyph', glyph: opts.glyph, color: opts.color ?? '#4fb3ff' };
+    const r = await api.post<InstanceSummary>(`/v1/instances/${inst.id}/appearance`, patch, {}, 'PUT');
+    out(r, () => `${r.name}: shown as "${r.displayName ?? r.packageName}"${r.customIcon ? ` with a custom ${r.customIcon.kind} icon` : ''}.`);
+  });
+
+const powerCmd = program.command('power').description('restart or shut down this machine through Harbor (needs the polkit rule installed by bootstrap)');
+powerCmd
+  .command('restart')
+  .option('--yes', 'do not ask', false)
+  .action(async (opts: { yes: boolean }) => {
+    if (!opts.yes && (await promptVisible('Restart this machine now? Apps come back after the reboot. [y/N] ')).trim().toLowerCase() !== 'y') return;
+    await client().post('/v1/system/power', { action: 'reboot' });
+    out({ action: 'reboot' }, () => 'Restarting…');
+  });
+powerCmd
+  .command('shutdown')
+  .option('--yes', 'do not ask', false)
+  .action(async (opts: { yes: boolean }) => {
+    if (!opts.yes && (await promptVisible('Shut this machine down now? You will need physical access (or your provider console) to turn it back on. [y/N] ')).trim().toLowerCase() !== 'y') return;
+    await client().post('/v1/system/power', { action: 'poweroff' });
+    out({ action: 'poweroff' }, () => 'Shutting down…');
   });
 
 program

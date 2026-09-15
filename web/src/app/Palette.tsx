@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CatalogItemDto, InstanceSummary } from '../../../src/contracts/api';
-import { AppIcon } from './components';
+import { AppIcon, InstanceIcon, appLabel } from './components';
 import { plainStatus } from './format';
 import type { Route } from './router';
 import type { Console } from './store';
@@ -13,6 +13,7 @@ export interface PaletteItem {
   title: string;
   subtitle: string;
   icon?: { packageId: string; icon: string | null; name: string };
+  inst?: InstanceSummary;
   glyph?: string;
   run: () => void;
 }
@@ -22,11 +23,12 @@ const PAGES: { route: Route; title: string; glyph: string; words: string }[] = [
   { route: { page: 'store' }, title: 'App Store', glyph: '▦', words: 'store install catalog apps' },
   { route: { page: 'publishing' }, title: 'Publishing', glyph: '⇗', words: 'publish addresses tailnet public expose' },
   { route: { page: 'platform' }, title: 'Platform', glyph: '⚙', words: 'docker cockpit portainer tools system' },
+  { route: { page: 'settings' }, title: 'Settings', glyph: '⚙', words: 'settings overview restart shut down device machine wallpaper' },
   { route: { page: 'settings', section: 'account' }, title: 'Settings · Account', glyph: '👤', words: 'password session log out' },
   { route: { page: 'settings', section: 'remote' }, title: 'Settings · Remote access', glyph: '🛰', words: 'tailscale tailnet vpn remote key' },
   { route: { page: 'settings', section: 'public' }, title: 'Settings · Public addresses', glyph: '🌐', words: 'domain dns certificate https letsencrypt caddy public internet' },
   { route: { page: 'settings', section: 'storage' }, title: 'Settings · Storage', glyph: '💽', words: 'disks folders data volumes' },
-  { route: { page: 'settings', section: 'appearance' }, title: 'Settings · Appearance', glyph: '🎨', words: 'theme wallpaper dark light picture' },
+  { route: { page: 'settings', section: 'appearance' }, title: 'Settings · Appearance', glyph: '🎨', words: 'theme wallpaper dark light picture rotating reddit bing wikimedia' },
   { route: { page: 'settings', section: 'access' }, title: 'Settings · Advanced access', glyph: '🔧', words: 'ssh cli command line' },
   { route: { page: 'settings', section: 'about' }, title: 'Settings · About', glyph: 'ℹ️', words: 'version about' },
 ];
@@ -36,6 +38,7 @@ export function usePaletteShortcut(open: () => void) {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
+      if (document.querySelector('dialog[open]')) return; // a modal sheet owns the keyboard
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         open();
@@ -59,16 +62,16 @@ export function Palette({ c, go, onOpenApp, onAbout, onClose }: { c: Console; go
     const has = (...parts: (string | null | undefined)[]) => !needle || parts.some((p) => (p ?? '').toLowerCase().includes(needle));
     const out: PaletteItem[] = [];
     for (const i of c.data.instances.filter((x) => x.installState !== 'retained')) {
-      if (!has(i.name, i.packageName, i.packageId)) continue;
+      if (!has(i.name, i.packageName, i.packageId, i.displayName)) continue;
       const primary = i.endpoints.find((e) => e.id === i.primaryEndpoint) ?? i.endpoints[0];
       const url = primary ? (primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback) : null;
       const canOpen = i.installState === 'installed' && i.runtime === 'running' && url;
       out.push({
         id: `app-${i.id}`,
         kind: 'app',
-        title: i.name === i.packageId ? i.packageName : `${i.packageName} · ${i.name}`,
+        title: appLabel(i),
         subtitle: `${plainStatus(i).label}${canOpen ? ' · Enter opens it' : ' · Enter shows details'}`,
-        icon: { packageId: i.packageId, icon: i.icon, name: i.packageName },
+        inst: i,
         run: () => {
           if (canOpen) window.open(url!, '_blank', 'noopener');
           else onOpenApp(i);
@@ -114,7 +117,9 @@ export function Palette({ c, go, onOpenApp, onAbout, onClose }: { c: Console; go
         <ul className="palette-list" role="listbox" aria-label="Results">
           {items.map((it, i) => (
             <li key={it.id} role="option" aria-selected={i === cursor} className={`palette-item ${i === cursor ? 'active' : ''}`} onMouseEnter={() => setCursor(i)} onClick={() => pick(it)}>
-              {it.icon ? (
+              {it.inst ? (
+                <InstanceIcon inst={it.inst} size={28} />
+              ) : it.icon ? (
                 <AppIcon packageId={it.icon.packageId} icon={it.icon.icon} name={it.icon.name} size={28} />
               ) : (
                 <span className="appicon small monogram palette-glyph" aria-hidden="true">

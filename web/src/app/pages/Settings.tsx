@@ -1,26 +1,28 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { DomainsDto, HostStorageDto, PlatformToolDto } from '../../../../src/contracts/api';
+import type { AppearanceDto, DomainsDto, HostStorageDto, PlatformToolDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
-import { FolderPicker, Pill } from '../components';
-import { fmtBytes } from '../format';
+import { Dialog, FolderPicker, Pill } from '../components';
+import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
-import { WALLPAPERS, applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper, type Theme, type Wallpaper } from '../theme';
+import { WALLPAPERS, applyTheme, applyWallpaper, hasExplicitWallpaper, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'access' | 'about';
+type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'access' | 'about';
 const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] = [
+  { id: 'overview', label: 'Overview', glyph: '◉', blurb: 'This machine at a glance' },
   { id: 'account', label: 'Account', glyph: '👤', blurb: 'Password and session' },
   { id: 'remote', label: 'Remote access', glyph: '🛰', blurb: 'Reach Harbor from your other devices' },
   { id: 'public', label: 'Public addresses', glyph: '🌐', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', glyph: '💽', blurb: 'Disks and folders your apps use' },
-  { id: 'appearance', label: 'Appearance', glyph: '🎨', blurb: 'Theme and wallpaper' },
+  { id: 'appearance', label: 'Appearance', glyph: '🎨', blurb: 'Theme and wallpapers' },
   { id: 'access', label: 'Advanced access', glyph: '🔧', blurb: 'SSH forwarding, CLI' },
   { id: 'about', label: 'About', glyph: 'ℹ️', blurb: 'Version and trust boundary' },
 ];
 
 export function Settings({ c, onLogout, initialSection, onSection }: { c: Console; onLogout: () => void; initialSection?: string; onSection?: (s: string) => void }) {
-  const [section, setSectionState] = useState<Section>((SECTIONS.some((s) => s.id === initialSection) ? initialSection : 'account') as Section);
+  const [section, setSectionState] = useState<Section>((SECTIONS.some((s) => s.id === initialSection) ? initialSection : 'overview') as Section);
   useEffect(() => {
-    if (initialSection && SECTIONS.some((s) => s.id === initialSection)) setSectionState(initialSection as Section);
+    if (SECTIONS.some((s) => s.id === initialSection)) setSectionState(initialSection as Section);
+    else if (!initialSection) setSectionState('overview');
   }, [initialSection]);
   const setSection = (s: Section) => {
     setSectionState(s);
@@ -46,15 +48,163 @@ export function Settings({ c, onLogout, initialSection, onSection }: { c: Consol
         </ul>
       </nav>
       <div className="settings-body">
+        {section === 'overview' && <Overview c={c} onLogout={onLogout} go={setSection} />}
         {section === 'account' && <Account onLogout={onLogout} />}
         {section === 'remote' && <RemoteAccess c={c} />}
         {section === 'public' && <PublicAddresses c={c} />}
         {section === 'storage' && <Storage />}
-        {section === 'appearance' && <Appearance />}
+        {section === 'appearance' && <Appearance c={c} />}
         {section === 'access' && <Access c={c} />}
         {section === 'about' && <About c={c} />}
       </div>
     </div>
+  );
+}
+
+// The Umbrel-style landing: the machine, its vitals, power, and the wallpaper picker right there.
+function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (s: Section) => void }) {
+  const m = c.data.metrics;
+  const [host, setHost] = useState<SystemHostDto | null>(null);
+  const [confirm, setConfirm] = useState<'reboot' | 'poweroff' | null>(null);
+  const [powerMsg, setPowerMsg] = useState<string | null>(null);
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    api.systemHost().then(setHost, () => setHost(null));
+  }, []);
+  const pct = (used: number, total: number) => (total ? Math.min(100, Math.round((used / total) * 100)) : 0);
+  const name = host?.hostname ?? m?.host.hostname ?? 'this machine';
+  const temp = m?.temperatureC ?? null;
+  const tempTone = temp === null ? 'muted' : temp < 70 ? 'ok' : temp < 85 ? 'warn' : 'bad';
+  const doPower = async (a: 'reboot' | 'poweroff') => {
+    setConfirm(null);
+    try {
+      await api.power(a);
+      setPowerMsg(a === 'reboot' ? 'Restarting… this page will reconnect when Harbor is back (usually under a minute).' : 'Shutting down. Turn the machine back on to use Harbor again.');
+    } catch (e) {
+      setPowerMsg(e instanceof ApiError ? `${e.message}. ${e.nextAction}` : String(e));
+    }
+  };
+  return (
+    <>
+      <section className="card device" aria-labelledby="dev-h">
+        <div className="device-preview" aria-hidden="true">
+          <div className="device-screen">
+            <span className="device-anchor">⚓</span>
+            <span className="device-greeting">Good evening</span>
+            <span className="device-dots">
+              {c.data.instances
+                .filter((i) => i.installState !== 'retained')
+                .slice(0, 8)
+                .map((i) => (
+                  <span key={i.id} className="device-dot" />
+                ))}
+            </span>
+          </div>
+        </div>
+        <div className="row wrap device-actions">
+          <button className="btn" onClick={onLogout}>
+            Log out
+          </button>
+          <button className="btn" onClick={() => setConfirm('reboot')} disabled={host ? !host.power.available : false}>
+            Restart
+          </button>
+          <button className="btn danger" onClick={() => setConfirm('poweroff')} disabled={host ? !host.power.available : false}>
+            Shut down
+          </button>
+        </div>
+        {host && !host.power.available && <p className="muted small">{host.power.note ?? 'Harbor cannot restart this machine from here.'}</p>}
+        {powerMsg && (
+          <p className="notice small" role="status">
+            {powerMsg}
+          </p>
+        )}
+        <h2 id="dev-h" className="device-name">
+          {name}
+        </h2>
+        <dl className="kv device-facts">
+          <dt>Running on</dt>
+          <dd>
+            {host ? `${host.os} · ${host.arch}` : m ? `${m.host.os} · ${m.host.arch}` : '—'}
+            {(host?.cpuModel ?? m?.host.cpuModel) ? <span className="muted"> · {host?.cpuModel ?? m?.host.cpuModel}</span> : null}
+          </dd>
+          <dt>Harbor version</dt>
+          <dd>{c.data.system?.version ?? '—'}</dd>
+          <dt>Up for</dt>
+          <dd>{m ? fmtUptime(m.uptimeSeconds) : '—'}</dd>
+        </dl>
+      </section>
+      <div className="vitals">
+        <button className="card vital" onClick={() => go('storage')} aria-label="Storage details">
+          <span className="meter-label">Storage</span>
+          <span className="meter-value">
+            {m?.disk ? fmtBytes(m.disk.usedBytes) : '—'} <span className="muted">/ {m?.disk ? fmtBytes(m.disk.totalBytes) : '—'}</span>
+          </span>
+          <span className="bar" aria-hidden="true">
+            <span className={m?.disk && pct(m.disk.usedBytes, m.disk.totalBytes) > 90 ? 'hot' : ''} style={{ width: `${m?.disk ? pct(m.disk.usedBytes, m.disk.totalBytes) : 0}%` }} />
+          </span>
+        </button>
+        <div className="card vital">
+          <span className="meter-label">Memory</span>
+          <span className="meter-value">
+            {m ? fmtBytes(m.memory.usedBytes) : '—'} <span className="muted">/ {m ? fmtBytes(m.memory.totalBytes) : '—'}</span>
+          </span>
+          <span className="bar" aria-hidden="true">
+            <span className={m && pct(m.memory.usedBytes, m.memory.totalBytes) > 90 ? 'hot' : ''} style={{ width: `${m ? pct(m.memory.usedBytes, m.memory.totalBytes) : 0}%` }} />
+          </span>
+        </div>
+        <div className="card vital">
+          <span className="meter-label">Temperature</span>
+          <span className="meter-value">{temp === null ? 'n/a' : `${Math.round(temp)}°C`}</span>
+          <span className="row">
+            <Pill tone={tempTone}>
+              <span className="dot" aria-hidden="true" />
+              {temp === null ? 'Not reported by this machine' : temp < 70 ? 'Optimal' : temp < 85 ? 'Warm' : 'Hot'}
+            </Pill>
+          </span>
+        </div>
+        <button className="card vital" onClick={() => setLive((v) => !v)} aria-expanded={live}>
+          <span className="meter-label">
+            <span aria-hidden="true">∿ </span>Live usage
+          </span>
+          <span className="meter-value">{m ? `${m.cpu.load1.toFixed(2)} load` : '—'}</span>
+          <span className="muted small">{live ? 'Hide details' : 'Open live usage'}</span>
+        </button>
+      </div>
+      {live && m && (
+        <section className="card" aria-label="Live usage">
+          <dl className="kv">
+            <dt>Processor</dt>
+            <dd>
+              {m.cpu.cores} cores · load {m.cpu.load1.toFixed(2)} / {m.cpu.load5.toFixed(2)} / {m.cpu.load15.toFixed(2)} (1 / 5 / 15 min)
+            </dd>
+            <dt>Memory</dt>
+            <dd>
+              {fmtBytes(m.memory.usedBytes)} used of {fmtBytes(m.memory.totalBytes)} ({pct(m.memory.usedBytes, m.memory.totalBytes)}%)
+            </dd>
+            <dt>Storage</dt>
+            <dd>{m.disk ? `${fmtBytes(m.disk.usedBytes)} used of ${fmtBytes(m.disk.totalBytes)} on ${m.disk.path}` : 'unknown'}</dd>
+            <dt>Apps engine</dt>
+            <dd>{m.docker.available ? `Docker ${m.docker.version ?? ''} · ${m.docker.containersRunning} of ${m.docker.containersTotal} containers running` : 'Docker is not reachable'}</dd>
+            <dt>Sampled</dt>
+            <dd>{new Date(m.sampledAt).toLocaleTimeString()}</dd>
+          </dl>
+        </section>
+      )}
+      <WallpaperPicker c={c} compact onMore={() => go('appearance')} />
+      {confirm && (
+        <Dialog title={confirm === 'reboot' ? 'Restart this machine?' : 'Shut down this machine?'} onClose={() => setConfirm(null)}>
+          <p>{confirm === 'reboot' ? 'Apps stop for a moment and come back on their own after the restart. Harbor reconnects when it is up again.' : 'Everything stops. You will need to turn the machine on again yourself (its power button, or your provider’s console) before Harbor and your apps are back.'}</p>
+          <div className="row end">
+            <button className="btn" onClick={() => setConfirm(null)}>
+              Cancel
+            </button>
+            <button className={`btn ${confirm === 'reboot' ? 'primary' : 'danger'}`} onClick={() => void doPower(confirm)}>
+              {confirm === 'reboot' ? 'Restart now' : 'Shut down now'}
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </>
   );
 }
 
@@ -456,91 +606,263 @@ function Storage() {
   );
 }
 
-function Appearance() {
+function Appearance({ c }: { c: Console }) {
   const [theme, setTheme] = useState<Theme>(readTheme());
+  return (
+    <>
+      <section className="card" aria-labelledby="theme-h">
+        <h2 id="theme-h">Theme</h2>
+        <div role="radiogroup" aria-label="Theme" className="seg">
+          {(['system', 'dark', 'light'] as Theme[]).map((t) => (
+            <button key={t} role="radio" aria-checked={theme === t} className={`seg-btn ${theme === t ? 'active' : ''}`} onClick={() => (applyTheme(t), setTheme(t))}>
+              {t === 'system' ? 'Match device' : t === 'dark' ? 'Dark' : 'Light'}
+            </button>
+          ))}
+        </div>
+      </section>
+      <WallpaperPicker c={c} />
+      <Rotation c={c} />
+      <OwnPicture c={c} />
+    </>
+  );
+}
+
+const PRESET_NAMES: Record<Wallpaper, string> = { harbor: 'Harbor', dusk: 'Dusk', forest: 'Forest', plain: 'Plain', photo: 'Picture' };
+function WallpaperPicker({ c, compact = false, onMore }: { c: Console; compact?: boolean; onMore?: () => void }) {
   const [wallpaper, setWallpaper] = useState<Wallpaper>(readWallpaper());
-  const pickTheme = (t: Theme) => {
-    applyTheme(t);
-    setTheme(t);
-  };
-  const pickWallpaper = (w: Wallpaper) => {
+  const wp = c.data.appearance?.wallpaper;
+  const hasPicture = Boolean(wp && wp.kind !== 'none');
+  const active = hasPicture && !hasExplicitWallpaper() ? 'photo' : wallpaper;
+  const choose = (w: Wallpaper) => {
     applyWallpaper(w);
     setWallpaper(w);
   };
-  const names: Record<Wallpaper, string> = { harbor: 'Harbor blue', dusk: 'Dusk', forest: 'Forest', plain: 'Plain', photo: 'My picture' };
-  const [hasPhoto, setHasPhoto] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const file = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    void api.hasWallpaper().then(setHasPhoto);
-  }, []);
-  const upload = (f: File) => {
-    if (f.size > 6 * 1024 * 1024) return setMsg('Pick a picture of 6 MB or less.');
-    const reader = new FileReader();
-    reader.onload = () => {
-      api.setWallpaper(String(reader.result)).then(
-        () => {
-          setHasPhoto(true);
-          applyWallpaperPhoto(true);
-          pickWallpaper('photo');
-          setMsg(null);
-        },
-        (e: Error) => setMsg(e.message),
-      );
-    };
-    reader.readAsDataURL(f);
-  };
   return (
-    <>
-      <section className="card" aria-labelledby="look-h">
-        <h2 id="look-h">Theme</h2>
-        <div className="row wrap chips" role="radiogroup" aria-label="Theme">
-          {(['system', 'dark', 'light'] as Theme[]).map((t) => (
-            <button key={t} role="radio" aria-checked={theme === t} className={`chip ${theme === t ? 'active' : ''}`} onClick={() => pickTheme(t)}>
-              {t === 'system' ? 'Match my device' : t === 'dark' ? 'Dark' : 'Light'}
+    <section className="card" aria-labelledby="wp-h">
+      <div className="row between wrap">
+        <div>
+          <h2 id="wp-h">Wallpaper</h2>
+          <p className="muted small">{hasPicture ? (wp!.kind === 'rotating' ? `Picture rotates from ${wp!.current?.sourceName ?? 'the internet'}.` : 'Your uploaded picture.') : 'Presets, your own picture, or a new picture every day.'}</p>
+        </div>
+        {compact && (
+          <button className="btn ghost" onClick={onMore}>
+            More options →
+          </button>
+        )}
+      </div>
+      <ul className="wallpapers" role="listbox" aria-label="Wallpaper">
+        {WALLPAPERS.filter((w) => w !== 'photo' || hasPicture).map((w) => (
+          <li key={w}>
+            <button role="option" aria-selected={active === w} className={`swatch wp-${w} ${active === w ? 'active' : ''}`} onClick={() => choose(w)} aria-label={`Wallpaper ${PRESET_NAMES[w]}`}>
+              <span className="swatch-name">{w === 'photo' ? (wp?.kind === 'rotating' ? 'Rotating' : 'My picture') : PRESET_NAMES[w]}</span>
             </button>
+          </li>
+        ))}
+      </ul>
+      {compact && !hasPicture && <p className="muted small">Want a fresh photo every day? Turn on rotating wallpapers under More options.</p>}
+    </section>
+  );
+}
+
+const SOURCE_LABEL: Record<WallpaperSource, string> = { bing: 'Bing picture of the day', wikimedia: 'Wikimedia Commons picture of the day', reddit: 'Reddit (your favourite subreddits)' };
+function Rotation({ c }: { c: Console }) {
+  const a = c.data.appearance;
+  const r = a?.rotation;
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [subs, setSubs] = useState<string | null>(null);
+  const [every, setEvery] = useState<number | null>(null);
+  const [clientId, setClientId] = useState('');
+  const [secret, setSecret] = useState('');
+  const [optimistic, setOptimistic] = useState<boolean | null>(null); // the switch flips at once; the daemon confirms
+  const [optSource, setOptSource] = useState<WallpaperSource | null>(null);
+  const apply = async (fn: () => Promise<AppearanceDto>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const next = await fn();
+      c.patchData((d) => ({ ...d, appearance: next }));
+      syncWallpaperPicture({ present: next.wallpaper.kind !== 'none', version: next.wallpaper.version });
+      if (next.rotation.lastError) setMsg(next.rotation.lastError);
+    } catch (e) {
+      setMsg(e instanceof ApiError ? `${e.message}${e.nextAction ? `. ${e.nextAction}` : ''}` : String(e));
+    } finally {
+      setBusy(false);
+      setOptimistic(null);
+      setOptSource(null);
+    }
+  };
+  if (!r) return null;
+  const subsValue = subs ?? r.subreddits.join(', ');
+  const everyValue = every ?? r.everyHours;
+  return (
+    <section className="card" aria-labelledby="rot-h">
+      <div className="row between wrap">
+        <div>
+          <h2 id="rot-h">Rotating wallpapers</h2>
+          <p className="muted small">Harbor fetches a new picture for everyone who uses this Harbor. Your browser never contacts the source.</p>
+        </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            role="switch"
+            checked={optimistic ?? r.enabled}
+            disabled={busy}
+            onChange={(e) => {
+              setOptimistic(e.target.checked);
+              void apply(() => api.setRotation({ enabled: e.target.checked }));
+            }}
+            aria-label="Rotating wallpapers"
+          />
+          <span className="switch-track" aria-hidden="true" />
+          <span>{(optimistic ?? r.enabled) ? (busy ? 'Fetching a picture…' : 'On') : 'Off'}</span>
+        </label>
+      </div>
+      <div className="stack rotation-body">
+        <div role="radiogroup" aria-label="Picture source" className="sources">
+          {(['bing', 'wikimedia', 'reddit'] as WallpaperSource[]).map((src) => (
+            <label key={src} className={`source ${(optSource ?? r.source) === src ? 'active' : ''}`}>
+              <input
+                type="radio"
+                name="wp-source"
+                value={src}
+                checked={(optSource ?? r.source) === src}
+                disabled={busy}
+                onChange={() => {
+                  setOptSource(src);
+                  void apply(() => api.setRotation({ source: src, ...(src === 'reddit' && !r.reddit.hasSecret ? { enabled: false } : {}) }));
+                }}
+              />
+              <span>
+                <span className="source-name">{SOURCE_LABEL[src]}</span>
+                <span className="muted small">{src === 'bing' ? 'Beautiful landscapes, no account needed.' : src === 'wikimedia' ? 'Openly licensed photos, no account needed.' : 'Needs a free Reddit app key (below).'}</span>
+              </span>
+            </label>
           ))}
         </div>
-      </section>
-      <section className="card" aria-labelledby="wp-h">
-        <h2 id="wp-h">Wallpaper</h2>
-        <ul className="wallpapers" role="radiogroup" aria-label="Wallpaper">
-          {WALLPAPERS.filter((w) => w !== 'photo' || hasPhoto).map((w) => (
-            <li key={w}>
-              <button role="radio" aria-checked={wallpaper === w} className={`swatch wp-${w} ${wallpaper === w ? 'active' : ''}`} onClick={() => pickWallpaper(w)} aria-label={names[w]}>
-                <span className="swatch-name">{names[w]}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        {r.source === 'reddit' && (
+          <div className="stack reddit-box">
+            <label>
+              Subreddits
+              <input value={subsValue} onChange={(e) => setSubs(e.target.value)} onBlur={() => subs !== null && subs !== r.subreddits.join(', ') && void apply(() => api.setRotation({ subreddits: subs.split(',') }))} placeholder="EarthPorn, wallpapers, SpacePorn" aria-label="Subreddits" />
+            </label>
+            <details open={!r.reddit.hasSecret}>
+              <summary className="small">
+                Reddit app key {r.reddit.hasSecret ? <Pill tone="ok">saved</Pill> : <Pill tone="warn">needed</Pill>}
+              </summary>
+              <ol className="steps">
+                <li>
+                  Open{' '}
+                  <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener noreferrer">
+                    reddit.com/prefs/apps
+                  </a>{' '}
+                  and click <em>create another app…</em>
+                </li>
+                <li>
+                  Choose <em>script</em>, any name, and <code>http://localhost</code> as the redirect URI. Create it.
+                </li>
+                <li>Copy the short id under the app name and the <em>secret</em> into the fields below.</li>
+              </ol>
+              <div className="row wrap">
+                <input value={clientId || r.reddit.clientId || ''} onChange={(e) => setClientId(e.target.value)} placeholder="client id" aria-label="Reddit client id" autoComplete="off" />
+                <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={r.reddit.hasSecret ? 'secret (saved)' : 'secret'} aria-label="Reddit secret" autoComplete="off" />
+                <button className="btn primary" disabled={busy || !(clientId || r.reddit.clientId) || (!secret && !r.reddit.hasSecret)} onClick={() => void apply(() => api.setRotation({ reddit: { clientId: clientId || r.reddit.clientId!, ...(secret ? { clientSecret: secret } : {}) }, enabled: true }).then((x) => (setSecret(''), x)))}>
+                  Save and use Reddit
+                </button>
+              </div>
+              <p className="muted small">Reddit stopped answering anonymous requests in 2026, so this key is required. It stays on this machine and is only used to read public posts. Adult-tagged posts are never used.</p>
+            </details>
+          </div>
+        )}
         <div className="row wrap">
-          <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" className="visually-hidden" aria-label="Choose a picture" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-          <button className="btn" onClick={() => file.current?.click()}>
-            {hasPhoto ? 'Replace my picture…' : 'Use my own picture…'}
-          </button>
-          {hasPhoto && (
-            <button
-              className="btn ghost"
-              onClick={() =>
-                void api.clearWallpaper().then(() => {
-                  setHasPhoto(false);
-                  applyWallpaperPhoto(false);
-                  setWallpaper(readWallpaper());
-                })
-              }
-            >
-              Remove picture
+          <label className="small row">
+            Change every
+            <select value={everyValue} onChange={(e) => (setEvery(Number(e.target.value)), void apply(() => api.setRotation({ everyHours: Number(e.target.value) })))} aria-label="Change every" disabled={busy}>
+              <option value={1}>hour</option>
+              <option value={6}>6 hours</option>
+              <option value={12}>12 hours</option>
+              <option value={24}>day</option>
+              <option value={168}>week</option>
+            </select>
+          </label>
+          {r.enabled && (
+            <button className="btn" disabled={busy} onClick={() => void apply(() => api.nextWallpaper())}>
+              Next picture
             </button>
           )}
         </div>
-        <p className="muted small">PNG, JPEG or WebP up to 6 MB, stored on this machine for everyone who uses this Harbor. The preset choice is remembered in this browser. Harbor does not fetch pictures from the internet; download one you like (r/wallpapers is full of them) and pick it here.</p>
-        {msg && (
-          <p className="error small" role="alert">
-            {msg}
+        {a?.wallpaper.kind === 'rotating' && a.wallpaper.current && (
+          <p className="small" role="status">
+            Now showing <strong>{a.wallpaper.current.title}</strong>
+            {a.wallpaper.current.author ? ` by ${a.wallpaper.current.author}` : ''} ({a.wallpaper.current.sourceName}){r.nextAt ? ` · next change ${new Date(r.nextAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
           </p>
         )}
-      </section>
-    </>
+        {(msg || r.lastError) && (
+          <p className="error small" role="alert">
+            {msg ?? r.lastError}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function OwnPicture({ c }: { c: Console }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const kind = c.data.appearance?.wallpaper.kind ?? 'none';
+  const upload = (f: File | undefined) => {
+    setMsg(null);
+    if (!f) return;
+    if (f.size > 6 * 1024 * 1024) return setMsg('The picture must be 6 MB or smaller.');
+    setBusy(true);
+    const r = new FileReader();
+    r.onload = async () => {
+      try {
+        await api.setWallpaper(String(r.result));
+        const next = await api.appearance();
+        c.patchData((d) => ({ ...d, appearance: next }));
+        syncWallpaperPicture({ present: next.wallpaper.kind !== 'none', version: next.wallpaper.version });
+      } catch (e) {
+        setMsg(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    };
+    r.readAsDataURL(f);
+  };
+  return (
+    <section className="card" aria-labelledby="own-h">
+      <h2 id="own-h">Your own picture</h2>
+      <p className="muted small">PNG, JPEG or WebP up to 6 MB, stored on this machine. Shown when rotating wallpapers are off.</p>
+      <div className="row wrap">
+        <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => upload(e.target.files?.[0])} aria-label="Wallpaper picture file" />
+        <button className="btn" disabled={busy} onClick={() => file.current?.click()}>
+          {busy ? 'Uploading…' : kind === 'uploaded' ? 'Replace picture…' : 'Choose a picture…'}
+        </button>
+        {kind === 'uploaded' && (
+          <button
+            className="btn ghost"
+            disabled={busy}
+            onClick={() =>
+              void api.clearWallpaper().then(async () => {
+                const next = await api.appearance();
+                c.patchData((d) => ({ ...d, appearance: next }));
+                syncWallpaperPicture({ present: next.wallpaper.kind !== 'none', version: next.wallpaper.version });
+              })
+            }
+          >
+            Remove picture
+          </button>
+        )}
+      </div>
+      {msg && (
+        <p className="error small" role="alert">
+          {msg}
+        </p>
+      )}
+    </section>
   );
 }
 

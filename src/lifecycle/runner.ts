@@ -585,6 +585,7 @@ export class OperationRunner {
     if (folders.length) this.event(op, 'purging', `your folder(s) left untouched: ${folders.join(', ')}`);
     const dir = instanceDir(this.ctx.config.stateDir, inst.id);
     rmSync(dir, { recursive: true, force: true });
+    rmSync(path.join(this.ctx.config.stateDir, 'icons', `${inst.id}.bin`), { force: true }); // custom launcher icon, if any
     this.event(op, 'purging', 'deleted secrets, runtime files and the stored release');
     // archived name keeps the row unique while freeing the name for a fresh install
     repo.purgeInstance(inst.id, `${inst.name}~purged~${inst.id.slice(0, 8)}`);

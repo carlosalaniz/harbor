@@ -24,6 +24,9 @@ import { FakeNet, RealNet, type NetProvider } from './system/net.js';
 import { CaddyAdminClient, FakeCaddyAdmin, type CaddyAdmin } from './exposure/caddy.js';
 import { FakeVerifier, httpsVerifier } from './exposure/verify.js';
 import type { UrlVerifier } from './lifecycle/context.js';
+import { AppearanceService } from './appearance/service.js';
+import { FakeFetcher, RealFetcher, json as fakeJson, type Fetcher } from './appearance/fetcher.js';
+import { FakePower, SystemdPower, type PowerControl } from './system/power.js';
 
 export function productVersion(): string {
   try {
@@ -47,6 +50,8 @@ export interface DaemonOverrides {
   caddy?: CaddyAdmin;
   verify?: UrlVerifier;
   net?: NetProvider;
+  fetcher?: Fetcher;
+  power?: PowerControl;
 }
 
 export interface Daemon {
@@ -57,6 +62,7 @@ export interface Daemon {
   observer: Observer;
   sessions: SessionService;
   tools: PlatformToolsService;
+  appearance: AppearanceService;
   url: string;
   close(): Promise<void>;
 }
@@ -107,15 +113,19 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
     const tools = new PlatformToolsService(repo, clock, overrides.toolsProbe, { tailscale, caddy });
     const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000);
+    const fetcher = overrides.fetcher ?? (fakeMode ? demoFetcher() : new RealFetcher());
+    const power = overrides.power ?? (fakeMode ? new FakePower() : new SystemdPower());
+    const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     service.onSubmit(() => runner.wake());
 
     const recovered = runner.recoverOnStartup();
     if (recovered) log.warn(`marked ${recovered} interrupted operation(s) needs_action`);
     repo.purgeExpiredSessions();
 
-    const app = await buildApi({ config, service, sessions, tools, log, version: ctx.version });
+    const app = await buildApi({ config, service, sessions, tools, appearance, power, log, version: ctx.version });
     await app.listen({ host: config.listen.host, port: config.listen.port });
     observer.start();
+    appearance.start();
     const url = `http://localhost:${config.listen.port}`;
     log.info(`daemon listening`, { url, stateDir: config.stateDir, docker: docker.description, installationId: installation.id });
 
@@ -124,6 +134,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       if (closed) return;
       closed = true;
       observer.stop();
+      appearance.stop();
       const graceful = runner.shutdown();
       await Promise.race([graceful, new Promise((r) => setTimeout(r, 20_000))]);
       await app.close();
@@ -132,11 +143,30 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       lock?.release();
       log.info('daemon stopped');
     };
-    return { app, ctx, service, runner, observer, sessions, tools, url, close };
+    return { app, ctx, service, runner, observer, sessions, tools, appearance, url, close };
   } catch (e) {
     lock?.release();
     throw e;
   }
+}
+
+// Fake mode (`pnpm dev`, e2e): a wallpaper "internet" with Bing's shape and a generated picture, so the
+// rotation can be exercised end to end without leaving the machine.
+export function demoFetcher(): FakeFetcher {
+  const f = new FakeFetcher();
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhQGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const days = ['Fort Union National Monument, New Mexico (© zrfphoto/Getty Images)', 'Aurora over Lofoten, Norway (© Demo Photographer)', 'Dunes at dusk, Namibia (© Demo Photographer)'];
+  f.on('https://www.bing.com/HPImageArchive.aspx', fakeJson({ images: days.map((c, i) => ({ urlbase: `/th?id=OHR.Demo${i}`, copyright: c, copyrightlink: 'https://www.bing.com/' })) }));
+  f.on('https://www.bing.com/th?id=', { status: 200, contentType: 'image/png', body: png });
+  f.on('https://api.wikimedia.org/feed/v1/wikipedia/en/featured/', fakeJson({ image: { title: 'File:Demo.jpg', image: { source: 'https://upload.wikimedia.org/wikipedia/commons/d/d0/Demo.jpg', width: 2400, height: 1600 }, artist: { text: 'Demo Artist' }, file_page: 'https://commons.wikimedia.org/wiki/File:Demo.jpg', description: { text: 'A demo picture of the day' } } }));
+  f.on('https://upload.wikimedia.org/', { status: 200, contentType: 'image/png', body: png });
+  f.on('https://www.reddit.com/api/v1/access_token', (_u, o) => (/^Basic /.test(o.headers?.['authorization'] ?? '') && !/Basic YmFkOmJhZA==/.test(o.headers?.['authorization'] ?? '') ? fakeJson({ access_token: 'demo-token', token_type: 'bearer', expires_in: 86400 }) : fakeJson({ error: 401 }, 401)));
+  f.on('https://oauth.reddit.com/r/', (u) => {
+    const sub = /\/r\/([^/]+)\//.exec(u)?.[1] ?? 'EarthPorn';
+    return fakeJson({ data: { children: [{ data: { title: `Sunrise over the fjord [OC] (${sub})`, author: 'demo_user', url: 'https://i.redd.it/demo1.jpg', permalink: `/r/${sub}/comments/demo1/sunrise/`, over_18: false, preview: { images: [{ source: { url: 'https://preview.redd.it/demo1.jpg?auto=webp', width: 3000, height: 2000 } }] } } }, { data: { title: 'Vertical phone shot', author: 'tall', url: 'https://i.redd.it/tall.jpg', permalink: '/r/x/comments/tall/', over_18: false, preview: { images: [{ source: { url: 'https://preview.redd.it/tall.jpg', width: 1080, height: 2340 } }] } } }, { data: { title: 'nsfw', author: 'no', url: 'https://i.redd.it/nsfw.jpg', over_18: true } }] } });
+  });
+  f.on('https://i.redd.it/', { status: 200, contentType: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]) });
+  return f;
 }
 
 // `node dist/daemon.js --config /etc/harbor/harbor.json`

@@ -288,7 +288,14 @@ test('install page: bring your own folder validates the path in the plan and mou
 test('settings: change password and back, remote access login flow, storage overview', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Settings' }).click();
+  // overview first (Umbrel-style): the machine, power, wallpaper
+  await expect(page.getByRole('heading', { level: 2 }).filter({ hasText: /^[a-zA-Z0-9.-]+$/ }).first()).toBeVisible();
+  await expect(page.getByText('Running on')).toBeVisible();
+  await page.getByRole('button', { name: 'Restart', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Restart this machine?');
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
   // account
+  await page.getByRole('button', { name: /Account/ }).click();
   await page.getByLabel('Current password').fill(ADMIN.password);
   await page.getByLabel('New password', { exact: true }).fill('brand-new-FIXTURE-password');
   await page.getByLabel('New password (again)').fill('brand-new-FIXTURE-password');
@@ -376,4 +383,109 @@ test('public addresses wizard: public IP, add and check a domain, use it in the 
   await page.getByLabel('Search everything').fill('memos');
   await expect(page.getByRole('option', { name: /Memos/ }).first()).toBeVisible();
   await page.keyboard.press('Escape');
+});
+
+test('customize an app: name and emoji icon show on the launcher and in search; picture icon is served', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Details of memos' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Customize memos' }).click();
+  const dlg = page.getByRole('dialog', { name: 'Customize Memos' });
+  await dlg.getByLabel('Name on the launcher').fill('Notes');
+  await dlg.getByRole('radio', { name: 'Emoji or letters' }).click();
+  await dlg.getByRole('option', { name: '📝' }).click();
+  await dlg.getByRole('option', { name: 'Colour #ff9f0a' }).click();
+  await dlg.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('dialog', { name: 'Notes' })).toBeVisible(); // the drawer follows the new name
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  const tile = page.locator('.icon-tile[data-instance="memos"]');
+  await expect(tile).toContainText('Notes');
+  await expect(tile.locator('.glyph-icon')).toHaveText('📝');
+  // search finds the new name
+  await page.keyboard.press('Meta+k');
+  await page.getByLabel('Search everything').fill('notes');
+  await expect(page.getByRole('option', { name: /^Notes/ })).toBeVisible();
+  await page.keyboard.press('Escape');
+  // picture icon
+  await page.getByRole('button', { name: 'Details of memos' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Customize memos' }).click();
+  const dlg2 = page.getByRole('dialog', { name: 'Customize Memos' });
+  await dlg2.getByRole('radio', { name: 'My picture' }).click();
+  await dlg2.getByLabel('Icon picture file').setInputFiles({ name: 'icon.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhQGAWjR9awAAAABJRU5ErkJggg==', 'base64') });
+  await dlg2.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  const img = tile.locator('img.appicon');
+  await expect(img).toHaveAttribute('src', /\/v1\/instances\/[0-9a-f-]+\/icon\?v=/);
+  const res = await page.request.get((await img.getAttribute('src'))!);
+  expect(res.status()).toBe(200);
+  expect(res.headers()['content-type']).toBe('image/png');
+  // back to the app's own icon and name
+  await page.getByRole('button', { name: 'Details of memos' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Customize memos' }).click();
+  const dlg3 = page.getByRole('dialog', { name: 'Customize Memos' });
+  await dlg3.getByLabel('Name on the launcher').fill('');
+  await dlg3.getByRole('radio', { name: "App's icon" }).click();
+  await dlg3.getByRole('button', { name: 'Save' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(tile).toContainText('Memos');
+});
+
+test('arrange the launcher: drag an icon to the front, the order survives a reload; keyboard arranging works', async ({ page }) => {
+  await login(page);
+  const tiles = page.locator('.icons[aria-label="Installed apps"] .icon-tile.instance');
+  await expect.poll(() => tiles.count()).toBeGreaterThanOrEqual(2);
+  const before = await tiles.evaluateAll((els) => els.map((e) => e.getAttribute('data-instance')));
+  const last = before[before.length - 1]!;
+  // mouse drag: press on the last tile, move over the first one, release
+  const from = page.locator(`.icon-tile[data-instance="${last}"]`);
+  const to = page.locator(`.icon-tile[data-instance="${before[0]}"]`);
+  const a = (await from.boundingBox())!;
+  const b = (await to.boundingBox())!;
+  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(a.x + a.width / 2 + 12, a.y + a.height / 2 + 4, { steps: 3 });
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await expect.poll(() => tiles.evaluateAll((els) => els.map((e) => e.getAttribute('data-instance')))).toEqual([last, ...before.slice(0, -1)]);
+  // no app opened as a side effect of the drag
+  expect(page.context().pages().length).toBe(1);
+  // persisted on the daemon
+  await page.reload();
+  await login(page);
+  await expect.poll(() => tiles.evaluateAll((els) => els.map((e) => e.getAttribute('data-instance')))).toEqual([last, ...before.slice(0, -1)]);
+  // keyboard: Arrange → focus the first tile → ArrowRight moves it one slot
+  await page.getByRole('button', { name: 'Arrange' }).click();
+  await expect(page.getByRole('status')).toContainText('Drag icons');
+  await page.locator(`.icon-tile[data-instance="${last}"] .icon-btn`).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => tiles.evaluateAll((els) => els.map((e) => e.getAttribute('data-instance')))).toEqual([before[0], last, ...before.slice(1, -1)]);
+  await page.getByRole('button', { name: 'Done' }).click();
+});
+
+test('rotating wallpapers: turn on from Settings, a picture with credit appears, next picture works; Reddit asks for a key', async ({ page }) => {
+  await login(page);
+  await page.goto('/#/settings/appearance');
+  await expect(page.getByRole('heading', { name: 'Rotating wallpapers' })).toBeVisible();
+  await page.getByRole('switch', { name: 'Rotating wallpapers' }).check();
+  await expect(page.getByRole('status')).toContainText(/Now showing .* \(Bing\)/);
+  const first = await page.getByRole('status').textContent();
+  await page.getByRole('button', { name: 'Next picture' }).click();
+  await expect.poll(() => page.getByRole('status').textContent()).not.toBe(first);
+  // the page paints the daemon's picture
+  expect(await page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--wallpaper-url')")).toContain('/v1/appearance/wallpaper?v=');
+  expect(await page.evaluate("document.documentElement.dataset.wallpaper")).toBe('photo');
+  // Reddit needs credentials: choosing it turns rotation off until a key is saved
+  await page.getByRole('radio', { name: /Reddit/ }).check();
+  await expect(page.getByText('Reddit app key')).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Rotating wallpapers' })).not.toBeChecked();
+  await page.getByLabel('Reddit client id').fill('demo-id');
+  await page.getByLabel('Reddit secret').fill('demo-secret');
+  await page.getByRole('button', { name: 'Save and use Reddit' }).click();
+  await expect(page.getByRole('status')).toContainText(/Now showing .* by u\/demo_user \(r\/\w+\)/);
+  // home shows the credit line
+  await page.getByRole('link', { name: 'Home' }).click();
+  await expect(page.locator('.wallpaper-credit')).toContainText('u/demo_user');
+  // off again: presets return
+  await page.goto('/#/settings/appearance');
+  await page.getByRole('switch', { name: 'Rotating wallpapers' }).uncheck();
+  await expect(page.getByRole('button', { name: 'Next picture' })).toHaveCount(0);
 });

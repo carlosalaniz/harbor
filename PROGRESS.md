@@ -103,16 +103,26 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Wallpaper upload (`/v1/appearance/wallpaper`), presets, 'My picture'; Spotlight palette (⌘K, `/`); Launchpad-style Home; Settings sections addressable (`#/settings/<section>`)
 - [x] Tests: unit (DNS judgement, migration to v4), integration (purge incl. foreign volume guard, domains lifecycle, wallpaper), Playwright (uninstall flow, domains wizard + publish dropdown, palette)
 
+## Phase 11 — personal launcher, rotating wallpapers, the machine (2026-09-15, v0.5.0) ✅
+- [x] Schema v5: `settings` table, `instances.display_name` / `icon_json`; in-place migration
+- [x] Rotating wallpapers fetched by the daemon (`src/appearance`): Bing (default, keyless), Wikimedia Commons (keyless), Reddit (operator's app key; anonymous JSON is 403 since May 2026), schedule + skip, attribution on Home; served at the open wallpaper route with cache-busting versions
+- [x] Per-app look: display name + icon (default / emoji-on-colour / picture), `PUT /v1/instances/{id}/appearance`, `GET /v1/instances/{id}/icon`; launcher order `PUT /v1/appearance/home`
+- [x] Drag-to-arrange (mouse, touch hold, Arrange mode with keyboard), FLIP transitions, slot-based hit testing
+- [x] Settings → Overview (device card, power, machine facts, vitals, wallpaper picker); Restart/Shut down via logind + polkit rule installed by bootstrap; `GET /v1/system/host`, `POST /v1/system/power`
+- [x] Visual pass (macOS cues): translucent materials, tokens, segmented controls, switches, lock-screen clock
+- [x] CLI: `harbor wallpaper [set|next]`, `harbor look`, `harbor power restart|shutdown`
+- [x] Tests: unit (sources, polkit rule, host facts, migration v5, OpenAPI routes), integration (rotation lifecycle, Reddit credentials, order/look/purge cleanup, power), Playwright (customize, drag + keyboard arrange, rotation + Reddit key, overview + restart confirm)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 57 passed |
-| `pnpm test:integration` (fake adapter) | 49 passed (install, lifecycle, auth, tools, exposure, storage); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 65 passed |
+| `pnpm test:integration` (fake adapter) | 64 passed (install, lifecycle, auth, tools, exposure, storage, settings, purge/domains, appearance); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 10 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, own folder) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 16 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, own folder, settings, uninstall, domains + palette, customize, arrange, rotating wallpapers) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |
@@ -123,7 +133,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 None.
 
 ## Status
-**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette. `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette; `v0.5.0` adds rotating wallpapers (Bing / Wikimedia / Reddit with the operator's key), per-app names and icons, drag-to-arrange, the Settings Overview with Restart/Shut down, and the macOS-style visual pass (deployed live on the droplet). `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
-Nothing for the build: every acceptance and exposure check has live evidence. decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).
+v0.6.0 (requested 2026-09-15): upload your own app package (zip with manifest, icon, compose) from the console, and an update/versioning system for apps. The droplet stays running for Carlos's testing (~$0.07/h).

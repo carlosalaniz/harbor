@@ -12,7 +12,7 @@ import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
 import { exec, execOk } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
-import { harborUnit } from './systemd.js';
+import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule } from './systemd.js';
 import { caddyPreview, cockpitPreview, externalToolRecord, portainerPreview, setupCaddy, setupCockpit, setupPortainer, setupTailscale, tailscalePreview, type ToolRecord } from './tools.js';
 
 export interface BootstrapOptions {
@@ -249,7 +249,13 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     log(`tool setup failed (${e instanceof Error ? e.message : String(e)}); Harbor itself is still being (re)started`);
   }
 
-  // 11. systemd unit
+  // 11. systemd unit (+ the polkit rule that lets the console restart / shut down the machine)
+  try {
+    mkdirSync(path.dirname(POLKIT_RULE_PATH), { recursive: true });
+    writeFileSync(POLKIT_RULE_PATH, polkitPowerRule(), { mode: 0o644 });
+  } catch (e) {
+    log(`could not install the polkit power rule (${(e as Error).message}); Restart/Shut down from the console will be refused`);
+  }
   writeFileSync(`/etc/systemd/system/${PRODUCT.paths.systemdUnit}`, harborUnit(), { mode: 0o644 });
   await execOk('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['enable', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
