@@ -163,6 +163,23 @@ Live on the droplet (in-place upgrade 0.4.0 → 0.5.0 by `bootstrap --yes --with
 
 Not verified live: a real Reddit fetch (needs Reddit app credentials I do not have; the OAuth flow and listing parsing are covered by unit and integration tests against Reddit's documented shapes, and a bad key surfaces as "Reddit refused the app credentials" in Settings). Shut down was not exercised on the droplet (same code path as restart with `poweroff`; the user is testing on it).
 
+### v0.6.0: your own apps and updates (2026-09-15)
+
+Automated: `tests/unit/packages-store.test.ts` (zip reader incl. top-folder strip, path tricks, CRC, limits; image reference parsing; numeric-aware revision ordering; store import: pin by digest, generated release.json, built-in id refusal, unknown image, older/conflicting/identical revisions, higher revision replaces, remove), `tests/integration/packages.test.ts` (upload → local catalog item with served icon → install → higher revision marks `updateAvailable` → update keeps port and tailnet address, swaps the container image, keeps `release-previous/`, generates the new secret → a failing update rolls back and the app stays installed and running on the old revision → an update adding a volume and an endpoint creates both → package removal refused while installed, allowed after purge → a newer *bundled* revision surfaces as an update), Playwright (upload dialog with pin report, *Your apps* filter and badge, install, second upload offers the update, Home card, tile badge, drawer banner, review and tray, same address after the update). Local run: unit 70 passed, integration 69 passed + 3 live-Docker skipped, e2e 17 passed.
+
+Live on the droplet (in-place upgrade 0.5.0 → 0.6.0; real Docker Hub registry; nothing mocked):
+
+| Check | Result |
+|---|---|
+| `harbor packages add hello-nginx-1.zip` (compose says `nginx:1.27-alpine`) | 1.5 s; pinned `web: nginx:1.27-alpine -> nginx@sha256:65645c7b…` from Docker Hub; listed as *yours*, qualification `pending` |
+| `harbor install hello-nginx --yes` | installed on 127.0.0.1:18087, readiness 200 on first probe; container image `65645c7bb6a0` |
+| `harbor packages add hello-nginx-2.zip` (`nginx:1.28-alpine`) | pinned `nginx@sha256:a8b39bd9…`; "replaces revision 1"; `harbor list` UPDATE column shows `-> 2 (1.28)`; Home shows *1 update available*, tile badge, drawer banner, review plan with the image change (screenshots) |
+| `harbor packages add hello-nginx-3-broken.zip` (`nginx:1.99-does-not-exist`) | refused at upload: `INVALID_PACKAGE … GET library/nginx/manifests/1.99-does-not-exist answered HTTP 404 (no such image or tag)` |
+| `harbor update hello-nginx --yes` | succeeded; container now `a8b39bd9cf0f`; same port 18087, app answers 200; instance dir has `release/` (revision 2) and `release-previous/` (revision 1) |
+| upload revision 3 with a health path that 404s, then `harbor update` | operation **failed with rollback**: events "restoring revision 2 … hello-nginx is back on revision 2; your data was not changed by Harbor"; `harbor list` shows `hello-nginx@2 installed running healthy` with `-> 3` still offered; container `a8b39bd9cf0f Up`, app answers 200 |
+| cleanup | `harbor purge`, `harbor packages remove hello-nginx`, re-upload revision 2 and install: left running for Carlos to look at |
+| Console screenshots (6) | `docs/evidence/ui-2026-09-15-v0.6.0/` |
+
 ### Live catalog qualification (`node scripts/vm/qualify-catalog.mjs --fresh`)
 
 Every bundled package is installed with the CLI on the designated droplet (fresh Ubuntu 24.04.4 x86-64; Docker 29.8.0, Compose 5.5.1, Node v24.12.0), waited for until Harbor reports it healthy, opened in headless Chromium (title, screenshot, health probe through the SSH tunnel), inspected (containers, mounts, resources) and removed. Packages with external storage claims are installed a second time with host folders under `/srv/harbor-test-storage` and the bind mounts are verified. 23 of 23 steps passed; reports and screenshots: `docs/evidence/catalog-2026-09-15T00-13-13/`, `docs/evidence/catalog-2026-09-15T00-40-44/`, `docs/evidence/catalog-2026-09-15T00-42-58/`.
