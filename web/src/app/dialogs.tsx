@@ -10,6 +10,8 @@ export function PlanDialog({ c }: { c: Console }) {
   const { pending, plan, planError } = c;
   if (!pending) return null;
   const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
+  const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
+  const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
   const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'install' ? 'Install' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
@@ -20,41 +22,74 @@ export function PlanDialog({ c }: { c: Console }) {
       )}
       {plan && (
         <div className="plan">
-          <p className="muted small">
-            {plan.name} · {plan.packageId} rev {plan.revision} · plan valid until {fmtTime(plan.expiresAt)}
-          </p>
-          <ul>
-            {plan.changes.map((ch, i) => (
-              <li key={i}>{ch}</li>
-            ))}
+          <p className="lead">{humanSummary(plan, displayName)}</p>
+          <ul className="plain facts-list">
+            {plan.endpoints.length > 0 && plan.kind === 'install' && (
+              <li>
+                <span className="fact-k">Address</span>
+                <span>{plan.endpoints.map((e) => e.browserUrl).join(', ')} <span className="muted small">(this machine only, until you publish)</span></span>
+              </li>
+            )}
+            {plan.storage.length > 0 && (
+              <li>
+                <span className="fact-k">Data</span>
+                <span>
+                  {plan.storage.map((s, i) => (
+                    <span key={s.id}>
+                      {i > 0 ? ', ' : ''}
+                      {s.mode === 'external' ? (
+                        <>
+                          your folder <code>{s.hostPath}</code>
+                          {s.readOnly ? ' (read-only)' : ''}
+                        </>
+                      ) : (
+                        `${s.purpose || s.id} in a retained volume${s.state === 'existing' ? ' (kept from before)' : ''}`
+                      )}
+                    </span>
+                  ))}
+                  <span className="muted small"> · Harbor never deletes data</span>
+                </span>
+              </li>
+            )}
+            {plan.secrets.length > 0 && (
+              <li>
+                <span className="fact-k">Secrets</span>
+                <span>
+                  {plan.secrets.length} generated for the app{plan.secrets.some((s) => s.state === 'existing') ? ' (existing ones kept)' : ''} <span className="muted small">· never shown</span>
+                </span>
+              </li>
+            )}
+            {plan.exposure && (
+              <li>
+                <span className="fact-k">Address</span>
+                <span>
+                  <a href={plan.exposure.url} target="_blank" rel="noopener noreferrer">
+                    {plan.exposure.url}
+                  </a>{' '}
+                  via {plan.exposure.via === 'tailnet' ? 'your tailnet' : 'the public internet'}
+                  {plan.exposure.protection === 'basic' ? ', behind a generated password' : ''}
+                  {plan.exposure.makePrimary ? '; becomes the address the app uses for itself' : ''}
+                </span>
+              </li>
+            )}
           </ul>
-          {plan.endpoints.length > 0 && plan.kind === 'install' && (
-            <p>
-              <strong>Ports:</strong> {plan.endpoints.map((e) => `${e.id} → ${e.browserUrl}`).join(', ')}
-            </p>
-          )}
-          {plan.storage.length > 0 && (
-            <p>
-              <strong>Storage:</strong> {plan.storage.map((s) => (s.mode === 'external' ? `your folder ${s.hostPath}${s.readOnly ? ' (read-only)' : ''}` : `${s.volumeName} (${s.state})`)).join(', ')}
-            </p>
-          )}
-          {plan.secrets.length > 0 && (
-            <p>
-              <strong>Secrets:</strong> {plan.secrets.map((s) => `${s.id} (${s.state})`).join(', ')} — never shown.
-            </p>
-          )}
-          {plan.exposure && (
-            <p>
-              <strong>Address:</strong> {plan.exposure.url} via {plan.exposure.via}, protection {plan.exposure.protection}
-              {plan.exposure.makePrimary ? ', becomes the primary address' : ''}
-            </p>
-          )}
           {plan.warnings.map((w, i) => (
             <p key={i} className="warn">
               {w}
             </p>
           ))}
-          {plan.kind === 'remove' && <p className="warn">Containers and the private network are deleted. Data volumes, secrets, the name and port allocations are retained.</p>}
+          {plan.kind === 'remove' && <p className="warn">Containers and the private network are deleted. Data, secrets, the name and its ports are kept, so Reinstall brings it back as it was.</p>}
+          <details>
+            <summary className="muted small">Exactly what Harbor will do ({plan.changes.length} steps)</summary>
+            <ul className="steps">
+              {plan.changes.map((ch, i) => (
+                <li key={i}>{ch}</li>
+              ))}
+            </ul>
+            <p className="muted small">
+              {plan.packageId} rev {plan.revision} · this plan is valid until {fmtTime(plan.expiresAt)}
+            </p>
+          </details>
         </div>
       )}
       <div className="row end">
@@ -395,6 +430,27 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish 
       </div>
     </Dialog>
   );
+}
+
+function humanSummary(plan: PlanDto, n: string): string {
+  switch (plan.kind) {
+    case 'install':
+      return `Harbor will install ${n} on this machine. It usually takes a minute or two (the first time includes downloading the app).`;
+    case 'start':
+      return `Harbor will start ${n} again with the same data and address.`;
+    case 'stop':
+      return `Harbor will stop ${n}. Nothing is deleted; Start brings it back.`;
+    case 'remove':
+      return `Harbor will remove ${n} but keep its data.`;
+    case 'reinstall':
+      return `Harbor will reinstall ${n} from the exact same release and reconnect its kept data.`;
+    case 'expose':
+      return `Harbor will publish ${n} at a new address. The app keeps running where it is.`;
+    case 'unexpose':
+      return `Harbor will withdraw one address of ${n}. The app itself is untouched.`;
+    case 'reconfigure':
+      return `Harbor will switch which address ${n} treats as its own, then restart it with the same data.`;
+  }
 }
 
 function verb(kind: PlanDto['kind']): string {

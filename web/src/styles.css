@@ -19,7 +19,7 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme='dark']) {
     --bg: #f3f5f8;
     --bg-2: #eaeef3;
     --card: #ffffff;
@@ -37,6 +37,24 @@
     color-scheme: light;
   }
 }
+:root[data-theme='light'] {
+    --bg: #f3f5f8;
+    --bg-2: #eaeef3;
+    --card: #ffffff;
+    --card-2: #f4f6f9;
+    --line: #d8dee7;
+    --fg: #182230;
+    --muted: #5b6776;
+    --accent: #0b6e99;
+    --accent-fg: #ffffff;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --bad: #b42318;
+    --info: #3b47c4;
+    --shadow: 0 8px 24px rgba(20, 30, 40, 0.12);
+    color-scheme: light;
+  }
+
 * {
   box-sizing: border-box;
 }
@@ -44,6 +62,8 @@ html,
 body {
   margin: 0;
   background: var(--bg);
+  background-image: radial-gradient(1200px 600px at 80% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%), radial-gradient(900px 500px at -10% 110%, color-mix(in srgb, var(--info) 12%, transparent), transparent 60%);
+  background-attachment: fixed;
   color: var(--fg);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, system-ui, sans-serif;
 }
@@ -109,7 +129,13 @@ pre.code {
   padding: 0;
   display: grid;
   gap: 4px;
+  align-content: start;
   flex: 1;
+}
+.side-foot {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px;
 }
 .sidebar a {
   display: flex;
@@ -170,6 +196,14 @@ pre.code {
 .login {
   width: min(420px, 100%);
 }
+.tagline {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 15px;
+}
+.login-wrap .login {
+  box-shadow: var(--shadow);
+}
 .login form {
   display: grid;
   gap: 12px;
@@ -177,6 +211,74 @@ pre.code {
 }
 .login .brand {
   padding: 0 0 10px;
+}
+
+/* page head */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 4px 0;
+}
+.page-head h1 {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+.page-head p {
+  margin: 4px 0 0;
+  max-width: 60ch;
+}
+.welcome {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  padding: 6px 0 2px;
+}
+.welcome .picks {
+  width: 100%;
+}
+.tile.pick {
+  grid-template-columns: 1fr;
+}
+.instance-name {
+  font-weight: 500;
+}
+.badges {
+  gap: 6px;
+  margin-top: 2px;
+}
+.badges:empty {
+  display: none;
+}
+.facts-list > li {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 10px;
+  align-items: baseline;
+  border-bottom: 0;
+  padding: 4px 0;
+}
+.fact-k {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.steps {
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.next-step {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin: 8px 0 4px;
+}
+.next-step p {
+  margin: 0;
 }
 
 /* cards & tiles */
@@ -203,6 +305,7 @@ pre.code {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
@@ -221,6 +324,11 @@ pre.code {
 }
 .tile-main:hover h3 {
   color: var(--accent);
+}
+.tile:has(.tile-main:not(.static):hover) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 .tile-main.static {
   cursor: default;
@@ -583,11 +691,14 @@ label.small {
   background: var(--accent);
   transition: width 0.4s ease;
 }
+.bar span.warm {
+  background: var(--warn);
+}
 .bar span.hot {
   background: var(--bad);
 }
-.meter.bad .bar span {
-  background: var(--bad);
+.meter.bad {
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--line));
 }
 
 /* dialogs */
@@ -691,7 +802,7 @@ progress {
     z-index: 9;
   }
   .sidebar .brand,
-  .sidebar .logout {
+  .sidebar .side-foot {
     display: none;
   }
   .sidebar ul {
@@ -708,6 +819,23 @@ progress {
   }
   .content {
     padding: 12px 12px 160px;
+  }
+  .strip {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .meter {
+    padding: 10px 12px;
+  }
+  .meter-value {
+    font-size: 15px;
+  }
+  .page-head h1 {
+    font-size: 22px;
+  }
+  .facts-list > li {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
   .grid {
     grid-template-columns: 1fr 1fr;

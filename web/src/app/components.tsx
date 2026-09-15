@@ -56,7 +56,7 @@ export function Empty({ title, hint, action }: { title: string; hint?: string; a
   );
 }
 
-export function StoreCard({ item, onOpen, onInstall, disabled }: { item: CatalogItemDto; onOpen: () => void; onInstall: () => void; disabled: boolean }) {
+export function StoreCard({ item, installed = 0, onOpen, onInstall, disabled }: { item: CatalogItemDto; installed?: number; onOpen: () => void; onInstall: () => void; disabled: boolean }) {
   return (
     <li className="tile store">
       <button className="tile-main" onClick={onOpen} aria-label={`About ${item.name}`}>
@@ -64,9 +64,12 @@ export function StoreCard({ item, onOpen, onInstall, disabled }: { item: Catalog
         <div>
           <h3>{item.name}</h3>
           <p className="muted small">{item.presentation.tagline ?? item.description}</p>
-          {item.qualification !== 'passed' && item.availability === 'available' && (
-            <Pill tone={item.qualification === 'blocked' ? 'warn' : 'muted'}>{item.qualification === 'blocked' ? 'Live check failed' : 'Not yet live-checked'}</Pill>
-          )}
+          <p className="row wrap badges">
+            {installed > 0 && <Pill tone="ok">{installed === 1 ? 'Installed' : `${installed} installed`}</Pill>}
+            {item.qualification !== 'passed' && item.availability === 'available' && (
+              <Pill tone={item.qualification === 'blocked' ? 'warn' : 'muted'}>{item.qualification === 'blocked' ? 'Live check failed' : 'Not yet live-checked'}</Pill>
+            )}
+          </p>
         </div>
       </button>
       {item.availability === 'unavailable' ? (

@@ -76,7 +76,8 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] docs/design/UI.md: Umbrel/HexOS-inspired information architecture
 - [x] Package `presentation` metadata (tagline, category, icon, gallery, developer, website, release notes) with hashed assets; `GET /v1/catalog/{id}/asset/{name}` (open, sandboxed SVG CSP); `GET /v1/system/metrics`
 - [x] New console: Home (system strip, app tiles, attention list), App Store (cards, categories, search, app page), Publishing, Platform, Settings; app drawer; install/publish wizards over the same plan → approve → operation flow; operation tray with one-time credentials; phone layout (bottom tabs); dark by default
-- [x] Playwright suite rewritten (9 tests incl. phone viewport); VM runner selectors updated
+- [x] Playwright suite rewritten (10 tests incl. phone viewport and own-folder flow); VM runner selectors updated
+- [x] Polish pass for humans (decision 44): greeting + status line, popular picks on first run, app names on tiles, pressure-coloured meters, human-first plan review with collapsed steps, tray with Open + next step, theme choice
 
 ## Phase 8 — one-click catalog + bring your own folder (2026-09-14/15) ✅
 - [x] docs/design/CATALOG.md; decisions 39–43

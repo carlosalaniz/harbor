@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import type { CatalogItemDto, InstanceSummary } from '../../src/contracts/api';
+import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken } from './api';
 import { EventList } from './app/components';
 import { AppDrawer, InstallWizard, PlanDialog, PublishWizard } from './app/dialogs';
@@ -9,9 +9,11 @@ import { Publishing } from './app/pages/Publishing';
 import { Settings } from './app/pages/Settings';
 import { Store } from './app/pages/Store';
 import { useRoute, type Route } from './app/router';
+import { applyTheme, readTheme } from './app/theme';
 import { isFinal, useConsole } from './app/store';
 
 type View = { kind: 'login' } | { kind: 'console' };
+applyTheme(readTheme());
 
 export function App() {
   const [view, setView] = useState<View>(hasToken() ? { kind: 'console' } : { kind: 'login' });
@@ -63,8 +65,8 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
           ⚓
         </span>
         <h1>Harbor</h1>
-        <span className="badge">local preview</span>
       </div>
+      <p className="tagline">Your own cloud, at home. Apps, files, photos and more on a machine you control.</p>
       <h2 id="login-h">Log in</h2>
       {notice && <p className="notice">{notice}</p>}
       <form onSubmit={submit}>
@@ -85,7 +87,7 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
           {busy ? 'Logging in…' : 'Log in'}
         </button>
       </form>
-      <p className="muted small">Loopback-only console. Tokens stay in memory; reloading asks you to log in again.</p>
+      <p className="muted small">This console only answers on this machine (or your tailnet, if you enabled it). Nothing is remembered in the browser; reloading asks you to log in again.</p>
     </section>
   );
 }
@@ -151,9 +153,12 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             </li>
           ))}
         </ul>
-        <button className="btn ghost logout" onClick={() => void logout()}>
-          Log out
-        </button>
+        <div className="side-foot">
+          <button className="btn ghost logout" onClick={() => void logout()}>
+            Log out
+          </button>
+          <span className="muted small">{c.data.system ? `Harbor ${c.data.system.version}` : ''}</span>
+        </div>
       </nav>
       <main className="content">
         {c.loadError && (
@@ -161,7 +166,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             Cannot load: {c.loadError}
           </p>
         )}
-        {page === 'home' && <Home c={c} onOpenApp={setDrawer} onGoStore={() => go({ page: 'store' })} />}
+        {page === 'home' && <Home c={c} onOpenApp={setDrawer} onGoStore={() => go({ page: 'store' })} onPick={setStoreItem} />}
         {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
@@ -217,13 +222,39 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   );
 }
 
+const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of' };
+const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched' };
+const PHASE: Record<string, string> = { queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
+
 // Bottom-right operation tray: progress while running, one-shot result (with credentials) when done.
 function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
   const op = c.watching ?? c.lastDone;
+  const inst = op ? c.data.instances.find((i) => i.id === op.instanceId) : undefined;
+  const [detail, setDetail] = useState<InstanceDetail | null>(null);
+  const finishedInstall = Boolean(op && op.state === 'succeeded' && (op.kind === 'install' || op.kind === 'reinstall'));
+  useEffect(() => {
+    if (!op || !finishedInstall) {
+      setDetail(null);
+      return;
+    }
+    api.instance(op.instanceId).then(setDetail, () => setDetail(null));
+  }, [op?.id, op?.state, finishedInstall]);
   if (!op) return null;
   const final = isFinal(op);
   const creds = op.result?.['credentials'] as { username: string; password: string } | undefined;
-  const title = `${op.kind.charAt(0).toUpperCase()}${op.kind.slice(1)} ${op.state === 'succeeded' ? 'succeeded' : op.state === 'failed' ? 'failed' : op.state === 'needs_action' ? 'needs attention' : `in progress — ${op.phase}`}`;
+  const who = inst ? (inst.name === inst.packageId ? inst.packageName : `${inst.packageName} (${inst.name})`) : 'the app';
+  const title =
+    op.state === 'succeeded'
+      ? op.kind === 'unexpose' || op.kind === 'reconfigure'
+        ? `${who}: ${DONE[op.kind]}`
+        : `${who} ${DONE[op.kind] ?? 'done'}`
+      : op.state === 'failed'
+        ? `${DOING[op.kind] ?? op.kind} ${who} failed`
+        : op.state === 'needs_action'
+          ? `${who} needs your attention`
+          : `${DOING[op.kind] ?? op.kind} ${who}…`;
+  const primary = inst?.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst?.endpoints[0];
+  const openUrl = primary ? (primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback) : null;
   return (
     <aside className={`tray ${op.state}`} aria-live="polite" aria-labelledby="tray-h">
       <div className="row between">
@@ -234,7 +265,28 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
           </button>
         )}
       </div>
-      {!final && <progress aria-label="operation progress" />}
+      {!final && (
+        <>
+          <p className="muted small">{PHASE[op.phase] ?? op.phase}</p>
+          <progress aria-label="operation progress" />
+        </>
+      )}
+      {finishedInstall && inst && (
+        <div className="next-step">
+          {openUrl && (
+            <a className="btn primary" href={openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Launch ${inst.name}`}>
+              Open {inst.packageName}
+            </a>
+          )}
+          {detail?.setup ? (
+            <p className="small">
+              <strong>Next step:</strong> {detail.setup.instructions}
+            </p>
+          ) : (
+            <p className="small muted">No account needed. It is yours to use.</p>
+          )}
+        </div>
+      )}
       {op.state === 'succeeded' && Boolean(op.result?.['url']) && (
         <p>
           Published at{' '}
@@ -256,8 +308,8 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
           <span className="muted">Next: {op.error.nextAction}</span>
         </p>
       )}
-      <details open={!final}>
-        <summary className="muted small">Steps</summary>
+      <details open={!final && false}>
+        <summary className="muted small">Technical steps</summary>
         <EventList events={op.events} />
       </details>
     </aside>

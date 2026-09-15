@@ -13,7 +13,10 @@ export function Store({ c, onOpen, onInstall }: { c: Console; onOpen: (item: Cat
   return (
     <section className="card" aria-labelledby="store-h">
       <div className="row between wrap">
-        <h2 id="store-h">App Store</h2>
+        <div>
+          <h2 id="store-h">App Store</h2>
+          <p className="muted small">{c.data.catalog.length} apps, every image pinned and checked on a real machine. Install with one click; the app runs privately on this computer.</p>
+        </div>
         <input className="search" type="search" placeholder="Search apps" aria-label="Search apps" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       <div className="row wrap chips" role="tablist" aria-label="Categories">
@@ -29,8 +32,7 @@ export function Store({ c, onOpen, onInstall }: { c: Console; onOpen: (item: Cat
         <ul className="grid store">
           {items.map((i) => (
             <li key={i.id} className="store-wrap">
-              <StoreCard item={i} onOpen={() => onOpen(i)} onInstall={() => onInstall(i)} disabled={c.busy} />
-              {installedOf(i.id) > 0 && <span className="muted small installed-note">{installedOf(i.id)} installed</span>}
+              <StoreCard item={i} installed={installedOf(i.id)} onOpen={() => onOpen(i)} onInstall={() => onInstall(i)} disabled={c.busy} />
               {i.availability === 'unavailable' && <p className="error small">{i.reason}</p>}
             </li>
           ))}

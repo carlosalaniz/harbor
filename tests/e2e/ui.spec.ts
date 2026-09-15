@@ -17,7 +17,9 @@ async function approve(page: Page, label: string | RegExp) {
   await expect(dlg).toContainText(/^Review /);
   await dlg.getByRole('button', { name: label }).click();
 }
-const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: `${kind} succeeded` })).toBeVisible({ timeout: 30_000 });
+// Tray titles are human sentences; map the operation kind to the wording that proves success.
+const DONE_RE: Record<string, RegExp> = { Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
+const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
 async function installFromStore(page: Page, pkgName: string) {
   await page.getByRole('link', { name: 'App Store' }).click();
@@ -40,6 +42,7 @@ test('home shows the system strip and an empty launcher; store lists real packag
   await expect(page.getByRole('region', { name: 'System' })).toContainText('Processor');
   await expect(page.getByRole('region', { name: 'System' })).toContainText('Docker');
   await expect(page.getByText('No apps yet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'About Nextcloud' })).toBeVisible(); // popular picks
 
   await page.getByRole('link', { name: 'App Store' }).click();
   for (const name of ['Excalidraw', 'BentoPDF']) await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
@@ -89,11 +92,13 @@ test('store app page, install with plan review, progress tray, Open link; duplic
   await about.getByRole('button', { name: 'Install Excalidraw now' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Review install');
+  await expect(dialog).toContainText('Harbor will install Excalidraw on this machine');
+  await dialog.getByText(/Exactly what Harbor will do/).click();
   await expect(dialog).toContainText(/Publish endpoint web: 127\.0\.0\.1:\d+/);
   await expect(dialog).toContainText(/Pull image excalidraw\/excalidraw@sha256:/);
   // Rapid double click: the same idempotency key is reused; only one operation must exist.
   await dialog.getByRole('button', { name: 'Install' }).dblclick();
-  await expect(page.getByRole('heading', { name: /Install (in progress|succeeded)/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Installing Excalidraw|Excalidraw is ready/ })).toBeVisible();
   await trayDone(page, 'Install');
   await page.getByRole('link', { name: 'Home' }).click();
   const tiles = page.locator('.instance');
@@ -116,7 +121,7 @@ test('reload requires login and then resumes existing state; no token in browser
   await expect(page.locator('.instance')).toHaveCount(0);
   await login(page);
   await expect(page.locator('.instance')).toHaveCount(1); // found, not recreated
-  await expect(page.locator('.instance').first()).toContainText('excalidraw');
+  await expect(page.locator('.instance').first()).toContainText(/excalidraw/i);
 });
 
 test('app drawer: stop, start, remove (data kept wording) and reinstall', async ({ page }) => {
@@ -252,8 +257,9 @@ test('install page: bring your own folder validates the path in the plan and mou
   await again.getByLabel('Folder for Your media library').fill(folder);
   await again.getByRole('button', { name: 'Install Jellyfin now' }).click();
   const plan = page.getByRole('dialog');
-  await expect(plan).toContainText(`Use your folder ${folder}`);
   await expect(plan).toContainText(`your folder ${folder}`);
+  await plan.getByText(/Exactly what Harbor will do/).click();
+  await expect(plan).toContainText(`Use your folder ${folder}`);
   await plan.getByRole('button', { name: 'Install' }).click();
   await trayDone(page, 'Install');
   await page.getByRole('link', { name: 'Home' }).click();
