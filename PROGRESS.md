@@ -71,7 +71,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: 9 exposure integration tests, unit tests (renderer, URLs, migration), Playwright publish flow
 - [x] Live B-matrix: run vm-2026-09-14T23-19-02 (fresh, `--exposure`): A01–A16 all passed again; B01, B05, B07 passed; B04/B09/B10 failed for runner reasons (a stray placeholder call, a cascaded state, an SSH banner timeout). Run vm-2026-09-14T23-36-24 (`--only B04,B05,B07,B10,B09` after the fixes): B04 public n8n as primary over Let's Encrypt, B05 basic-auth BentoPDF, B07 provider outage/recovery, B09 back to loopback and route withdrawal all **passed**; B10 fixed afterwards (it must use instances that are not yet published) and re-runs with the final fresh run
 - [x] Tailnet enrollment live with Carlos's auth key (run vm-2026-09-15T03-57-13, B01 passed; two bootstrap bugs fixed on the way, decision 45)
-- [ ] B02/B03 (tailnet exposure) BLOCKED until HTTPS certificates are enabled in the tailnet admin console; engine behaviour covered by tests/integration/exposure.test.ts
+- [x] B02/B03 (tailnet exposure) **passed live** (run vm-2026-09-15T04-20-57) after Carlos enabled MagicDNS + HTTPS: Excalidraw and the Harbor console reachable over the tailnet name with tailnet certificates
 
 ## Phase 7 — console (2026-09-14) ✅
 - [x] docs/design/UI.md: Umbrel/HexOS-inspired information architecture
@@ -112,4 +112,4 @@ None.
 **Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` on `main` adds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
-Carlos: enable MagicDNS + HTTPS in the Tailscale admin console, then `pnpm test:vm -- --skip-reboot --exposure --only B02` (or `harbor expose --ui --via tailnet` on the droplet) turns B02/B03 into live evidence; decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).
+Nothing for the build: every acceptance and exposure check has live evidence. decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).

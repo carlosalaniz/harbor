@@ -1,0 +1,58 @@
+{
+  "startedAt": "2026-09-15T04:20:57.240Z",
+  "updatedAt": "2026-09-15T04:21:49.080Z",
+  "results": [
+    {
+      "id": "B02",
+      "title": "Tailnet exposure of Excalidraw (same port) and B03 Harbor UI on the tailnet",
+      "status": "pass",
+      "at": "2026-09-15T04:21:49.078Z",
+      "details": {
+        "exposure": {
+          "instanceId": "b8876d43-6345-4bab-8d2a-cb3d394eea11",
+          "name": "excalidraw",
+          "exposureId": "995d1337-5b24-4e61-b9f0-bcbd3985b26d",
+          "url": "https://harbor-test.tail7d0db4.ts.net:18080/",
+          "exposureState": "active"
+        },
+        "ui": {
+          "via": "tailnet",
+          "url": "https://harbor-test.tail7d0db4.ts.net/",
+          "state": "pending",
+          "note": "served by tailscale; open it from a device on your tailnet"
+        },
+        "serve": {
+          "TCP": {
+            "443": {
+              "HTTPS": true
+            },
+            "18080": {
+              "HTTPS": true
+            }
+          },
+          "Web": {
+            "harbor-test.tail7d0db4.ts.net:18080": {
+              "Handlers": {
+                "/": {
+                  "Proxy": "http://127.0.0.1:18080"
+                }
+              }
+            },
+            "harbor-test.tail7d0db4.ts.net:443": {
+              "Handlers": {
+                "/": {
+                  "Proxy": "http://127.0.0.1:18000"
+                }
+              }
+            }
+          }
+        },
+        "curlFromHost": "200"
+      },
+      "notes": [
+        "Excalidraw at https://harbor-test.tail7d0db4.ts.net:18080/ answered HTTP 200 from the host over the tailnet name; Harbor UI at https://harbor-test.tail7d0db4.ts.net/",
+        "a second tailnet device was not available to this run; reachability verified from the node itself"
+      ]
+    }
+  ]
+}
