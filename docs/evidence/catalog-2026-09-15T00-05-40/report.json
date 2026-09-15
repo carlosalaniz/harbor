@@ -1,6 +1,6 @@
 {
   "startedAt": "2026-09-15T00:05:40.994Z",
-  "updatedAt": "2026-09-15T00:08:16.084Z",
+  "updatedAt": "2026-09-15T00:11:57.072Z",
   "results": [
     {
       "id": "HOST",
@@ -21,6 +21,30 @@
       },
       "notes": [
         "Docker 29.8.0, Compose 5.5.1, Node v24.12.0, Ubuntu 24.04.4 LTS x86_64"
+      ]
+    },
+    {
+      "id": "actual",
+      "title": "Install, readiness, browser check and remove of actual",
+      "status": "fail",
+      "at": "2026-09-15T00:10:37.208Z",
+      "details": {
+        "error": "page.goto: Timeout 120000ms exceeded.\nCall log:\n  - navigating to \"http://localhost:18080/\", waiting until \"networkidle\"\n"
+      },
+      "notes": [
+        "page.goto: Timeout 120000ms exceeded.\nCall log:\n  - navigating to \"http://localhost:18080/\", waiting until \"networkidle\"\n"
+      ]
+    },
+    {
+      "id": "anythingllm",
+      "title": "Install, readiness, browser check and remove of anythingllm",
+      "status": "fail",
+      "at": "2026-09-15T00:11:57.071Z",
+      "details": {
+        "error": "harbor install anythingllm --name anythingllm --yes exited 255:  "
+      },
+      "notes": [
+        "harbor install anythingllm --name anythingllm --yes exited 255:  "
       ]
     }
   ]

@@ -71,8 +71,14 @@ qualifies, a LAN IP over plain HTTP does not. Do not disable app security settin
 
 ## 4. Application lifecycle
 
-Web UI sections: **Installed** (status, Open, Start/Stop, Remove, Reinstall for retained instances,
-progress), **Available** (the bundled catalog), **System** (Docker/Harbor observation), **Platform tools**.
+Console pages (sidebar on desktop, bottom tabs on a phone): **Home** (system strip with processor,
+memory, storage and Docker; your apps as tiles with a plain-words status, Open and a details drawer
+with Start/Stop/Remove/Reinstall and technical details), **App Store** (catalog cards with icon,
+tagline, category chips and search; an app page with Install and the storage choices), **Publishing**
+(every published address, Publish/Withdraw, Harbor on your tailnet), **Platform** (Docker, Cockpit,
+Portainer, Tailscale, proxy with real state and links), **Settings** (session, SSH forwarding line,
+about). Every change goes through the same plan review; the operation tray at the bottom right shows
+progress and, once, any generated credentials.
 
 CLI (`/opt/harbor/bin/harbor`, add it to PATH if you like):
 
@@ -196,8 +202,8 @@ harbor unexpose n8n --via public
 harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
 ```
 
-In the Web UI every running card has **Publish…** with the same options; the tool cards show
-Tailscale enrollment and proxy state.
+In the console, the Publishing page and every running app's drawer have **Publish…** with the same
+options; the Platform page shows Tailscale enrollment and proxy state.
 
 Notes:
 

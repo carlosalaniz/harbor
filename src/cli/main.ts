@@ -165,7 +165,8 @@ program
   .description('list bundled packages')
   .action(async () => {
     const { items } = await client().get<{ items: CatalogItemDto[] }>('/v1/catalog');
-    out(items, () => table([['ID', 'NAME', 'REV', 'AVAILABILITY', 'QUALIFICATION', 'DESCRIPTION'], ...items.map((i) => [i.id, i.name, i.revision, i.availability + (i.reason ? ` (${i.reason})` : ''), i.qualification, i.description])]));
+    const folders = (i: CatalogItemDto) => i.claims.filter((c) => c.external).map((c) => `${c.id}${c.external?.required ? ' (required)' : ''}${c.external?.readOnly ? ' (ro)' : ''}`).join(', ') || '-';
+    out(items, () => table([['ID', 'NAME', 'REV', 'AVAILABILITY', 'QUALIFICATION', 'OWN-FOLDER CLAIMS', 'DESCRIPTION'], ...items.map((i) => [i.id, i.name, i.revision, i.availability + (i.reason ? ` (${i.reason})` : ''), i.qualification, folders(i), i.description])]));
   });
 
 program
