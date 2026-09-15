@@ -86,7 +86,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] 14 new packages pinned by digest with `scripts/catalog-pin.mjs` (Open WebUI+Ollama, AnythingLLM, Jellyfin, Immich, Nextcloud, Vaultwarden, Uptime Kuma, Forgejo, FreshRSS, Actual, Audiobookshelf, Navidrome, Memos, Mealie); all 17 load and validate (`pnpm tsx scripts/catalog-verify.ts`)
 - [x] Live qualification of all 17 on a fresh droplet (`scripts/vm/qualify-catalog.mjs --fresh`): runs catalog-2026-09-15T00-13-13 (15/17 + all folder variants), 00-40-44 and 00-42-58 (Jellyfin and Uptime Kuma after fixes: Uptime Kuma redirects to /setup on first run; the script needed probe retries and per-run folder names) → **17/17 passed**, recorded in every release.json and docs/VERIFICATION.md
 - [x] Final fresh acceptance run with the console and the enlarged catalog: **vm-2026-09-15T01-01-08 — A01–A16 all passed, exposure B-matrix passed (public path), B02/B03 blocked without a Tailscale key**
-- [ ] Merge `exposure` → `main` (pull request opened; Carlos's call)
+- [x] Merged `exposure` → `main` via pull request #1 (2026-09-14); tagged `v0.2.0`
 
 ## Test results (latest local run)
 
@@ -108,7 +108,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 None.
 
 ## Status
-**Delivered.** MVP tagged (`v0.1.0-mvp` on `main`). Branch `exposure` (pull request open) adds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` on `main` adds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
-Carlos: review/merge the pull request; provide a Tailscale auth key (`HARBOR_TS_AUTHKEY`, MagicDNS + HTTPS on) to turn B02/B03 into live evidence; decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).
+Carlos: provide a Tailscale auth key (`HARBOR_TS_AUTHKEY`, MagicDNS + HTTPS on) to turn B02/B03 into live evidence; decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).

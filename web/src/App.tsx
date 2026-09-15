@@ -87,7 +87,7 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
           {busy ? 'Logging in…' : 'Log in'}
         </button>
       </form>
-      <p className="muted small">This console only answers on this machine (or your tailnet, if you enabled it). Nothing is remembered in the browser; reloading asks you to log in again.</p>
+      <p className="muted small">This console only answers on this machine (or your tailnet, if you enabled it). Your login is never stored in the browser; reloading asks you to log in again.</p>
     </section>
   );
 }
