@@ -230,3 +230,36 @@ test('phone width: bottom tabs navigate, tiles render in two columns, dialogs op
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   expect(await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')).toBe(true);
 });
+
+test('install page: bring your own folder validates the path in the plan and mounts it', async ({ page }) => {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const folder = mkdtempSync(`${tmpdir()}/harbor-e2e-media-`);
+  await login(page);
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'About Jellyfin' }).click();
+  const about = page.getByRole('dialog');
+  await expect(about).toContainText('Where should the data live?');
+  await about.getByLabel('Use a folder on this machine').check();
+  await about.getByLabel('Folder for Your media library').fill('/definitely/missing/folder');
+  await about.getByRole('button', { name: 'Install Jellyfin now' }).click();
+  // the daemon rejects the folder while planning; nothing was created
+  await expect(page.getByRole('dialog')).toContainText('does not exist');
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+  await page.getByRole('button', { name: 'About Jellyfin' }).click();
+  const again = page.getByRole('dialog');
+  await again.getByLabel('Use a folder on this machine').check();
+  await again.getByLabel('Folder for Your media library').fill(folder);
+  await again.getByRole('button', { name: 'Install Jellyfin now' }).click();
+  const plan = page.getByRole('dialog');
+  await expect(plan).toContainText(`Use your folder ${folder}`);
+  await expect(plan).toContainText(`your folder ${folder}`);
+  await plan.getByRole('button', { name: 'Install' }).click();
+  await trayDone(page, 'Install');
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of jellyfin' }).click();
+  const d = page.getByRole('dialog');
+  await d.getByText('Technical details').click();
+  await expect(d).toContainText('bind');
+  await expect(d).toContainText(folder);
+});

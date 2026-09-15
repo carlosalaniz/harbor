@@ -64,6 +64,9 @@ export function StoreCard({ item, onOpen, onInstall, disabled }: { item: Catalog
         <div>
           <h3>{item.name}</h3>
           <p className="muted small">{item.presentation.tagline ?? item.description}</p>
+          {item.qualification !== 'passed' && item.availability === 'available' && (
+            <Pill tone={item.qualification === 'blocked' ? 'warn' : 'muted'}>{item.qualification === 'blocked' ? 'Live check failed' : 'Not yet live-checked'}</Pill>
+          )}
         </div>
       </button>
       {item.availability === 'unavailable' ? (

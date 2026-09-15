@@ -22,7 +22,8 @@ const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const ARCHIVE = path.resolve(opt('--archive', path.join(ROOT, 'release', `harbor-${pkg.version}-linux-x64.tar.gz`)));
 const ARCHIVE_DIR = path.basename(ARCHIVE).replace(/\.tar\.gz$/, '');
 const ADMIN = { username: 'admin', password: 'harbor-test-Admin-Passw0rd' };
-const PORTS = [18000, ...Array.from({ length: 20 }, (_, i) => 18080 + i)];
+// retained instances keep their ports, so a full catalog pass needs more than the acceptance suite's 20
+const PORTS = [18000, ...Array.from({ length: 60 }, (_, i) => 18080 + i)];
 const UI = 'http://localhost:18000';
 const EXT_ROOT = '/srv/harbor-test-storage';
 
@@ -107,8 +108,9 @@ async function qualifyOne(id, variant, storageArgs) {
   const consoleErrors = [];
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 200)); });
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 120_000 });
-    await sleep(1500);
+    // 'load', not 'networkidle': most of these apps hold a websocket open, so the network is never idle
+    await page.goto(url, { waitUntil: 'load', timeout: 120_000 });
+    await sleep(4000);
     title = await page.title();
     await page.screenshot({ path: path.join(ev.dir, `${name}.png`) });
   } finally {

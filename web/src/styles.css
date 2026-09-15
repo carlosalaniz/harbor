@@ -712,8 +712,19 @@ progress {
   .grid {
     grid-template-columns: 1fr 1fr;
   }
+  .grid.store,
+  .grid.tools {
+    grid-template-columns: 1fr;
+  }
   .tile {
     grid-template-columns: 1fr;
+    overflow: hidden;
+  }
+  .pill {
+    white-space: normal;
+  }
+  .tile-main {
+    max-width: 100%;
   }
   .dialog {
     width: 100%;
