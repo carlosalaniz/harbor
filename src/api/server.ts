@@ -270,6 +270,20 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     async (req) => service.setNotificationChannels((req.body as { channels: Parameters<typeof service.setNotificationChannels>[0] }).channels),
   );
   app.post('/v1/notifications/channels/test', { preHandler: requireAuth, schema: { description: 'Send a test notification to every configured channel.' } }, async () => ({ results: await service.testNotificationChannels() }));
+
+  // --- automatic updates
+  app.get('/v1/updates/policy', { preHandler: requireAuth, schema: { description: 'Global automatic-update default for newly installed apps.' } }, async () => service.updatesPolicy());
+  app.put(
+    '/v1/updates/policy',
+    { preHandler: requireAuth, schema: { description: 'Set the global automatic-update default (opt-in; per-app toggles win).', body: { type: 'object', additionalProperties: false, required: ['autoDefault'], properties: { autoDefault: { type: 'boolean' } } } } },
+    async (req) => service.setUpdatesPolicy(req.body as { autoDefault: boolean }),
+  );
+  app.put(
+    '/v1/instances/:id/auto-update',
+    { preHandler: requireAuth, schema: { description: 'Turn automatic updates for one app on or off.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] }, body: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } } } },
+    async (req) => service.setInstanceAutoUpdate((req.params as { id: string }).id, (req.body as { enabled: boolean }).enabled),
+  );
+  app.post('/v1/updates/apply-all', { preHandler: requireAuth, schema: { description: 'Submit one update per app with a newer package revision (serial queue; per-app rollback).' } }, async (req) => service.applyAllUpdates(req.actor!));
   app.get('/v1/instances', { preHandler: requireAuth, schema: { description: 'All instances including retained records.' } }, async () => ({ items: service.instances() }));
   app.get(
     '/v1/instances/:id',

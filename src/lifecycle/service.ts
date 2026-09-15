@@ -53,6 +53,69 @@ export class ApplicationService {
     else this.usageCache.set(instanceId, { ...usage, sampledAt: rfc3339(this.ctx.clock.now()) });
   }
 
+  // ---- automatic updates (decision 78)
+  updatesPolicy(): { autoDefault: boolean } {
+    return { autoDefault: this.ctx.repo.setting<boolean>('updates.autoDefault') ?? false };
+  }
+  setUpdatesPolicy(p: { autoDefault: boolean }): { autoDefault: boolean } {
+    this.ctx.repo.setSetting('updates.autoDefault', p.autoDefault);
+    return this.updatesPolicy();
+  }
+  setInstanceAutoUpdate(id: string, enabled: boolean): InstanceSummary {
+    const row = this.instanceRow(id);
+    this.ctx.repo.setAutoUpdate(row.id, enabled);
+    const meta = this.packageMeta(row);
+    const fresh = this.ctx.repo.instance(row.id)!;
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null });
+  }
+  // One update plan per eligible instance, submitted through the normal queue ("Update all").
+  // Failures roll back per instance and never stop the rest (the queue is serial anyway).
+  async applyAllUpdates(actor: string): Promise<{ started: { instanceId: string; name: string; operationId: string }[]; skipped: { instanceId: string; name: string; reason: string }[] }> {
+    const current = this.currentRevisionsSafe();
+    const started: { instanceId: string; name: string; operationId: string }[] = [];
+    const skipped: { instanceId: string; name: string; reason: string }[] = [];
+    for (const i of this.ctx.repo.listInstances()) {
+      if (!this.updateFor(i, current)) continue;
+      if (i.installState !== 'installed') {
+        skipped.push({ instanceId: i.id, name: i.name, reason: `state is ${i.installState}` });
+        continue;
+      }
+      if (i.activeOperationId) {
+        skipped.push({ instanceId: i.id, name: i.name, reason: 'another operation is running' });
+        continue;
+      }
+      try {
+        const plan = await this.createPlan({ kind: 'update', instanceId: i.id }, actor);
+        const r = this.submit(plan.id, this.ctx.ids.uuid(), actor);
+        started.push({ instanceId: i.id, name: i.name, operationId: r.operation.id });
+      } catch (e) {
+        skipped.push({ instanceId: i.id, name: i.name, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    return { started, skipped };
+  }
+  // Called by the observer: submit updates for auto-enabled instances (actor auto-update).
+  // Each (instance, revision) is attempted once — a rolled-back update must not loop.
+  private autoUpdateAttempts = new Set<string>();
+  async runAutoUpdates(): Promise<void> {
+    const current = this.currentRevisionsSafe();
+    for (const i of this.ctx.repo.listInstances()) {
+      if (!i.autoUpdate || i.installState !== 'installed' || i.activeOperationId) continue;
+      const upd = this.updateFor(i, current);
+      if (!upd) continue;
+      const attempt = `${i.id}:${upd.revision}`;
+      if (this.autoUpdateAttempts.has(attempt)) continue;
+      this.autoUpdateAttempts.add(attempt);
+      try {
+        const plan = await this.createPlan({ kind: 'update', instanceId: i.id }, 'auto-update');
+        this.submit(plan.id, this.ctx.ids.uuid(), 'auto-update');
+        this.ctx.log.info('auto-update submitted', { instanceId: i.id, to: upd.revision });
+      } catch (e) {
+        this.ctx.log.warn(`auto-update of ${i.name} could not start: ${(e as Error).message}`);
+      }
+    }
+  }
+
   // ---- notifications (decision 77)
   notifications(unreadOnly: boolean): NotificationsDto {
     const items = this.ctx.repo.notifications({ unreadOnly }).map((n) => ({ id: n.id, createdAt: n.createdAt, kind: n.kind, severity: n.severity, title: n.title, body: n.body, instanceId: n.instanceId, read: n.readAt !== null }));
@@ -732,6 +795,7 @@ export class ApplicationService {
           endpoints: plan.proposal.endpoints,
           secrets: [],
           activeOperationId: operationId,
+          autoUpdate: repo.setting<boolean>('updates.autoDefault') ?? false,
         });
         for (const e of plan.proposal.endpoints) repo.claimPort(e.hostPort, plan.instanceId, e.id);
       } else {

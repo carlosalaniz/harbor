@@ -30,6 +30,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     displayName: i.displayName,
     customIcon: i.icon ? (i.icon.kind === 'glyph' ? { kind: 'glyph', glyph: i.icon.glyph, color: i.icon.color } : { kind: 'image', url: `/v1/instances/${i.id}/icon?v=${encodeURIComponent(i.icon.version)}` }) : null,
     usage: look.usage ?? null,
+    autoUpdate: i.autoUpdate,
   };
 }
 

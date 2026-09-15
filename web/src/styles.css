@@ -1717,6 +1717,19 @@ button.vital:hover {
   padding: 0 5px;
 }
 
+/* ---- auto-update toggles ---- */
+.auto-upd {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.auto-upd input {
+  margin-top: 2px;
+  flex: none;
+}
+
 /* ---- notifications bell + channels ---- */
 .channel {
   border: 1px solid var(--line);

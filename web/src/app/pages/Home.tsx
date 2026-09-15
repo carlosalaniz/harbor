@@ -78,6 +78,18 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
               </h2>
               <p className="muted small">Your data, addresses and ports stay. If a new version does not start, Harbor puts the current one back.</p>
             </div>
+            {updates.length > 1 && (
+              <button
+                className="btn"
+                disabled={c.busy}
+                onClick={() => {
+                  void api.applyAllUpdates().then(() => c.refresh());
+                }}
+                aria-label="Update all apps"
+              >
+                Update all
+              </button>
+            )}
           </div>
           <ul className="plain">
             {updates.map((i) => (

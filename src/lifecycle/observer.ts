@@ -98,6 +98,7 @@ export class Observer {
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
       }
       this.notifyUpdatesAndDisk();
+      await this.service.runAutoUpdates();
       await this.verifyExposures(now);
     } catch (e) {
       this.ctx.log.warn(`observer tick failed: ${(e as Error).message}`);

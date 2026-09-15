@@ -60,6 +60,8 @@ export interface InstanceSummary {
   customIcon: { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; url: string } | null;
   // live resource usage summed over the app's containers; null when stopped or not yet sampled
   usage: { cpuPercent: number; memoryBytes: number; sampledAt: string } | null;
+  // opt-in automatic updates (decision 78)
+  autoUpdate: boolean;
 }
 
 // Volume disk usage grouped per app (GET /v1/system/storage/usage; docker system df, cached).

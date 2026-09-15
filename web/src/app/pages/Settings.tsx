@@ -182,7 +182,31 @@ function HarborUpdate({ c }: { c: Console }) {
           </div>
         </Dialog>
       )}
+      <AutoUpdateDefault />
     </section>
+  );
+}
+
+// Global default for app auto-updates (decision 78): applies to newly installed apps; per-app toggles win.
+function AutoUpdateDefault() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.updatesPolicy().then((p) => setOn(p.autoDefault), () => setOn(null));
+  }, []);
+  if (on === null) return null;
+  return (
+    <label className="row auto-upd">
+      <input
+        type="checkbox"
+        checked={on}
+        onChange={(e) => {
+          setOn(e.target.checked);
+          void api.setUpdatesPolicy(e.target.checked).catch(() => setOn(!e.target.checked));
+        }}
+        aria-label="Automatic app updates for new installs"
+      />
+      <span className="muted small">Turn on automatic updates for newly installed apps (each app can be changed in its drawer; failed updates roll back)</span>
+    </label>
   );
 }
 

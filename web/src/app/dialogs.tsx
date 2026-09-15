@@ -362,6 +362,8 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
   const [error, setError] = useState<string | null>(null);
   const [confirmPurge, setConfirmPurge] = useState('');
   const [purgeOpen, setPurgeOpen] = useState(false);
+  const [autoUpdate, setAutoUpdate] = useState(inst.autoUpdate);
+  useEffect(() => setAutoUpdate(inst.autoUpdate), [inst.id, inst.autoUpdate]);
   useEffect(() => {
     let live = true;
     const load = () => api.instance(inst.id).then((d) => live && setDetail(d), (e: Error) => live && setError(e.message));
@@ -410,6 +412,20 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
             Update
           </button>
         </div>
+      )}
+      {!retained && inst.installState === 'installed' && (
+        <label className="row auto-upd">
+          <input
+            type="checkbox"
+            checked={autoUpdate}
+            onChange={(e) => {
+              setAutoUpdate(e.target.checked); // optimistic; the poll corrects on failure
+              void api.setAutoUpdate(inst.id, e.target.checked).catch(() => setAutoUpdate(!e.target.checked));
+            }}
+            aria-label={`Automatic updates for ${inst.name}`}
+          />
+          <span className="muted small">Update this app automatically when a new version arrives (rolls back if it does not start)</span>
+        </label>
       )}
       <div className="row wrap actions">
         {canOpen && primary && (
