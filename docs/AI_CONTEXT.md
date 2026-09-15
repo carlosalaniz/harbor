@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `TDD.md` (spec), `plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–74 so far) | `docs/DECISIONS.md` — **next number is 75**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–75 so far) | `docs/DECISIONS.md` — **next number is 76**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `PROGRESS.md` (phases 0–14) |
 | What was verified live and how | `docs/VERIFICATION.md` (sections per version) + `docs/evidence/<dir>/` (screenshots/logs; VM IPs redacted as `<ip>`) |
 | Operator-facing manual | `docs/OPERATOR_GUIDE.md` (sections 2a one-line install, 4a–4e settings/own apps/updates) |
@@ -71,42 +71,40 @@ LAN mode + mDNS, Harbor self-update, defaultCredentials.
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (Carlos, 2026-09-15, session paused right after):** make the GitHub repository
-`carlosalaniz/harbor` **public** (option 1), so that the `curl … | sudo bash` installer, the release
-downloads inside `install.sh`, and Harbor's self-update check all work without a token. The alternative
-(a separate public releases-only repository) was rejected. **Not executed yet.** Record it as decision 75
-in `docs/DECISIONS.md` when done.
+**Latest decision (75, executed 2026-09-15):** the GitHub repository `carlosalaniz/harbor` is now
+**public**. Before flipping the visibility, the whole history was rewritten with
+`git filter-repo --replace-text` and force-pushed (tags included) to purge credential-looking **test
+fixtures** that GitHub secret scanning had flagged (the VM-suite admin password literal, e2e form-fill
+passwords, `tskey-auth-*` fake keys — all fixtures; no real credentials were ever committed). The
+replacements are scanner-safe (`*-FIXTURE-*`, `tskey-fixture-*`); the VM-suite admin password is
+overridable via `HARBOR_VM_ADMIN_PASSWORD`. Unauthenticated `install.sh` (200) and the releases API
+verified. **All commit SHAs changed** in the rewrite — SHAs mentioned in older docs/evidence refer to
+the pre-rewrite history.
 
 **Last three actions, most recent first:**
-1. **Paused and wrote this file** (`docs/AI_CONTEXT.md`, commit `e2a482f`) so a new session, possibly a
-   different model, can continue. Memory file points here.
-2. **Shipped and verified v0.8.0 → v0.8.1** (commits `e32555a`, `13f8cda`; GitHub Releases v0.8.0, v0.8.1
+1. **Purged flagged fixtures, rewrote history, made the repo public** (2026-09-15): replaced the
+   fixture strings in 7 files, `git filter-repo --replace-text` over all 59 commits, force-pushed
+   `main` + all 11 tags, flipped visibility, verified unauthenticated access. Decision 75 recorded;
+   `PROGRESS.md` blockers cleared; `docs/VERIFICATION.md` v0.8.x section updated.
+2. **Shipped and verified v0.8.0 → v0.8.1** (GitHub Releases v0.8.0, v0.8.1
    with `install.sh` attached): one-line installer, first-run setup wizard with a printed setup code, LAN
    mode + mDNS (`http://harbor.local`, Caddy LAN route), Harbor self-update via `harbor-self-update@<v>.service`,
    `defaultCredentials` manifest field. Verified on a brand-new droplet `harbor-test-2`: install from a
    local archive (1 min 52 s), wizard over the machine's address, app install from the LAN console,
    in-place self-update 0.8.0→0.8.1 from an archive, polkit-started unit failing cleanly on GitHub's 404.
-   Four bugs found on the real box were fixed in 0.8.1 (see §8). The public-URL path could not be tested
-   because the repo is private.
-3. **Shipped v0.7.0** (commits `09d5df9`, `c74711c`): terminal in the console (WebSocket + Python pty
+   Four bugs found on the real box were fixed in 0.8.1 (see §8).
+3. **Shipped v0.7.0**: terminal in the console (WebSocket + Python pty
    bridge), Troubleshoot logs, TOTP two-factor login, device name, Tailscale re-login self-heal (the bug
    Carlos hit after disconnecting from the tailnet), Advanced access page redesign. Verified live on
    `harbor-test`, which is still logged out of the tailnet until Carlos approves a login link.
 
-Everything is committed and pushed; `git status` is clean; `main` = `e2a482f`.
+## 5a. THE OPEN ITEM — fresh-box proof of the public paths
 
-## 5a. THE OPEN ITEM — steps to execute the decision
-
-**The GitHub repo `carlosalaniz/harbor` is private.** The public one-liner URL
-(`https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh`), the release downloads inside
-`install.sh`, and the daemon's update check (`https://api.github.com/repos/carlosalaniz/harbor/releases`)
-all return 404 without a token. Everything was verified with a local archive instead.
-
-Carlos decided: **option 1, make the repository public.** Not done yet (session paused). Steps when resuming:
-1. `gh repo edit carlosalaniz/harbor --visibility public --accept-visibility-change-consequences`
-2. Verify: `curl -sI https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh` → 200; `curl -s https://api.github.com/repos/carlosalaniz/harbor/releases | head` → list.
-3. Fresh-box proof: rebuild `harbor-test-2` (`HARBOR_VM_NAME=harbor-test-2 HARBOR_VM_STATE=.vm2.local.json HARBOR_VM_KNOWN_HOSTS=.vm2-known_hosts node scripts/vm/do-vm.mjs rebuild`), then run the real one-liner over SSH, drive the wizard, then publish a newer release (bump to 0.8.2, `pnpm build && pnpm package`, `gh release create v0.8.2 …`) and press *Update* in Settings → Overview to prove the GitHub self-update path (only the local-archive path has been proven live so far).
-4. Record results in `docs/VERIFICATION.md` (v0.8.x section, replace the "Blocked until public" paragraph), `PROGRESS.md` (Blockers → None), memory file; add a decision row (75) about making the repo public.
+The repo is public and the URLs answer unauthenticated. What remains is the **live** proof on a fresh
+box (only the local-archive paths have been proven so far):
+1. Rebuild `harbor-test-2` (`HARBOR_VM_NAME=harbor-test-2 HARBOR_VM_STATE=.vm2.local.json HARBOR_VM_KNOWN_HOSTS=.vm2-known_hosts node scripts/vm/do-vm.mjs rebuild`), then run the real one-liner over SSH (`curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh | sudo bash`) and drive the wizard.
+2. Publish a newer release (bump to 0.8.2, `pnpm build && pnpm package`, `gh release create v0.8.2 …`) and press *Update* in Settings → Overview to prove the GitHub-feed self-update path.
+3. Record results in `docs/VERIFICATION.md` (v0.8.x section) and `PROGRESS.md`.
 
 ## 6. Live environments (DigitalOcean; each ~$0.07/h; token only in git-ignored `.env.vm.local`)
 
