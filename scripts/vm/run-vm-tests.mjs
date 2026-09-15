@@ -179,10 +179,12 @@ const A01 = step('A01', 'Clean VM bootstrap without Node/npm; re-run preserves i
 });
 
 // ---------------------------------------------------------------- A02 catalog + invalid package
-const A02 = step('A02', 'CLI and UI show three real pinned packages; invalid package hash/schema rejected before effects', async () => {
+const A02 = step('A02', 'CLI and UI show the real pinned catalog (incl. the three demo packages); invalid package hash/schema rejected before effects', async () => {
   const catalog = cliOk(target, ['catalog']);
   const ids = catalog.map((c) => c.id).sort();
-  if (ids.join(',') !== 'bentopdf,excalidraw,n8n') throw new Error(`catalog ids ${ids}`);
+  for (const must of ['bentopdf', 'excalidraw', 'n8n']) if (!ids.includes(must)) throw new Error(`catalog is missing ${must}: ${ids}`);
+  const expectedIds = Object.keys(JSON.parse(readFileSync(path.join(ROOT, 'catalog', 'index.json'), 'utf8')).packages).sort();
+  if (ids.join(',') !== expectedIds.join(',')) throw new Error(`catalog ids ${ids} != bundled ${expectedIds}`);
   if (!catalog.every((c) => c.availability === 'available')) throw new Error('not all packages available');
   const digests = JSON.parse(ssh(`for p in bentopdf excalidraw n8n; do jq -c '{id:.package.id, images:[.images[]|.reference]}' /opt/harbor/catalog/$p/release.json; done | jq -s .`));
   for (const d of digests) for (const ref of d.images) if (!/@sha256:[a-f0-9]{64}$/.test(ref)) throw new Error(`unpinned image ${ref}`);

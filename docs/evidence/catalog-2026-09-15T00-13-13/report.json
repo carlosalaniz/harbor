@@ -1,0 +1,72 @@
+{
+  "startedAt": "2026-09-15T00:13:13.522Z",
+  "updatedAt": "2026-09-15T00:14:27.516Z",
+  "results": [
+    {
+      "id": "HOST",
+      "title": "Host prepared: Harbor bootstrapped from the release archive",
+      "status": "pass",
+      "at": "2026-09-15T00:14:03.165Z",
+      "details": {
+        "versions": {
+          "node": "v24.12.0",
+          "docker": "29.8.0",
+          "compose": "5.5.1",
+          "ubuntu": "Ubuntu 24.04.4 LTS",
+          "arch": "x86_64"
+        },
+        "installationId": "b4da4e7f-2bda-47fa-8697-3736e656a130",
+        "fresh": false,
+        "rebuilt": false
+      },
+      "notes": [
+        "Docker 29.8.0, Compose 5.5.1, Node v24.12.0, Ubuntu 24.04.4 LTS x86_64"
+      ]
+    },
+    {
+      "id": "actual",
+      "title": "Install, readiness, browser check and remove of actual",
+      "status": "pass",
+      "at": "2026-09-15T00:14:27.515Z",
+      "details": {
+        "name": "actual-q0013",
+        "instanceId": "50f947a0-a604-48d8-a228-826f8dd3dc0c",
+        "url": "http://localhost:18082/",
+        "title": "Actual",
+        "healthStatus": 200,
+        "containers": [
+          "hb_50f947a0a60448d8a228826f8dd3dc0c-web-1 Up 16 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_50f947a0a60448d8a228826f8dd3dc0c_data/_data->/data"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_50f947a0a60448d8a228826f8dd3dc0c-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_50f947a0a60448d8a228826f8dd3dc0c_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_50f947a0a60448d8a228826f8dd3dc0c_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 24,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 24s; page title \"Actual\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    }
+  ]
+}

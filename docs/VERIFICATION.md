@@ -18,10 +18,10 @@ and the outcome. Nothing here is asserted without a recorded run. Live runs are 
 |---|---|---|
 | `pnpm typecheck` | server + web strict TS | pass |
 | `pnpm lint` | ESLint (ts, tsx, mjs) | pass |
-| `pnpm test` | unit: YAML restrictions, manifest/Compose schemas and cross-references, catalog/hash verification, planner, OpenAPI, release file replacement | 42 passed |
-| `pnpm test:integration` | daemon in-process with the fake Docker adapter: install flow, idempotency, port claims, readiness timeout, coexistence, sentinel non-interference, restart→needs_action, Docker-down, volumes/secrets retention (synthetic stateful package), auth controls, tool binding | 34 passed |
-| `HARBOR_LIVE_DOCKER_SOCKET=~/.docker/run/docker.sock pnpm test:integration` | real Dockerode + `docker compose` against the authorized Docker Desktop engine: Excalidraw install/stop/start/remove/reinstall, BentoPDF coexistence, COOP/COEP headers | 3 passed (plus the 34 above) |
-| `pnpm build && pnpm test:e2e` | Playwright against the built UI with the fake adapter: login errors, dashboard sections, install with confirmation and double-click safety, reload→re-login→resume, stop/start/remove/reinstall, coexistence, details, logout, no browser persistence | 7 passed |
+| `pnpm test` | unit: YAML restrictions, manifest/Compose schemas and cross-references, catalog/hash verification (incl. presentation assets), planner and renderer (bind mounts, configuration formats), host-path rules, exposure config/URLs, schema migrations v1→v3, OpenAPI, systemd/release files | 57 passed |
+| `pnpm test:integration` | daemon in-process with the fake Docker adapter: install flow, idempotency, port claims, readiness timeout, coexistence, sentinel non-interference, restart→needs_action, Docker-down, volumes/secrets retention (synthetic stateful package), auth controls, tool binding, exposure (tailnet/public/primary/degraded/withdraw, UI exposure), external storage (validation, bind mounts, overlap, reinstall verification, DATA_MISSING) | 49 passed |
+| `HARBOR_LIVE_DOCKER_SOCKET=~/.docker/run/docker.sock pnpm test:integration` | real Dockerode + `docker compose` against the authorized Docker Desktop engine: Excalidraw install/stop/start/remove/reinstall, BentoPDF coexistence, COOP/COEP headers | 3 passed (plus the 49 above) |
+| `pnpm build && pnpm test:e2e` | Playwright against the built console with the fake adapter: login errors, Home/App Store/Platform/Publishing pages (icons served with sandboxed CSP, category filter, search), app page + plan review + double-click safety, reload→re-login→resume, drawer stop/start/remove/reinstall, coexistence + owned resources, logout, publish wizard (tailnet, public with one-time credentials, withdraw), phone width, bring-your-own-folder validation and mount | 10 passed |
 
 Fake-adapter results prove the engine, API and UI contracts. They are not evidence for A03/A09/A11/A14/A16; those come from section 3.
 

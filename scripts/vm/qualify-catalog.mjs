@@ -26,6 +26,8 @@ const ADMIN = { username: 'admin', password: 'harbor-test-Admin-Passw0rd' };
 const PORTS = [18000, ...Array.from({ length: 60 }, (_, i) => 18080 + i)];
 const UI = 'http://localhost:18000';
 const EXT_ROOT = '/srv/harbor-test-storage';
+// instance names carry a per-run suffix: retained instances from earlier passes keep their names and ports
+const SUFFIX = 'q' + new Date().toISOString().slice(11, 16).replace(':', '');
 
 if (!existsSync(ARCHIVE)) fail(`release archive not found: ${ARCHIVE} (run pnpm package)`, 2);
 const target = resolveTarget();
@@ -65,11 +67,14 @@ async function prepareHost() {
   target.scp(path.join(path.dirname(ARCHIVE), 'SHA256SUMS'), '/root/SHA256SUMS');
   ssh(`cd /root && sha256sum -c SHA256SUMS && rm -rf ${ARCHIVE_DIR} && tar -xzf ${path.basename(ARCHIVE)}`);
   const fresh = sshTry('test -f /etc/harbor/harbor.json').code !== 0;
+  if (!fresh) await waitFor(() => (cli(target, ['doctor']).json?.system?.busyOperationId ? null : true), { timeoutMs: 1800_000, intervalMs: 10_000, what: 'no operation in flight before bootstrap re-run' });
   const flags = fresh ? `--install-docker --admin-username ${ADMIN.username} --password-stdin` : '';
   const b = target.ssh(`cd /root && ./${ARCHIVE_DIR}/bin/harbor bootstrap --yes ${flags} 2>&1`, { input: fresh ? ADMIN.password + '\n' : undefined, timeoutMs: 1800_000 });
   ev.file('bootstrap.log', b.stdout + b.stderr);
   if (b.code !== 0) throw new Error(`bootstrap failed (exit ${b.code}); see bootstrap.log`);
   await openTunnels();
+  // wait for any operation a previous (interrupted) pass left running before touching state
+  await waitFor(() => (cliOk(target, ['doctor']).system.busyOperationId ? null : true), { timeoutMs: 1800_000, intervalMs: 10_000, what: 'no operation in flight' });
   const login = cli(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
   if (login.code !== 0) throw new Error(`CLI login failed: ${login.stderr} ${login.stdout}`);
   const doctor = cliOk(target, ['doctor']);
@@ -95,7 +100,7 @@ async function waitHealthy(name, timeoutMs) {
 
 async function qualifyOne(id, variant, storageArgs) {
   const m = manifests[id];
-  const name = variant ? `${id}-ext` : id;
+  const name = `${id}-${SUFFIX}${variant ? 'x' : ''}`;
   const t0 = Date.now();
   const op = cliOk(target, ['install', id, '--name', name, ...storageArgs, '--yes'], { timeoutMs: 2400_000 });
   if (op.state !== 'succeeded') throw new Error(`install ${op.state}: ${JSON.stringify(op.error)} | ${op.events.slice(-3).map((e) => e.message).join(' | ')}`);
@@ -162,7 +167,7 @@ async function main() {
         results[id] = 'blocked';
         console.log(`[FAIL] ${step}: ${e.message}`);
         // leave nothing running for the next package
-        const left = cliOk(target, ['list']).filter((i) => i.name.startsWith(id) && i.installState !== 'retained');
+        const left = cliOk(target, ['list']).filter((i) => i.name.startsWith(`${id}-${SUFFIX}`) && i.installState !== 'retained');
         for (const i of left) cli(target, ['remove', i.id, '--yes'], { timeoutMs: 600_000 });
       }
     }
