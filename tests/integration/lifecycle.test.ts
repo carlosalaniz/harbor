@@ -245,7 +245,7 @@ describe('stateful package: volumes, secrets, retention (generic engine, synthet
 
   it('a pre-existing volume with the owned name blocks a fresh install (OWNERSHIP_CONFLICT) before Compose runs', async () => {
     const plan = await h.api.plan({ kind: 'install', packageId: 'statefulapp', name: 'clash' });
-    const volName = plan.storage.find((s) => s.id === 'database')!.volumeName;
+    const volName = plan.storage.find((s) => s.id === 'database')!.volumeName!;
     await h.fake.createVolume(volName, { owner: 'foreign' });
     const sub = await h.api.submit(plan.id);
     const op = await h.api.waitOperation(sub.operationId);

@@ -7,7 +7,7 @@ import { ComposeCli } from '../docker/compose-cli.js';
 import { DockerodeAdapter } from '../docker/dockerode-adapter.js';
 import { loopbackPortFree } from '../docker/ports.js';
 import type { PlatformToolRow } from '../state/repo.js';
-import { exec, execOk } from './exec.js';
+import { exec, execOk, httpGetStatus } from './exec.js';
 import { cockpitSocketDropIn } from './systemd.js';
 
 // Platform tool recipes (host infrastructure; deliberately specialized, unlike app packages).
@@ -169,3 +169,136 @@ export function stateDirHasPlatform(stateDir: string): boolean {
 }
 
 export { PRODUCT };
+
+
+// ---------------------------------------------------------------- Tailscale (private cloud path)
+
+const TS_KEYRING = '/usr/share/keyrings/tailscale-archive-keyring.gpg';
+const TS_LIST = '/etc/apt/sources.list.d/tailscale.list';
+
+export function tailscalePreview(existing: { installed: boolean; backendState: string | null }, authKey: boolean): string[] {
+  return [
+    existing.installed ? 'Tailscale already installed: keep it' : `Install tailscale from pkgs.tailscale.com (signed apt repository, noble): keyring ${TS_KEYRING}, list ${TS_LIST}`,
+    existing.backendState === 'Running' ? 'Node already logged in: keep its identity' : authKey ? 'Log the node in with the provided auth key (tailscale up --auth-key from stdin; never on the command line)' : 'Run `tailscale up` and print its login URL for you to approve in a browser',
+    `Allow the ${PRODUCT.serviceUser} service account to manage serve entries: tailscale set --operator=${PRODUCT.serviceUser}`,
+    'Record the node name; Harbor only publishes apps you explicitly expose (tailscale serve, HTTPS with tailnet certificates)',
+  ];
+}
+
+export async function setupTailscale(log: (m: string) => void, existing: { installed: boolean; backendState: string | null }, authKey: string | null, now: string): Promise<ToolRecord> {
+  if (!existing.installed) {
+    log('installing tailscale from pkgs.tailscale.com');
+    const key = await fetch('https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg');
+    if (!key.ok) throw new HarborError('OPERATION_FAILED', `cannot download tailscale keyring: HTTP ${key.status}`);
+    writeFileSync(TS_KEYRING, Buffer.from(await key.arrayBuffer()), { mode: 0o644 });
+    const list = await fetch('https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list');
+    if (!list.ok) throw new HarborError('OPERATION_FAILED', `cannot download tailscale apt list: HTTP ${list.status}`);
+    const listText = await list.text();
+    if (!listText.includes('pkgs.tailscale.com') || !listText.includes(TS_KEYRING)) throw new HarborError('OPERATION_FAILED', 'unexpected tailscale apt list content');
+    writeFileSync(TS_LIST, listText, { mode: 0o644 });
+    await execOk('/usr/bin/apt-get', ['update', '-q'], { timeoutMs: 10 * 60_000 });
+    await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'tailscale'], { timeoutMs: 20 * 60_000 });
+    await execOk('/usr/bin/systemctl', ['enable', '--now', 'tailscaled'], { timeoutMs: 60_000 });
+  }
+  let state = existing.backendState;
+  if (state !== 'Running') {
+    if (authKey) {
+      // The key is passed through an environment variable to the CLI, not as an argument (not visible in `ps`).
+      const r = await exec('/usr/bin/tailscale', ['up', '--auth-key=env:TS_AUTHKEY', '--ssh=false'], { timeoutMs: 180_000, env: { TS_AUTHKEY: authKey } });
+      if (r.code !== 0) throw new HarborError('OPERATION_FAILED', `tailscale up failed: ${(r.stderr || r.stdout).trim().slice(0, 300)}`);
+      state = 'Running';
+      log('tailscale node logged in with the provided auth key');
+    } else {
+      const r = await exec('/usr/bin/tailscale', ['up', '--timeout=10s'], { timeoutMs: 30_000 });
+      const url = /(https:\/\/login\.tailscale\.com\/\S+)/.exec(r.stdout + r.stderr)?.[1] ?? null;
+      log(url ? `tailscale login required: open ${url} in a browser, then re-run bootstrap --with-tailscale (or run: sudo tailscale up)` : 'tailscale login required: run `sudo tailscale up` and approve the URL it prints');
+    }
+  }
+  await execOk('/usr/bin/tailscale', ['set', `--operator=${PRODUCT.serviceUser}`], { timeoutMs: 30_000 });
+  const st = await exec('/usr/bin/tailscale', ['status', '--json'], { timeoutMs: 15_000 });
+  let dnsName: string | null = null;
+  let httpsEnabled = false;
+  try {
+    const j = JSON.parse(st.stdout) as { BackendState?: string; Self?: { DNSName?: string }; CertDomains?: string[] | null };
+    state = j.BackendState ?? state;
+    dnsName = j.Self?.DNSName?.replace(/\.$/, '') ?? null;
+    httpsEnabled = (j.CertDomains ?? []).length > 0;
+  } catch {
+    /* keep prior */
+  }
+  const loggedIn = state === 'Running' && Boolean(dnsName);
+  return {
+    id: 'tailscale',
+    mode: existing.installed ? 'external' : 'managed',
+    browserUrl: null,
+    installationState: loggedIn ? (httpsEnabled ? 'installed' : 'setup_required') : 'setup_required',
+    availability: 'unknown',
+    observedAt: now,
+    note: !loggedIn
+      ? 'Installed; log in with `sudo tailscale up` (approve the printed URL), then Harbor can publish apps on your tailnet.'
+      : httpsEnabled
+        ? `Node ${dnsName} logged in; MagicDNS + HTTPS enabled. Use harbor expose <instance> --via tailnet.`
+        : `Node ${dnsName} logged in. Enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS settings) before publishing.`,
+    resources: { dnsName, operator: PRODUCT.serviceUser },
+  };
+}
+
+// ---------------------------------------------------------------- Caddy (public path)
+
+const CADDY_KEYRING = '/usr/share/keyrings/caddy-stable-archive-keyring.gpg';
+const CADDY_LIST = '/etc/apt/sources.list.d/caddy-stable.list';
+export const CADDY_CONFIG = '/etc/caddy/harbor.json';
+
+export function caddyPreview(existing: { installed: boolean; harborConfig: boolean }): string[] {
+  return [
+    existing.installed ? 'Caddy already installed: keep the package' : `Install caddy from dl.cloudsmith.io/public/caddy/stable (signed apt repository): keyring ${CADDY_KEYRING}, list ${CADDY_LIST}`,
+    existing.harborConfig ? `Keep the Harbor-owned ${CADDY_CONFIG}` : `Write a Harbor-owned JSON config ${CADDY_CONFIG} (admin API on 127.0.0.1:2019, no sites yet) and run caddy from it via a systemd drop-in (--resume keeps Harbor's changes across restarts)`,
+    'Ports 80/443 stay closed until you expose an app; then DNS for each hostname must point at this host',
+  ];
+}
+
+export async function setupCaddy(log: (m: string) => void, existing: { installed: boolean; harborConfig: boolean }, now: string): Promise<ToolRecord> {
+  if (!existing.installed) {
+    log('installing caddy from cloudsmith stable repository');
+    const key = await fetch('https://dl.cloudsmith.io/public/caddy/stable/gpg.key');
+    if (!key.ok) throw new HarborError('OPERATION_FAILED', `cannot download caddy gpg key: HTTP ${key.status}`);
+    const armored = await key.text();
+    if (!armored.includes('BEGIN PGP PUBLIC KEY BLOCK')) throw new HarborError('OPERATION_FAILED', 'downloaded caddy key is not an OpenPGP public key');
+    const tmp = '/tmp/caddy-stable.gpg.asc';
+    writeFileSync(tmp, armored, { mode: 0o644 });
+    await execOk('/usr/bin/gpg', ['--dearmor', '--yes', '-o', CADDY_KEYRING, tmp], { timeoutMs: 30_000 });
+    const list = await fetch('https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt');
+    if (!list.ok) throw new HarborError('OPERATION_FAILED', `cannot download caddy apt list: HTTP ${list.status}`);
+    writeFileSync(CADDY_LIST, await list.text(), { mode: 0o644 });
+    await execOk('/usr/bin/apt-get', ['update', '-q'], { timeoutMs: 10 * 60_000 });
+    await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'caddy'], { timeoutMs: 20 * 60_000 });
+  }
+  if (!existing.harborConfig) {
+    mkdirSync('/etc/caddy', { recursive: true, mode: 0o755 });
+    writeFileSync(CADDY_CONFIG, JSON.stringify({ admin: { listen: '127.0.0.1:2019' }, apps: { http: { servers: { harbor: { '@id': 'harbor-managed', listen: [':443'], routes: [] } } } } }, null, 2) + '\n', { mode: 0o644 });
+    const dropDir = '/etc/systemd/system/caddy.service.d';
+    mkdirSync(dropDir, { recursive: true, mode: 0o755 });
+    writeFileSync(path.join(dropDir, 'harbor.conf'), `# managed-by: ${PRODUCT.codename}-bootstrap\n[Service]\nExecStart=\nExecStart=/usr/bin/caddy run --environ --resume --config ${CADDY_CONFIG}\nExecReload=\nExecReload=/usr/bin/caddy reload --config ${CADDY_CONFIG} --force\n`, { mode: 0o644 });
+    await execOk('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
+    log(`wrote ${CADDY_CONFIG} and the caddy unit drop-in`);
+  }
+  await execOk('/usr/bin/systemctl', ['enable', '--now', 'caddy'], { timeoutMs: 120_000 });
+  await execOk('/usr/bin/systemctl', ['restart', 'caddy'], { timeoutMs: 120_000 });
+  let reachable = false;
+  for (let i = 0; i < 20 && !reachable; i++) {
+    reachable = (await httpGetStatus('127.0.0.1', 2019, '/config/')) === 200;
+    if (!reachable) await new Promise((r) => setTimeout(r, 1000));
+  }
+  if (!reachable) throw new HarborError('OPERATION_FAILED', 'caddy admin API did not become reachable on 127.0.0.1:2019', { nextAction: 'Check `systemctl status caddy` and `journalctl -u caddy`.' });
+  log('caddy running with the Harbor-owned config; admin API on 127.0.0.1:2019');
+  return {
+    id: 'proxy',
+    mode: existing.installed ? 'external' : 'managed',
+    browserUrl: null,
+    installationState: 'installed',
+    availability: 'reachable',
+    observedAt: now,
+    note: 'Caddy serves only the routes Harbor publishes (harbor expose --via public --host <fqdn>). Certificates come from Let\'s Encrypt; DNS must point at this host and ports 80/443 must be reachable.',
+    resources: { config: CADDY_CONFIG, adminApi: 'http://127.0.0.1:2019' },
+  };
+}

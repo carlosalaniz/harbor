@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "mealie",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "31a8344e447ee74940dc93928c51d8642b7338e7d0893f7cd82a80ed5b3a6e56"
+    },
+    "compose.yaml": {
+      "sha256": "49fecffecde39f1ddf740e6d9a45ba8577a7ffda1ef5e194037b61568e1c2962"
+    },
+    "README.md": {
+      "sha256": "d73b238d03d869e94ee08676db5d10e5a31dd02a85d537aaca07454caa1223d0"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "ghcr.io/mealie-recipes/mealie@sha256:a4d12ab3a009832cc94058345e22aea831c3e992e94783fefc1cd5a08544fe0c",
+      "repository": "ghcr.io/mealie-recipes/mealie",
+      "tag": "v3.26.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:20270d87515436aa9578aba3607607859d667b4b948d5ba3eb4ed7c719976bde",
+      "appVersion": "3.26.0",
+      "imageCreated": "2026-09-14T01:56:59Z",
+      "source": "https://ghcr.io/mealie-recipes/mealie"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "3.26.0"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/mealie-recipes/mealie:v3.26.0); image config: ExposedPorts 9000/tcp, Volumes /app/data/, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 81s; page title \"Login\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "24245fb444f3b8385511ea2e14d8cb1f58a456f4c9ae05de2888fb616fd237c7"
+    }
+  }
+}

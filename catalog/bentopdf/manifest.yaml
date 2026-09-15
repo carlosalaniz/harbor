@@ -26,3 +26,10 @@ health:
   deadlineSeconds: 90
 ui:
   primaryEndpoint: web
+presentation:
+  tagline: Merge, split and convert PDFs in your browser
+  category: files
+  icon: icon.svg
+  developer: alam00000
+  website: https://github.com/alam00000/bentopdf
+  releaseNotes: v2.8.8 pinned by digest; all processing stays in the browser.

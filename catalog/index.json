@@ -1,6 +1,18 @@
 {
   "schemaVersion": 1,
   "packages": {
+    "actual": {
+      "revision": "1",
+      "dir": "actual"
+    },
+    "anythingllm": {
+      "revision": "1",
+      "dir": "anythingllm"
+    },
+    "audiobookshelf": {
+      "revision": "1",
+      "dir": "audiobookshelf"
+    },
     "bentopdf": {
       "revision": "1",
       "dir": "bentopdf"
@@ -9,9 +21,53 @@
       "revision": "1",
       "dir": "excalidraw"
     },
+    "forgejo": {
+      "revision": "1",
+      "dir": "forgejo"
+    },
+    "freshrss": {
+      "revision": "1",
+      "dir": "freshrss"
+    },
+    "immich": {
+      "revision": "1",
+      "dir": "immich"
+    },
+    "jellyfin": {
+      "revision": "1",
+      "dir": "jellyfin"
+    },
+    "mealie": {
+      "revision": "1",
+      "dir": "mealie"
+    },
+    "memos": {
+      "revision": "1",
+      "dir": "memos"
+    },
     "n8n": {
       "revision": "1",
       "dir": "n8n"
+    },
+    "navidrome": {
+      "revision": "1",
+      "dir": "navidrome"
+    },
+    "nextcloud": {
+      "revision": "1",
+      "dir": "nextcloud"
+    },
+    "open-webui": {
+      "revision": "1",
+      "dir": "open-webui"
+    },
+    "uptime-kuma": {
+      "revision": "1",
+      "dir": "uptime-kuma"
+    },
+    "vaultwarden": {
+      "revision": "1",
+      "dir": "vaultwarden"
     }
   }
 }

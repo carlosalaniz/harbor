@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "anythingllm",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "165849f07f9d1a217f41f9aeb8e1619152705f24c9899afe7f71fb0cc5b29872"
+    },
+    "compose.yaml": {
+      "sha256": "e6b84682cfc391b20cba7efa4cf54dfab1822dcc42b8083170895218d40d0bcb"
+    },
+    "README.md": {
+      "sha256": "435140a4580ca02b27d3975e44c2e94096d2c30f4b87962f5f6a99a647e89287"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "mintplexlabs/anythingllm@sha256:05617e7bece7fd6eddc4f5b4176cd87fff74d7da88d988a6109b95481cce122c",
+      "repository": "mintplexlabs/anythingllm",
+      "tag": "1.16.1",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:b7b570b8bfc0bd2a64097439524a38542784eea03522db9d30256f5e711f52fc",
+      "appVersion": "1.16.1",
+      "imageCreated": "2026-08-27T16:32:21Z",
+      "source": "https://hub.docker.com/r/mintplexlabs/anythingllm"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "1.16.1"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; mintplexlabs/anythingllm:1.16.1); image config: ExposedPorts none, Volumes none, User anythingllm.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 41s; page title \"AnythingLLM | Your personal LLM trained on anything\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.png": {
+      "sha256": "538d36ef4217492336c50fb0dd0f6c1fe0c9010cc7c20991b4bda27ce3809fc4"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+services:
+  web:
+    image: jellyfin/jellyfin@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db # tag: 10.11.11
+    environment:
+      TZ: "UTC"
+    volumes:
+      - {type: volume, source: config, target: /config}
+      - {type: volume, source: cache, target: /cache}
+      - {type: volume, source: media, target: /media}
+volumes:
+  cache: {}
+  config: {}
+  media: {}

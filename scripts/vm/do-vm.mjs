@@ -13,6 +13,9 @@
 //   node scripts/vm/do-vm.mjs snapshot <name>   # create snapshot
 //   node scripts/vm/do-vm.mjs wait-ssh
 //   node scripts/vm/do-vm.mjs ssh -- <command>  # run a command on the VM
+//   node scripts/vm/do-vm.mjs firewall-web on|off   # allow inbound 80/443 (public exposure tests)
+//   node scripts/vm/do-vm.mjs dns-set <fqdn>        # A record in the DO-managed zone -> droplet IP
+//   node scripts/vm/do-vm.mjs dns-delete <fqdn>
 //   node scripts/vm/do-vm.mjs destroy --yes
 //
 // Files (all git-ignored): .env.vm.local (token), .vm.local.json (droplet id/ip),
@@ -266,6 +269,50 @@ async function cmdDestroy(yes) {
   console.log(`Destroyed droplet ${d.id}.`);
 }
 
+// Inbound 80/443 for public-exposure tests (Let's Encrypt HTTP-01 needs 80; apps are served on 443).
+async function cmdFirewallWeb(on) {
+  const { firewalls } = await api('GET', '/firewalls?per_page=200');
+  const fw = firewalls.find((f) => f.name === 'harbor-test-ssh-only');
+  if (!fw) fail('firewall harbor-test-ssh-only not found');
+  const web = [
+    { protocol: 'tcp', ports: '80', sources: { addresses: ['0.0.0.0/0', '::/0'] } },
+    { protocol: 'tcp', ports: '443', sources: { addresses: ['0.0.0.0/0', '::/0'] } },
+  ];
+  if (on) await api('POST', `/firewalls/${fw.id}/rules`, { inbound_rules: web });
+  else await api('DELETE', `/firewalls/${fw.id}/rules`, { inbound_rules: web });
+  console.log(`inbound 80/443 ${on ? 'allowed' : 'removed'} on ${fw.name}`);
+}
+
+// DNS records in a DigitalOcean-managed zone. Only records the suite created (name suffix) are touched.
+function splitFqdn(fqdn) {
+  const parts = fqdn.split('.');
+  if (parts.length < 3) fail(`need a subdomain of a DO-managed zone, got ${fqdn}`);
+  return { name: parts.slice(0, -2).join('.'), zone: parts.slice(-2).join('.') };
+}
+async function cmdDnsSet(fqdn) {
+  const d = await findDroplet();
+  if (!d) fail('no droplet');
+  const ip = publicIp(d);
+  const { name, zone } = splitFqdn(fqdn);
+  const { domain_records } = await api('GET', `/domains/${zone}/records?per_page=200&type=A&name=${fqdn}`);
+  const existing = domain_records.find((r) => r.type === 'A' && r.name === name);
+  if (existing) {
+    await api('PUT', `/domains/${zone}/records/${existing.id}`, { data: ip, ttl: 60 });
+    console.log(`updated A ${fqdn} -> ${ip}`);
+  } else {
+    await api('POST', `/domains/${zone}/records`, { type: 'A', name, data: ip, ttl: 60 });
+    console.log(`created A ${fqdn} -> ${ip}`);
+  }
+}
+async function cmdDnsDelete(fqdn) {
+  const { name, zone } = splitFqdn(fqdn);
+  const { domain_records } = await api('GET', `/domains/${zone}/records?per_page=200&type=A&name=${fqdn}`);
+  for (const r of domain_records.filter((x) => x.type === 'A' && x.name === name)) {
+    await api('DELETE', `/domains/${zone}/records/${r.id}`);
+    console.log(`deleted A ${fqdn}`);
+  }
+}
+
 async function cmdWaitSsh() {
   const s = readState();
   if (!s?.ip) fail('No .vm.local.json; run create.');
@@ -291,8 +338,11 @@ switch (cmd) {
   case 'snapshot': await cmdSnapshot(args[0]); break;
   case 'destroy': await cmdDestroy(rest.includes('--yes')); break;
   case 'wait-ssh': await cmdWaitSsh(); break;
+  case 'firewall-web': await cmdFirewallWeb(args[0] !== 'off'); break;
+  case 'dns-set': await cmdDnsSet(args[0]); break;
+  case 'dns-delete': await cmdDnsDelete(args[0]); break;
   case 'ssh': await cmdSsh(args); break;
   default:
-    console.error('usage: do-vm.mjs <create|status|rebuild|reboot|snapshot [name]|wait-ssh|ssh -- cmd|destroy --yes>');
+    console.error('usage: do-vm.mjs <create|status|rebuild|reboot|snapshot [name]|wait-ssh|ssh -- cmd|firewall-web on|off|dns-set fqdn|dns-delete fqdn|destroy --yes>');
     process.exit(2);
 }

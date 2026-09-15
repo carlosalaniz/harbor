@@ -16,6 +16,16 @@ for (const f of RELEASE_FILES) {
   const h = sha256Hex(readFileSync(path.join(dir, f)));
   if (release.files[f]?.sha256 !== h) { changed = true; release.files[f] = { sha256: h }; }
 }
+// presentation assets referenced by the manifest
+const manifestText = readFileSync(path.join(dir, 'manifest.yaml'), 'utf8');
+const assetNames = [...manifestText.matchAll(/^\s*(?:icon:|-)\s*([a-z0-9][a-z0-9._-]*\.(?:svg|png|jpg|jpeg|webp))\s*$/gm)].map((m) => m[1]!);
+const assets: Record<string, { sha256: string }> = {};
+for (const name of assetNames) assets[name] = { sha256: sha256Hex(readFileSync(path.join(dir, name))) };
+if (JSON.stringify(release.assets ?? {}) !== JSON.stringify(assets)) {
+  changed = true;
+  if (assetNames.length) release.assets = assets;
+  else delete release.assets;
+}
 if (flag === '--check') {
   if (changed) { console.error(`${id}: release.json hashes are stale`); process.exit(1); }
   console.log(`${id}: hashes ok`);

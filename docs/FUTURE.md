@@ -45,3 +45,21 @@ Reviewed the implementation against the four points; no code change was needed.
 2. **Browser URLs are distinct from internal targets** — state holds `hostPort`; `browserUrlFor()` (`src/config.ts`) is the single rendering point used by DTOs and the `configuration` binding; readiness targets `127.0.0.1:<hostPort>` (`src/lifecycle/readiness.ts`). A proxy would change that function and the access policy, not packages.
 3. **Instance-owned removal and instance-scoped secrets do not assume unique product names** — every Docker resource is matched by `io.harbor.preview/instance=<uuid>` before mutation (`src/lifecycle/runner.ts`), volumes carry per-instance ownership tokens, secrets live under `instances/<uuid>/secrets/`. Two n8n instances coexist with distinct keys (live evidence A11).
 4. **Runtime/readiness is distinct from setup** — `installState`/`readiness` come only from container state and the HTTP probe; the manifest `setup` block renders as separate guidance in `InstanceDetail.setup` and the UI ("Harbor did not create any account in this application").
+
+## Catalog and storage follow-ups (recorded 2026-09-14)
+
+- **Umbrel catalog converter**: translate `umbrel-app.yml` + Compose into Harbor packages (bind
+  mounts → storage claims, `APP_DATA_DIR` → managed volumes, `app_proxy` → endpoint). Roughly a third
+  of Umbrel's apps fit the current subset; each still needs a live qualification.
+- **Compose subset extension** (reviewed, small): `command`, `init`, `cap_drop`, `security_opt`
+  would unlock OpenClaw and a few others without weakening the trust model (they only *drop*
+  privileges). `extra_hosts: host.docker.internal:host-gateway` needs a decision (it exposes the host).
+- **One-time credential at install**: reuse the exposure flow's "shown once" credential for apps that
+  create their admin from an environment variable (Paperless-ngx, Linkding, code-server).
+- **Scheme-dependent configuration** (`format: if-https`, or a template) for Collabora's
+  `ssl.termination` and similar switches.
+- **Storage inventory**: a Settings page listing all managed volumes and external folders with sizes;
+  a "purge retained instance" operation (delete volumes and records after explicit confirmation).
+- **App updates**: no update engine yet; a new package revision is a manual reinstall today.
+- **Cross-app links**: AnythingLLM could use the Ollama bundled with Open WebUI if instances could
+  address each other; today every package is its own private network.

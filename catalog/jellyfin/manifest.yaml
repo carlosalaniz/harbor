@@ -1,0 +1,54 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: jellyfin
+  name: "Jellyfin"
+  description: "Free media system: stream your movies, shows, music and photos to any device, no subscription, no tracking."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 8096
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /health
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 300
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Jellyfin and run the setup wizard: create the admin user and add libraries pointing at /media (your folder) or subfolders of it."
+storage:
+  - id: config
+    composeVolume: config
+    purpose: "Jellyfin configuration and database"
+    retention: retain
+  - id: cache
+    composeVolume: cache
+    purpose: "Transcoding cache and thumbnails"
+    retention: retain
+  - id: media
+    composeVolume: media
+    purpose: "Your media library"
+    retention: retain
+    external: {hint: "The folder that holds your movies, shows and music, for example /mnt/media. Mounted at /media inside Jellyfin."}
+configuration:
+  - {service: web, environment: JELLYFIN_PublishedServerUrl, endpoint: web, format: origin}
+presentation:
+  tagline: "Your movies and music, streamed from your own machine"
+  category: media
+  icon: icon.svg
+  developer: "Jellyfin Project"
+  website: https://jellyfin.org
+  releaseNotes: "Jellyfin 10.11.11. Software transcoding only (no GPU passthrough in this profile)."

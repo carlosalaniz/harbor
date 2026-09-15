@@ -1,0 +1,58 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: open-webui
+  name: "Open WebUI"
+  description: "Private ChatGPT-style assistant with a bundled Ollama model server. Chat with local models on this machine or connect your own API keys."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+    ollama: infrastructure
+endpoints:
+  web:
+    service: web
+    containerPort: 8080
+    scheme: http
+    exposure: direct
+    browserContext: secure
+health:
+  endpoint: web
+  path: /health
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 420
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Create the first account (it becomes the admin). Then pull a model under Settings, Models (for example llama3.2:1b) or add an API key under Connections."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Chats, users and settings"
+    retention: retain
+  - id: models
+    composeVolume: models
+    purpose: "Downloaded Ollama models"
+    retention: retain
+    external: {hint: "Models are large (1 to 40 GB each); a folder on a big disk is a good idea."}
+secrets:
+  - id: session-key
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: web, environment: WEBUI_SECRET_KEY}
+configuration:
+  - {service: web, environment: WEBUI_URL, endpoint: web, format: origin}
+presentation:
+  tagline: "Your private AI assistant, with local models"
+  category: ai
+  icon: icon.png
+  developer: "Open WebUI contributors"
+  website: https://openwebui.com
+  releaseNotes: "Open WebUI v0.11.3 with Ollama 0.34.0 (CPU inference; bring your own GPU later). Telemetry off."

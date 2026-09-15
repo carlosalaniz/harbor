@@ -1,18 +1,22 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto } from '../contracts/api.js';
+import type { CatalogItemDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import { browserUrlFor, managementOrigin } from '../config.js';
 import { HarborError } from '../errors.js';
 import { listCatalog, loadPackage } from '../packages/catalog.js';
-import { identityFor, ownedVolumeName, proposeName } from '../planner/identity.js';
+import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from '../planner/identity.js';
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
+import { checkHostDirectory, hostPathsOverlap } from '../storage/host-path.js';
 import type { InstanceRow, OperationRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
 import { ComposeError } from '../docker/adapter.js';
 import type { Ctx } from './context.js';
-import { instanceSummary, operationDto, planDto } from './dto.js';
+import { exposureDto, instanceSummary, operationDto, planDto } from './dto.js';
+import type { ExposureDto } from '../contracts/api.js';
+import { HOSTNAME_RE, exposureUrl } from '../exposure/urls.js';
 import { instanceDir, loadReleaseSnapshot, secretExists } from './instance-dir.js';
 
 export interface SubmitResult {
@@ -47,29 +51,59 @@ export class ApplicationService {
     };
   }
 
+  async metrics(): Promise<SystemMetricsDto> {
+    const recorded = this.ctx.repo.listInstances().flatMap((i) => this.ctx.repo.resources(i.id).filter((r) => r.kind === 'container'));
+    let running = 0;
+    if (this.lastDockerObservation.available) {
+      for (const r of recorded) {
+        try {
+          const c = await this.ctx.docker.inspectContainer(r.dockerId ?? r.name);
+          if (c?.state === 'running') running += 1;
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    return sampleMetrics(this.ctx.clock.now(), { available: this.lastDockerObservation.available, version: this.lastDockerObservation.version, containersRunning: running, containersTotal: recorded.length });
+  }
+
   catalog(): CatalogItemDto[] {
     return listCatalog(this.ctx.config.catalogDir);
   }
 
-  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null } {
+  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string } {
+    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other' });
     try {
-      const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId);
-      return { name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null };
+      return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
-        const pkg = loadPackage(this.ctx.config.catalogDir, i.packageId);
-        return { name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null };
+        return from(loadPackage(this.ctx.config.catalogDir, i.packageId));
       } catch {
-        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null };
+        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other' };
       }
     }
+  }
+
+  // Package asset bytes for the console (icon/gallery), from the bundled package only.
+  asset(packageId: string, name: string): { bytes: Buffer; contentType: string } {
+    const pkg = loadPackage(this.ctx.config.catalogDir, packageId);
+    const bytes = pkg.assets[name];
+    if (!bytes) throw new HarborError('NOT_FOUND', `no asset ${name} in package ${packageId}`);
+    const ext = name.split('.').pop();
+    const contentType = ext === 'svg' ? 'image/svg+xml' : ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    return { bytes, contentType };
   }
 
   instances(): InstanceSummary[] {
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint);
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category });
     });
+  }
+
+  exposuresList(): ExposureDto[] {
+    const names = new Map(this.ctx.repo.listInstances().map((i) => [i.id, i]));
+    return this.ctx.repo.exposures().map((e) => exposureDto(e, names.get(e.instanceId)?.name ?? e.instanceId, names.get(e.instanceId)?.primaryExposure ?? 'loopback'));
   }
 
   instanceRow(idOrName: string): InstanceRow {
@@ -81,13 +115,14 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint);
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
       try {
         if (r.kind === 'container') presence.push((await this.ctx.docker.inspectContainer(r.dockerId ?? r.name)) !== null);
         else if (r.kind === 'volume') presence.push((await this.ctx.docker.inspectVolume(r.name)) !== null);
+        else if (r.kind === 'bind') presence.push(existsSync(r.name));
         else presence.push((await this.ctx.docker.inspectNetwork(r.dockerId ?? r.name)) !== null);
       } catch {
         presence.push(null);
@@ -117,7 +152,7 @@ export class ApplicationService {
     const secretStates: Record<string, 'new' | 'existing'> = {};
     if (inst && p.kind !== 'install') {
       const resources = this.ctx.repo.resources(inst.id);
-      for (const s of p.proposal.storage) storageStates[s.id] = resources.some((r) => r.kind === 'volume' && r.role === s.composeVolume) ? 'existing' : 'new';
+      for (const s of p.proposal.storage) storageStates[s.id] = resources.some((r) => (r.kind === 'volume' || r.kind === 'bind') && r.role === s.composeVolume) ? 'existing' : 'new';
       const secretsDir = path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'secrets');
       for (const s of p.proposal.secrets) secretStates[s.id] = secretExists(secretsDir, s.id) ? 'existing' : 'new';
     }
@@ -148,19 +183,20 @@ export class ApplicationService {
       const instanceId = ids.uuid();
       const identity = identityFor(this.ctx.installationId, instanceId);
       const endpoints = await this.allocatePorts(pkg);
+      const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
       const proposal: PlanProposal = {
         packageId: pkg.id,
         revision: pkg.revision,
         name: proposed.name,
         project: identity.project,
         endpoints,
-        storage: (pkg.manifest.storage ?? []).map((s) => ({ id: s.id, composeVolume: s.composeVolume, volumeName: ownedVolumeName(identity, s.composeVolume), purpose: s.purpose })),
+        storage,
         secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
         changes: [
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
-          ...(pkg.manifest.storage ?? []).map((s) => `Create retained volume ${ownedVolumeName(identity, s.composeVolume)} (${s.purpose})`),
+          ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
         ],
@@ -179,6 +215,7 @@ export class ApplicationService {
     const inst = this.instanceRow(req.instanceId);
     if (inst.activeOperationId) throw new HarborError('BUSY', `instance ${inst.name} has an active operation`, { operationId: inst.activeOperationId });
     const pkgName = this.packageMeta(inst).name;
+    if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
     switch (req.kind) {
       case 'start':
@@ -207,13 +244,128 @@ export class ApplicationService {
       name: inst.name,
       project: inst.project,
       endpoints: inst.endpoints,
-      storage: resources.filter((r) => r.kind === 'volume').map((r) => ({ id: r.role, composeVolume: r.role, volumeName: r.name, purpose: '' })),
+      storage: resources
+        .filter((r) => r.kind === 'volume' || r.kind === 'bind')
+        .sort((a, b) => a.role.localeCompare(b.role))
+        .map((r) => (r.kind === 'bind' ? { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: null, purpose: '', hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) } : { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: r.name, purpose: '' })),
       secrets: inst.secrets.map((s) => ({ id: s.id })),
       changes,
       warnings: req.kind === 'remove' ? ['Data volumes and secrets are retained; nothing is deleted except containers and the private network.'] : [],
       releaseHashes: inst.releaseHashes,
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: req.kind, instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Storage claims: managed Docker volumes by default; claims the manifest marks `external` may (or must)
+  // be bound to an operator-chosen host directory. Validation happens here so a bad folder never reaches Docker.
+  private resolveStorage(pkg: LoadedPackage, identity: InstanceIdentity, choices: Record<string, { hostPath: string }>, instances: InstanceRow[]): PlanProposal['storage'] {
+    const claims = pkg.manifest.storage ?? [];
+    for (const id of Object.keys(choices)) {
+      const claim = claims.find((c) => c.id === id);
+      if (!claim) throw new HarborError('INVALID_REQUEST', `package ${pkg.id} has no storage claim ${id}`);
+      if (!claim.external) throw new HarborError('INVALID_REQUEST', `storage claim ${id} of ${pkg.id} cannot be bound to a host folder`, { nextAction: 'Only claims the package marks as external accept a folder.' });
+    }
+    const inUse = instances.flatMap((i) => this.ctx.repo.resources(i.id).filter((r) => r.kind === 'bind').map((r) => ({ path: r.name, instance: i.name })));
+    const chosen: string[] = [];
+    return claims.map((claim) => {
+      const choice = choices[claim.id];
+      if (!choice) {
+        if (claim.external?.required) throw new HarborError('INVALID_REQUEST', `${pkg.manifest.metadata.name} needs a folder for ${claim.purpose} (storage claim ${claim.id})`, { nextAction: `Pass storage.${claim.id}.hostPath (CLI: --storage ${claim.id}=/path). ${claim.external.hint}` });
+        return { id: claim.id, composeVolume: claim.composeVolume, volumeName: ownedVolumeName(identity, claim.composeVolume), purpose: claim.purpose };
+      }
+      const { path: hostPath } = checkHostDirectory(choice.hostPath);
+      const clash = inUse.find((u) => hostPathsOverlap(u.path, hostPath));
+      if (clash) throw new HarborError('OWNERSHIP_CONFLICT', `${hostPath} overlaps ${clash.path}, already used by instance ${clash.instance}`, { nextAction: 'Choose a different folder; two apps must not share or nest their storage.' });
+      if (chosen.some((c) => hostPathsOverlap(c, hostPath))) throw new HarborError('INVALID_REQUEST', `folder ${hostPath} is used by two storage claims of the same install`);
+      chosen.push(hostPath);
+      return { id: claim.id, composeVolume: claim.composeVolume, volumeName: null, purpose: claim.purpose, hostPath, readOnly: claim.external?.readOnly ?? false };
+    });
+  }
+
+  private async exposurePlan(req: Extract<PlanRequest, { kind: 'expose' | 'unexpose' | 'reconfigure' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `exposure changes require an installed instance; ${inst.name} is ${inst.installState}`);
+    const meta = this.packageMeta(inst);
+    const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+    const existing = repo.exposures(inst.id);
+    const base: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [],
+      warnings: [],
+      releaseHashes: inst.releaseHashes,
+    };
+    const hasBaseUrlBindings = (pkg.manifest.configuration ?? []).length > 0;
+    if (req.kind === 'reconfigure') {
+      if (req.primary !== 'loopback' && !existing.some((e) => e.via === req.primary)) throw new HarborError('INVALID_REQUEST', `instance ${inst.name} has no ${req.primary} exposure to make primary`);
+      if (req.primary === inst.primaryExposure) throw new HarborError('INVALID_STATE', `${req.primary} is already the primary address of ${inst.name}`);
+      base.primary = req.primary;
+      base.changes.push(`Make ${req.primary} the primary address of "${inst.name}"`, hasBaseUrlBindings ? `Re-render the private Compose file with the new base URL and recreate ${pkgName}'s containers (same volumes, secrets and ports), then check readiness` : 'No package configuration depends on the base URL; only Harbor\'s records change');
+      const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'reconfigure', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+      repo.insertPlan(plan);
+      return this.plan(plan.id);
+    }
+    const endpointId = req.endpointId ?? meta.primaryEndpoint;
+    const alloc = inst.endpoints.find((e) => e.id === endpointId);
+    if (!alloc) throw new HarborError('INVALID_REQUEST', `instance ${inst.name} has no endpoint ${endpointId}`);
+    if (req.kind === 'unexpose') {
+      const e = existing.find((x) => x.endpointId === endpointId && x.via === req.via);
+      if (!e) throw new HarborError('NOT_FOUND', `${inst.name}/${endpointId} is not exposed via ${req.via}`);
+      base.exposure = { endpointId, via: e.via, hostname: e.hostname, port: e.port, protection: e.protection, makePrimary: false };
+      base.changes.push(`Remove the ${req.via} address ${exposureUrl(e)} of "${inst.name}" (${req.via === 'public' ? 'Caddy route' : 'tailscale serve entry'})`);
+      if (inst.primaryExposure === req.via) {
+        base.primary = 'loopback';
+        base.changes.push(hasBaseUrlBindings ? 'It is the primary address: switch back to loopback and recreate containers with the loopback base URL' : 'It is the primary address: switch back to loopback');
+      }
+      if (e.protection === 'basic') base.changes.push('Retain the generated basic-auth credentials (instance secret) for a later re-exposure');
+      const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'unexpose', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+      repo.insertPlan(plan);
+      return this.plan(plan.id);
+    }
+    // expose
+    if (existing.some((x) => x.endpointId === endpointId && x.via === req.via)) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already exposed via ${req.via}`, { nextAction: 'Unexpose it first to change hostname or protection.' });
+    const endpoint = pkg.manifest.endpoints[endpointId]!;
+    let hostname: string;
+    let port: number;
+    let protection: 'none' | 'basic';
+    if (req.via === 'tailnet') {
+      const st = await this.ctx.tailscale.status();
+      if (!st || st.backendState !== 'Running' || !st.dnsName) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Tailscale is not set up on this host', { nextAction: 'Re-run bootstrap with --with-tailscale and complete the login; see the Tailscale tool card.' });
+      if (!st.httpsEnabled) throw new HarborError('UNSUPPORTED_CAPABILITY', 'HTTPS certificates are not enabled for this tailnet', { nextAction: 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS settings), then retry.' });
+      if (req.hostname && req.hostname !== st.dnsName) throw new HarborError('INVALID_REQUEST', `tailnet exposures use the node name ${st.dnsName}; a custom hostname is not possible`);
+      hostname = st.dnsName;
+      port = alloc.hostPort; // same port number as loopback: "same port, three addresses"
+      protection = 'none'; // tailnet ACLs are the access control; serve has no auth layer
+      if (req.protection === 'basic') base.warnings.push('Basic-auth protection is not available on the tailnet path; access is governed by your tailnet ACLs.');
+    } else {
+      if (!(await this.ctx.caddy.available())) throw new HarborError('UNSUPPORTED_CAPABILITY', 'The public proxy (Caddy) is not set up on this host', { nextAction: 'Re-run bootstrap with --with-public-proxy; see the Public proxy tool card.' });
+      if (!req.hostname || !HOSTNAME_RE.test(req.hostname)) throw new HarborError('INVALID_REQUEST', 'public exposure needs a fully qualified hostname you control (e.g. n8n.example.com)');
+      hostname = req.hostname;
+      port = 443;
+      const packageHasOwnAuth = pkg.manifest.setup !== undefined; // packages with their own onboarding manage their own accounts (n8n)
+      protection = req.protection ?? (packageHasOwnAuth ? 'none' : 'basic');
+      if (protection === 'none' && !packageHasOwnAuth) base.warnings.push(`${pkgName} has no login of its own; without basic-auth protection anyone who reaches ${hostname} can use it.`);
+      base.warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued.`);
+    }
+    const taken = repo.exposureByAddress(req.via, hostname, port);
+    if (taken) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.via, hostname, port })} is already used by another exposure`);
+    if (endpoint.browserContext === 'ordinary') base.warnings.push('This endpoint is declared for ordinary browser contexts; it will still be served over HTTPS.');
+    base.exposure = { endpointId, via: req.via, hostname, port, protection, makePrimary: req.makePrimary ?? false };
+    if (req.makePrimary) base.primary = req.via;
+    base.changes.push(
+      `Publish "${inst.name}" endpoint ${endpointId} at ${exposureUrl(base.exposure)} via ${req.via === 'public' ? 'Caddy (Let\'s Encrypt certificate)' : 'tailscale serve (tailnet certificate)'} -> 127.0.0.1:${alloc.hostPort}`,
+      ...(protection === 'basic' ? ['Generate retained basic-auth credentials (shown once when the operation completes)'] : []),
+      ...(req.makePrimary ? [hasBaseUrlBindings ? 'Make it the primary address and recreate containers with the new base URL' : 'Make it the primary address'] : []),
+      'Verify the address answers over HTTPS before marking it active',
+    );
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'expose', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
   }

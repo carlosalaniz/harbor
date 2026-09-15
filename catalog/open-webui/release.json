@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "open-webui",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "712343cf090b0154f6d1634015fb593ff10ab8f759bef43c144d8ada3e62beee"
+    },
+    "compose.yaml": {
+      "sha256": "cc9102fea37c64165713f2756be58151c10f56f6eec2cafdec42fd8d94b6bde4"
+    },
+    "README.md": {
+      "sha256": "1bd2f5ecb3ae70f1880189ab2436682aa3de10dd13cdb51fd1310fcdcf69f6b2"
+    }
+  },
+  "images": {
+    "ollama": {
+      "reference": "ollama/ollama@sha256:684d8674b4315fa18f4f0e973a118ec2652ed96f67563277839985175858e0ba",
+      "repository": "ollama/ollama",
+      "tag": "0.34.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:aa6f86f01fee264c81f1edd9083ebfb07c8116d95d8bedd1ad470874b66a40b4",
+      "appVersion": "0.34.0",
+      "imageCreated": "2026-09-09T23:17:47Z",
+      "source": "https://hub.docker.com/r/ollama/ollama"
+    },
+    "web": {
+      "reference": "ghcr.io/open-webui/open-webui@sha256:41daa0cf2561a5d4c8d1ff31ee2a98d93ab4d3ac2605cac69366ff6a3374a933",
+      "repository": "ghcr.io/open-webui/open-webui",
+      "tag": "v0.11.3",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:9cd136effce6bb12a6a1988a35ab3b82cb40c48a6768fceeb17c83baf7cfac9c",
+      "appVersion": "0.11.3",
+      "imageCreated": "2026-09-04T19:28:58Z",
+      "source": "https://ghcr.io/open-webui/open-webui"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "ollama": "0.34.0",
+      "web": "0.11.3"
+    },
+    "notes": [
+      "Digest of ollama resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ollama/ollama:0.34.0); image config: ExposedPorts 11434/tcp, Volumes none, User root.",
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/open-webui/open-webui:v0.11.3); image config: ExposedPorts 8080/tcp, Volumes none, User 0:0.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 211s; page title \"Open WebUI\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.png": {
+      "sha256": "5698a3e39513e7b6304ec96c309373ab3af0f70fe794293461de395a94deaa65"
+    }
+  }
+}

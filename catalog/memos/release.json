@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "memos",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "5773c993e66c2dbc085d609168a9c4bc3cd7b06f519127ead767d68b5cfdc508"
+    },
+    "compose.yaml": {
+      "sha256": "e5bcc5492cd02f3866bb218b40cd5d0a47f0338f22f44f6130026992f105dfb4"
+    },
+    "README.md": {
+      "sha256": "9ea3c5e51d3567b9b2bef71fe72ecf86dfbdb2e6849d31273d2b2cc668632454"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "neosmemo/memos@sha256:71a5b4738d1bed96e92112004054f0888e92791b64eb78afd79077c96e6f9327",
+      "repository": "neosmemo/memos",
+      "tag": "0.30.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:51a4cef418b1f173ac37139ad99de08da5b8662136007231d3ac8a0498a3095a",
+      "appVersion": "0.30.0",
+      "imageCreated": "2026-07-26T15:50:22Z",
+      "source": "https://hub.docker.com/r/neosmemo/memos"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "0.30.0"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; neosmemo/memos:0.30.0); image config: ExposedPorts 5230/tcp, Volumes /var/opt/memos, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 19s; page title \"Memos\"; health 200)"
+    ]
+  }
+}

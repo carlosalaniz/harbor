@@ -1,0 +1,45 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: mealie
+  name: "Mealie"
+  description: "Recipe manager and meal planner: import recipes from any URL, plan the week, build shopping lists."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 9000
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /api/app/about
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 300
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Log in with the default account changeme@example.com and password MyPassword, then change both immediately under your profile."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Recipes, images and database (SQLite)"
+    retention: retain
+configuration:
+  - {service: web, environment: BASE_URL, endpoint: web, format: origin}
+presentation:
+  tagline: "Recipes, meal plans and shopping lists"
+  category: home
+  icon: icon.svg
+  developer: "Mealie contributors"
+  website: https://mealie.io
+  releaseNotes: "Mealie v3.26.0 with SQLite; sign-ups disabled (invite users from the admin area)."

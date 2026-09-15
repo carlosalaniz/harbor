@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675 # tag: 17.11
+    environment:
+      POSTGRES_USER: "nextcloud"
+      POSTGRES_DB: "nextcloud"
+    healthcheck:
+      test: [CMD, pg_isready, -U, nextcloud, -d, nextcloud]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - {type: volume, source: db, target: /var/lib/postgresql/data}
+  redis:
+    image: redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576 # tag: 8.10.1-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  app:
+    image: nextcloud@sha256:de4ad938938636f2f616b07cfac5f355a82f44edb88acd297d6931fa5d39bac7 # tag: 34.0.4-apache
+    environment:
+      POSTGRES_HOST: "db"
+      POSTGRES_DB: "nextcloud"
+      POSTGRES_USER: "nextcloud"
+      REDIS_HOST: "redis"
+      TRUSTED_PROXIES: "127.0.0.1 ::1"
+      PHP_MEMORY_LIMIT: "1G"
+      PHP_UPLOAD_LIMIT: "16G"
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - {type: volume, source: html, target: /var/www/html}
+      - {type: volume, source: data, target: /var/www/html/data}
+volumes:
+  data: {}
+  db: {}
+  html: {}

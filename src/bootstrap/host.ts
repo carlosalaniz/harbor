@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { arch, platform } from 'node:os';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
-import { exec, which } from './exec.js';
+import { exec, httpGetStatus, which } from './exec.js';
 
 export interface HostFacts {
   osId: string;
@@ -21,6 +21,8 @@ export interface HostFacts {
     user: boolean;
     cockpit: { installed: boolean; socketActive: boolean };
     portainer: { containerPresent: boolean };
+    tailscale: { installed: boolean; backendState: string | null; dnsName: string | null };
+    caddy: { installed: boolean; adminReachable: boolean; harborConfig: boolean };
   };
 }
 
@@ -67,6 +69,22 @@ export async function gatherHostFacts(): Promise<HostFacts> {
   const userExists = (await exec('/usr/bin/id', ['-u', PRODUCT.serviceUser], { timeoutMs: 5000 })).code === 0;
   const cockpitInstalled = (await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', 'cockpit-ws'], { timeoutMs: 10_000 })).stdout.includes('install ok installed');
   const cockpitSocket = (await exec('/usr/bin/systemctl', ['is-active', 'cockpit.socket'], { timeoutMs: 10_000 })).stdout.trim() === 'active';
+  const tailscaleBin = await which('tailscale');
+  let tailscaleState: string | null = null;
+  let tailscaleDns: string | null = null;
+  if (tailscaleBin) {
+    const st = await exec(tailscaleBin, ['status', '--json'], { timeoutMs: 15_000 });
+    try {
+      const j = JSON.parse(st.stdout) as { BackendState?: string; Self?: { DNSName?: string } };
+      tailscaleState = j.BackendState ?? null;
+      tailscaleDns = j.Self?.DNSName?.replace(/\.$/, '') ?? null;
+    } catch {
+      tailscaleState = null;
+    }
+  }
+  const caddyBin = await which('caddy');
+  let caddyAdmin = false;
+  if (caddyBin) caddyAdmin = (await httpGetStatus('127.0.0.1', 2019, '/config/')) === 200;
   let portainerPresent = false;
   if (dockerBin && daemonActive) {
     const ps = await exec(dockerBin, ['ps', '-a', '--filter', 'name=hb_platform_portainer', '--format', '{{.Names}}'], { timeoutMs: 20_000, env: { DOCKER_CONFIG: '/nonexistent-harbor-bootstrap' } });
@@ -89,6 +107,8 @@ export async function gatherHostFacts(): Promise<HostFacts> {
       user: userExists,
       cockpit: { installed: cockpitInstalled, socketActive: cockpitSocket },
       portainer: { containerPresent: portainerPresent },
+      tailscale: { installed: Boolean(tailscaleBin), backendState: tailscaleState, dnsName: tailscaleDns },
+      caddy: { installed: Boolean(caddyBin), adminReachable: caddyAdmin, harborConfig: existsSync('/etc/caddy/harbor.json') },
     },
   };
 }

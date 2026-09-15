@@ -1,0 +1,67 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: nextcloud
+  name: "Nextcloud"
+  description: "Files, calendar, contacts and office documents on your own machine. Sync clients for every platform; Nextcloud Office included via the recommended apps."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    app: application
+    db: infrastructure
+    redis: infrastructure
+endpoints:
+  web:
+    service: app
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: secure
+health:
+  endpoint: web
+  path: /status.php
+  expectedStatus: [200]
+  timeoutSeconds: 10
+  deadlineSeconds: 600
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Nextcloud and create the admin account. The database is pre-configured. Keep Install recommended apps checked to get Nextcloud Office, Calendar, Contacts, Talk and Mail."
+storage:
+  - id: html
+    composeVolume: html
+    purpose: "Nextcloud application, config and apps"
+    retention: retain
+  - id: db
+    composeVolume: db
+    purpose: "PostgreSQL database"
+    retention: retain
+  - id: data
+    composeVolume: data
+    purpose: "User files"
+    retention: retain
+    external: {hint: "A folder with room for everyone's files, for example /mnt/nextcloud-data. Nextcloud must own it; it takes ownership on first start."}
+secrets:
+  - id: database-password
+    bytes: 32
+    encoding: hex
+    retention: retain
+    bindings:
+      - {service: db, environment: POSTGRES_PASSWORD}
+      - {service: app, environment: POSTGRES_PASSWORD}
+configuration:
+  - {service: app, environment: NEXTCLOUD_TRUSTED_DOMAINS, endpoint: web, format: authority}
+  - {service: app, environment: OVERWRITEHOST, endpoint: web, format: authority}
+  - {service: app, environment: OVERWRITEPROTOCOL, endpoint: web, format: scheme}
+  - {service: app, environment: OVERWRITECLIURL, endpoint: web, format: origin}
+presentation:
+  tagline: "Your files, calendar, contacts and office, at home"
+  category: files
+  icon: icon.svg
+  developer: "Nextcloud GmbH and contributors"
+  website: https://nextcloud.com
+  releaseNotes: "Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis. Nextcloud Office uses the built-in CODE server from the recommended apps."

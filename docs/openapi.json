@@ -213,6 +213,47 @@
         }
       }
     },
+    "/v1/catalog/{id}/asset/{name}": {
+      "get": {
+        "description": "Package presentation asset (icon/gallery) from the bundled package. Open (no session): static catalog content only.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$"
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/metrics": {
+      "get": {
+        "description": "Host metrics for the console (cpu, memory, disk, docker).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/instances": {
       "get": {
         "description": "All instances including retained records.",
@@ -286,7 +327,56 @@
     },
     "/v1/platform-tools": {
       "get": {
-        "description": "Cockpit/Portainer state and real links.",
+        "description": "Cockpit/Portainer/Tailscale/proxy state and real links.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/exposures": {
+      "get": {
+        "description": "Published addresses (tailnet/public) of all instances.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/ui-exposure": {
+      "put": {
+        "description": "Expose the Harbor UI on the tailnet (never publicly).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "via"
+                ],
+                "properties": {
+                  "via": {
+                    "enum": [
+                      "tailnet"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "delete": {
+        "description": "Withdraw the tailnet exposure of the Harbor UI.",
         "responses": {
           "200": {
             "description": "Default Response"
@@ -388,6 +478,27 @@
                       "name": {
                         "type": "string",
                         "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      },
+                      "storage": {
+                        "type": "object",
+                        "maxProperties": 16,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "hostPath"
+                          ],
+                          "properties": {
+                            "hostPath": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4096
+                            }
+                          }
+                        }
                       }
                     }
                   },
@@ -410,6 +521,107 @@
                       "instanceId": {
                         "type": "string",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "instanceId",
+                      "via"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "expose"
+                        ]
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "endpointId": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      },
+                      "via": {
+                        "enum": [
+                          "tailnet",
+                          "public"
+                        ]
+                      },
+                      "hostname": {
+                        "type": "string",
+                        "pattern": "^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
+                        "maxLength": 253
+                      },
+                      "protection": {
+                        "enum": [
+                          "none",
+                          "basic"
+                        ]
+                      },
+                      "makePrimary": {
+                        "type": "boolean"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "instanceId",
+                      "via"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "unexpose"
+                        ]
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "endpointId": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                      },
+                      "via": {
+                        "enum": [
+                          "tailnet",
+                          "public"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "instanceId",
+                      "primary"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "reconfigure"
+                        ]
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "primary": {
+                        "enum": [
+                          "loopback",
+                          "tailnet",
+                          "public"
+                        ]
                       }
                     }
                   }

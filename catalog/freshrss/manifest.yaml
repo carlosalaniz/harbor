@@ -1,0 +1,47 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: freshrss
+  name: "FreshRSS"
+  description: "Fast, self-hosted RSS and Atom feed reader with a clean web interface and mobile apps via its API."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /i/
+  expectedStatus: [200, 302]
+  timeoutSeconds: 5
+  deadlineSeconds: 180
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open FreshRSS and run the installer: choose SQLite, create your user, then add feeds."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Users, feeds and articles (SQLite)"
+    retention: retain
+  - id: extensions
+    composeVolume: extensions
+    purpose: "Installed extensions"
+    retention: retain
+presentation:
+  tagline: "Read the web on your terms"
+  category: productivity
+  icon: icon.svg
+  developer: "FreshRSS contributors"
+  website: https://freshrss.org
+  releaseNotes: "FreshRSS 1.30.0; feeds refresh every 20 minutes."

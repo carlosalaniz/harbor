@@ -8,6 +8,7 @@ export const RELEASE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: ['schemaVersion', 'package', 'files', 'images', 'qualification'],
+  // `assets`: sha256 of presentation files (icon/gallery) referenced by the manifest; required when the manifest references any.
   properties: {
     schemaVersion: { const: 1 },
     package: {
@@ -26,6 +27,11 @@ export const RELEASE_SCHEMA = {
           { type: 'object', additionalProperties: false, required: ['sha256'], properties: { sha256: { type: 'string', pattern: SHA256_HEX_PATTERN } } },
         ]),
       ),
+    },
+    assets: {
+      type: 'object',
+      propertyNames: { pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$' },
+      additionalProperties: { type: 'object', additionalProperties: false, required: ['sha256'], properties: { sha256: { type: 'string', pattern: SHA256_HEX_PATTERN } } },
     },
     images: {
       type: 'object',

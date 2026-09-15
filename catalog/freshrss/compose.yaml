@@ -1,0 +1,12 @@
+services:
+  web:
+    image: freshrss/freshrss@sha256:258b8edfc8a76a61f60d2d6a14d8f8d12495d78abf38646a2137612dfa264a21 # tag: 1.30.0
+    environment:
+      TZ: "UTC"
+      CRON_MIN: "*/20"
+    volumes:
+      - {type: volume, source: data, target: /var/www/FreshRSS/data}
+      - {type: volume, source: extensions, target: /var/www/FreshRSS/extensions}
+volumes:
+  data: {}
+  extensions: {}

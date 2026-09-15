@@ -11,6 +11,7 @@ import type { ApplicationService } from '../lifecycle/service.js';
 import type { Logger } from '../lifecycle/context.js';
 import type { PlatformToolsService } from '../tools/service.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
+import { HOSTNAME_RE } from '../exposure/urls.js';
 import { PRODUCT } from '../naming.js';
 
 export interface ApiDeps {
@@ -79,11 +80,12 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     reply.header('x-content-type-options', 'nosniff');
     reply.header('referrer-policy', 'no-referrer');
     const host = req.headers.host ?? '';
-    if (!allowedHosts.has(host)) {
+    const extra = tools.extraOrigins(); // tailnet UI exposure, when configured
+    if (!allowedHosts.has(host) && !extra.hosts.includes(host)) {
       throw new HarborError('FORBIDDEN_ORIGIN', `Host ${host || '(missing)'} is not the configured management address`, { nextAction: `Use ${origin}.` });
     }
     const reqOrigin = req.headers.origin;
-    if (reqOrigin !== undefined && !allowedOrigins.has(reqOrigin)) {
+    if (reqOrigin !== undefined && !allowedOrigins.has(reqOrigin) && !extra.origins.includes(reqOrigin)) {
       throw new HarborError('FORBIDDEN_ORIGIN', `Origin ${reqOrigin} is not allowed`);
     }
     const site = req.headers['sec-fetch-site'];
@@ -156,6 +158,21 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   // --- reads
   app.get('/v1/system', { preHandler: requireAuth, schema: { description: 'Daemon/Docker availability.' } }, async () => service.system());
   app.get('/v1/catalog', { preHandler: requireAuth, schema: { description: 'Bundled packages.' } }, async () => ({ items: service.catalog() }));
+  app.get(
+    '/v1/catalog/:id/asset/:name',
+    // Unauthenticated on purpose: <img src> cannot carry the bearer token, and the assets are static
+    // files of the bundled, hash-verified catalog (no instance or host data). Same-origin/Host guards still apply.
+    { schema: { description: 'Package presentation asset (icon/gallery) from the bundled package. Open (no session): static catalog content only.', security: [], params: { type: 'object', required: ['id', 'name'], properties: { id: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$' } } } } },
+    async (req, reply) => {
+      const { id, name } = req.params as { id: string; name: string };
+      const a = service.asset(id, name);
+      reply.header('content-type', a.contentType);
+      reply.header('cache-control', 'private, max-age=300');
+      if (a.contentType === 'image/svg+xml') reply.header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+      return reply.send(a.bytes);
+    },
+  );
+  app.get('/v1/system/metrics', { preHandler: requireAuth, schema: { description: 'Host metrics for the console (cpu, memory, disk, docker).' } }, async () => service.metrics());
   app.get('/v1/instances', { preHandler: requireAuth, schema: { description: 'All instances including retained records.' } }, async () => ({ items: service.instances() }));
   app.get(
     '/v1/instances/:id',
@@ -164,7 +181,17 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   );
   app.get('/v1/plans/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.plan((req.params as { id: string }).id));
   app.get('/v1/operations/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.operation((req.params as { id: string }).id));
-  app.get('/v1/platform-tools', { preHandler: requireAuth, schema: { description: 'Cockpit/Portainer state and real links.' } }, async () => ({ items: await tools.list() }));
+  app.get('/v1/platform-tools', { preHandler: requireAuth, schema: { description: 'Cockpit/Portainer/Tailscale/proxy state and real links.' } }, async () => ({ items: await tools.list() }));
+  app.get('/v1/exposures', { preHandler: requireAuth, schema: { description: 'Published addresses (tailnet/public) of all instances.' } }, async () => ({ items: service.exposuresList(), ui: tools.uiExposure() }));
+  app.put(
+    '/v1/ui-exposure',
+    { preHandler: requireAuth, schema: { description: 'Expose the Harbor UI on the tailnet (never publicly).', body: { type: 'object', additionalProperties: false, required: ['via'], properties: { via: { const: 'tailnet' } } } } },
+    async (req, reply) => reply.status(201).send(await tools.exposeUi(config.listen.port)),
+  );
+  app.delete('/v1/ui-exposure', { preHandler: requireAuth, schema: { description: 'Withdraw the tailnet exposure of the Harbor UI.' } }, async (_req, reply) => {
+    await tools.unexposeUi(config.listen.port);
+    return reply.status(204).send();
+  });
   app.put(
     '/v1/platform-tools/:id',
     {
@@ -198,8 +225,35 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
         description: 'Create an immutable plan. Install: {kind, packageId, name?}. Others: {kind, instanceId}.',
         body: {
           oneOf: [
-            { type: 'object', additionalProperties: false, required: ['kind', 'packageId'], properties: { kind: { const: 'install' }, packageId: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', pattern: ID_PATTERN } } },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'packageId'],
+              properties: {
+                kind: { const: 'install' },
+                packageId: { type: 'string', pattern: ID_PATTERN },
+                name: { type: 'string', pattern: ID_PATTERN },
+                // storage claim id -> host directory ("bring your own folder"); only claims the manifest marks `external`
+                storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
+              },
+            },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'instanceId', 'via'],
+              properties: {
+                kind: { const: 'expose' },
+                instanceId: { type: 'string', pattern: UUID_PATTERN },
+                endpointId: { type: 'string', pattern: ID_PATTERN },
+                via: { enum: ['tailnet', 'public'] },
+                hostname: { type: 'string', pattern: HOSTNAME_RE.source, maxLength: 253 },
+                protection: { enum: ['none', 'basic'] },
+                makePrimary: { type: 'boolean' },
+              },
+            },
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'via'], properties: { kind: { const: 'unexpose' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, endpointId: { type: 'string', pattern: ID_PATTERN }, via: { enum: ['tailnet', 'public'] } } },
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'primary'], properties: { kind: { const: 'reconfigure' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, primary: { enum: ['loopback', 'tailnet', 'public'] } } },
           ],
         },
         response: { 201: { type: 'object', additionalProperties: true } },

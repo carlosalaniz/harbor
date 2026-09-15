@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "nextcloud",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "c365b2dbebada2453ef2126d9cca83350085f05a1fb9eeb4f8e7c87e8b5136e7"
+    },
+    "compose.yaml": {
+      "sha256": "6e75749f77cd57873421dbc48eeba68167ae57971dafd796562e4d292d1bf8f4"
+    },
+    "README.md": {
+      "sha256": "3fe6825dcb1436ab6e84678a15a7e3ade4ab245660081b5cded898b07e8ede5b"
+    }
+  },
+  "images": {
+    "db": {
+      "reference": "postgres@sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675",
+      "repository": "postgres",
+      "tag": "17.11",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:d13db94ae661d517c5ed57c509a578d5ea64aae639871ba25294f4f42d83de28",
+      "appVersion": "17.11",
+      "imageCreated": "2026-08-25T00:41:57Z",
+      "source": "https://hub.docker.com/_/postgres"
+    },
+    "redis": {
+      "reference": "redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576",
+      "repository": "redis",
+      "tag": "8.10.1-alpine",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:9c3ecc609a8087c0f11c494fefaf37a8f7bf9a967631d4a0da8967a9810be354",
+      "appVersion": "8.10.1-alpine",
+      "imageCreated": "2026-08-18T16:58:27Z",
+      "source": "https://hub.docker.com/_/redis"
+    },
+    "app": {
+      "reference": "nextcloud@sha256:de4ad938938636f2f616b07cfac5f355a82f44edb88acd297d6931fa5d39bac7",
+      "repository": "nextcloud",
+      "tag": "34.0.4-apache",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:cad02be5a67f5e10ce0f15d39a4939fe9b7873f64b33346d0a52eec5af529d30",
+      "appVersion": "34.0.4-apache",
+      "imageCreated": "2026-09-11T23:21:36Z",
+      "source": "https://hub.docker.com/_/nextcloud"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "db": "17.11",
+      "redis": "8.10.1-alpine",
+      "app": "34.0.4-apache"
+    },
+    "notes": [
+      "Digest of db resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; postgres:17.11); image config: ExposedPorts 5432/tcp, Volumes /var/lib/postgresql/data, User root.",
+      "Digest of redis resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; redis:8.10.1-alpine); image config: ExposedPorts 6379/tcp, Volumes none, User root.",
+      "Digest of app resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; nextcloud:34.0.4-apache); image config: ExposedPorts 80/tcp, Volumes /var/www/html, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 65s; page title \"Nextcloud\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "c332ad568ebe57c5a177c16c153b1e2d87b1575485a4845222d8996092d74b01"
+    }
+  }
+}

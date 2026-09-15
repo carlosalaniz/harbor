@@ -1,0 +1,43 @@
+apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: actual
+  name: "Actual Budget"
+  description: "Local-first personal finance: envelope budgeting with bank import, fast and private, synced through your own server."
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 5006
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 180
+ui:
+  primaryEndpoint: web
+setup:
+  endpoint: web
+  instructions: "Open Actual and set a server password on first launch, then create or import a budget file."
+storage:
+  - id: data
+    composeVolume: data
+    purpose: "Budget files and server data"
+    retention: retain
+presentation:
+  tagline: "Budgeting that stays on your machine"
+  category: finance
+  icon: icon.svg
+  developer: "Actual Budget contributors"
+  website: https://actualbudget.org
+  releaseNotes: "Actual Server 26.9.0."

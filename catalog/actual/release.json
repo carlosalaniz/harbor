@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "actual",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "7f5157e61c937435541e8a891e9dab04e274a18496b0f56c6eeaf2a8d0d30913"
+    },
+    "compose.yaml": {
+      "sha256": "59c07ee03006e7626f692d62da87c6db4472a43c2625e18760d94892dfb4bfce"
+    },
+    "README.md": {
+      "sha256": "417bc15ec6341c7aa1c7132f5ac880d161d3f1a8fb6fd9842d7790d8c43d5439"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "actualbudget/actual-server@sha256:552beab3dec8c93d46b8b9245612d63c3f123b8a45063a474f53e229b17621d3",
+      "repository": "actualbudget/actual-server",
+      "tag": "26.9.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:59cab86c77e764855119e2d5ddd96b9c9cefd90913f4feed7f4ee1433a6482c5",
+      "appVersion": "26.9.0",
+      "imageCreated": "2026-09-01T08:55:22Z",
+      "source": "https://hub.docker.com/r/actualbudget/actual-server"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "26.9.0"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; actualbudget/actual-server:26.9.0); image config: ExposedPorts 5006/tcp, Volumes none, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 24s; page title \"Actual\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "be56c76eed237173521184130f909cab392cd3f8aae95bd14ca35754cad0bdb6"
+    }
+  }
+}

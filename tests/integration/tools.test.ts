@@ -12,8 +12,9 @@ afterAll(async () => {
 
 describe('platform tools state and binding', () => {
   it('absent tools are reported as not_installed with no link', async () => {
-    const { items } = await h.api.expect<{ items: PlatformToolDto[] }>(200, 'GET', '/v1/platform-tools');
-    expect(items.map((t) => t.id).sort()).toEqual(['cockpit', 'portainer']);
+    const all = (await h.api.expect<{ items: PlatformToolDto[] }>(200, 'GET', '/v1/platform-tools')).items;
+    expect(all.map((t) => t.id).sort()).toEqual(['cockpit', 'portainer', 'proxy', 'tailscale']);
+    const items = all.filter((t) => t.id === 'cockpit' || t.id === 'portainer');
     for (const t of items) {
       expect(t.installationState).toBe('not_installed');
       expect(t.browserUrl).toBeNull();

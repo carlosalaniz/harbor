@@ -66,3 +66,18 @@ export async function which(name: string): Promise<string | null> {
   }
   return null;
 }
+
+// Plain GET without fetch's Sec-Fetch-* headers (Caddy's admin API rejects those without an Origin).
+export function httpGetStatus(host: string, port: number, path: string, timeoutMs = 3000): Promise<number> {
+  return new Promise((resolve) => {
+    import('node:http').then(({ request }) => {
+      const req = request({ host, port, path, method: 'GET', timeout: timeoutMs }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      req.on('timeout', () => req.destroy(new Error('timeout')));
+      req.on('error', () => resolve(0));
+      req.end();
+    });
+  });
+}

@@ -1,0 +1,10 @@
+services:
+  web:
+    image: mintplexlabs/anythingllm@sha256:05617e7bece7fd6eddc4f5b4176cd87fff74d7da88d988a6109b95481cce122c # tag: 1.16.1
+    environment:
+      STORAGE_DIR: "/app/server/storage"
+      DISABLE_TELEMETRY: "true"
+    volumes:
+      - {type: volume, source: storage, target: /app/server/storage}
+volumes:
+  storage: {}

@@ -62,25 +62,53 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Context-only architecture check (plan §11) documented in docs/FUTURE.md; no code change needed
 - Bugs found only by the live suite and fixed: bootstrap re-run over existing release (EEXIST on symlinks); `harbor.service` `Requires=docker` stopped Harbor with Docker (now `Wants=`); CLI `--json` printed two documents on failed operations; Portainer 2.39 setup-token onboarding documented and automated
 
+## Phase 6 — exposure (branch `exposure`, 2026-09-14) ✅
+- [x] Design addendum docs/design/EXPOSURE.md (tailnet via Tailscale serve, public via Caddy; no package hooks)
+- [x] Schema v2 + migration; `expose`/`unexpose`/`reconfigure` plan kinds through the same queue; primary address per instance re-renders `configuration` bindings
+- [x] Providers: Tailscale CLI + Caddy admin API clients with fakes; HTTPS verifier; observer re-checks exposures
+- [x] Bootstrap `--with-tailscale [--tailscale-authkey-stdin]`, `--with-public-proxy`; tool cards for both
+- [x] CLI `expose/unexpose/exposures/primary`, `expose --ui --via tailnet`; console Publishing page and publish wizard
+- [x] Tests: 9 exposure integration tests, unit tests (renderer, URLs, migration), Playwright publish flow
+- [x] Live B-matrix: run vm-2026-09-14T23-19-02 (fresh, `--exposure`): A01–A16 all passed again; B01, B05, B07 passed; B04/B09/B10 failed for runner reasons (a stray placeholder call, a cascaded state, an SSH banner timeout). Run vm-2026-09-14T23-36-24 (`--only B04,B05,B07,B10,B09` after the fixes): B04 public n8n as primary over Let's Encrypt, B05 basic-auth BentoPDF, B07 provider outage/recovery, B09 back to loopback and route withdrawal all **passed**; B10 fixed afterwards (it must use instances that are not yet published) and re-runs with the final fresh run
+- [ ] B02/B03 (tailnet) BLOCKED without a Tailscale auth key in `HARBOR_TS_AUTHKEY` and MagicDNS+HTTPS enabled in the tailnet; engine behaviour covered by tests/integration/exposure.test.ts
+
+## Phase 7 — console (2026-09-14) ✅
+- [x] docs/design/UI.md: Umbrel/HexOS-inspired information architecture
+- [x] Package `presentation` metadata (tagline, category, icon, gallery, developer, website, release notes) with hashed assets; `GET /v1/catalog/{id}/asset/{name}` (open, sandboxed SVG CSP); `GET /v1/system/metrics`
+- [x] New console: Home (system strip, app tiles, attention list), App Store (cards, categories, search, app page), Publishing, Platform, Settings; app drawer; install/publish wizards over the same plan → approve → operation flow; operation tray with one-time credentials; phone layout (bottom tabs); dark by default
+- [x] Playwright suite rewritten (10 tests incl. phone viewport and own-folder flow); VM runner selectors updated
+- [x] Polish pass for humans (decision 44): greeting + status line, popular picks on first run, app names on tiles, pressure-coloured meters, human-first plan review with collapsed steps, tray with Open + next step, theme choice
+
+## Phase 8 — one-click catalog + bring your own folder (2026-09-14/15) ✅
+- [x] docs/design/CATALOG.md; decisions 39–43
+- [x] External storage: manifest `storage[].external`, install request `storage`, plan-time validation (denylist, existence, overlap), bind-mount rendering, `bind` resources, reinstall/start verification, schema v3 migration, CLI `--storage claim=/path`, console choice per claim; 6 integration + 8 unit tests
+- [x] `configuration[].format` (url/origin/authority/host/scheme); mixed-case env keys
+- [x] 14 new packages pinned by digest with `scripts/catalog-pin.mjs` (Open WebUI+Ollama, AnythingLLM, Jellyfin, Immich, Nextcloud, Vaultwarden, Uptime Kuma, Forgejo, FreshRSS, Actual, Audiobookshelf, Navidrome, Memos, Mealie); all 17 load and validate (`pnpm tsx scripts/catalog-verify.ts`)
+- [x] Live qualification of all 17 on a fresh droplet (`scripts/vm/qualify-catalog.mjs --fresh`): runs catalog-2026-09-15T00-13-13 (15/17 + all folder variants), 00-40-44 and 00-42-58 (Jellyfin and Uptime Kuma after fixes: Uptime Kuma redirects to /setup on first run; the script needed probe retries and per-run folder names) → **17/17 passed**, recorded in every release.json and docs/VERIFICATION.md
+- [x] Final fresh acceptance run with the console and the enlarged catalog: **vm-2026-09-15T01-01-08 — A01–A16 all passed, exposure B-matrix passed (public path), B02/B03 blocked without a Tailscale key**
+- [x] Merged `exposure` → `main` via pull request #1 (2026-09-14); tagged `v0.2.0`
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 43 passed |
-| `pnpm test:integration` (fake adapter) | 34 passed (install, lifecycle, auth, tools); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 57 passed |
+| `pnpm test:integration` (fake adapter) | 49 passed (install, lifecycle, auth, tools, exposure, storage); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 7 passed |
+| `pnpm test:e2e` (Playwright, fake adapter) | 10 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, own folder) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |
+| `pnpm test:vm -- --fresh --exposure` (2026-09-15, run vm-2026-09-15T01-01-08) | **23 checks: 22 passed, 1 blocked (tailnet), 0 failed** with the console and the 17-package catalog |
+| `node scripts/vm/qualify-catalog.mjs --fresh` (2026-09-15) | **17/17 packages passed**, incl. 6 bring-your-own-folder variants (23/23 steps) |
 
 ## Blockers
 None.
 
 ## Status
-**Scoped release delivered.** All phases complete; acceptance matrix A01–A16 passed live; automated suites green; repository self-contained (source, lockfile, packages, tests, release builder, guides, verification report).
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` on `main` adds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
 
 ## Exact next step
-None for the build. Operator decision pending: destroy the `harbor-test` droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists) or keep it for exploration.
+Carlos: provide a Tailscale auth key (`HARBOR_TS_AUTHKEY`, MagicDNS + HTTPS on) to turn B02/B03 into live evidence; decide whether to destroy the droplet (`node scripts/vm/do-vm.mjs destroy --yes`, ~$0.07/h while it exists).

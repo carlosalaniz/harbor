@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "audiobookshelf",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "eae00bb2d8e29d48ff72873a1fb0eb14181bec946533f6981f5d0b2925d89cf9"
+    },
+    "compose.yaml": {
+      "sha256": "41f8e3e2fc87d0b0b7ead56d1b885005e3342e0c7838c1c57653cd1ed2c5e82b"
+    },
+    "README.md": {
+      "sha256": "11c658f3678e8751d31f755eb4ed4a1165587db55ef9fe7cda91bc347652f691"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "ghcr.io/advplyr/audiobookshelf@sha256:180acad33d69c99ed208676465d8edcb268fa46967735579a7810859885b1a8e",
+      "repository": "ghcr.io/advplyr/audiobookshelf",
+      "tag": "2.36.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:e388e90e381ae3fa8660346612b2955f2c555ede81c9c286e2218bdf966b4de8",
+      "appVersion": "2.36.0",
+      "imageCreated": "2026-07-27T22:34:22Z",
+      "source": "https://ghcr.io/advplyr/audiobookshelf"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "2.36.0"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/advplyr/audiobookshelf:2.36.0); image config: ExposedPorts 80/tcp, Volumes none, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 31s; page title \"Audiobookshelf\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "9a6f9cf3af0ca2c7d814799f00be5f0a80db96b41bd5e37628f2157e16639fc3"
+    }
+  }
+}

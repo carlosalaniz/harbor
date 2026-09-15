@@ -5,7 +5,7 @@ import type { CatalogIndex, LoadedPackage } from '../contracts/types.js';
 import { compile, formatErrors } from '../contracts/validate.js';
 import { HarborError } from '../errors.js';
 import { validateComposeSource } from './compose-source.js';
-import { parseReleaseInventory, verifyInventory } from './inventory.js';
+import { parseReleaseInventory, sha256Hex, verifyInventory } from './inventory.js';
 import { validateManifestReferences, validateManifestShape } from './manifest.js';
 import { parseRestrictedYaml } from './yaml.js';
 
@@ -64,7 +64,18 @@ export function loadPackageDir(dir: string, id: string, label = id): LoadedPacka
     compose,
     `${label}/release.json`,
   );
-  return { id, revision: manifest.release.revision, dir, manifest, compose, release, readme: raw.readme.toString('utf8'), raw, hashes };
+  // Presentation assets: only files named by the manifest, only inside the package dir, hashed in release.json.
+  const assets: Record<string, Buffer> = {};
+  const wanted = [...(manifest.presentation?.icon ? [manifest.presentation.icon] : []), ...(manifest.presentation?.gallery ?? [])];
+  for (const name of wanted) {
+    const expected = release.assets?.[name]?.sha256;
+    if (!expected) throw new HarborError('INVALID_PACKAGE', `${label}: presentation asset ${name} is not listed in release.json assets`);
+    const bytes = readBounded(containedPath(dir, name), name.endsWith('.svg') || name.endsWith('.png') && name === manifest.presentation?.icon ? 256 * 1024 : 1024 * 1024);
+    const actual = sha256Hex(bytes);
+    if (actual !== expected) throw new HarborError('INVALID_PACKAGE', `${label}: asset ${name} hash mismatch`);
+    assets[name] = bytes;
+  }
+  return { id, revision: manifest.release.revision, dir, manifest, compose, release, readme: raw.readme.toString('utf8'), raw, hashes, assets };
 }
 
 // Load one bundled package through the catalog index. Only the index's entry is trusted.
@@ -89,6 +100,10 @@ export interface CatalogItem {
   availability: 'available' | 'unavailable';
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
+  presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; releaseNotes: string | null };
+  setup: boolean;
+  storage: number;
+  claims: { id: string; purpose: string; external: { hint: string; required: boolean; readOnly: boolean } | null }[];
 }
 
 // Catalog listing never throws for one bad package: it reports it as unavailable with the reason.
@@ -106,6 +121,10 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
         availability: 'available',
         reason: null,
         qualification: pkg.release.qualification.status,
+        presentation: presentationOf(pkg),
+        setup: Boolean(pkg.manifest.setup),
+        storage: (pkg.manifest.storage ?? []).length,
+        claims: (pkg.manifest.storage ?? []).map((s) => ({ id: s.id, purpose: s.purpose, external: s.external ? { hint: s.external.hint, required: s.external.required ?? false, readOnly: s.external.readOnly ?? false } : null })),
       });
     } catch (e) {
       items.push({
@@ -116,6 +135,10 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
         availability: 'unavailable',
         reason: e instanceof HarborError ? e.message : 'invalid package',
         qualification: 'invalid',
+        presentation: { tagline: null, category: 'other', icon: null, gallery: [], developer: null, website: null, releaseNotes: null },
+        setup: false,
+        storage: 0,
+        claims: [],
       });
     }
   }
@@ -123,3 +146,8 @@ export function listCatalog(catalogDir: string): CatalogItem[] {
 }
 
 export { RELEASE_FILES };
+
+export function presentationOf(pkg: LoadedPackage): CatalogItem['presentation'] {
+  const p = pkg.manifest.presentation ?? {};
+  return { tagline: p.tagline ?? null, category: p.category ?? 'other', icon: p.icon ?? null, gallery: p.gallery ?? [], developer: p.developer ?? null, website: p.website ?? null, releaseNotes: p.releaseNotes ?? null };
+}

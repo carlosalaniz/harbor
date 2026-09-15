@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "jellyfin",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "3cde8b18991c85b2709955ade2e658550808c165e6f74530df015316fdb25249"
+    },
+    "compose.yaml": {
+      "sha256": "288318e62cf235c1845fa83f28fd0eb3f1c1c8cb433803945bf4c4f309ffda08"
+    },
+    "README.md": {
+      "sha256": "3213ae301825805cd90ec10537f50e312274f196570da23a9d0e58e257b0f045"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "jellyfin/jellyfin@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db",
+      "repository": "jellyfin/jellyfin",
+      "tag": "10.11.11",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:0b901391a662862eddb5dc55d244d7883cbb6236ef5b9a6ea82abc78a89819f0",
+      "appVersion": "10.11.11",
+      "imageCreated": "2026-06-06T15:43:54Z",
+      "source": "https://hub.docker.com/r/jellyfin/jellyfin"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "10.11.11"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; jellyfin/jellyfin:10.11.11); image config: ExposedPorts 8096/tcp, Volumes /cache,/config, User root.",
+      "Live catalog run catalog-2026-09-15T00-42-58: passed (healthy after 31s; page title \"ddcb45c82584\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "236767c7c80470addced089a0b4879916738d64ff237422f16f06880d48bdb50"
+    }
+  }
+}

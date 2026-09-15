@@ -1,0 +1,12 @@
+services:
+  web:
+    image: ghcr.io/mealie-recipes/mealie@sha256:a4d12ab3a009832cc94058345e22aea831c3e992e94783fefc1cd5a08544fe0c # tag: v3.26.0
+    environment:
+      ALLOW_SIGNUP: "false"
+      TZ: "UTC"
+      MAX_WORKERS: "1"
+      WEB_CONCURRENCY: "1"
+    volumes:
+      - {type: volume, source: data, target: /app/data}
+volumes:
+  data: {}

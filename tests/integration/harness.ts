@@ -4,6 +4,9 @@ import path from 'node:path';
 import { createServer } from 'node:net';
 import { normalizeConfig, type DaemonConfig } from '../../src/config.js';
 import { FakeDocker } from '../../src/docker/fake.js';
+import { FakeTailscale } from '../../src/exposure/tailscale.js';
+import { FakeCaddyAdmin } from '../../src/exposure/caddy.js';
+import { FakeVerifier } from '../../src/exposure/verify.js';
 import { startDaemon, type Daemon, type DaemonOverrides } from '../../src/daemon.js';
 import { initializeState } from '../../src/state/db.js';
 import { enrollAdministrator } from '../../src/maintenance.js';
@@ -37,6 +40,9 @@ export class MutableClock implements Clock {
 export interface Harness {
   daemon: Daemon;
   fake: FakeDocker;
+  tailscale: FakeTailscale;
+  caddy: FakeCaddyAdmin;
+  verifier: FakeVerifier;
   config: DaemonConfig;
   stateDir: string;
   catalogDir: string;
@@ -130,7 +136,10 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   initializeState(stateDir, { clock: systemClock, ids: systemIds, config: {} });
   await enrollAdministrator(config, ADMIN.username, ADMIN.password, { reset: false });
   const fake = new FakeDocker(clock);
-  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
+  const tailscale = new FakeTailscale();
+  const caddy = new FakeCaddyAdmin();
+  const verifier = new FakeVerifier();
+  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
   let daemon = await start();
   const baseUrl = `http://localhost:${port}`;
   const api = new Api(baseUrl, null);
@@ -139,6 +148,9 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   const h: Harness = {
     daemon,
     fake,
+    tailscale,
+    caddy,
+    verifier,
     config,
     stateDir,
     catalogDir,

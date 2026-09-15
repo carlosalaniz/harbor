@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "forgejo",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "3d79838cfcc3e99289ec3644ce3fafa8ae92460901a9dd8dff4f69ac6b6d2125"
+    },
+    "compose.yaml": {
+      "sha256": "0dbccb333ff9c5275a504e56561ea589466771dac3d4c858dc3fdb1706d4e1aa"
+    },
+    "README.md": {
+      "sha256": "4fb816b7fa568b6b2c43d1b3a0ea7f7280b101d6e4f373a80fd8239a3f694b7a"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "codeberg.org/forgejo/forgejo@sha256:a3e33d03e771d3e58b27de5573c3a25dc4f670583a6724c1878a6d0bbecf3556",
+      "repository": "codeberg.org/forgejo/forgejo",
+      "tag": "16.0.4",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:d11261f3634f6257f4dd946bffa7215beb144e24debb7f9f5cbccb4823f13b1a",
+      "appVersion": "16.0.4",
+      "imageCreated": "2026-09-10T11:11:00Z",
+      "source": "https://codeberg.org/forgejo/forgejo"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "16.0.4"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; codeberg.org/forgejo/forgejo:16.0.4); image config: ExposedPorts 22/tcp,3000/tcp, Volumes /data, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 28s; page title \"Installation - Forgejo: Beyond coding. We forge.\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "b2ba4206b6344a4116b9a7eb86f822942940fec0fa83327114d77fb7a98775b8"
+    }
+  }
+}

@@ -6,7 +6,7 @@
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "522edd7c769de6b5d8d35518a8552907782a37ee8e7c6217c16f71300204dbe9"
+      "sha256": "161a4f76d92a9104cf0089e1ed6d573924f02083acee1396d38538e2a245dee5"
     },
     "compose.yaml": {
       "sha256": "6fd2bb82776ee2ac89ecb162fba9d0f38a185fccf8865900bb7bfedde7f96973"
@@ -39,7 +39,7 @@
   },
   "qualification": {
     "status": "passed",
-    "date": "2026-09-14",
+    "date": "2026-09-15",
     "node": "v24.12.0",
     "dockerEngine": "29.8.0",
     "dockerCompose": "5.5.1",
@@ -53,7 +53,13 @@
       "postgres image config declares VOLUME /var/lib/postgresql/data (claimed as storage `database`); n8n image declares no volumes, ExposedPorts 5678/tcp, User node.",
       "n8n 2.x task runners: internal mode inside the web container; no sidecar. External runners not qualified.",
       "Live run vm-2026-09-14T18-40-00: passed",
-      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory"
+      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 104s; page title \"n8n.io - Workflow Automation\"; health 200)"
     ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "0161b8420a148f0db35a5a015b58e9ecff0d98cd26f193ce7439a340fb591668"
+    }
   }
 }

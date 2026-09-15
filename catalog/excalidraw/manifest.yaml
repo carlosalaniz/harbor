@@ -26,3 +26,10 @@ health:
   deadlineSeconds: 90
 ui:
   primaryEndpoint: web
+presentation:
+  tagline: Whiteboard for quick sketches and diagrams
+  category: productivity
+  icon: icon.svg
+  developer: Excalidraw contributors
+  website: https://excalidraw.com
+  releaseNotes: Static web image pinned by digest; drawings live in your browser and in exported files.

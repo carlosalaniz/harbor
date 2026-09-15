@@ -6,7 +6,7 @@
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "0846c6bf5faf419a1890fc792dbe880bdbf9bcd0558bd309e814c95172ff30c7"
+      "sha256": "28dee8e6ad52d181781fc5fa67182d60c9c260e712642193a745f75aa0d35fa8"
     },
     "compose.yaml": {
       "sha256": "12a1aa7755b2cc96962d935f5d956883676bca659d0035f6ec0b865571fb6de4"
@@ -29,7 +29,7 @@
   },
   "qualification": {
     "status": "passed",
-    "date": "2026-09-14",
+    "date": "2026-09-15",
     "node": "v24.12.0",
     "dockerEngine": "29.8.0",
     "dockerCompose": "5.5.1",
@@ -41,7 +41,13 @@
       "Digest resolved 2026-09-14 via registry API (scripts/registry.mjs digest ghcr.io/alam00000/bentopdf-simple:v2.8.8).",
       "Image config: ExposedPorts 8080/tcp, User nginx, no declared volumes.",
       "Live run vm-2026-09-14T18-40-00: passed",
-      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory"
+      "Fresh Ubuntu 24.04 x86-64 DigitalOcean droplet; A01-A16 all passed; browser demos recorded in the run directory",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 30s; page title \"BentoPDF - PDF Tools\"; health 200)"
     ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "fa93b7bdf6a4d8cf9df9489450107c25c5336a4930c4eddbbf8364c77f4ad3c3"
+    }
   }
 }

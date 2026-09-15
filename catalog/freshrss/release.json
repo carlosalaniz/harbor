@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "package": {
+    "id": "freshrss",
+    "revision": "1"
+  },
+  "files": {
+    "manifest.yaml": {
+      "sha256": "15ed47fd1c370cce573a5c0cedafa02ba3168a0a982f1f1895fda5665080d4d3"
+    },
+    "compose.yaml": {
+      "sha256": "7437a521d86d074120deb0c7cc86fa34f8845e50f0852b343159ce898dcf44da"
+    },
+    "README.md": {
+      "sha256": "b4d5c18b83fa4bf28918bdef1dbb07db754ebdea22c925b3aa36196128beb5fb"
+    }
+  },
+  "images": {
+    "web": {
+      "reference": "freshrss/freshrss@sha256:258b8edfc8a76a61f60d2d6a14d8f8d12495d78abf38646a2137612dfa264a21",
+      "repository": "freshrss/freshrss",
+      "tag": "1.30.0",
+      "platform": "linux/amd64",
+      "platformDigest": "sha256:e885cd223c96b895086f59d4e8642aa5d8eff83352619f65a56931e084fc2fdc",
+      "appVersion": "1.30.0",
+      "imageCreated": "2026-09-09T14:44:32Z",
+      "source": "https://hub.docker.com/r/freshrss/freshrss"
+    }
+  },
+  "qualification": {
+    "status": "passed",
+    "date": "2026-09-15",
+    "node": "v24.12.0",
+    "dockerEngine": "29.8.0",
+    "dockerCompose": "5.5.1",
+    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "appVersions": {
+      "web": "1.30.0"
+    },
+    "notes": [
+      "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; freshrss/freshrss:1.30.0); image config: ExposedPorts 80/tcp, Volumes none, User root.",
+      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 25s; page title \"Installation · FreshRSS: step 1\"; health 200)"
+    ]
+  },
+  "assets": {
+    "icon.svg": {
+      "sha256": "cd4b523442a0af289ccd774eea65fa908261e0ab7a374380c5fd2cfb882e72b2"
+    }
+  }
+}
