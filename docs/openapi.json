@@ -40,6 +40,93 @@
         }
       }
     },
+    "/v1/setup": {
+      "get": {
+        "description": "Whether this Harbor still needs its first administrator, plus what the setup wizard shows.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "post": {
+        "description": "Create the first administrator (setup code from the installer required), optionally name the machine, and get a session. Refused once an administrator exists.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "code",
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 8
+                  },
+                  "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "deviceName": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/update": {
+      "get": {
+        "description": "Installed version, newest release, and the state of an update in progress.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/update/check": {
+      "post": {
+        "description": "Ask GitHub Releases now whether a newer Harbor exists.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/update/apply": {
+      "post": {
+        "description": "Update Harbor to the newest release: downloads, verifies, installs in place and restarts the daemon (the console reconnects).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/sessions": {
       "post": {
         "description": "Log in the local administrator. Rate limited.",

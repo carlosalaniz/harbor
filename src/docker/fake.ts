@@ -223,7 +223,7 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
   // --- fake app listeners
   private async listen(c: FakeContainer): Promise<void> {
     for (const p of c.ports) {
-      if (p.hostIp !== '127.0.0.1') continue;
+      // the fake always binds loopback (LAN mode renders 0.0.0.0 but tests must not open the machine)
       const server = createServer((req, res) => {
         const verdict = this.behaviour.respond?.(c.service, req.url ?? '/') ?? 200;
         if (verdict === 'hang') return; // never respond

@@ -6,6 +6,8 @@ import { browserUrlFor } from '../config.js';
 import { defaultNetworkName, instanceLabels, ownedVolumeName, type InstanceIdentity } from './identity.js';
 
 export interface RenderInput {
+  // LAN mode publishes app ports on every interface (0.0.0.0); default loopback only
+  bindHost?: string;
   manifest: Manifest;
   compose: ComposeSource;
   identity: InstanceIdentity;
@@ -85,7 +87,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
     const ports = endpoints
       .filter((e) => e.service === service)
       .sort((a, b) => a.id.localeCompare(b.id))
-      .map((e) => ({ target: e.containerPort, published: String(e.hostPort), host_ip: '127.0.0.1', protocol: 'tcp', mode: 'host' }));
+      .map((e) => ({ target: e.containerPort, published: String(e.hostPort), host_ip: input.bindHost ?? '127.0.0.1', protocol: 'tcp', mode: 'host' }));
 
     const def: Record<string, unknown> = {
       image: src.image,

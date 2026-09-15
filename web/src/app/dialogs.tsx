@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DomainsDto } from '../../../src/contracts/api';
 import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
-import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel } from './components';
+import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
 import { categoryLabel, fmtTime } from './format';
 import type { Action, Console } from './store';
 
@@ -166,6 +166,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
       )}
       <p>{item.description}</p>
       {item.presentation.releaseNotes && <p className="muted small">{item.presentation.releaseNotes}</p>}
+      {item.defaultCredentials && <DefaultLogin creds={item.defaultCredentials} />}
       <ul className="facts">
         <li>{item.storage ? `${item.storage} retained data volume${item.storage > 1 ? 's' : ''}` : 'No server-side data'}</li>
         <li>{item.setup ? 'Has its own account setup after install' : 'No account setup needed'}</li>
@@ -407,7 +408,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
       )}
       <div className="row wrap actions">
         {canOpen && primary && (
-          <a className="btn primary" href={primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`}>
+          <a className="btn primary" href={openUrl(inst) ?? primary.urls.loopback} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`}>
             Open
           </a>
         )}
@@ -464,6 +465,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           </ul>
         </>
       )}
+      {detail?.defaultCredentials && !retained && <DefaultLogin creds={detail.defaultCredentials} />}
       {retained && <p className="muted">Removed. Data volumes and secrets are retained; Reinstall restores the exact same release.</p>}
       {inst.installState !== 'installing' && (
         <details className="danger-zone" open={purgeOpen} onToggle={(e) => setPurgeOpen((e.target as HTMLDetailsElement).open)}>
@@ -799,5 +801,29 @@ export function UploadPackageDialog({ onClose, onDone }: { onClose: () => void; 
         </button>
       </div>
     </Dialog>
+  );
+}
+
+// Apps that ship with a fixed first login (documented by the upstream project). Shown with a copy button and
+// the one thing that matters: change it right after signing in, because every copy of the app starts the same.
+export function DefaultLogin({ creds }: { creds: { username: string; password: string; note: string | null } }) {
+  return (
+    <div className="default-login" role="note">
+      <div className="row between wrap">
+        <strong>Default login</strong>
+        <Pill tone="warn">change it after the first sign-in</Pill>
+      </div>
+      <dl className="kv">
+        <dt>Username</dt>
+        <dd>
+          <code>{creds.username}</code> <Copy text={creds.username} />
+        </dd>
+        <dt>Password</dt>
+        <dd>
+          <code>{creds.password}</code> <Copy text={creds.password} />
+        </dd>
+      </dl>
+      <p className="muted small">{creds.note ?? 'This login is the same for everyone who installs this app; anyone who reaches it can use it until you change it.'}</p>
+    </div>
   );
 }

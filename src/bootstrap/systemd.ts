@@ -5,7 +5,7 @@ import { UNIT_MARKER } from './host.js';
 // only Harbor's own child processes (KillMode=control-group). App containers belong to Docker's
 // cgroups, so restarting Harbor never stops them. Docker is Wanted, not Required: if Docker stops,
 // Harbor stays up and reports it as unavailable instead of being stopped along with it.
-export function harborUnit(): string {
+export function harborUnit(opts: { lan?: boolean } = {}): string {
   return `${UNIT_MARKER}
 [Unit]
 Description=${PRODUCT.displayName} local application manager (preview)
@@ -33,7 +33,7 @@ PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
-LockPersonality=yes
+LockPersonality=yes${opts.lan ? '\n# LAN mode: the console answers on port 80 without running as root\nAmbientCapabilities=CAP_NET_BIND_SERVICE' : ''}
 Environment=NODE_ENV=production
 
 [Install]
@@ -68,6 +68,12 @@ polkit.addRule(function (action, subject) {
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
+  // Harbor updating itself: start the root oneshot for one version (harbor-self-update@<version>.service)
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("${SELF_UPDATE_UNIT_PREFIX}") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
   return polkit.Result.NOT_HANDLED;
 });
 `;
@@ -85,5 +91,23 @@ Description=Let the ${PRODUCT.serviceUser} service account operate Tailscale (re
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/tailscale set --operator=${PRODUCT.serviceUser}
+`;
+}
+
+export const SELF_UPDATE_UNIT_PREFIX = 'harbor-self-update@';
+export const SELF_UPDATE_UNIT_FILE = 'harbor-self-update@.service';
+
+// Template unit: `systemctl start harbor-self-update@0.8.0.service` runs the root apply step for that version.
+export function selfUpdateUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor self-update to version %i (download, verify, in-place bootstrap)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor self-update apply --version %i
+TimeoutStartSec=1800
 `;
 }

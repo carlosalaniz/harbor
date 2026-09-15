@@ -242,7 +242,7 @@ export class OperationRunner {
 
   private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure): Promise<string> {
     const externalStorage = Object.fromEntries(this.ctx.repo.resources(inst.id).filter((r) => r.kind === 'bind').map((r) => [r.role, { hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) }]));
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage });
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1' });
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
       await this.ctx.compose.config({ projectDir: runtimeDir, projectName: identity.project, file }, 60_000);
@@ -278,8 +278,9 @@ export class OperationRunner {
     if (!alloc) throw new HarborError('STATE_CHANGED', `no allocation for health endpoint ${health.endpoint}`);
     const container = containers.find((c) => c.labels['com.docker.compose.service'] === ep.service);
     if (!container || container.state !== 'running') throw new HarborError('OPERATION_FAILED', `service ${ep.service} is not running after start`);
-    const bound = container.ports.some((p) => p.hostIp === '127.0.0.1' && p.hostPort === alloc.hostPort && p.containerPort === alloc.containerPort);
-    if (!bound) throw new HarborError('OPERATION_FAILED', `container ${container.name} does not publish 127.0.0.1:${alloc.hostPort}->${alloc.containerPort}; refusing to probe an unrelated listener`);
+    const okHost = (ip: string) => ip === '127.0.0.1' || ip === '0.0.0.0' || ip === '' || ip === '::';
+    const bound = container.ports.some((p) => okHost(p.hostIp) && p.hostPort === alloc.hostPort && p.containerPort === alloc.containerPort);
+    if (!bound) throw new HarborError('OPERATION_FAILED', `container ${container.name} does not publish ${alloc.hostPort}->${alloc.containerPort} on this machine; refusing to probe an unrelated listener`);
     this.ctx.repo.setOperationPhase(op.id, 'verifying', 'checking');
     repo.updateInstance(inst.id, { runtime: 'running', readiness: 'checking', observedAt: repo.now() });
     this.event(op, 'checking', `probing http://127.0.0.1:${alloc.hostPort}${health.path} (deadline ${health.deadlineSeconds}s)`);

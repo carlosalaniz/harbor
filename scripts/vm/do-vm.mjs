@@ -29,11 +29,13 @@ import process from 'node:process';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const ENV_FILE = path.join(ROOT, '.env.vm.local');
-const STATE_FILE = path.join(ROOT, '.vm.local.json');
-const KNOWN_HOSTS = path.join(ROOT, '.vm-known_hosts');
+// A second, independent droplet (e.g. a fresh install test) is selected with HARBOR_VM_NAME=harbor-test-2
+// HARBOR_VM_STATE=.vm2.local.json; the default stays the designated `harbor-test` droplet.
+const STATE_FILE = path.join(ROOT, process.env.HARBOR_VM_STATE ?? '.vm.local.json');
+const KNOWN_HOSTS = path.join(ROOT, process.env.HARBOR_VM_KNOWN_HOSTS ?? '.vm-known_hosts');
 const KEY_FILE = process.env.HARBOR_VM_SSH_KEY ?? path.join(homedir(), '.ssh', 'harbor-test-vm_ed25519');
 
-const VM_NAME = 'harbor-test';
+const VM_NAME = process.env.HARBOR_VM_NAME ?? 'harbor-test';
 const VM_TAG = 'harbor-test';
 const IMAGE = 'ubuntu-24-04-x64';
 const SIZE = process.env.HARBOR_VM_SIZE ?? 's-4vcpu-8gb';

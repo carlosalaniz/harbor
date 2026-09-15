@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
-import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, PlatformToolDto, SecurityDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
+import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
 import { fmtBytes, fmtUptime } from '../format';
@@ -62,6 +62,125 @@ export function Settings({ c, onLogout, initialSection, onSection }: { c: Consol
         {section === 'about' && <About c={c} />}
       </div>
     </div>
+  );
+}
+
+// Harbor updating itself: newest GitHub release, one button, progress that survives the daemon's restart.
+function HarborUpdate({ c }: { c: Console }) {
+  const initial = c.data.system?.update ?? null;
+  const [st, setSt] = useState<SelfUpdateStatusDto | null>(initial);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [watching, setWatching] = useState(false);
+  useEffect(() => {
+    if (!watching) setSt(c.data.system?.update ?? null);
+  }, [c.data.system, watching]);
+  // while an update runs the daemon restarts: poll gently and forgive errors until it is back
+  useEffect(() => {
+    if (!watching) return;
+    const t = setInterval(() => {
+      api
+        .selfUpdate()
+        .then((s) => {
+          setSt(s);
+          if (s.applying && (s.applying.state === 'succeeded' || s.applying.state === 'failed')) {
+            setWatching(false);
+            void c.refresh();
+          }
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [watching, c]);
+  const check = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      setSt(await api.selfUpdateCheck());
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const apply = async () => {
+    setConfirm(false);
+    setBusy(true);
+    setMsg(null);
+    try {
+      setSt(await api.selfUpdateApply());
+      setWatching(true);
+    } catch (e) {
+      setMsg(e instanceof ApiError ? `${e.message}. ${e.nextAction}` : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!st) return null;
+  const running = st.applying && ['requested', 'downloading', 'installing'].includes(st.applying.state);
+  return (
+    <section className={`card harbor-update ${st.available ? 'attention-soft' : ''}`} aria-labelledby="hu-h">
+      <div className="row between wrap">
+        <div>
+          <h2 id="hu-h">Harbor {st.current}</h2>
+          <p className="muted small">
+            {st.available && st.latest
+              ? `Version ${st.latest.version} is available${st.latest.publishedAt ? ` (released ${new Date(st.latest.publishedAt).toLocaleDateString()})` : ''}.`
+              : st.error
+                ? `Could not check for updates: ${st.error}`
+                : st.checkedAt
+                  ? `Up to date · checked ${new Date(st.checkedAt).toLocaleTimeString()}`
+                  : 'Not checked yet.'}
+          </p>
+        </div>
+        <div className="row wrap">
+          <button className="btn" onClick={() => void check()} disabled={busy || Boolean(running)}>
+            Check now
+          </button>
+          {st.available && !running && (
+            <button className="btn primary" onClick={() => setConfirm(true)} disabled={busy} aria-label={`Update Harbor to ${st.latest?.version}`}>
+              Update to {st.latest?.version}
+            </button>
+          )}
+        </div>
+      </div>
+      {st.available && st.latest?.notes && (
+        <details>
+          <summary className="muted small">What is new in {st.latest.version}</summary>
+          <pre className="code wrap notes">{st.latest.notes}</pre>
+          {st.latest.url && (
+            <a className="small" href={st.latest.url} target="_blank" rel="noopener noreferrer">
+              Release page ↗
+            </a>
+          )}
+        </details>
+      )}
+      {st.applying && (
+        <p className={`small ${st.applying.state === 'failed' ? 'error' : st.applying.state === 'succeeded' ? 'notice' : ''}`} role="status">
+          {running ? <progress aria-label="update progress" /> : null}
+          {st.applying.state === 'succeeded' ? `Updated to ${st.applying.version}.` : st.applying.state === 'failed' ? `Update to ${st.applying.version} failed: ${st.applying.message}` : `Updating to ${st.applying.version}: ${st.applying.message}. Harbor restarts for a minute; this page reconnects by itself.`}
+        </p>
+      )}
+      {msg && (
+        <p className="error small" role="alert">
+          {msg}
+        </p>
+      )}
+      {confirm && st.latest && (
+        <Dialog title={`Update Harbor to ${st.latest.version}?`} onClose={() => setConfirm(false)}>
+          <p>Harbor downloads the release from GitHub, verifies its checksum, installs it and restarts. Your apps keep running; the console is unavailable for about a minute. The database is migrated automatically.</p>
+          <div className="row end">
+            <button className="btn" onClick={() => setConfirm(false)}>
+              Cancel
+            </button>
+            <button className="btn primary" onClick={() => void apply()}>
+              Update now
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </section>
   );
 }
 
@@ -175,7 +294,10 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
             {(host?.cpuModel ?? m?.host.cpuModel) ? <span className="muted"> · {host?.cpuModel ?? m?.host.cpuModel}</span> : null}
           </dd>
           <dt>Harbor version</dt>
-          <dd>{c.data.system?.version ?? '—'}</dd>
+          <dd>
+            {c.data.system?.version ?? '—'}
+            {c.data.system?.update.available && c.data.system.update.latest ? <span className="notice"> · {c.data.system.update.latest.version} is available (below)</span> : c.data.system?.update.checkedAt ? <span className="muted"> · up to date</span> : null}
+          </dd>
           <dt>Up for</dt>
           <dd>{m ? fmtUptime(m.uptimeSeconds) : '—'}</dd>
         </dl>
@@ -237,6 +359,7 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
           </dl>
         </section>
       )}
+      <HarborUpdate c={c} />
       <WallpaperPicker c={c} compact onMore={() => go('appearance')} />
       {confirm && (
         <Dialog title={confirm === 'reboot' ? 'Restart this machine?' : 'Shut down this machine?'} onClose={() => setConfirm(null)}>

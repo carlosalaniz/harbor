@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CatalogItemDto, InstanceSummary, SystemMetricsDto } from '../../../../src/contracts/api';
 import { api } from '../../api';
-import { AppIcon, InstanceIcon, Pill, appLabel } from '../components';
+import { AppIcon, InstanceIcon, Pill, appLabel, openUrl } from '../components';
 import { fmtBytes, fmtUptime, plainStatus } from '../format';
 import { useReorder } from '../reorder';
 import type { Console } from '../store';
@@ -203,8 +203,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
 }
 
 function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDetails: () => void; reorder?: ReturnType<typeof useReorder> }) {
-  const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
-  const url = primary ? (primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback) : null;
+  const url = openUrl(inst);
   const arranging = reorder?.arranging ?? false;
   const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && url && !arranging;
   const status = plainStatus(inst);

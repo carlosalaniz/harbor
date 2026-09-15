@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SelfUpdateStatusDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
+import { lanUrl } from '../system/lan.js';
+import { hostname } from 'node:os';
+import { defaultCredentialsOf } from '../packages/catalog.js';
 import { dnsState } from '../system/net.js';
 import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
@@ -51,7 +54,23 @@ export class ApplicationService {
       installationId: this.ctx.installationId,
       managementOrigin: managementOrigin(this.ctx.config),
       deviceName: this.ctx.repo.setting<string>('device.name'),
+      hostname: hostname(),
+      lan: { enabled: this.ctx.config.lan.enabled, url: this.ctx.config.lan.enabled ? lanUrl(this.ctx.config.lan.port) : null },
+      update: this.ctx.selfUpdate.status(),
     };
+  }
+  selfUpdateStatus(): SelfUpdateStatusDto {
+    return this.ctx.selfUpdate.status();
+  }
+  selfUpdateCheck(): Promise<SelfUpdateStatusDto> {
+    return this.ctx.selfUpdate.check();
+  }
+  selfUpdateApply(actor: string): Promise<SelfUpdateStatusDto> {
+    return this.ctx.selfUpdate.apply(actor);
+  }
+  // http://<hostname>.local for app addresses in LAN mode (the console swaps in the host it was opened with)
+  private lanHost(): string | null {
+    return this.ctx.config.lan.enabled ? `${hostname().toLowerCase().replace(/\.local$/, '')}.local` : null;
   }
   setDeviceName(name: string | null): SystemDto {
     const clean = name?.trim().replace(/\s+/g, ' ') ?? '';
@@ -101,15 +120,15 @@ export class ApplicationService {
     return this.ctx.packages.list();
   }
 
-  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string } {
-    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other' });
+  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials'] } {
+    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest) });
     try {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
         return from(this.ctx.packages.load(i.packageId));
       } catch {
-        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other' };
+        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null };
       }
     }
   }
@@ -128,7 +147,7 @@ export class ApplicationService {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current) });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost() });
     });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
@@ -176,7 +195,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost() });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
@@ -194,6 +213,7 @@ export class ApplicationService {
     return {
       ...summary,
       description: meta.description,
+      defaultCredentials: meta.defaultCredentials,
       setup: meta.setup && setupEndpoint ? { endpointId: setupEndpoint.id, browserUrl: browserUrlFor(setupEndpoint.hostPort), instructions: meta.setup.instructions } : null,
       resources: resources.map((r, i) => ({ kind: r.kind, role: r.role, name: r.name, present: presence[i] ?? null })),
       events: this.ctx.repo.eventsForInstance(row.id, 50).map((e) => ({ cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message })),
@@ -310,6 +330,7 @@ export class ApplicationService {
         warnings: [
           ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
+          ...(pkg.manifest.defaultCredentials ? [`This app ships with a default login (${pkg.manifest.defaultCredentials.username}); change it right after the first sign-in.`] : []),
         ],
         releaseHashes: pkg.hashes,
       };

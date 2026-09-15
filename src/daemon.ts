@@ -30,6 +30,9 @@ import { FakePower, SystemdPower, type PowerControl } from './system/power.js';
 import { PackageStore } from './packages/store.js';
 import { LogBuffer } from './system/logs.js';
 import { TerminalService } from './system/terminal.js';
+import { FakeReleaseFeed, FakeUnitStarter, GitHubReleaseFeed, SelfUpdateService, SystemctlStarter, type ReleaseFeed, type UnitStarter } from './system/selfupdate.js';
+import { SetupService } from './auth/setup.js';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/registry.js';
 
 export function productVersion(): string {
@@ -57,6 +60,8 @@ export interface DaemonOverrides {
   fetcher?: Fetcher;
   power?: PowerControl;
   registry?: ImageResolver;
+  releaseFeed?: ReleaseFeed;
+  unitStarter?: UnitStarter;
 }
 
 export interface Daemon {
@@ -68,6 +73,7 @@ export interface Daemon {
   sessions: SessionService;
   tools: PlatformToolsService;
   appearance: AppearanceService;
+  selfUpdate: SelfUpdateService;
   url: string;
   close(): Promise<void>;
 }
@@ -120,13 +126,17 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const net = overrides.net ?? (fakeMode ? new FakeNet() : new RealNet());
     const registry = overrides.registry ?? (fakeMode ? demoRegistry() : new RegistryResolver());
     const packages = new PackageStore(config.catalogDir, config.localPackagesDir, registry, clock);
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version: productVersion(), tailscale, caddy, verify, net, packages, logBuffer };
+    const fetcher = overrides.fetcher ?? (fakeMode ? demoFetcher() : new RealFetcher());
+    const version = productVersion();
+    const feed = overrides.releaseFeed ?? (fakeMode ? demoReleaseFeed(version) : config.updates.repo ? new GitHubReleaseFeed(fetcher, config.updates.repo) : null);
+    const unitStarter = overrides.unitStarter ?? (fakeMode ? new FakeUnitStarter() : new SystemctlStarter());
+    const selfUpdate = new SelfUpdateService(version, feed, unitStarter, config.stateDir, clock, log);
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
     const tools = new PlatformToolsService(repo, clock, overrides.toolsProbe, { tailscale, caddy });
     const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000);
-    const fetcher = overrides.fetcher ?? (fakeMode ? demoFetcher() : new RealFetcher());
     const power = overrides.power ?? (fakeMode ? new FakePower() : new SystemdPower());
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode
@@ -137,10 +147,35 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     if (recovered) log.warn(`marked ${recovered} interrupted operation(s) needs_action`);
     repo.purgeExpiredSessions();
 
-    const app = await buildApi({ config, service, sessions, tools, appearance, power, terminals, log, version: ctx.version });
+    const setup = new SetupService(repo, sessions, config.stateDir);
+    const tailscaleFacts = async () => {
+      try {
+        const installed = await tailscale.installed();
+        const st = installed ? await tailscale.status() : null;
+        return { installed, loggedIn: Boolean(st && st.backendState === 'Running' && st.dnsName) };
+      } catch {
+        return { installed: false, loggedIn: false };
+      }
+    };
+    const app = await buildApi({ config, service, sessions, tools, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version });
     await app.listen({ host: config.listen.host, port: config.listen.port });
+    // LAN mode: a second listener on every interface hands requests (and WebSocket upgrades) to the same routes.
+    let lanServer: HttpServer | null = null;
+    if (config.lan.enabled) {
+      lanServer = createHttpServer((req, res) => app.routing(req, res));
+      lanServer.on('upgrade', (req, socket, head) => app.server.emit('upgrade', req, socket, head));
+      await new Promise<void>((resolve, reject) => {
+        lanServer!.once('error', reject);
+        lanServer!.listen({ host: '::', port: config.lan.port }, () => resolve());
+      }).catch((e: Error) => {
+        log.error(`LAN listener on port ${config.lan.port} failed: ${e.message}; the console stays reachable on 127.0.0.1:${config.listen.port}`);
+        lanServer = null;
+      });
+      if (lanServer) log.info('LAN listener up', { port: config.lan.port });
+    }
     observer.start();
     appearance.start();
+    selfUpdate.start();
     const url = `http://localhost:${config.listen.port}`;
     log.info(`daemon listening`, { url, stateDir: config.stateDir, docker: docker.description, installationId: installation.id });
 
@@ -150,7 +185,9 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       closed = true;
       observer.stop();
       appearance.stop();
+      selfUpdate.stop();
       terminals.closeAll();
+      if (lanServer) await new Promise<void>((r) => lanServer!.close(() => r()));
       const graceful = runner.shutdown();
       await Promise.race([graceful, new Promise((r) => setTimeout(r, 20_000))]);
       await app.close();
@@ -159,7 +196,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       lock?.release();
       log.info('daemon stopped');
     };
-    return { app, ctx, service, runner, observer, sessions, tools, appearance, url, close };
+    return { app, ctx, service, runner, observer, sessions, tools, appearance, selfUpdate, url, close };
   } catch (e) {
     lock?.release();
     throw e;
@@ -182,6 +219,15 @@ export function demoFetcher(): FakeFetcher {
     return fakeJson({ data: { children: [{ data: { title: `Sunrise over the fjord [OC] (${sub})`, author: 'demo_user', url: 'https://i.redd.it/demo1.jpg', permalink: `/r/${sub}/comments/demo1/sunrise/`, over_18: false, preview: { images: [{ source: { url: 'https://preview.redd.it/demo1.jpg?auto=webp', width: 3000, height: 2000 } }] } } }, { data: { title: 'Vertical phone shot', author: 'tall', url: 'https://i.redd.it/tall.jpg', permalink: '/r/x/comments/tall/', over_18: false, preview: { images: [{ source: { url: 'https://preview.redd.it/tall.jpg', width: 1080, height: 2340 } }] } } }, { data: { title: 'nsfw', author: 'no', url: 'https://i.redd.it/nsfw.jpg', over_18: true } }] } });
   });
   f.on('https://i.redd.it/', { status: 200, contentType: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]) });
+  return f;
+}
+
+// Fake mode: "a newer Harbor exists" so the update flow can be exercised without GitHub.
+export function demoReleaseFeed(current: string): FakeReleaseFeed {
+  const f = new FakeReleaseFeed();
+  const [a, b, c] = current.split('.').map(Number);
+  const next = `${a}.${b}.${(c ?? 0) + 1}`;
+  f.info = { version: next, tag: `v${next}`, publishedAt: '2026-09-15T12:00:00Z', notes: 'Demo release: what a newer Harbor would say here.', url: `https://github.com/carlosalaniz/harbor/releases/tag/v${next}`, archiveUrl: `https://github.com/carlosalaniz/harbor/releases/download/v${next}/harbor-${next}-linux-x64.tar.gz`, sumsUrl: `https://github.com/carlosalaniz/harbor/releases/download/v${next}/SHA256SUMS` };
   return f;
 }
 

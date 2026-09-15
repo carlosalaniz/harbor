@@ -8,7 +8,7 @@ export function eventDto(e: EventRow): EventDto {
   return { cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message };
 }
 
-export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable'] } = { icon: null, category: 'other' }): InstanceSummary {
+export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null } = { icon: null, category: 'other' }): InstanceSummary {
   return {
     id: i.id,
     name: i.name,
@@ -22,7 +22,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     runtime: i.runtime,
     readiness: i.readiness,
     observedAt: i.observedAt,
-    endpoints: i.endpoints.map((e) => ({ id: e.id, containerPort: e.containerPort, hostPort: e.hostPort, browserUrl: browserUrlFor(e.hostPort), urls: endpointUrls(e, exposures), primary: i.primaryExposure })),
+    endpoints: i.endpoints.map((e) => ({ id: e.id, containerPort: e.containerPort, hostPort: e.hostPort, browserUrl: browserUrlFor(e.hostPort), urls: endpointUrls(e, exposures, look.lanHost ?? null), primary: i.primaryExposure })),
     primaryEndpoint,
     operationId: i.activeOperationId ?? i.lastOperationId,
     hasRetainedData: i.everInstalled || i.secrets.length > 0,

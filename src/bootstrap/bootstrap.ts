@@ -12,7 +12,10 @@ import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
 import { exec, execOk } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
-import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit } from './systemd.js';
+import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit } from './systemd.js';
+import { privateInterfaces, lanUrl as lanUrlFor } from '../system/lan.js';
+import { readSetupCode, writeSetupCode } from '../auth/setup.js';
+import { hostname as osHostname } from 'node:os';
 import { caddyPreview, cockpitPreview, externalToolRecord, portainerPreview, setupCaddy, setupCockpit, setupPortainer, setupTailscale, tailscalePreview, type ToolRecord } from './tools.js';
 
 export interface BootstrapOptions {
@@ -28,6 +31,12 @@ export interface BootstrapOptions {
   withTailscale: boolean;
   tailscaleAuthKey: string | null;
   withPublicProxy: boolean;
+  // first-run in the browser: no administrator on the terminal; a setup code is printed for the wizard
+  setupInBrowser: boolean;
+  // LAN mode (home network): console on port 80 + app ports on every interface, mDNS name <hostname>.local
+  lan: boolean;
+  lanForce: boolean; // allow LAN mode without a private-network interface (cloud VM: everything becomes public)
+  hostname: string | null; // set the machine's hostname (mDNS name becomes <hostname>.local)
   log: (m: string) => void;
   confirm: (question: string, preview: string[]) => Promise<boolean>;
 }
@@ -36,12 +45,15 @@ export interface BootstrapResult {
   facts: HostFacts;
   installationId: string;
   adminCreated: boolean;
+  setupCode: string | null; // when the administrator is created in the browser
+  lanUrl: string | null;
   managementUrl: string;
   tools: ToolRecord[];
   versions: { harbor: string; node: string; docker: string | null; compose: string | null };
 }
 
 const CONFIG_FILE = `${PRODUCT.paths.etc}/harbor.json`;
+const lanPort = 80; // LAN mode console port (plain http://<hostname>.local)
 
 // Idempotent, root-only bootstrap. Every mutating step is previewed and approved (or --yes).
 export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult> {
@@ -82,6 +94,11 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     log(`Docker Engine ${facts.docker.version}, Compose ${facts.docker.composeVersion} found; not modified`);
   }
 
+  // 2b. LAN mode sanity: on a cloud VM "every interface" means the public internet
+  if (opts.lan && !opts.lanForce && privateInterfaces().length === 0) {
+    throw new HarborError('UNSUPPORTED_CAPABILITY', 'LAN mode asked for, but this machine has no private-network address (it looks like a cloud server): its ports would face the internet', { nextAction: 'Leave LAN mode off here (use Tailscale or publishing), or pass --lan-force if you really want that.' });
+  }
+
   // 3. Preview of the Harbor installation itself
   const preview = [
     `${facts.existing.optDir === 'harbor' ? `Replace release files in ${PRODUCT.paths.opt} (current ${facts.existing.optReleaseVersion ?? '?'} -> ${release.version})` : `Install release ${release.version} to ${PRODUCT.paths.opt}`}`,
@@ -89,7 +106,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     `Ensure ${PRODUCT.paths.etc} (root:${PRODUCT.serviceUser} 0750), ${PRODUCT.paths.var} (${PRODUCT.serviceUser} 0700) and the data folder ${PRODUCT.paths.data} (${PRODUCT.serviceUser} 0755)`,
     facts.existing.config ? `Keep ${CONFIG_FILE}` : `Write ${CONFIG_FILE} (listen 127.0.0.1:${opts.port}, app ports ${PRODUCT.defaults.appPortRange.from}-${PRODUCT.defaults.appPortRange.to}, socket ${facts.docker.socket})`,
     facts.existing.state ? `Keep existing state in ${PRODUCT.paths.var} (apps, keys, administrator untouched)` : `Initialize fresh state in ${PRODUCT.paths.var}`,
-    facts.existing.state ? 'Keep the existing administrator' : `Enroll the local administrator (${opts.adminUsername ?? 'prompted'})`,
+    facts.existing.state ? 'Keep the existing administrator' : opts.setupInBrowser ? 'Create the administrator later in the browser (setup wizard with a printed setup code)' : `Enroll the local administrator (${opts.adminUsername ?? 'prompted'})`,
+    ...(opts.hostname ? [`Set the machine hostname to ${opts.hostname} (mDNS name ${opts.hostname}.local)`] : []),
+    ...(opts.lan ? [`LAN mode: install avahi (mDNS), console on port ${lanPort} and app ports on every interface of this machine`] : []),
     `${facts.existing.unit === 'harbor' ? 'Rewrite' : 'Install'} systemd unit ${PRODUCT.paths.systemdUnit} and (re)start it`,
   ];
   if (!(await opts.confirm('Apply the Harbor installation steps above?', preview))) throw new HarborError('INVALID_REQUEST', 'bootstrap not approved');
@@ -152,6 +171,7 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
       docker: { mode: 'socket', socketPath: facts.docker.socket, cliPluginDirs: [] },
       appPortRange: { ...PRODUCT.defaults.appPortRange },
       logLevel: 'info',
+      lan: { enabled: opts.lan, port: lanPort },
     };
     config = normalizeConfig(raw, PRODUCT.paths.etc);
     writeFileSync(CONFIG_FILE, JSON.stringify(raw, null, 2) + '\n', { mode: 0o640 });
@@ -159,6 +179,33 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     log(`wrote ${CONFIG_FILE}`);
   } else {
     config = loadConfig(CONFIG_FILE);
+    if (opts.lan && !config.lan.enabled) {
+      // turning LAN mode on for an existing installation: rewrite the config, keep everything else
+      const raw = JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) as Record<string, unknown>;
+      raw['lan'] = { enabled: true, port: lanPort };
+      writeFileSync(CONFIG_FILE, JSON.stringify(raw, null, 2) + '\n', { mode: 0o640 });
+      config = loadConfig(CONFIG_FILE);
+      log('LAN mode turned on in the config (apps installed before this keep answering on 127.0.0.1 until they are updated or reinstalled)');
+    }
+  }
+  // hostname + mDNS
+  if (opts.hostname && osHostname() !== opts.hostname) {
+    await execOk('/usr/bin/hostnamectl', ['set-hostname', opts.hostname], { timeoutMs: 30_000 });
+    try {
+      const hosts = readFileSync('/etc/hosts', 'utf8');
+      if (!new RegExp(`^127\\.0\\.1\\.1\\s+${opts.hostname}\\b`, 'm').test(hosts)) writeFileSync('/etc/hosts', hosts.trimEnd() + `\n127.0.1.1 ${opts.hostname}\n`);
+    } catch {
+      /* best effort */
+    }
+    log(`hostname set to ${opts.hostname}`);
+  }
+  if (config.lan.enabled) {
+    const avahi = await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', 'avahi-daemon'], { timeoutMs: 10_000 });
+    if (!avahi.stdout.includes('install ok installed')) {
+      log('installing avahi-daemon (mDNS: this machine answers as <hostname>.local on your network)');
+      await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'avahi-daemon', 'libnss-mdns'], { timeoutMs: 10 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
+    }
+    await execOk('/usr/bin/systemctl', ['enable', '--now', 'avahi-daemon'], { timeoutMs: 60_000 });
   }
 
   // 8. State (explicit initialization, never on accidental absence)
@@ -180,19 +227,25 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     log(`existing state found (installation ${installationId}); apps, keys and administrator preserved`);
   }
 
-  // 9. Administrator
+  // 9. Administrator: on the terminal, or later in the browser (setup wizard guarded by a printed code)
   let adminCreated = false;
+  let setupCode: string | null = null;
   {
     const db = openState(config.stateDir);
     const hasAdmin = new Repo(db, systemClock).administrator() !== null;
     db.close();
     if (!hasAdmin) {
-      if (!opts.passwordProvider) throw new HarborError('INVALID_REQUEST', 'no administrator enrolled and no password source', { nextAction: 'Run interactively or pass --password-stdin.' });
-      const username = opts.adminUsername ?? 'admin';
-      const password = await opts.passwordProvider();
-      await enrollAdministrator(config, username, password, { reset: false });
-      adminCreated = true;
-      log(`enrolled administrator ${username}`);
+      if (opts.setupInBrowser || !opts.passwordProvider) {
+        if (!opts.setupInBrowser) throw new HarborError('INVALID_REQUEST', 'no administrator enrolled and no password source', { nextAction: 'Run interactively, pass --password-stdin, or use --setup-in-browser to finish in the setup wizard.' });
+        setupCode = readSetupCode(config.stateDir) ?? writeSetupCode(config.stateDir);
+        log('administrator will be created in the browser (setup wizard)');
+      } else {
+        const username = opts.adminUsername ?? 'admin';
+        const password = await opts.passwordProvider();
+        await enrollAdministrator(config, username, password, { reset: false });
+        adminCreated = true;
+        log(`enrolled administrator ${username}`);
+      }
     }
   }
   chownTree(config.stateDir, uid, gid);
@@ -256,8 +309,9 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   } catch (e) {
     log(`could not install the polkit power rule (${(e as Error).message}); Restart/Shut down from the console will be refused`);
   }
-  writeFileSync(`/etc/systemd/system/${PRODUCT.paths.systemdUnit}`, harborUnit(), { mode: 0o644 });
+  writeFileSync(`/etc/systemd/system/${PRODUCT.paths.systemdUnit}`, harborUnit({ lan: config.lan.enabled }), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${TAILSCALE_OPERATOR_UNIT}`, tailscaleOperatorUnit(), { mode: 0o644 });
+  writeFileSync(`/etc/systemd/system/${SELF_UPDATE_UNIT_FILE}`, selfUpdateUnit(), { mode: 0o644 });
   await execOk('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['enable', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['restart', PRODUCT.paths.systemdUnit], { timeoutMs: 120_000 });
@@ -271,7 +325,7 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   if (toolFailure) throw toolFailure;
 
   const nodeVersion = (await exec(`${PRODUCT.paths.opt}/node/bin/node`, ['--version'], { timeoutMs: 10_000 })).stdout.trim();
-  return { facts, installationId, adminCreated, managementUrl, tools, versions: { harbor: release.version, node: nodeVersion, docker: facts.docker.version, compose: facts.docker.composeVersion } };
+  return { facts, installationId, adminCreated, setupCode, lanUrl: config.lan.enabled ? lanUrlFor(config.lan.port) : null, managementUrl, tools, versions: { harbor: release.version, node: nodeVersion, docker: facts.docker.version, compose: facts.docker.composeVersion } };
 }
 
 // Release files are replaced wholesale (state lives in /var/lib/harbor, config in /etc/harbor).

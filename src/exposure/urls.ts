@@ -8,8 +8,9 @@ export function exposureUrl(e: Pick<ExposureRow, 'via' | 'hostname' | 'port'>): 
   return e.port === 443 ? `https://${e.hostname}/` : `https://${e.hostname}:${e.port}/`;
 }
 
-export function endpointUrls(alloc: EndpointAllocation, exposures: ExposureRow[]): EndpointDto['urls'] {
+export function endpointUrls(alloc: EndpointAllocation, exposures: ExposureRow[], lanHost: string | null = null): EndpointDto['urls'] {
   const urls: EndpointDto['urls'] = { loopback: browserUrlFor(alloc.hostPort) };
+  if (lanHost) urls.lan = `http://${lanHost}:${alloc.hostPort}/`;
   for (const e of exposures) {
     if (e.endpointId !== alloc.id) continue;
     if (e.via === 'tailnet') urls.tailnet = exposureUrl(e);

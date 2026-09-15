@@ -16,6 +16,10 @@ export interface DaemonConfig {
   userDataDir: string;
   // packages uploaded by the operator ("your own apps"); default <stateDir>/packages
   localPackagesDir: string;
+  // LAN mode: the console and app ports also answer on the local network (http://<hostname>.local); chosen at install
+  lan: { enabled: boolean; port: number };
+  // where Harbor looks for newer releases of itself (GitHub owner/name); null disables the check
+  updates: { repo: string | null };
   listen: { host: '127.0.0.1'; port: number };
   docker: DockerConfig;
   appPortRange: { from: number; to: number };
@@ -36,6 +40,8 @@ const CONFIG_SCHEMA = {
     uiDir: { type: ['string', 'null'] },
     userDataDir: { type: 'string', minLength: 1 },
     localPackagesDir: { type: 'string', minLength: 1 },
+    lan: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' }, port: { type: 'integer', minimum: 1, maximum: 65535 } } },
+    updates: { type: 'object', additionalProperties: false, properties: { repo: { type: ['string', 'null'], pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' } } },
     listen: {
       type: 'object',
       additionalProperties: false,
@@ -71,6 +77,8 @@ export const CONFIG_DEFAULTS = {
   logLevel: 'info',
   uiDir: null,
   userDataDir: '/srv/harbor',
+  lan: { enabled: false, port: 80 },
+  updates: { repo: 'carlosalaniz/harbor' },
 } as const;
 
 // Configuration is always explicit: a JSON file path. No dotenv, no cwd discovery, no
@@ -97,6 +105,8 @@ export function normalizeConfig(raw: unknown, baseDir: string): DaemonConfig {
     uiDir: raw.uiDir ? abs(raw.uiDir) : null,
     userDataDir: abs(raw.userDataDir ?? CONFIG_DEFAULTS.userDataDir),
     localPackagesDir: raw.localPackagesDir ? abs(raw.localPackagesDir) : path.join(abs(raw.stateDir), 'packages'),
+    lan: { enabled: raw.lan?.enabled ?? CONFIG_DEFAULTS.lan.enabled, port: raw.lan?.port ?? CONFIG_DEFAULTS.lan.port },
+    updates: { repo: raw.updates === undefined ? CONFIG_DEFAULTS.updates.repo : (raw.updates.repo ?? null) },
     listen: { host: '127.0.0.1', port: raw.listen?.port ?? CONFIG_DEFAULTS.listen.port },
     docker: raw.docker.mode === 'socket' ? { mode: 'socket', socketPath: raw.docker.socketPath, cliPluginDirs: (raw.docker as { cliPluginDirs?: string[] }).cliPluginDirs ?? [] } : { mode: 'fake' },
     appPortRange: raw.appPortRange ?? { ...CONFIG_DEFAULTS.appPortRange },

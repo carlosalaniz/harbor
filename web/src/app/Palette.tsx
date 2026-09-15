@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CatalogItemDto, InstanceSummary } from '../../../src/contracts/api';
-import { AppIcon, InstanceIcon, appLabel } from './components';
+import { AppIcon, InstanceIcon, appLabel, openUrl } from './components';
 import { plainStatus } from './format';
 import type { Route } from './router';
 import type { Console } from './store';
@@ -64,8 +64,7 @@ export function Palette({ c, go, onOpenApp, onAbout, onClose }: { c: Console; go
     const out: PaletteItem[] = [];
     for (const i of c.data.instances.filter((x) => x.installState !== 'retained')) {
       if (!has(i.name, i.packageName, i.packageId, i.displayName)) continue;
-      const primary = i.endpoints.find((e) => e.id === i.primaryEndpoint) ?? i.endpoints[0];
-      const url = primary ? (primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback) : null;
+      const url = openUrl(i);
       const canOpen = i.installState === 'installed' && i.runtime === 'running' && url;
       out.push({
         id: `app-${i.id}`,

@@ -73,6 +73,10 @@ configuration:                   # optional: hand the app its own address
 setup:                           # optional: tell people what to do on first open
   endpoint: web
   instructions: Create the first account; it becomes the administrator.
+defaultCredentials:              # optional: ONLY if the image ships a fixed login; shown with a "change it" warning
+  username: admin
+  password: changeme
+  note: Change it under Settings → Users right after signing in.
 presentation:
   tagline: Short line shown on the card
   category: productivity         # productivity media files automation network developer ai security finance home other

@@ -7,6 +7,15 @@ normal Docker Compose projects, verifies readiness, and remembers what it owns.
 Bundled packages: **Excalidraw**, **BentoPDF**, **n8n + PostgreSQL** (all pinned by image digest).
 Platform tools: **Cockpit** and **Portainer** set up or bound by bootstrap, opened from Harbor.
 
+## Install (Ubuntu 24.04 x86-64)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh | sudo bash
+```
+
+Then open **http://harbor.local** (or the address it prints) and follow the setup wizard with the printed
+setup code. Releases: https://github.com/carlosalaniz/harbor/releases. Harbor updates itself from Settings.
+
 - Requirements, install, access, lifecycle, tools, troubleshooting: [docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md)
 - Requirements/spec: [TDD.md](TDD.md) · build order: [plan.md](plan.md) · progress: [PROGRESS.md](PROGRESS.md)
 - Decisions: [docs/DECISIONS.md](docs/DECISIONS.md) · verification report: [docs/VERIFICATION.md](docs/VERIFICATION.md) · future context: [docs/FUTURE.md](docs/FUTURE.md)

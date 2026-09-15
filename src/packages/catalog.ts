@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { CATALOG_INDEX_SCHEMA, RELEASE_FILES } from '../contracts/release.schema.js';
-import type { CatalogIndex, LoadedPackage } from '../contracts/types.js';
+import type { CatalogIndex, LoadedPackage, Manifest } from '../contracts/types.js';
 import { compile, formatErrors } from '../contracts/validate.js';
 import { HarborError } from '../errors.js';
 import { validateComposeSource } from './compose-source.js';
@@ -104,6 +104,7 @@ export interface CatalogItem {
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
   presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; releaseNotes: string | null };
+  defaultCredentials: { username: string; password: string; note: string | null } | null;
   setup: boolean;
   storage: number;
   claims: { id: string; purpose: string; external: { hint: string; required: boolean; readOnly: boolean } | null }[];
@@ -127,6 +128,7 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         reason: null,
         qualification: pkg.release.qualification.status,
         presentation: presentationOf(pkg),
+        defaultCredentials: defaultCredentialsOf(pkg.manifest),
         setup: Boolean(pkg.manifest.setup),
         storage: (pkg.manifest.storage ?? []).length,
         claims: (pkg.manifest.storage ?? []).map((s) => ({ id: s.id, purpose: s.purpose, external: s.external ? { hint: s.external.hint, required: s.external.required ?? false, readOnly: s.external.readOnly ?? false } : null })),
@@ -143,6 +145,7 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         reason: e instanceof HarborError ? e.message : 'invalid package',
         qualification: 'invalid',
         presentation: { tagline: null, category: 'other', icon: null, gallery: [], developer: null, website: null, releaseNotes: null },
+        defaultCredentials: null,
         setup: false,
         storage: 0,
         claims: [],
@@ -157,4 +160,8 @@ export { RELEASE_FILES };
 export function presentationOf(pkg: LoadedPackage): CatalogItem['presentation'] {
   const p = pkg.manifest.presentation ?? {};
   return { tagline: p.tagline ?? null, category: p.category ?? 'other', icon: p.icon ?? null, gallery: p.gallery ?? [], developer: p.developer ?? null, website: p.website ?? null, releaseNotes: p.releaseNotes ?? null };
+}
+
+export function defaultCredentialsOf(m: Manifest): CatalogItem['defaultCredentials'] {
+  return m.defaultCredentials ? { username: m.defaultCredentials.username, password: m.defaultCredentials.password, note: m.defaultCredentials.note ?? null } : null;
 }

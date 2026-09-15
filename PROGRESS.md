@@ -129,6 +129,14 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Advanced access page redesigned (no overflow, copy buttons, per-app ports, CLI list); CLI `harbor logs [app]`
 - [x] Tests: unit (RFC 6238 vectors, base32, systemd/polkit text, docker log demux), integration (2FA lifecycle, logs, terminal echo + resize over WebSocket), Playwright (terminal, troubleshoot, rename, 2FA login)
 
+## Phase 14 — one-line install, browser setup wizard, LAN mode, Harbor self-update, default logins (2026-09-15, v0.8.0) ✅
+- [x] GitHub Releases published (v0.7.0 first); `install.sh` at the repo root (`curl … | sudo bash`): checks, Docker, checksum-verified download, hostname `harbor`, avahi/mDNS, `bootstrap --setup-in-browser`
+- [x] First-run wizard: `GET/POST /v1/setup` guarded by a printed setup code; console shows name → account → look; `harbor setup-code`
+- [x] LAN mode (`config.lan`, `bootstrap --lan/--lan-force/--hostname`): second listener on every interface (port 80, ambient cap), app ports on 0.0.0.0, `urls.lan`, LAN-aware Host/Origin checks, console swaps in the host it was opened with; refused on cloud servers without `--lan-force`
+- [x] Harbor self-update: GitHub feed (6 h + Check now), `POST /v1/system/update/apply` → `harbor-self-update@<version>.service` (polkit) → root `harbor self-update apply` (download, SHA256SUMS, bootstrap --yes), progress file survives the restart; Overview card with release notes; CLI `harbor self-update [check|start]`
+- [x] Manifest `defaultCredentials` → Store page, drawer and plan warning
+- [x] Tests: unit (release feed, version order, LAN host rules, setup code, systemd/polkit text), integration (setup flow, LAN mode Host/Origin + 0.0.0.0 render, self-update lifecycle), Playwright (first-run wizard in a second daemon, update card, default login)
+
 ## Test results (latest local run)
 
 | Command | Result |

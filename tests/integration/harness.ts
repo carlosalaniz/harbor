@@ -10,6 +10,7 @@ import { FakePower } from '../../src/system/power.js';
 import type { FakeFetcher } from '../../src/appearance/fetcher.js';
 import { demoFetcher, demoRegistry } from '../../src/daemon.js';
 import type { FakeRegistry } from '../../src/packages/registry.js';
+import { FakeReleaseFeed, FakeUnitStarter } from '../../src/system/selfupdate.js';
 import { FakeCaddyAdmin } from '../../src/exposure/caddy.js';
 import { FakeVerifier } from '../../src/exposure/verify.js';
 import { startDaemon, type Daemon, type DaemonOverrides } from '../../src/daemon.js';
@@ -50,6 +51,8 @@ export interface Harness {
   fetcher: FakeFetcher;
   power: FakePower;
   registry: FakeRegistry;
+  releaseFeed: FakeReleaseFeed;
+  unitStarter: FakeUnitStarter;
   userDataDir: string;
   caddy: FakeCaddyAdmin;
   verifier: FakeVerifier;
@@ -129,7 +132,7 @@ export class Api {
   }
 }
 
-export async function startHarness(opts: { catalogDir?: string; overrides?: DaemonOverrides; portRange?: { from: number; to: number } } = {}): Promise<Harness> {
+export async function startHarness(opts: { catalogDir?: string; overrides?: DaemonOverrides; portRange?: { from: number; to: number }; noAdmin?: boolean; config?: Record<string, unknown> } = {}): Promise<Harness> {
   const root = mkdtempSync(path.join(tmpdir(), 'harbor-it-'));
   const stateDir = path.join(root, 'state');
   const catalogDir = opts.catalogDir ?? path.join(root, 'catalog');
@@ -140,25 +143,30 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   // A private port range far from the default so parallel test files do not collide.
   const range = opts.portRange ?? { from: base + 1, to: base + 40 };
   const config = normalizeConfig(
-    { stateDir, catalogDir, userDataDir: path.join(root, 'data'), docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port }, appPortRange: range, planTtlSeconds: 900, sessionTtlSeconds: 3600, logLevel: 'error' },
+    { stateDir, catalogDir, userDataDir: path.join(root, 'data'), docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port }, appPortRange: range, planTtlSeconds: 900, sessionTtlSeconds: 3600, logLevel: 'error', ...(opts.config ?? {}) },
     root,
   );
   initializeState(stateDir, { clock: systemClock, ids: systemIds, config: {} });
-  await enrollAdministrator(config, ADMIN.username, ADMIN.password, { reset: false });
+  if (!opts.noAdmin) await enrollAdministrator(config, ADMIN.username, ADMIN.password, { reset: false });
   const fake = new FakeDocker(clock);
   const tailscale = new FakeTailscale();
   const net = new FakeNet();
   const fetcher = demoFetcher();
   const power = new FakePower();
   const registry = demoRegistry();
+  const releaseFeed = new FakeReleaseFeed();
+  const unitStarter = new FakeUnitStarter();
   const caddy = new FakeCaddyAdmin();
   const verifier = new FakeVerifier();
-  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, net, fetcher, power, registry, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
+  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, net, fetcher, power, registry, releaseFeed, unitStarter, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
   let daemon = await start();
   const baseUrl = `http://localhost:${port}`;
   const api = new Api(baseUrl, null);
-  const { token } = await api.login();
-  api.token = token;
+  let token = '';
+  if (!opts.noAdmin) {
+    token = (await api.login()).token;
+    api.token = token;
+  }
   const h: Harness = {
     daemon,
     fake,
@@ -167,6 +175,8 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     fetcher,
     power,
     registry,
+    releaseFeed,
+    unitStarter,
     userDataDir: config.userDataDir,
     caddy,
     verifier,

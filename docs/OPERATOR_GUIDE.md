@@ -18,7 +18,33 @@ Qualified pair for this release (see `docs/VERIFICATION.md` for the run that pro
 Engine and Compose versions installed by `--install-docker` on the date of qualification; Node
 24.12.0 bundled.
 
-## 2. Install (bootstrap)
+## 2. Install
+
+### 2a. The one-line installer (recommended)
+
+On a machine (or VM) running Ubuntu 24.04 x86-64, from a terminal on it (SSH or keyboard):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh | sudo bash
+```
+
+It checks the machine, installs Docker if needed, downloads the newest release from GitHub and verifies its
+checksum, names the machine `harbor` (so it answers as **http://harbor.local** on your network through mDNS),
+installs Tailscale and the HTTPS proxy, and prints a **setup code**. Then open the printed address in a
+browser and follow the wizard: name your Harbor, create your account (type the code), pick a look. Nothing
+is typed on the terminal.
+
+- `HARBOR_HOSTNAME=mybox` changes the mDNS name (`http://mybox.local`); `HARBOR_HOSTNAME=` keeps the current one.
+- `HARBOR_LAN=off` keeps LAN mode off (console and apps then answer only on the machine, over Tailscale, or via SSH forwarding). On a cloud server LAN mode stays off automatically: there, "every interface" would be the public internet.
+- `HARBOR_TOOLS=1` also sets up Cockpit and Portainer. `HARBOR_VERSION=0.8.0` pins a release.
+- Lost the setup code? On the machine: `sudo /opt/harbor/bin/harbor setup-code --config /etc/harbor/harbor.json`.
+
+**LAN mode** means the console (port 80) and every app port answer to any device on your local network,
+like Umbrel. Protect the console with a strong password and two-factor login (Settings → Account); apps
+without their own login are open to the LAN. It is chosen at install time (`bootstrap --lan`); apps
+installed before it was turned on keep answering on the machine only until they are updated.
+
+### 2b. Manual install (bootstrap)
 
 ```sh
 # on your workstation
@@ -204,6 +230,15 @@ Disconnecting from the tailnet (`tailscale logout`) used to wipe the permission 
 - **Upload a package**: App Store → *+ Your own app* (or `harbor packages add my-app.zip`). A package is a zip with `manifest.yaml`, `compose.yaml`, optionally `README.md`, an icon and screenshots; see [DEVELOPER_PACKAGES.md](DEVELOPER_PACKAGES.md) for the template. Harbor validates it, pins the images by digest, and lists it under *Your apps*. Install it like any other app.
 - **Update an app**: when a newer revision of its package exists (you uploaded one, or a Harbor upgrade shipped a newer built-in catalog), Home shows an *updates available* card and the app's tile gets a blue ↑. Press **Update**, review the plan (which images change, what is added), approve. Data, ports and addresses stay. If the new version fails to start, Harbor rolls back to the previous one automatically and tells you. CLI: `harbor list` (UPDATE column), `harbor update <name>`.
 - **Remove an uploaded package**: from its App Store page once no app installed from it exists (`harbor packages remove <id>`).
+
+## 4e. Updating Harbor itself
+
+Settings → Overview shows the installed version and, when GitHub has a newer release, an **Update to
+x.y.z** button (release notes underneath; *Check now* asks GitHub immediately, otherwise every 6 hours).
+Harbor downloads the release, verifies its checksum, installs it in place and restarts; your apps keep
+running, the console is away for about a minute and reconnects by itself. The same from the terminal:
+`harbor self-update`, `harbor self-update check`, `harbor self-update start`. Manual path, still supported:
+download the archive, extract, `sudo ./harbor-<version>-linux-x64/bin/harbor bootstrap --yes`.
 
 ## 5. Service operations
 

@@ -1,10 +1,11 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
 import { enrollAdministrator, initState, resetTwoFactor } from '../maintenance.js';
+import { readSetupCode } from '../auth/setup.js';
 import { productVersion } from '../daemon.js';
 import { ApiClient, clearCliState, readCliState, writeCliState } from './client.js';
 import path from 'node:path';
@@ -721,7 +722,11 @@ program
   .option('--tailscale-authkey-stdin', 'read a Tailscale auth key from stdin to log the node in non-interactively (protected pipe only; combine with --password-stdin: first line password, second line auth key)')
   .option('--with-public-proxy', 'set up Caddy for public HTTPS exposure (separately approved)', false)
   .option('--release-dir <dir>', 'extracted release directory (default: the one containing this CLI)')
-  .action(async (opts: { yes: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; withTailscale: boolean; tailscaleAuthkeyStdin?: boolean; withPublicProxy: boolean; releaseDir?: string }) => {
+  .option('--setup-in-browser', 'do not ask for an administrator here; print a setup code and finish in the browser wizard', false)
+  .option('--lan', 'LAN mode (home network): console on port 80 and app ports on every interface, mDNS name <hostname>.local', false)
+  .option('--lan-force', 'allow --lan on a machine without a private-network address (cloud server: everything faces the internet)', false)
+  .option('--hostname <name>', 'set the machine hostname (the mDNS name becomes <name>.local)')
+  .action(async (opts: { yes: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; withTailscale: boolean; tailscaleAuthkeyStdin?: boolean; withPublicProxy: boolean; releaseDir?: string; setupInBrowser: boolean; lan: boolean; lanForce: boolean; hostname?: string }) => {
     const { bootstrap, accessInstructions } = await import('../bootstrap/bootstrap.js');
     const releaseDir = opts.releaseDir ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const log = (m: string) => process.stderr.write(`[bootstrap] ${m}\n`);
@@ -742,7 +747,7 @@ program
       if (pw !== null) passwordProvider = async () => pw;
       if (opts.tailscaleAuthkeyStdin) tailscaleAuthKey = (lines.shift() ?? '').trim() || null;
     }
-    else if (process.stdin.isTTY) {
+    else if (process.stdin.isTTY && !opts.setupInBrowser) {
       passwordProvider = async () => {
         const p1 = await promptHidden('Administrator password (min 12 chars): ');
         const p2 = await promptHidden('Repeat password: ');
@@ -763,12 +768,18 @@ program
       withTailscale: opts.withTailscale,
       tailscaleAuthKey,
       withPublicProxy: opts.withPublicProxy,
+      setupInBrowser: opts.setupInBrowser,
+      lan: opts.lan,
+      lanForce: opts.lanForce,
+      hostname: opts.hostname ?? null,
       log,
       confirm: confirmStep,
     });
     const toolPorts = result.tools.map((t) => (t.browserUrl ? Number(new URL(t.browserUrl).port || (t.browserUrl.startsWith('https') ? 443 : 80)) : 0)).filter(Boolean);
     const summary = {
       managementUrl: result.managementUrl,
+      lanUrl: result.lanUrl,
+      setupCode: result.setupCode,
       installationId: result.installationId,
       adminCreated: result.adminCreated,
       versions: result.versions,
@@ -777,8 +788,13 @@ program
     out(summary, () =>
       [
         `Harbor ${result.versions.harbor} installed (node ${result.versions.node}, docker ${result.versions.docker ?? '?'}, compose ${result.versions.compose ?? '?'}).`,
-        `Installation ${result.installationId}; administrator ${result.adminCreated ? 'enrolled' : 'kept'}.`,
+        `Installation ${result.installationId}; administrator ${result.adminCreated ? 'enrolled' : result.setupCode ? 'to be created in the browser' : 'kept'}.`,
         ...result.tools.map((t) => `${t.id}: ${t.mode} ${t.installationState} ${t.browserUrl ?? ''}\n    ${t.note ?? ''}`),
+        ...(result.setupCode
+          ? ['', '========================================', `  Finish setup in a browser: ${result.lanUrl ?? result.managementUrl}`, `  Setup code: ${result.setupCode}`, '========================================', '  (from another computer without LAN mode: forward the port over SSH first, see below; `harbor setup-code` prints the code again)']
+          : result.lanUrl
+            ? ['', `On your network: ${result.lanUrl}`]
+            : []),
         '',
         ...accessInstructions(Number(new URL(result.managementUrl).port), toolPorts, [PRODUCT.defaults.appPortRange.from, PRODUCT.defaults.appPortRange.from + 1, PRODUCT.defaults.appPortRange.from + 2]),
       ].join('\n'),
@@ -786,6 +802,58 @@ program
   });
 
 // ---------------- local maintenance (direct state access, no HTTP)
+
+program
+  .command('setup-code')
+  .description('print the setup code for the browser wizard (root, on the machine; only while no administrator exists)')
+  .requiredOption('--config <file>', 'daemon config JSON (usually /etc/harbor/harbor.json)')
+  .action((opts: { config: string }) => {
+    const cfg = loadConfig(opts.config);
+    const code = readSetupCode(cfg.stateDir);
+    if (!code) throw new HarborError('INVALID_STATE', 'no setup code on this machine (the administrator already exists, or bootstrap ran without --setup-in-browser)');
+    out({ setupCode: code }, () => `Setup code: ${code}`);
+  });
+
+const selfUpdateCmd = program.command('self-update').description('Harbor updating itself from GitHub Releases: status, check, apply');
+selfUpdateCmd.action(async () => {
+  const s = await client().get<SelfUpdateStatusDto>('/v1/system/update');
+  out(s, () => selfUpdateText(s));
+});
+selfUpdateCmd
+  .command('check')
+  .action(async () => {
+    const s = await client().post<SelfUpdateStatusDto>('/v1/system/update/check', {});
+    out(s, () => selfUpdateText(s));
+  });
+selfUpdateCmd
+  .command('start')
+  .description('ask the daemon to update Harbor to the newest release (it restarts; run `harbor self-update` afterwards)')
+  .option('--yes', 'do not ask', false)
+  .action(async (opts: { yes: boolean }) => {
+    const api = client();
+    const s = await api.get<SelfUpdateStatusDto>('/v1/system/update');
+    if (!s.available || !s.latest) throw new HarborError('INVALID_STATE', `Harbor ${s.current} is the newest known release`, { nextAction: 'Run `harbor self-update check` first.' });
+    if (!opts.yes && (await promptVisible(`Update Harbor ${s.current} -> ${s.latest.version}? The daemon restarts for a minute. [y/N] `)).trim().toLowerCase() !== 'y') return;
+    const r = await api.post<SelfUpdateStatusDto>('/v1/system/update/apply', {});
+    out(r, () => `Update to ${s.latest!.version} started. Watch it with: harbor self-update`);
+  });
+selfUpdateCmd
+  .command('apply')
+  .description('ROOT, run by harbor-self-update@<version>.service: download the release, verify SHA256SUMS, install it in place (bootstrap --yes)')
+  .requiredOption('--version <version>', 'release version, e.g. 0.8.0')
+  .option('--repo <owner/name>', 'GitHub repository', 'carlosalaniz/harbor')
+  .action(async (opts: { version: string; repo: string }) => {
+    const { applySelfUpdate } = await import('../bootstrap/selfupdate-apply.js');
+    await applySelfUpdate(opts.version, opts.repo, (m) => process.stderr.write(`[self-update] ${m}\n`));
+  });
+
+function selfUpdateText(s: SelfUpdateStatusDto): string {
+  const lines = [`Installed: Harbor ${s.current}`];
+  if (s.latest) lines.push(`Newest release: ${s.latest.version}${s.latest.publishedAt ? ` (${s.latest.publishedAt.slice(0, 10)})` : ''}${s.available ? ' — UPDATE AVAILABLE (harbor self-update start)' : ' — up to date'}`);
+  else lines.push(s.error ? `Could not check: ${s.error}` : 'Not checked yet (harbor self-update check)');
+  if (s.applying) lines.push(`Update ${s.applying.version}: ${s.applying.state} — ${s.applying.message} (${s.applying.at})`);
+  return lines.join('\n');
+}
 
 program
   .command('init')

@@ -41,7 +41,12 @@ if (!existsSync(path.join(stateDir, 'harbor.db'))) {
   const db = openState(stateDir, { readonly: true });
   const hasAdmin = new Repo(db, systemClock).administrator() !== null;
   db.close();
-  if (!hasAdmin) {
+  if (!hasAdmin && process.env['HARBOR_DEV_SETUP'] === '1') {
+    // first-run wizard mode: no administrator; a known setup code for the browser
+    const code = process.env['HARBOR_DEV_SETUP_CODE'] ?? '123456';
+    writeFileSync(path.join(stateDir, 'setup-code'), code + '\n', { mode: 0o600 });
+    console.error(`[dev] setup mode: no administrator; setup code ${code}`);
+  } else if (!hasAdmin) {
     const password = process.env['HARBOR_DEV_PASSWORD'] ?? randomBytes(9).toString('base64url');
     await enrollAdministrator(config, 'admin', password, { reset: false });
     console.error(`[dev] enrolled administrator "admin". Password (dev only, shown once): ${password}`);

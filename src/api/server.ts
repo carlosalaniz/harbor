@@ -14,7 +14,10 @@ import type { PlatformToolsService } from '../tools/service.js';
 import type { AppearanceService } from '../appearance/service.js';
 import type { PowerControl } from '../system/power.js';
 import type { TerminalService, TerminalSession } from '../system/terminal.js';
-import type { TerminalClientMessage } from '../contracts/api.js';
+import type { SetupRequest, TerminalClientMessage } from '../contracts/api.js';
+import type { SetupService } from '../auth/setup.js';
+import { lanHostAllowed } from '../system/lan.js';
+import { hostname as osHostname } from 'node:os';
 import { hostFacts } from '../system/metrics.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
@@ -30,6 +33,8 @@ export interface ApiDeps {
   appearance: AppearanceService;
   power: PowerControl;
   terminals: TerminalService;
+  setup: SetupService;
+  tailscaleFacts: () => Promise<{ installed: boolean; loggedIn: boolean }>;
   log: Logger;
   version: string;
 }
@@ -64,7 +69,7 @@ const errorBodySchema = {
 } as const;
 
 export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
-  const { config, service, sessions, tools, log, appearance, power, terminals } = deps;
+  const { config, service, sessions, tools, log, appearance, power, terminals, setup, tailscaleFacts } = deps;
   const origin = managementOrigin(config);
   const allowedOrigins = new Set([origin, `http://127.0.0.1:${config.listen.port}`]);
   const allowedHosts = new Set([`localhost:${config.listen.port}`, `127.0.0.1:${config.listen.port}`]);
@@ -95,12 +100,19 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     reply.header('referrer-policy', 'no-referrer');
     const host = req.headers.host ?? '';
     const extra = tools.extraOrigins(); // tailnet UI exposure, when configured
-    if (!allowedHosts.has(host) && !extra.hosts.includes(host)) {
+    const lanOk = (h: string) => config.lan.enabled && lanHostAllowed(h, config.lan.port, config.listen.port);
+    if (!allowedHosts.has(host) && !extra.hosts.includes(host) && !lanOk(host)) {
       throw new HarborError('FORBIDDEN_ORIGIN', `Host ${host || '(missing)'} is not the configured management address`, { nextAction: `Use ${origin}.` });
     }
     const reqOrigin = req.headers.origin;
     if (reqOrigin !== undefined && !allowedOrigins.has(reqOrigin) && !extra.origins.includes(reqOrigin)) {
-      throw new HarborError('FORBIDDEN_ORIGIN', `Origin ${reqOrigin} is not allowed`);
+      let originHost: string;
+      try {
+        originHost = new URL(reqOrigin).host;
+      } catch {
+        originHost = '';
+      }
+      if (!(originHost && lanOk(originHost))) throw new HarborError('FORBIDDEN_ORIGIN', `Origin ${reqOrigin} is not allowed`);
     }
     const site = req.headers['sec-fetch-site'];
     if (site && site !== 'same-origin' && site !== 'none' && req.url.startsWith('/v1/')) {
@@ -146,6 +158,28 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
 
   // --- liveness
   app.get('/healthz', { schema: { description: 'Daemon liveness only.', security: [], response: { 200: { type: 'object', properties: { status: { const: 'ok' } } } } } }, async () => ({ status: 'ok' }));
+
+  // --- first-run setup (open while no administrator exists; guarded by the installer's setup code)
+  app.get('/v1/setup', { schema: { description: 'Whether this Harbor still needs its first administrator, plus what the setup wizard shows.', security: [] } }, async () => {
+    const sys = service.system();
+    return { needed: setup.needed(), hostname: osHostname(), deviceName: sys.deviceName, lan: sys.lan, tailscale: await tailscaleFacts(), version: sys.version };
+  });
+  app.post(
+    '/v1/setup',
+    {
+      schema: {
+        description: 'Create the first administrator (setup code from the installer required), optionally name the machine, and get a session. Refused once an administrator exists.',
+        security: [],
+        body: { type: 'object', additionalProperties: false, required: ['code', 'username', 'password'], properties: { code: { type: 'string', minLength: 6, maxLength: 8 }, username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, deviceName: { type: 'string', maxLength: 80 } } },
+      },
+    },
+    async (req, reply) => reply.status(201).send(await setup.claim(req.body as SetupRequest, req.ip)),
+  );
+
+  // --- Harbor's own updates
+  app.get('/v1/system/update', { preHandler: requireAuth, schema: { description: 'Installed version, newest release, and the state of an update in progress.' } }, async () => service.selfUpdateStatus());
+  app.post('/v1/system/update/check', { preHandler: requireAuth, schema: { description: 'Ask GitHub Releases now whether a newer Harbor exists.' } }, async () => service.selfUpdateCheck());
+  app.post('/v1/system/update/apply', { preHandler: requireAuth, schema: { description: 'Update Harbor to the newest release: downloads, verifies, installs in place and restarts the daemon (the console reconnects).' } }, async (req, reply) => reply.status(202).send(await service.selfUpdateApply(req.actor!)));
 
   // --- sessions
   app.post(

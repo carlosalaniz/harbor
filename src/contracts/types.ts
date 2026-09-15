@@ -17,6 +17,7 @@ export interface Manifest {
   configuration?: ConfigurationBinding[];
   setup?: { endpoint: string; instructions: string };
   presentation?: PackagePresentation;
+  defaultCredentials?: { username: string; password: string; note?: string };
 }
 
 export type PackageCategory = 'productivity' | 'media' | 'files' | 'automation' | 'network' | 'developer' | 'ai' | 'security' | 'finance' | 'home' | 'other';

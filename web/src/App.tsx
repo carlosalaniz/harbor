@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken } from './api';
-import { EventList } from './app/components';
+import { EventList, openUrl as appOpenUrl } from './app/components';
 import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
 import { Home } from './app/pages/Home';
 import { Platform } from './app/pages/Platform';
@@ -11,6 +11,8 @@ import { Store } from './app/pages/Store';
 import { useRoute, type Route } from './app/router';
 import { applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper, syncWallpaperPicture } from './app/theme';
 import { Palette, usePaletteShortcut } from './app/Palette';
+import { SetupWizard } from './app/Setup';
+import type { SetupStatusDto } from '../../src/contracts/api';
 import { isFinal, useConsole } from './app/store';
 
 type View = { kind: 'login' } | { kind: 'console' };
@@ -21,12 +23,21 @@ void api.hasWallpaper().then(applyWallpaperPhoto);
 export function App() {
   const [view, setView] = useState<View>(hasToken() ? { kind: 'console' } : { kind: 'login' });
   const [notice, setNotice] = useState<string | null>(null);
+  // first run: no administrator yet → the setup wizard instead of the login form
+  const [setup, setSetup] = useState<SetupStatusDto | null | undefined>(undefined);
+  useEffect(() => {
+    if (view.kind !== 'login') return;
+    api.setupStatus().then((s) => setSetup(s.needed ? s : null), () => setSetup(null));
+  }, [view.kind]);
   const onAuthLost = useCallback((msg?: string) => {
     forgetToken();
     // an explicit message (e.g. "Logged out.") must not be replaced by a racing poll's generic one
     setNotice((prev) => msg ?? prev ?? 'Your session ended. Log in again to continue; running operations keep going on the server.');
     setView({ kind: 'login' });
   }, []);
+  if (view.kind === 'login' && setup) {
+    return <SetupWizard status={setup} onDone={() => (setSetup(null), setView({ kind: 'console' }))} />;
+  }
   if (view.kind === 'login') {
     return (
       <main className="login-wrap">
@@ -354,8 +365,7 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
         : op.state === 'needs_action'
           ? `${who} needs your attention`
           : `${DOING[op.kind] ?? op.kind} ${who}…`;
-  const primary = inst?.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst?.endpoints[0];
-  const openUrl = primary ? (primary.urls[primary.primary as keyof typeof primary.urls] ?? primary.urls.loopback) : null;
+  const openUrl = inst ? appOpenUrl(inst) : null;
   return (
     <aside className={`tray ${op.state}`} aria-live="polite" aria-labelledby="tray-h">
       <div className="row between">

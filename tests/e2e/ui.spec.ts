@@ -635,3 +635,68 @@ test('two-factor login: set up with a live code, log in again with password + co
   await page.getByRole('button', { name: 'Turn off' }).click();
   await expect(page.getByRole('status')).toContainText('Two-factor login is off');
 });
+
+test('Harbor update card: the newest release shows on the Overview, Update asks first and reports progress; default login shows for an app that ships one', async ({ page }) => {
+  await login(page);
+  await page.goto('/#/settings');
+  const card = page.locator('.harbor-update');
+  await expect(card).toContainText(/is available/, { timeout: 15_000 });
+  await card.getByText(/What is new in/).click();
+  await expect(card).toContainText('Demo release');
+  await card.getByRole('button', { name: /Update Harbor to/ }).click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg).toContainText('verifies its checksum');
+  await dlg.getByRole('button', { name: 'Update now' }).click();
+  await expect(card.getByRole('status')).toContainText(/Updating to .* Harbor restarts/, { timeout: 10_000 });
+  // default credentials on an uploaded package
+  const { writeZip } = await import('../../src/packages/zip.js');
+  const manifest = `apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: hello-creds
+  name: Hello Creds
+  description: Ships with a default login
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 30
+ui:
+  primaryEndpoint: web
+defaultCredentials:
+  username: admin
+  password: changeme
+  note: Sign in with these once and change them in the app's settings.
+`;
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'Add your own app' }).click();
+  await page.getByLabel('Package zip file').setInputFiles({ name: 'hello-creds.zip', mimeType: 'application/zip', buffer: writeZip({ 'manifest.yaml': manifest, 'compose.yaml': 'services:\n  web:\n    image: nginx:alpine\n' }) });
+  await page.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('button', { name: 'About Hello Creds' }).click();
+  const about = page.getByRole('dialog');
+  await expect(about.getByRole('note')).toContainText('Default login');
+  await expect(about.getByRole('note')).toContainText('changeme');
+  await expect(about.getByRole('note')).toContainText('change it after the first sign-in');
+  await about.getByRole('button', { name: 'Install Hello Creds now' }).click();
+  await expect(page.getByRole('dialog')).toContainText('ships with a default login (admin)');
+  await page.getByRole('dialog').getByRole('button', { name: 'Install' }).click();
+  await trayDone(page, 'Install');
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of hello-creds' }).click();
+  await expect(page.getByRole('dialog').getByRole('note')).toContainText('changeme', { timeout: 10_000 });
+});

@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -47,6 +47,17 @@ export const api = {
   },
   // the terminal authenticates with the session token in its first WebSocket message
   currentToken: (): string | null => token,
+  // first-run setup (open routes)
+  setupStatus: () => call<SetupStatusDto>('GET', '/v1/setup'),
+  async setup(req: SetupRequest): Promise<SessionDto> {
+    const s = await call<SessionDto>('POST', '/v1/setup', req);
+    token = s.token;
+    return s;
+  },
+  // Harbor's own updates
+  selfUpdate: () => call<SelfUpdateStatusDto>('GET', '/v1/system/update'),
+  selfUpdateCheck: () => call<SelfUpdateStatusDto>('POST', '/v1/system/update/check', {}),
+  selfUpdateApply: () => call<SelfUpdateStatusDto>('POST', '/v1/system/update/apply', {}),
   async logout(): Promise<void> {
     try {
       await call<void>('DELETE', '/v1/sessions/current');

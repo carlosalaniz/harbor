@@ -1,6 +1,6 @@
 {
   "name": "harbor",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "Harbor — simple self-hosted application manager (local preview)",
   "type": "module",

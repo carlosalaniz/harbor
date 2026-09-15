@@ -251,3 +251,24 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
     </Dialog>
   );
 }
+
+// The address to open an app at, from where this page was opened: the tailnet/public address when it is
+// primary, else the LAN address with the host the browser used (mDNS name or IP), else loopback.
+export function openUrl(inst: InstanceSummary, endpoint = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0]): string | null {
+  if (!endpoint) return null;
+  const primary = endpoint.urls[endpoint.primary as keyof typeof endpoint.urls];
+  if (primary && endpoint.primary !== 'loopback') return primary;
+  const here = location.hostname;
+  if (here !== 'localhost' && here !== '127.0.0.1' && here !== '[::1]') {
+    if (endpoint.urls.lan) {
+      try {
+        const u = new URL(endpoint.urls.lan);
+        u.hostname = here;
+        return u.toString();
+      } catch {
+        return endpoint.urls.lan;
+      }
+    }
+  }
+  return endpoint.urls.loopback;
+}

@@ -24,3 +24,5 @@ evidence/raw/
 .DS_Store
 .idea/
 .vscode/
+.vm*.local.json
+.vm*-known_hosts
