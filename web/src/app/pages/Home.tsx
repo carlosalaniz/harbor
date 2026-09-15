@@ -208,6 +208,7 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
   const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && url && !arranging;
   const status = plainStatus(inst);
   const label = appLabel(inst);
+  const usageText = inst.usage ? ` · CPU ${inst.usage.cpuPercent}% · ${fmtBytes(inst.usage.memoryBytes)}` : '';
   const tp = reorder?.tileProps(inst.id);
   const guard = (e: React.MouseEvent) => {
     if (reorder?.suppressClick(inst.id) || arranging) {
@@ -226,7 +227,7 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
       data-instance={inst.name}
     >
       {canOpen ? (
-        <a className="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`} title={`${label} — ${status.label}`} onClick={guard} draggable={false}>
+        <a className="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`} title={`${label} — ${status.label}${usageText}`} onClick={guard} draggable={false}>
           <InstanceIcon inst={inst} size={72} />
           <span className="icon-label">{label}</span>
           <span className="icon-status">
@@ -235,7 +236,7 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
           </span>
         </a>
       ) : (
-        <button className="icon-btn" onClick={(e) => (arranging || reorder?.suppressClick(inst.id) ? guard(e) : onDetails())} aria-label={arranging ? `Move ${inst.name}` : `Manage ${inst.name}`} title={`${label} — ${status.label}`}>
+        <button className="icon-btn" onClick={(e) => (arranging || reorder?.suppressClick(inst.id) ? guard(e) : onDetails())} aria-label={arranging ? `Move ${inst.name}` : `Manage ${inst.name}`} title={`${label} — ${status.label}${usageText}`}>
           <InstanceIcon inst={inst} size={72} />
           <span className="icon-label">{label}</span>
           <span className="icon-status small">

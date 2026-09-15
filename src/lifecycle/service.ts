@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SelfUpdateStatusDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
 import { hostname } from 'node:os';
@@ -33,6 +33,10 @@ export interface SubmitResult {
 export class ApplicationService {
   private lastDockerObservation: { available: boolean; observedAt: string | null; version: string | null; error: string | null } = { available: false, observedAt: null, version: null, error: null };
   private wake: () => void = () => {};
+  // Live usage per instance, written by the observer tick; in-memory only (no history).
+  private usageCache = new Map<string, { cpuPercent: number; memoryBytes: number; sampledAt: string }>();
+  // docker system df is expensive: cache the grouped result for 60 s.
+  private storageUsageCache: { at: number; value: StorageUsageDto } | null = null;
 
   constructor(private readonly ctx: Ctx) {}
 
@@ -42,6 +46,35 @@ export class ApplicationService {
 
   recordDockerObservation(o: { available: boolean; version: string | null; error: string | null }): void {
     this.lastDockerObservation = { ...o, observedAt: rfc3339(this.ctx.clock.now()) };
+  }
+
+  recordUsage(instanceId: string, usage: { cpuPercent: number; memoryBytes: number } | null): void {
+    if (!usage) this.usageCache.delete(instanceId);
+    else this.usageCache.set(instanceId, { ...usage, sampledAt: rfc3339(this.ctx.clock.now()) });
+  }
+
+  // Volume sizes grouped per app. Never called from the observer; the 60 s cache keeps the Storage page cheap.
+  async storageUsage(): Promise<StorageUsageDto> {
+    const now = this.ctx.clock.now().getTime();
+    if (this.storageUsageCache && now - this.storageUsageCache.at < 60_000) return this.storageUsageCache.value;
+    const df = await this.ctx.docker.diskUsage();
+    const size = new Map(df.volumes.map((v) => [v.name, v.sizeBytes]));
+    const apps: StorageUsageDto['apps'] = [];
+    const owned = new Set<string>();
+    for (const i of this.ctx.repo.listInstances()) {
+      const volumes = this.ctx.repo
+        .resources(i.id)
+        .filter((r) => r.kind === 'volume')
+        .map((r) => {
+          owned.add(r.name);
+          return { id: r.role, volumeName: r.name, sizeBytes: size.get(r.name) ?? 0 };
+        });
+      if (volumes.length) apps.push({ instanceId: i.id, name: i.name, volumes, totalBytes: volumes.reduce((a, v) => a + v.sizeBytes, 0) });
+    }
+    const unownedBytes = df.volumes.filter((v) => !owned.has(v.name)).reduce((a, v) => a + v.sizeBytes, 0);
+    const value: StorageUsageDto = { sampledAt: rfc3339(this.ctx.clock.now()), apps, unownedBytes };
+    this.storageUsageCache = { at: now, value };
+    return value;
   }
 
   system(): SystemDto {
@@ -147,7 +180,7 @@ export class ApplicationService {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost() });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), usage: this.usageCache.get(i.id) ?? null });
     });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
@@ -195,7 +228,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost() });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(row.id) ?? null });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {

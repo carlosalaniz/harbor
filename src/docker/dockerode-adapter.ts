@@ -1,5 +1,5 @@
 import Docker from 'dockerode';
-import type { ContainerInfo, DockerAdapter, EngineInfo, NetworkInfo, VolumeInfo } from './adapter.js';
+import type { ContainerInfo, ContainerStats, DockerAdapter, DockerDiskUsage, EngineInfo, NetworkInfo, VolumeInfo } from './adapter.js';
 import { demuxDockerLogs } from '../system/logs.js';
 
 type InspectInfo = Docker.ContainerInspectInfo;
@@ -161,5 +161,41 @@ export class DockerodeAdapter implements DockerAdapter {
       for (const p of c.Ports ?? []) if (p.PublicPort) ports.add(p.PublicPort);
     }
     return [...ports];
+  }
+
+  async containerStats(id: string): Promise<ContainerStats | null> {
+    try {
+      const s = (await this.docker.getContainer(id).stats({ stream: false })) as unknown as {
+        cpu_stats?: { cpu_usage?: { total_usage?: number }; system_cpu_usage?: number; online_cpus?: number };
+        precpu_stats?: { cpu_usage?: { total_usage?: number }; system_cpu_usage?: number };
+        memory_stats?: { usage?: number; limit?: number; stats?: { inactive_file?: number } };
+      };
+      const cpuDelta = (s.cpu_stats?.cpu_usage?.total_usage ?? 0) - (s.precpu_stats?.cpu_usage?.total_usage ?? 0);
+      const sysDelta = (s.cpu_stats?.system_cpu_usage ?? 0) - (s.precpu_stats?.system_cpu_usage ?? 0);
+      const cores = s.cpu_stats?.online_cpus ?? 1;
+      const cpuPercent = sysDelta > 0 && cpuDelta > 0 ? (cpuDelta / sysDelta) * cores * 100 : 0;
+      // Match `docker stats`: usage minus inactive page cache.
+      const raw = s.memory_stats?.usage ?? 0;
+      const inactive = s.memory_stats?.stats?.inactive_file ?? 0;
+      return {
+        cpuPercent: Math.round(cpuPercent * 10) / 10,
+        memoryBytes: Math.max(0, raw - inactive),
+        memoryLimitBytes: s.memory_stats?.limit ?? 0,
+      };
+    } catch (e) {
+      if (isNotFound(e)) return null;
+      // A stopped container returns stats with zeros on some engines and errors on others; be lenient.
+      if ((e as { statusCode?: number }).statusCode === 409) return null;
+      throw e;
+    }
+  }
+
+  async diskUsage(): Promise<DockerDiskUsage> {
+    const df = (await this.docker.df()) as unknown as {
+      Volumes?: { Name: string; UsageData?: { Size?: number } }[];
+    };
+    return {
+      volumes: (df.Volumes ?? []).map((v) => ({ name: v.Name, sizeBytes: v.UsageData?.Size && v.UsageData.Size > 0 ? v.UsageData.Size : 0 })),
+    };
   }
 }

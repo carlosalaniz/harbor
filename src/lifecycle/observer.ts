@@ -53,17 +53,33 @@ export class Observer {
         const containers = this.ctx.repo.resources(inst.id).filter((r) => r.kind === 'container');
         let running = 0;
         let present = 0;
+        let cpuPercent = 0;
+        let memoryBytes = 0;
+        let sampled = 0;
         for (const r of containers) {
           try {
             const c = await this.ctx.docker.inspectContainer(r.dockerId ?? r.name);
             if (c && c.labels[LABELS.instance] === inst.id) {
               present += 1;
-              if (c.state === 'running') running += 1;
+              if (c.state === 'running') {
+                running += 1;
+                try {
+                  const s = await this.ctx.docker.containerStats(c.id);
+                  if (s) {
+                    cpuPercent += s.cpuPercent;
+                    memoryBytes += s.memoryBytes;
+                    sampled += 1;
+                  }
+                } catch {
+                  /* stats are best-effort */
+                }
+              }
             }
           } catch {
             /* treat as absent */
           }
         }
+        this.service.recordUsage(inst.id, sampled > 0 ? { cpuPercent: Math.round(cpuPercent * 10) / 10, memoryBytes } : null);
         let runtime: Runtime;
         if (!containers.length || present === 0) runtime = 'unknown';
         else if (running === present) runtime = 'running';

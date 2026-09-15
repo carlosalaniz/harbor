@@ -2,7 +2,7 @@ import { createServer, type Server } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
-import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type DockerAdapter, type EngineInfo, type NetworkInfo, type VolumeInfo } from './adapter.js';
+import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type NetworkInfo, type VolumeInfo } from './adapter.js';
 import type { Clock } from '../util.js';
 import { rfc3339 } from '../util.js';
 
@@ -23,6 +23,10 @@ export interface FakeBehaviour {
   failUp?: string | null;
   failUpImage?: string | null; // fail `up` only when a service image contains this text (update rollback tests)
   engineDown?: boolean;
+  // Usage a running container reports (defaults below); keyed by container name, fallback '*'.
+  stats?: Record<string, ContainerStats>;
+  // Volume sizes reported by diskUsage(); keyed by volume name, fallback default.
+  volumeSizes?: Record<string, number>;
 }
 
 export class FakeDocker implements DockerAdapter, ComposeRunner {
@@ -139,6 +143,20 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const ports = new Set<number>();
     for (const c of this.containers.values()) for (const p of c.ports) ports.add(p.hostPort);
     return [...ports];
+  }
+
+  async containerStats(id: string): Promise<ContainerStats | null> {
+    this.assertUp();
+    const c = this.containers.get(id);
+    if (!c || c.state !== 'running') return null;
+    return this.behaviour.stats?.[c.name] ?? this.behaviour.stats?.['*'] ?? { cpuPercent: 1.5, memoryBytes: 64 * 1024 * 1024, memoryLimitBytes: 8 * 1024 * 1024 * 1024 };
+  }
+
+  async diskUsage(): Promise<DockerDiskUsage> {
+    this.assertUp();
+    return {
+      volumes: [...this.volumes.keys()].map((name) => ({ name, sizeBytes: this.behaviour.volumeSizes?.[name] ?? 32 * 1024 * 1024 })),
+    };
   }
 
   // --- ComposeRunner

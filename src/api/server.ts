@@ -221,6 +221,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     },
   );
   app.get('/v1/system/metrics', { preHandler: requireAuth, schema: { description: 'Host metrics for the console (cpu, memory, disk, docker).' } }, async () => service.metrics());
+  app.get('/v1/system/storage/usage', { preHandler: requireAuth, schema: { description: 'Volume disk usage grouped per app (docker system df, cached 60 s).' } }, async () => service.storageUsage());
   app.get('/v1/instances', { preHandler: requireAuth, schema: { description: 'All instances including retained records.' } }, async () => ({ items: service.instances() }));
   app.get(
     '/v1/instances/:id',

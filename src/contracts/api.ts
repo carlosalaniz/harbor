@@ -58,6 +58,15 @@ export interface InstanceSummary {
   // launcher customisation (Customize… in the app drawer); null = package defaults
   displayName: string | null;
   customIcon: { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; url: string } | null;
+  // live resource usage summed over the app's containers; null when stopped or not yet sampled
+  usage: { cpuPercent: number; memoryBytes: number; sampledAt: string } | null;
+}
+
+// Volume disk usage grouped per app (GET /v1/system/storage/usage; docker system df, cached).
+export interface StorageUsageDto {
+  sampledAt: string;
+  apps: { instanceId: string; name: string; volumes: { id: string; volumeName: string; sizeBytes: number }[]; totalBytes: number }[];
+  unownedBytes: number; // volumes on the engine that no Harbor instance owns
 }
 
 export interface EventDto {

@@ -8,7 +8,7 @@ export function eventDto(e: EventRow): EventDto {
   return { cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message };
 }
 
-export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null } = { icon: null, category: 'other' }): InstanceSummary {
+export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; usage?: InstanceSummary['usage'] } = { icon: null, category: 'other' }): InstanceSummary {
   return {
     id: i.id,
     name: i.name,
@@ -29,6 +29,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     updateAvailable: look.updateAvailable ?? null,
     displayName: i.displayName,
     customIcon: i.icon ? (i.icon.kind === 'glyph' ? { kind: 'glyph', glyph: i.icon.glyph, color: i.icon.color } : { kind: 'image', url: `/v1/instances/${i.id}/icon?v=${encodeURIComponent(i.icon.version)}` }) : null,
+    usage: look.usage ?? null,
   };
 }
 

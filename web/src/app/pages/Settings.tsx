@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
-import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
+import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
 import { fmtBytes, fmtUptime } from '../format';
@@ -807,11 +807,13 @@ function StatusRow({ tool }: { tool: PlatformToolDto | undefined }) {
 
 function Storage() {
   const [s, setS] = useState<HostStorageDto | null>(null);
+  const [usage, setUsage] = useState<StorageUsageDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const load = () => api.hostStorage().then(setS, (e: Error) => setError(e.message));
   useEffect(() => {
     void load();
+    api.storageUsage().then(setUsage, () => setUsage(null)); // best-effort: Docker may be down
   }, []);
   return (
     <>
@@ -860,6 +862,23 @@ function Storage() {
           Browse and create folders…
         </button>
         {browsing && <FolderPicker title="Folders" hint="Browse your disks. Create folders inside the Harbor data folder or anywhere the harbor account may write." onClose={() => setBrowsing(false)} onPick={() => setBrowsing(false)} />}
+      </section>
+      <section className="card" aria-labelledby="appspace-h">
+        <h2 id="appspace-h">Space used by apps</h2>
+        {!usage && <p className="muted small">Sizes are unavailable right now (Docker may be busy or down).</p>}
+        {usage && usage.apps.length === 0 && <p className="muted small">No app keeps data in managed volumes yet.</p>}
+        <ul className="plain">
+          {usage?.apps.map((a) => (
+            <li key={a.instanceId} className="row between wrap">
+              <span>{a.name}</span>
+              <span className="muted small" title={a.volumes.map((v) => `${v.id}: ${fmtBytes(v.sizeBytes)}`).join(' · ')}>
+                {fmtBytes(a.totalBytes)}
+                {a.volumes.length > 1 ? ` in ${a.volumes.length} volumes` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {usage && usage.unownedBytes > 0 && <p className="muted small">Other Docker volumes not managed by Harbor use {fmtBytes(usage.unownedBytes)}.</p>}
       </section>
       <section className="card" aria-labelledby="inuse-h">
         <h2 id="inuse-h">Folders used by apps</h2>

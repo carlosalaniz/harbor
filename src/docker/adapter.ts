@@ -40,6 +40,19 @@ export interface EngineInfo {
   error: string | null;
 }
 
+// One-shot resource usage of a running container (no stream; the stats API's precpu
+// field provides the two samples a CPU percentage needs).
+export interface ContainerStats {
+  cpuPercent: number; // 0..(100 * cores)
+  memoryBytes: number;
+  memoryLimitBytes: number;
+}
+
+// Volume disk usage (docker system df -v equivalent). Expensive: callers must cache.
+export interface DockerDiskUsage {
+  volumes: { name: string; sizeBytes: number }[];
+}
+
 export interface DockerAdapter {
   readonly description: string;
   ping(): Promise<EngineInfo>;
@@ -59,6 +72,10 @@ export interface DockerAdapter {
   publishedHostPorts(): Promise<number[]>;
   // Last N log lines of one container (stdout+stderr, timestamps), for the Troubleshoot page.
   containerLogs(id: string, tail: number): Promise<string>;
+  // One-shot usage sample; null when the container is not running or stats are unsupported.
+  containerStats(id: string): Promise<ContainerStats | null>;
+  // Volume sizes (docker system df). Expensive; callers cache (observer never calls this).
+  diskUsage(): Promise<DockerDiskUsage>;
 }
 
 export interface ComposeInvocation {

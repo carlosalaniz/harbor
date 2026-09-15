@@ -3,7 +3,7 @@ import type { DomainsDto } from '../../../src/contracts/api';
 import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
 import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
-import { categoryLabel, fmtTime } from './format';
+import { categoryLabel, fmtBytes, fmtTime } from './format';
 import type { Action, Console } from './store';
 
 // Step 2 of every wizard: review the server-side plan, approve, then the tray takes over.
@@ -387,6 +387,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           </p>
           <StatusPill inst={inst} />
           <span className="muted small"> · observed {fmtTime(inst.observedAt)}</span>
+          {inst.usage && (
+            <p className="muted small" aria-label="Resource usage">
+              CPU {inst.usage.cpuPercent}% · {fmtBytes(inst.usage.memoryBytes)} memory
+            </p>
+          )}
         </div>
       </div>
       {upd && !retained && (

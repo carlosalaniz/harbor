@@ -346,6 +346,16 @@
         }
       }
     },
+    "/v1/system/storage/usage": {
+      "get": {
+        "description": "Volume disk usage grouped per app (docker system df, cached 60 s).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/instances": {
       "get": {
         "description": "All instances including retained records.",
