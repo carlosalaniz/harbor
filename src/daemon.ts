@@ -33,7 +33,9 @@ import { TerminalService } from './system/terminal.js';
 import { FakeReleaseFeed, FakeUnitStarter, GitHubReleaseFeed, SelfUpdateService, SystemctlStarter, type ReleaseFeed, type UnitStarter } from './system/selfupdate.js';
 import { SetupService } from './auth/setup.js';
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import { hostname } from 'node:os';
 import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/registry.js';
+import { FakeTransport, Notifier, realTransport, type NotifyTransport } from './notify/notifier.js';
 
 export function productVersion(): string {
   try {
@@ -62,6 +64,7 @@ export interface DaemonOverrides {
   registry?: ImageResolver;
   releaseFeed?: ReleaseFeed;
   unitStarter?: UnitStarter;
+  notifyTransport?: NotifyTransport;
 }
 
 export interface Daemon {
@@ -131,7 +134,9 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const feed = overrides.releaseFeed ?? (fakeMode ? demoReleaseFeed(version) : config.updates.repo ? new GitHubReleaseFeed(fetcher, config.updates.repo) : null);
     const unitStarter = overrides.unitStarter ?? (fakeMode ? new FakeUnitStarter() : new SystemctlStarter());
     const selfUpdate = new SelfUpdateService(version, feed, unitStarter, config.stateDir, clock, log);
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate };
+    const notifyTransport = overrides.notifyTransport ?? (fakeMode ? new FakeTransport() : realTransport());
+    const notifier = new Notifier(repo, ids, log, notifyTransport, () => repo.setting<string>('device.name') ?? hostname());
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate, notifier };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);

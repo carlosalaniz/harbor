@@ -20,15 +20,7 @@ export function sampleMetrics(now: Date, docker: { available: boolean; version: 
   } catch {
     /* not linux */
   }
-  let disk: SystemMetricsDto['disk'];
-  try {
-    const st = statfsSync(diskPath);
-    const totalBytes = Number(st.blocks) * Number(st.bsize);
-    const freeBytes = Number(st.bavail) * Number(st.bsize);
-    disk = { path: diskPath, totalBytes, usedBytes: totalBytes - freeBytes };
-  } catch {
-    disk = null;
-  }
+  const disk = sampleDisk(diskPath);
   return {
     sampledAt: now.toISOString(),
     uptimeSeconds: Math.round(uptime()),
@@ -42,6 +34,18 @@ export function sampleMetrics(now: Date, docker: { available: boolean; version: 
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;
+
+// Root-disk usage; null when statfs is unavailable (also used by the disk-pressure notification).
+export function sampleDisk(diskPath = '/'): { path: string; totalBytes: number; usedBytes: number } | null {
+  try {
+    const st = statfsSync(diskPath);
+    const totalBytes = Number(st.blocks) * Number(st.bsize);
+    const freeBytes = Number(st.bavail) * Number(st.bsize);
+    return { path: diskPath, totalBytes, usedBytes: totalBytes - freeBytes };
+  } catch {
+    return null;
+  }
+}
 
 // Plain facts for the Settings overview ("Running on"). /etc/os-release on Linux; os module elsewhere.
 export function hostFacts(): SystemMetricsDto['host'] {

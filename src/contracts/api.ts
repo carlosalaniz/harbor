@@ -69,6 +69,27 @@ export interface StorageUsageDto {
   unownedBytes: number; // volumes on the engine that no Harbor instance owns
 }
 
+// ---- notifications (decision 77)
+export interface NotificationDto {
+  id: string;
+  createdAt: string;
+  kind: string;
+  severity: 'info' | 'warning' | 'error';
+  title: string;
+  body: string;
+  instanceId: string | null;
+  read: boolean;
+}
+export interface NotificationsDto {
+  items: NotificationDto[];
+  unread: number;
+}
+// External delivery channels; secrets stay server-side (the GET returns them redacted).
+export type NotificationChannelDto =
+  | { kind: 'ntfy'; server: string; topic: string; token?: string; minSeverity?: 'info' | 'warning' | 'error' }
+  | { kind: 'webhook'; url: string; secret?: string; minSeverity?: 'info' | 'warning' | 'error' }
+  | { kind: 'email'; smtp: { host: string; port: number; secure: boolean; user?: string; pass?: string }; from: string; to: string; minSeverity?: 'info' | 'warning' | 'error' };
+
 export interface EventDto {
   cursor: string; // decimal string of a 64-bit cursor
   at: string;

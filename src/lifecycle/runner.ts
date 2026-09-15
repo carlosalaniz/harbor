@@ -146,6 +146,15 @@ export class OperationRunner {
         repo.bumpGeneration(inst.id);
         repo.addEvent({ operationId: op.id, instanceId: inst.id, phase: state, message: `${op.kind} ${state}: ${message}` });
       });
+      // One row per failed operation (unique id in the key): auto-updates and background redeploys surface here.
+      this.ctx.notifier.notify({
+        kind: 'operation-failed',
+        severity: 'error',
+        title: rolledBack ? `Update of ${inst.name} failed; the previous version is back` : `${op.kind} of ${inst.name} ${state === 'needs_action' ? 'needs attention' : 'failed'}`,
+        body: `${message} Next: ${nextAction}`,
+        instanceId: inst.id,
+        dedupeKey: `operation-failed:${op.id}`,
+      });
     }
   }
 

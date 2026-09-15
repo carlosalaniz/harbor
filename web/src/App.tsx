@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken } from './api';
 import { EventList, openUrl as appOpenUrl } from './app/components';
@@ -204,6 +204,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           <span>Search</span>
           <kbd aria-hidden="true">⌘K</kbd>
         </button>
+        <NotificationBell c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} />
         <ul>
           {NAV.map((n) => (
             <li key={n.route.page}>
@@ -330,6 +331,76 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
       )}
       <PlanDialog c={c} />
       <Tray c={c} />
+    </div>
+  );
+}
+
+// Bell + panel: history of conditions and events (the Home attention list shows live state).
+function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; onOpenApp: (instanceId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const n = c.data.notifications;
+  const unread = n?.unread ?? 0;
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  const markRead = (id: string) => api.markNotificationRead(id).then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
+  const markAll = () => api.markAllNotificationsRead().then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
+  return (
+    <div className="bell-wrap" ref={panelRef}>
+      <button className="btn ghost search-btn" onClick={() => setOpen((v) => !v)} aria-label={unread ? `Notifications: ${unread} unread` : 'Notifications'} aria-expanded={open} title="Notifications">
+        <span className="glyph" aria-hidden="true">
+          🔔
+        </span>
+        <span>Notifications</span>
+        {unread > 0 && <span className="badge">{unread > 99 ? '99+' : unread}</span>}
+      </button>
+      {open && (
+        <div className="bell-panel card" role="dialog" aria-label="Notifications">
+          <div className="row between">
+            <strong>Notifications</strong>
+            {unread > 0 && (
+              <button className="btn ghost small" onClick={() => void markAll()}>
+                Mark all read
+              </button>
+            )}
+          </div>
+          {(!n || n.items.length === 0) && <p className="muted small">Nothing yet. Updates, warnings and failures appear here.</p>}
+          <ul className="plain bell-list">
+            {n?.items.slice(0, 30).map((item) => (
+              <li key={item.id} className={item.read ? 'read' : 'unread'}>
+                <button
+                  className="bell-item"
+                  onClick={() => {
+                    if (!item.read) void markRead(item.id);
+                    if (item.instanceId) {
+                      onOpenApp(item.instanceId);
+                      setOpen(false);
+                    }
+                  }}
+                >
+                  <span className={`dot tone-${item.severity === 'error' ? 'bad' : item.severity === 'warning' ? 'warn' : 'ok'}`} aria-hidden="true" />
+                  <span className="bell-text">
+                    <strong>{item.title}</strong>
+                    <span className="muted small">{item.body}</span>
+                    <span className="muted small">{new Date(item.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

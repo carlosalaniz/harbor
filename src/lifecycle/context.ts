@@ -1,5 +1,6 @@
 import type { SelfUpdateService } from '../system/selfupdate.js';
 import type { LogBuffer } from '../system/logs.js';
+import type { Notifier } from '../notify/notifier.js';
 import type { DaemonConfig } from '../config.js';
 import type { ComposeRunner, DockerAdapter } from '../docker/adapter.js';
 import type { PortObserver } from '../docker/ports.js';
@@ -38,6 +39,7 @@ export interface Ctx {
   packages: PackageStore;
   logBuffer: LogBuffer;
   selfUpdate: SelfUpdateService;
+  notifier: Notifier;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

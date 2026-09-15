@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
-import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
+import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
 import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
 import { WALLPAPERS, applyTheme, applyWallpaper, hasExplicitWallpaper, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'access' | 'troubleshoot' | 'about';
+type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
 const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] = [
   { id: 'overview', label: 'Overview', glyph: '◉', blurb: 'This machine at a glance' },
   { id: 'account', label: 'Account', glyph: '👤', blurb: 'Password and session' },
@@ -16,6 +16,7 @@ const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] =
   { id: 'public', label: 'Public addresses', glyph: '🌐', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', glyph: '💽', blurb: 'Disks and folders your apps use' },
   { id: 'appearance', label: 'Appearance', glyph: '🎨', blurb: 'Theme and wallpapers' },
+  { id: 'notifications', label: 'Notifications', glyph: '🔔', blurb: 'Reach you when something needs attention' },
   { id: 'access', label: 'Advanced access', glyph: '⌨️', blurb: 'Terminal, SSH forwarding, CLI' },
   { id: 'troubleshoot', label: 'Troubleshoot', glyph: '🩺', blurb: 'Harbor and app logs' },
   { id: 'about', label: 'About', glyph: 'ℹ️', blurb: 'Version and trust boundary' },
@@ -57,6 +58,7 @@ export function Settings({ c, onLogout, initialSection, onSection }: { c: Consol
         {section === 'public' && <PublicAddresses c={c} />}
         {section === 'storage' && <Storage />}
         {section === 'appearance' && <Appearance c={c} />}
+        {section === 'notifications' && <Notifications />}
         {section === 'access' && <Access c={c} />}
         {section === 'troubleshoot' && <Troubleshoot c={c} />}
         {section === 'about' && <About c={c} />}
@@ -802,6 +804,150 @@ function StatusRow({ tool }: { tool: PlatformToolDto | undefined }) {
       </Pill>
       {tool.note && <span className="muted small">{tool.note}</span>}
     </p>
+  );
+}
+
+// Delivery channels for the bell's notifications: ntfy, webhook, email. Secrets are write-only.
+function Notifications() {
+  const [channels, setChannels] = useState<NotificationChannelDto[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.notificationChannels().then((r) => (setChannels(r.channels), setLoaded(true)), (e: Error) => setError(e.message));
+  }, []);
+  const save = async (next: NotificationChannelDto[]) => {
+    setBusy(true);
+    setMsg(null);
+    setError(null);
+    try {
+      const r = await api.setNotificationChannels(next);
+      setChannels(r.channels);
+      setMsg('Saved.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const test = async () => {
+    setBusy(true);
+    setMsg(null);
+    setError(null);
+    try {
+      const r = await api.testNotificationChannels();
+      const failed = r.results.filter((x) => !x.ok);
+      setMsg(failed.length === 0 ? `Test sent to ${r.results.length} channel${r.results.length === 1 ? '' : 's'}.` : `Failed: ${failed.map((f) => `${f.kind} (${f.error ?? 'unknown'})`).join(', ')}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const update = (idx: number, patch: Partial<NotificationChannelDto>) => setChannels((cs) => cs.map((c, i) => (i === idx ? ({ ...c, ...patch } as NotificationChannelDto) : c)));
+  return (
+    <section className="card" aria-labelledby="notif-h">
+      <h2 id="notif-h">Notification channels</h2>
+      <p className="muted small">
+        The bell in the sidebar always works. Channels below also reach you when you are not looking at the console: a{' '}
+        <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer">
+          ntfy
+        </a>{' '}
+        topic on your phone, any webhook, or email. Severity filters keep the noise down.
+      </p>
+      {error && <p className="error">{error}</p>}
+      {msg && (
+        <p role="status" className="notice small">
+          {msg}
+        </p>
+      )}
+      {loaded &&
+        channels.map((ch, idx) => (
+          <div className="channel" key={idx}>
+            <div className="row between wrap">
+              <strong>{ch.kind === 'ntfy' ? 'ntfy push' : ch.kind === 'webhook' ? 'Webhook' : 'Email'}</strong>
+              <button className="btn ghost small" disabled={busy} onClick={() => void save(channels.filter((_, i) => i !== idx))}>
+                Remove
+              </button>
+            </div>
+            {ch.kind === 'ntfy' && (
+              <div className="row wrap">
+                <label>
+                  Server <input value={ch.server} onChange={(e) => update(idx, { server: e.target.value })} placeholder="https://ntfy.sh" />
+                </label>
+                <label>
+                  Topic <input value={ch.topic} onChange={(e) => update(idx, { topic: e.target.value })} placeholder="my-harbor" />
+                </label>
+                <label>
+                  Access token (optional) <input type="password" value={ch.token ?? ''} onChange={(e) => update(idx, { token: e.target.value })} />
+                </label>
+              </div>
+            )}
+            {ch.kind === 'webhook' && (
+              <div className="row wrap">
+                <label>
+                  URL <input value={ch.url} onChange={(e) => update(idx, { url: e.target.value })} placeholder="https://…" />
+                </label>
+                <label>
+                  Signing secret (optional) <input type="password" value={ch.secret ?? ''} onChange={(e) => update(idx, { secret: e.target.value })} />
+                </label>
+              </div>
+            )}
+            {ch.kind === 'email' && (
+              <div className="row wrap">
+                <label>
+                  SMTP host <input value={ch.smtp.host} onChange={(e) => update(idx, { smtp: { ...ch.smtp, host: e.target.value } })} />
+                </label>
+                <label>
+                  Port <input type="number" value={ch.smtp.port} onChange={(e) => update(idx, { smtp: { ...ch.smtp, port: Number(e.target.value) } })} />
+                </label>
+                <label className="row">
+                  <input type="checkbox" checked={ch.smtp.secure} onChange={(e) => update(idx, { smtp: { ...ch.smtp, secure: e.target.checked } })} /> TLS from the start (465)
+                </label>
+                <label>
+                  User (optional) <input value={ch.smtp.user ?? ''} onChange={(e) => update(idx, { smtp: { ...ch.smtp, user: e.target.value } })} />
+                </label>
+                <label>
+                  Password <input type="password" value={ch.smtp.pass ?? ''} onChange={(e) => update(idx, { smtp: { ...ch.smtp, pass: e.target.value } })} />
+                </label>
+                <label>
+                  From <input value={ch.from} onChange={(e) => update(idx, { from: e.target.value })} placeholder="harbor@example.org" />
+                </label>
+                <label>
+                  To <input value={ch.to} onChange={(e) => update(idx, { to: e.target.value })} placeholder="you@example.org" />
+                </label>
+              </div>
+            )}
+            <label>
+              Send{' '}
+              <select value={ch.minSeverity ?? 'info'} onChange={(e) => update(idx, { minSeverity: e.target.value as 'info' | 'warning' | 'error' })}>
+                <option value="info">everything</option>
+                <option value="warning">warnings and failures</option>
+                <option value="error">only failures</option>
+              </select>
+            </label>
+          </div>
+        ))}
+      <div className="row wrap">
+        <button className="btn" disabled={busy || channels.length >= 5} onClick={() => setChannels((cs) => [...cs, { kind: 'ntfy', server: 'https://ntfy.sh', topic: '' }])}>
+          + ntfy
+        </button>
+        <button className="btn" disabled={busy || channels.length >= 5} onClick={() => setChannels((cs) => [...cs, { kind: 'webhook', url: '' }])}>
+          + webhook
+        </button>
+        <button className="btn" disabled={busy || channels.length >= 5} onClick={() => setChannels((cs) => [...cs, { kind: 'email', smtp: { host: '', port: 587, secure: false }, from: '', to: '' }])}>
+          + email
+        </button>
+        <span style={{ flex: 1 }} />
+        <button className="btn primary" disabled={busy || !loaded} onClick={() => void save(channels)}>
+          Save
+        </button>
+        <button className="btn" disabled={busy || channels.length === 0} onClick={() => void test()}>
+          Send a test
+        </button>
+      </div>
+    </section>
   );
 }
 

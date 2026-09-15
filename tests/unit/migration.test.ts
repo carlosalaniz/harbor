@@ -46,6 +46,11 @@ describe('state migration v1 -> v2', () => {
     // v5: settings table and per-app look columns
     opened.prepare("INSERT INTO settings VALUES ('home.order', '[]', 't')").run();
     expect(opened.prepare('SELECT display_name, icon_json FROM instances').get()).toEqual({ display_name: null, icon_json: null });
+    // v6: notifications (dedupe unique), package sources, per-instance auto-update default off
+    expect(opened.prepare('SELECT auto_update FROM instances').get()).toEqual({ auto_update: 0 });
+    opened.prepare("INSERT INTO notifications (id, created_at, kind, severity, title, body, dedupe_key) VALUES ('66666666-6666-4666-8666-666666666666', 't', 'update', 'info', 'Update', 'b', 'update:x:2')").run();
+    expect(() => opened.prepare("INSERT INTO notifications (id, created_at, kind, severity, title, body, dedupe_key) VALUES ('77777777-7777-4777-8777-777777777777', 't', 'update', 'info', 'Update', 'b', 'update:x:2')").run()).toThrow(/UNIQUE/);
+    opened.prepare("INSERT INTO package_sources (id, kind, url, ref, package_id, created_at) VALUES ('88888888-8888-4888-8888-888888888888', 'git', 'https://github.com/x/y', 'main', 'myapp', 't')").run();
     opened.close();
     // second open: no migration, still fine
     const again = openState(dir);

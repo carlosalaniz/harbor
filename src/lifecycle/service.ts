@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
 import { hostname } from 'node:os';
@@ -51,6 +51,46 @@ export class ApplicationService {
   recordUsage(instanceId: string, usage: { cpuPercent: number; memoryBytes: number } | null): void {
     if (!usage) this.usageCache.delete(instanceId);
     else this.usageCache.set(instanceId, { ...usage, sampledAt: rfc3339(this.ctx.clock.now()) });
+  }
+
+  // ---- notifications (decision 77)
+  notifications(unreadOnly: boolean): NotificationsDto {
+    const items = this.ctx.repo.notifications({ unreadOnly }).map((n) => ({ id: n.id, createdAt: n.createdAt, kind: n.kind, severity: n.severity, title: n.title, body: n.body, instanceId: n.instanceId, read: n.readAt !== null }));
+    return { items, unread: this.ctx.repo.unreadNotificationCount() };
+  }
+  markNotificationRead(id: string): NotificationsDto {
+    this.ctx.repo.markNotificationRead(id);
+    return this.notifications(false);
+  }
+  markAllNotificationsRead(): NotificationsDto {
+    this.ctx.repo.markAllNotificationsRead();
+    return this.notifications(false);
+  }
+  notificationChannels(): { channels: NotificationChannelDto[] } {
+    // Secrets are write-only through the API: redact on read.
+    const channels = this.ctx.notifier.channels().map((c) => {
+      if (c.kind === 'ntfy') return { ...c, ...(c.token ? { token: '••••' } : {}) };
+      if (c.kind === 'webhook') return { ...c, ...(c.secret ? { secret: '••••' } : {}) };
+      return { ...c, smtp: { ...c.smtp, ...(c.smtp.pass ? { pass: '••••' } : {}) } };
+    });
+    return { channels };
+  }
+  setNotificationChannels(channels: NotificationChannelDto[]): { channels: NotificationChannelDto[] } {
+    if (channels.length > 5) throw new HarborError('INVALID_REQUEST', 'at most 5 notification channels');
+    // A redacted secret in the payload means "keep the stored one".
+    const stored = this.ctx.notifier.channels();
+    const merged = channels.map((c, idx) => {
+      const prev = stored[idx];
+      if (c.kind === 'ntfy' && c.token === '••••' && prev?.kind === 'ntfy') return { ...c, ...(prev.token !== undefined ? { token: prev.token } : {}) };
+      if (c.kind === 'webhook' && c.secret === '••••' && prev?.kind === 'webhook') return { ...c, ...(prev.secret !== undefined ? { secret: prev.secret } : {}) };
+      if (c.kind === 'email' && c.smtp.pass === '••••' && prev?.kind === 'email') return { ...c, smtp: { ...c.smtp, ...(prev.smtp.pass !== undefined ? { pass: prev.smtp.pass } : {}) } };
+      return c;
+    });
+    this.ctx.notifier.setChannels(merged);
+    return this.notificationChannels();
+  }
+  testNotificationChannels(): Promise<{ kind: string; ok: boolean; error: string | null }[]> {
+    return this.ctx.notifier.test();
   }
 
   // Volume sizes grouped per app. Never called from the observer; the 60 s cache keeps the Storage page cheap.

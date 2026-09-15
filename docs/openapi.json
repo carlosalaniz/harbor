@@ -356,6 +356,191 @@
         }
       }
     },
+    "/v1/notifications": {
+      "get": {
+        "description": "Notification history, newest first (persisting conditions are deduplicated).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "in": "query",
+            "name": "unread",
+            "required": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/notifications/{id}/read": {
+      "post": {
+        "description": "Mark one notification read.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/notifications/read-all": {
+      "post": {
+        "description": "Mark every notification read.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/notifications/channels": {
+      "get": {
+        "description": "External delivery channels (ntfy, webhook, email); secrets redacted.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "put": {
+        "description": "Replace the delivery channels. A redacted secret (\"••••\") keeps the stored value.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "channels"
+                ],
+                "properties": {
+                  "channels": {
+                    "type": "array",
+                    "maxItems": 5,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "kind"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "ntfy",
+                            "webhook",
+                            "email"
+                          ]
+                        },
+                        "server": {
+                          "type": "string",
+                          "maxLength": 512
+                        },
+                        "topic": {
+                          "type": "string",
+                          "maxLength": 256
+                        },
+                        "token": {
+                          "type": "string",
+                          "maxLength": 512
+                        },
+                        "url": {
+                          "type": "string",
+                          "maxLength": 1024
+                        },
+                        "secret": {
+                          "type": "string",
+                          "maxLength": 512
+                        },
+                        "smtp": {
+                          "type": "object",
+                          "properties": {
+                            "host": {
+                              "type": "string",
+                              "maxLength": 253
+                            },
+                            "port": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 65535
+                            },
+                            "secure": {
+                              "type": "boolean"
+                            },
+                            "user": {
+                              "type": "string",
+                              "maxLength": 256
+                            },
+                            "pass": {
+                              "type": "string",
+                              "maxLength": 512
+                            }
+                          },
+                          "required": [
+                            "host",
+                            "port",
+                            "secure"
+                          ]
+                        },
+                        "from": {
+                          "type": "string",
+                          "maxLength": 256
+                        },
+                        "to": {
+                          "type": "string",
+                          "maxLength": 256
+                        },
+                        "minSeverity": {
+                          "type": "string",
+                          "enum": [
+                            "info",
+                            "warning",
+                            "error"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/notifications/channels/test": {
+      "post": {
+        "description": "Send a test notification to every configured channel.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/instances": {
       "get": {
         "description": "All instances including retained records.",

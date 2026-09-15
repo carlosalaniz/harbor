@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AppearanceDto, CatalogItemDto, ExposureDto, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SystemDto, SystemMetricsDto, UiExposureDto } from '../../../src/contracts/api';
+import type { AppearanceDto, CatalogItemDto, ExposureDto, InstanceSummary, NotificationsDto, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SystemDto, SystemMetricsDto, UiExposureDto } from '../../../src/contracts/api';
 import { ApiError, api, newIdempotencyKey } from '../api';
 
 export interface Data {
@@ -11,6 +11,7 @@ export interface Data {
   exposures: ExposureDto[];
   uiExposure: UiExposureDto | null;
   appearance: AppearanceDto | null;
+  notifications: NotificationsDto | null;
 }
 
 export type Action =
@@ -40,7 +41,7 @@ export const isFinal = (op: OperationDto) => op.state === 'succeeded' || op.stat
 // One store for the console: polling, the plan → approve → operation flow with a stable idempotency
 // key per plan, and the operation tray. Everything comes from the daemon; nothing is cached across reloads.
 export function useConsole(onAuthLost: (msg?: string) => void) {
-  const [data, setData] = useState<Data>({ system: null, metrics: null, catalog: [], instances: [], tools: [], exposures: [], uiExposure: null, appearance: null });
+  const [data, setData] = useState<Data>({ system: null, metrics: null, catalog: [], instances: [], tools: [], exposures: [], uiExposure: null, appearance: null, notifications: null });
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pending, setPending] = useState<Action | null>(null);
@@ -53,8 +54,8 @@ export function useConsole(onAuthLost: (msg?: string) => void) {
 
   const refresh = useCallback(async () => {
     try {
-      const [system, catalog, instances, tools, exp, metrics, appearance] = await Promise.all([api.system(), api.catalog(), api.instances(), api.tools(), api.exposures(), api.metrics().catch(() => null), api.appearance().catch(() => null)]);
-      setData((prev) => ({ system, metrics, catalog, instances, tools, exposures: exp.items, uiExposure: exp.ui, appearance: appearance ?? prev.appearance }));
+      const [system, catalog, instances, tools, exp, metrics, appearance, notifications] = await Promise.all([api.system(), api.catalog(), api.instances(), api.tools(), api.exposures(), api.metrics().catch(() => null), api.appearance().catch(() => null), api.notifications().catch(() => null)]);
+      setData((prev) => ({ system, metrics, catalog, instances, tools, exposures: exp.items, uiExposure: exp.ui, appearance: appearance ?? prev.appearance, notifications: notifications ?? prev.notifications }));
       setLoadError(null);
       setLoaded(true);
       if (!watching) {

@@ -8,6 +8,8 @@ import type { Readiness, Runtime } from '../state/repo.js';
 import { exposureUrl } from '../exposure/urls.js';
 import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyRoutesFromState, caddySignature } from './runner.js';
+import { compareRevisions } from '../packages/store.js';
+import { sampleDisk } from '../system/metrics.js';
 
 // Periodic observation of what actually exists. Never mutates Docker.
 export class Observer {
@@ -89,13 +91,50 @@ export class Observer {
         if (runtime === 'running' && inst.installState === 'installed') {
           readiness = (await this.quickProbe(inst.id, inst.packageId, inst.endpoints)) ? 'healthy' : 'unhealthy';
         }
+        // An app that should be running but is not answering is a warning; recovery clears the unread row.
+        if (inst.desired === 'running' && inst.installState === 'installed' && (readiness === 'unhealthy' || runtime === 'stopped')) {
+          this.ctx.notifier.notify({ kind: 'app-degraded', severity: 'warning', title: `${inst.displayName ?? inst.name} is not answering`, body: runtime === 'stopped' ? 'Its containers are not running. Open the app drawer to start it or check its logs.' : 'Its containers run but the app does not answer its health check. Check its logs under Troubleshoot.', instanceId: inst.id, dedupeKey: `app-degraded:${inst.id}` });
+        } else this.ctx.notifier.resolve(`app-degraded:${inst.id}`);
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
       }
+      this.notifyUpdatesAndDisk();
       await this.verifyExposures(now);
     } catch (e) {
       this.ctx.log.warn(`observer tick failed: ${(e as Error).message}`);
     } finally {
       this.busy = false;
+    }
+  }
+
+  // Update-available and disk-pressure notifications ride the same tick (cheap reads, dedupe upserts).
+  private notifyUpdatesAndDisk(): void {
+    try {
+      const current = this.ctx.packages.currentRevisions();
+      for (const i of this.ctx.repo.listInstances()) {
+        if (i.purgedAt || i.installState !== 'installed') continue;
+        const cur = current.get(i.packageId);
+        const key = cur ? `update:${i.id}:${cur.revision}` : null;
+        if (key && compareRevisions(cur!.revision, i.revision) > 0) {
+          this.ctx.notifier.notify({ kind: 'update-available', severity: 'info', title: `Update for ${i.displayName ?? i.name}`, body: `Revision ${i.revision} → ${cur!.revision}${cur!.version ? ` (${cur!.version})` : ''}. Update from the app drawer or Home; your data stays.`, instanceId: i.id, dedupeKey: key });
+        } else if (key) this.ctx.notifier.resolve(key);
+      }
+    } catch {
+      /* package store trouble is reported elsewhere */
+    }
+    try {
+      const disk = sampleDisk();
+      if (disk && disk.totalBytes > 0) {
+        const pct = Math.round((disk.usedBytes / disk.totalBytes) * 100);
+        if (pct >= 90) this.ctx.notifier.notify({ kind: 'disk-pressure', severity: pct >= 95 ? 'error' : 'warning', title: `Disk ${pct}% full`, body: 'Apps can fail when the disk fills up. Remove unused apps or data, or check Settings → Storage.', dedupeKey: 'disk-pressure' });
+        else this.ctx.notifier.resolve('disk-pressure');
+      }
+    } catch {
+      /* statfs unavailable on this platform */
+    }
+    // Harbor's own update (manual by design, decision 70): notify only.
+    const su = this.ctx.selfUpdate.status();
+    if (su.available && su.latest) {
+      this.ctx.notifier.notify({ kind: 'harbor-update', severity: 'info', title: `Harbor ${su.latest.version} is available`, body: 'Update from Settings → Overview. Apps keep running; the console is briefly unavailable.', dedupeKey: `harbor-update:${su.latest.version}` });
     }
   }
 
@@ -111,6 +150,8 @@ export class Observer {
       if (!inst || inst.activeOperationId) continue;
       const r = await this.ctx.verify(exposureUrl(e));
       const state = r.ok ? 'active' : 'degraded';
+      if (state === 'degraded') this.ctx.notifier.notify({ kind: 'exposure-degraded', severity: 'warning', title: `${inst.name} is not reachable at ${e.hostname}`, body: `${exposureUrl(e)} does not answer: ${r.error ?? `HTTP ${r.status}`}. Harbor keeps checking and recovers the address automatically when DNS/certificates settle.`, instanceId: e.instanceId, dedupeKey: `exposure-degraded:${e.id}` });
+      else this.ctx.notifier.resolve(`exposure-degraded:${e.id}`);
       if (state !== e.state || r.ok) this.ctx.repo.updateExposure(e.id, { state, observedAt: now, note: r.ok ? `answered HTTP ${r.status}` : `not reachable: ${r.error ?? `HTTP ${r.status}`}` });
       else this.ctx.repo.updateExposure(e.id, { observedAt: now });
     }

@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, StorageUsageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -81,6 +81,12 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string) => call<{ revokedSessions: number }>('PUT', '/v1/account/password', { currentPassword, newPassword }),
   hostStorage: () => call<HostStorageDto>('GET', '/v1/host/storage'),
   storageUsage: () => call<StorageUsageDto>('GET', '/v1/system/storage/usage'),
+  notifications: () => call<NotificationsDto>('GET', '/v1/notifications'),
+  markNotificationRead: (id: string) => call<NotificationsDto>('POST', `/v1/notifications/${id}/read`, {}),
+  markAllNotificationsRead: () => call<NotificationsDto>('POST', '/v1/notifications/read-all', {}),
+  notificationChannels: () => call<{ channels: NotificationChannelDto[] }>('GET', '/v1/notifications/channels'),
+  setNotificationChannels: (channels: NotificationChannelDto[]) => call<{ channels: NotificationChannelDto[] }>('PUT', '/v1/notifications/channels', { channels }),
+  testNotificationChannels: () => call<{ results: { kind: string; ok: boolean; error: string | null }[] }>('POST', '/v1/notifications/channels/test', {}),
   folders: (path: string) => call<FolderListingDto>('GET', `/v1/host/folders?path=${encodeURIComponent(path)}`),
   createFolder: (parent: string, name: string) => call<{ name: string; path: string; writable: boolean }>('POST', '/v1/host/folders', { parent, name }),
   tailscaleLogin: (authKey?: string) => call<TailscaleLoginDto>('POST', '/v1/platform-tools/tailscale/login', authKey ? { authKey } : {}),

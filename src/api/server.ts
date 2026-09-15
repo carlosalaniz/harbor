@@ -222,6 +222,54 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   );
   app.get('/v1/system/metrics', { preHandler: requireAuth, schema: { description: 'Host metrics for the console (cpu, memory, disk, docker).' } }, async () => service.metrics());
   app.get('/v1/system/storage/usage', { preHandler: requireAuth, schema: { description: 'Volume disk usage grouped per app (docker system df, cached 60 s).' } }, async () => service.storageUsage());
+
+  // --- notifications
+  app.get(
+    '/v1/notifications',
+    { preHandler: requireAuth, schema: { description: 'Notification history, newest first (persisting conditions are deduplicated).', querystring: { type: 'object', additionalProperties: false, properties: { unread: { type: 'string', enum: ['true', 'false'] } } } } },
+    async (req) => service.notifications((req.query as { unread?: string }).unread === 'true'),
+  );
+  app.post('/v1/notifications/:id/read', { preHandler: requireAuth, schema: { description: 'Mark one notification read.', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.markNotificationRead((req.params as { id: string }).id));
+  app.post('/v1/notifications/read-all', { preHandler: requireAuth, schema: { description: 'Mark every notification read.' } }, async () => service.markAllNotificationsRead());
+  app.get('/v1/notifications/channels', { preHandler: requireAuth, schema: { description: 'External delivery channels (ntfy, webhook, email); secrets redacted.' } }, async () => service.notificationChannels());
+  app.put(
+    '/v1/notifications/channels',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Replace the delivery channels. A redacted secret ("••••") keeps the stored value.',
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['channels'],
+          properties: {
+            channels: {
+              type: 'array',
+              maxItems: 5,
+              items: {
+                type: 'object',
+                required: ['kind'],
+                properties: {
+                  kind: { type: 'string', enum: ['ntfy', 'webhook', 'email'] },
+                  server: { type: 'string', maxLength: 512 },
+                  topic: { type: 'string', maxLength: 256 },
+                  token: { type: 'string', maxLength: 512 },
+                  url: { type: 'string', maxLength: 1024 },
+                  secret: { type: 'string', maxLength: 512 },
+                  smtp: { type: 'object', properties: { host: { type: 'string', maxLength: 253 }, port: { type: 'integer', minimum: 1, maximum: 65535 }, secure: { type: 'boolean' }, user: { type: 'string', maxLength: 256 }, pass: { type: 'string', maxLength: 512 } }, required: ['host', 'port', 'secure'] },
+                  from: { type: 'string', maxLength: 256 },
+                  to: { type: 'string', maxLength: 256 },
+                  minSeverity: { type: 'string', enum: ['info', 'warning', 'error'] },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    async (req) => service.setNotificationChannels((req.body as { channels: Parameters<typeof service.setNotificationChannels>[0] }).channels),
+  );
+  app.post('/v1/notifications/channels/test', { preHandler: requireAuth, schema: { description: 'Send a test notification to every configured channel.' } }, async () => ({ results: await service.testNotificationChannels() }));
   app.get('/v1/instances', { preHandler: requireAuth, schema: { description: 'All instances including retained records.' } }, async () => ({ items: service.instances() }));
   app.get(
     '/v1/instances/:id',

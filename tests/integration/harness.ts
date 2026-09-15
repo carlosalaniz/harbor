@@ -13,6 +13,7 @@ import type { FakeRegistry } from '../../src/packages/registry.js';
 import { FakeReleaseFeed, FakeUnitStarter } from '../../src/system/selfupdate.js';
 import { FakeCaddyAdmin } from '../../src/exposure/caddy.js';
 import { FakeVerifier } from '../../src/exposure/verify.js';
+import { FakeTransport } from '../../src/notify/notifier.js';
 import { startDaemon, type Daemon, type DaemonOverrides } from '../../src/daemon.js';
 import { initializeState } from '../../src/state/db.js';
 import { enrollAdministrator } from '../../src/maintenance.js';
@@ -56,6 +57,7 @@ export interface Harness {
   userDataDir: string;
   caddy: FakeCaddyAdmin;
   verifier: FakeVerifier;
+  notifyTransport: FakeTransport;
   config: DaemonConfig;
   stateDir: string;
   catalogDir: string;
@@ -158,7 +160,8 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   const unitStarter = new FakeUnitStarter();
   const caddy = new FakeCaddyAdmin();
   const verifier = new FakeVerifier();
-  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, net, fetcher, power, registry, releaseFeed, unitStarter, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
+  const notifyTransport = new FakeTransport();
+  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, net, fetcher, power, registry, releaseFeed, unitStarter, notifyTransport, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
   let daemon = await start();
   const baseUrl = `http://localhost:${port}`;
   const api = new Api(baseUrl, null);
@@ -180,6 +183,7 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     userDataDir: config.userDataDir,
     caddy,
     verifier,
+    notifyTransport,
     config,
     stateDir,
     catalogDir,
