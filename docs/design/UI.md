@@ -1,6 +1,6 @@
 # Design addendum: the Harbor console
 
-**Status:** approved direction (Carlos, 2026-09-14): "like Umbrel and/or HexOS but better and easier".
+**Status:** approved direction (Carlos, 2026-09-14): "like Umbrel and/or HexOS but better and easier". Implemented 2026-09-14 (web/src/app); Playwright coverage in tests/e2e/ui.spec.ts.
 **Extends:** TDD.md section 8 (minimal UI). The API stays the single source of truth; the console is
 a nicer client of it, not a second engine.
 
