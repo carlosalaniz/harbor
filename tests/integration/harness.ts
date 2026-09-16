@@ -145,7 +145,16 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   const base = await freePort();
   const clock = new MutableClock();
   // A private port range far from the default so parallel test files do not collide.
-  const range = opts.portRange ?? { from: base + 1, to: base + 40 };
+  // The range must stay clear of the management port AND any test LAN port (e.g. 18999
+  // in setup-selfupdate.test.ts): freePort() can hand out any ephemeral port, so if the
+  // random range swallows either one, shift it above both.
+  let range = opts.portRange ?? { from: base + 1, to: base + 40 };
+  if (!opts.portRange) {
+    const reserved = [port, 18999];
+    while (reserved.some((p) => p >= range.from && p <= range.to)) {
+      range = { from: range.to + 1, to: range.to + 40 };
+    }
+  }
   const config = normalizeConfig(
     { stateDir, catalogDir, userDataDir: path.join(root, 'data'), docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port }, appPortRange: range, planTtlSeconds: 900, sessionTtlSeconds: 3600, logLevel: 'error', ...(opts.config ?? {}) },
     root,
