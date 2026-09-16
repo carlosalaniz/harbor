@@ -74,6 +74,12 @@ polkit.addRule(function (action, subject) {
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
+  // One-click platform-tool installs from the console: start harbor-tools-install@<tool>.service
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("harbor-tools-install@") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
   return polkit.Result.NOT_HANDLED;
 });
 `;
@@ -108,6 +114,24 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=${PRODUCT.paths.opt}/bin/harbor self-update apply --to %i
+TimeoutStartSec=1800
+`;
+}
+
+export const TOOLS_INSTALL_UNIT = 'harbor-tools-install.service';
+
+// Oneshot unit for one-click platform-tool installs from the console (Cockpit/Portainer).
+// The daemon (harbor user, allowed by the polkit rule) starts it with the tool id; the root
+// step runs `harbor tools-install <id>`, which reuses the bootstrap recipes and records the
+// result in state. Progress goes to <stateDir>/platform/<id>/install-status.json.
+export function toolsInstallUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor platform tool install (%i: cockpit or portainer)
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor tools-install %i
 TimeoutStartSec=1800
 `;
 }

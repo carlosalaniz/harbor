@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { PlatformToolDto } from '../../../../src/contracts/api';
+import { api, ApiError } from '../../api';
 import { Pill } from '../components';
 import { fmtTime } from '../format';
 import type { Console } from '../store';
@@ -54,8 +56,23 @@ export function Platform({ c }: { c: Console }) {
 }
 
 function ToolCard({ t }: { t: PlatformToolDto }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const installing = t.install && (t.install.state === 'requested' || t.install.state === 'installing');
+  const installable = (t.id === 'cockpit' || t.id === 'portainer') && (t.mode === 'absent' || t.installationState === 'not_installed') && !installing;
   const tone = t.installationState === 'installed' ? (t.availability === 'reachable' ? 'ok' : t.availability === 'unreachable' ? 'bad' : 'muted') : t.installationState === 'setup_required' ? 'warn' : 'muted';
-  const label = t.installationState === 'installed' ? (t.availability === 'reachable' ? 'Ready' : t.availability === 'unreachable' ? 'Not reachable' : 'Installed') : t.installationState === 'setup_required' ? 'Setup required' : t.installationState === 'not_installed' ? 'Not set up' : 'Unknown';
+  const label = installing ? 'Installing…' : t.installationState === 'installed' ? (t.availability === 'reachable' ? 'Ready' : t.availability === 'unreachable' ? 'Not reachable' : 'Installed') : t.installationState === 'setup_required' ? 'Setup required' : t.installationState === 'not_installed' ? 'Not set up' : 'Unknown';
+  const install = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.installTool(t.id);
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}. ${e.nextAction}` : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <li className={`tile tool ${t.id}`}>
       <div className="tile-main static">
@@ -79,6 +96,22 @@ function ToolCard({ t }: { t: PlatformToolDto }) {
           <p className="muted small">observed {fmtTime(t.observedAt)}</p>
         </div>
       </div>
+      {installable && (
+        <button className="btn primary" onClick={() => void install()} disabled={busy} aria-label={`Set up ${t.name}`}>
+          {busy ? 'Starting…' : `Set up ${t.name.split(' ')[0]}`}
+        </button>
+      )}
+      {installing && t.install && <p className="small" role="status">{t.install.message} This page refreshes by itself.</p>}
+      {t.install?.state === 'failed' && (
+        <p className="error small" role="alert">
+          Install failed: {t.install.message}
+        </p>
+      )}
+      {error && (
+        <p className="error small" role="alert">
+          {error}
+        </p>
+      )}
       {t.browserUrl && t.installationState !== 'not_installed' && (
         <a className="btn" href={t.browserUrl} target="_blank" rel="noopener noreferrer">
           Open {t.name.split(' ')[0]}

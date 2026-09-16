@@ -684,6 +684,11 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       return reply.status(204).send();
     },
   );
+  app.post(
+    '/v1/platform-tools/:id/install',
+    { preHandler: requireAuth, schema: { description: 'One-click install of Cockpit or Portainer from the console: starts the root oneshot (polkit-allowed); poll GET /v1/platform-tools for progress.', params: { type: 'object', properties: { id: { enum: ['cockpit', 'portainer'] } }, required: ['id'] } } },
+    async (req, reply) => reply.status(202).send(await tools.install((req.params as { id: string }).id, req.actor!)),
+  );
 
   // --- plans & operations
   app.post(

@@ -246,6 +246,8 @@ export interface PlatformToolDto {
   mode: 'managed' | 'external' | 'absent';
   // provider facts (tailscale: node dns name / tailnet; proxy: public address) for the UI
   facts?: Record<string, string | boolean | null>;
+  // one-click install from the console (cockpit/portainer only): the root oneshot's progress
+  install?: { state: 'requested' | 'installing' | 'succeeded' | 'failed'; message: string; at: string } | null;
 }
 
 export interface SessionDto {

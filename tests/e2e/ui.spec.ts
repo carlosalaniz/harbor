@@ -77,6 +77,9 @@ test('home shows the system strip and an empty launcher; store lists real packag
   await expect(tools.filter({ hasText: 'Portainer' })).toContainText('Not set up');
   await expect(tools.filter({ hasText: 'Tailscale' })).toContainText('Ready');
   await expect(page.getByRole('link', { name: /Open Cockpit|Open Portainer/ })).toHaveCount(0);
+  // one-click install is offered for the absent tools (fake mode refuses with the root command)
+  await expect(page.getByRole('button', { name: 'Set up Cockpit' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Set up Portainer' })).toBeVisible();
 
   await page.getByRole('link', { name: 'Publishing' }).click();
   await expect(page.getByRole('button', { name: 'Expose Harbor UI on tailnet' })).toBeVisible();

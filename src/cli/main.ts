@@ -911,6 +911,14 @@ selfUpdateCmd
     await applySelfUpdate(opts.to, opts.repo, (m) => process.stderr.write(`[self-update] ${m}\n`), opts.archive ? { archive: opts.archive, sums: path.join(path.dirname(opts.archive), 'SHA256SUMS') } : undefined);
   });
 
+program
+  .command('tools-install <tool>')
+  .description('ROOT, run by harbor-tools-install@<tool>.service: install cockpit|portainer with the bootstrap recipe and record it in state')
+  .action(async (tool: string) => {
+    const { applyToolInstall } = await import('../bootstrap/tools-install-apply.js');
+    await applyToolInstall(tool, (m) => process.stderr.write(`[tools-install] ${m}\n`));
+  });
+
 function selfUpdateText(s: SelfUpdateStatusDto): string {
   const lines = [`Installed: Harbor ${s.current}`];
   if (s.latest) lines.push(`Newest release: ${s.latest.version}${s.latest.publishedAt ? ` (${s.latest.publishedAt.slice(0, 10)})` : ''}${s.available ? ' — UPDATE AVAILABLE (harbor self-update start)' : ' — up to date'}`);

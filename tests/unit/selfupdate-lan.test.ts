@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FakeFetcher, json } from '../../src/appearance/fetcher.js';
 import { readSetupCode, writeSetupCode } from '../../src/auth/setup.js';
-import { harborUnit, polkitPowerRule, selfUpdateUnit } from '../../src/bootstrap/systemd.js';
+import { harborUnit, polkitPowerRule, selfUpdateUnit, toolsInstallUnit } from '../../src/bootstrap/systemd.js';
 import { isPrivateIPv4, lanHostAllowed } from '../../src/system/lan.js';
 import { GitHubReleaseFeed, compareVersions } from '../../src/system/selfupdate.js';
 import { renderCaddyConfig } from '../../src/exposure/caddy.js';
@@ -29,6 +29,10 @@ describe('self-update pieces', () => {
     expect(polkitPowerRule()).toContain('indexOf("harbor-self-update@") === 0');
     expect(harborUnit({ lan: true })).toContain('AmbientCapabilities=CAP_NET_BIND_SERVICE');
     expect(harborUnit()).not.toContain('AmbientCapabilities');
+  });
+  it('systemd: template unit for one-click tool installs, polkit grants only its start', () => {
+    expect(toolsInstallUnit()).toContain('ExecStart=/opt/harbor/bin/harbor tools-install %i');
+    expect(polkitPowerRule()).toContain('indexOf("harbor-tools-install@") === 0');
   });
 });
 

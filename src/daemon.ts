@@ -57,6 +57,7 @@ export interface DaemonOverrides {
   observerIntervalMs?: number;
   sourceCheckMs?: number;
   toolsProbe?: ConstructorParameters<typeof PlatformToolsService>[2];
+  toolsInstallStarter?: ConstructorParameters<typeof PlatformToolsService>[5];
   tailscale?: TailscaleProvider;
   caddy?: CaddyAdmin;
   verify?: UrlVerifier;
@@ -144,7 +145,26 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
-    const tools = new PlatformToolsService(repo, clock, overrides.toolsProbe, { tailscale, caddy });
+    // One-click tool installs: the harbor user may start harbor-tools-install@<id>.service
+    // (polkit rule from bootstrap); in fake mode there is no systemd, so the endpoint refuses
+    // with the exact root command instead.
+    const tools = new PlatformToolsService(
+      repo,
+      clock,
+      overrides.toolsProbe,
+      { tailscale, caddy },
+      config.stateDir,
+      overrides.toolsInstallStarter ?? (fakeMode ? null : async (unit: string) => {
+        const { spawn } = await import('node:child_process');
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn('/usr/bin/systemctl', ['start', '--no-block', unit], { env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'pipe'] });
+          let err = '';
+          child.stderr.on('data', (d: Buffer) => (err += d.toString()));
+          child.on('error', reject);
+          child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err.trim() || `systemctl exited ${code}`))));
+        });
+      }),
+    );
     const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000, overrides.sourceCheckMs ?? 15 * 60_000);
     const power = overrides.power ?? (fakeMode ? new FakePower() : new SystemdPower());
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);

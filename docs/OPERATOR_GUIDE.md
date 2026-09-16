@@ -104,7 +104,9 @@ memory, storage and Docker; your apps as tiles with a plain-words status, Open a
 with Start/Stop/Remove/Reinstall and technical details), **App Store** (catalog cards with icon,
 tagline, category chips and search; an app page with Install and the storage choices), **Publishing**
 (every published address, Publish/Withdraw, Harbor on your tailnet), **Platform** (Docker, Cockpit,
-Portainer, Tailscale, proxy with real state and links), **Settings** (session, SSH forwarding line,
+Portainer, Tailscale, proxy with real state and links; Cockpit and Portainer show a **Set up**
+button when absent — one click starts the install as root and the card reports progress),
+**Settings** (session, SSH forwarding line,
 about). Every change goes through the same plan review; the operation tray at the bottom right shows
 progress and, once, any generated credentials.
 
@@ -269,6 +271,10 @@ intentionally stopped instances stay stopped. Harbor re-observes and reports act
 - Both cards report installed/not_installed/setup_required/unknown and reachable/unreachable/unknown
   with observation times. "Reachable" means the login page answers, nothing more.
 - Bind existing tools: `harbor tools bind portainer --url https://localhost:9443/` (loopback URLs only).
+- One-click install: when Cockpit or Portainer is absent, the Platform page shows **Set up** — one
+  click starts `harbor-tools-install@<tool>.service` as root (polkit-allowed, same recipe as
+  `--with-tools`) and the card reports requested → installing → installed/failed. Root equivalent
+  on the terminal: `sudo /opt/harbor/bin/harbor tools-install cockpit|portainer`.
 - Ordinary `harbor remove` cannot touch platform resources; they are not application instances.
 
 ## 6a. Publishing apps beyond localhost (exposure)

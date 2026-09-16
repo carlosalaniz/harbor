@@ -1770,6 +1770,29 @@
         }
       }
     },
+    "/v1/platform-tools/{id}/install": {
+      "post": {
+        "description": "One-click install of Cockpit or Portainer from the console: starts the root oneshot (polkit-allowed); poll GET /v1/platform-tools for progress.",
+        "parameters": [
+          {
+            "schema": {
+              "enum": [
+                "cockpit",
+                "portainer"
+              ]
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/plans": {
       "post": {
         "description": "Create an immutable plan. Install: {kind, packageId, name?}. Others: {kind, instanceId}.",

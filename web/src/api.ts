@@ -72,6 +72,7 @@ export const api = {
   instance: (id: string) => call<InstanceDetail>('GET', `/v1/instances/${id}`),
   widget: (id: string) => call<WidgetDto | null>('GET', `/v1/instances/${id}/widget`),
   tools: () => call<{ items: PlatformToolDto[] }>('GET', '/v1/platform-tools').then((r) => r.items),
+  installTool: (id: string) => call<PlatformToolDto>('POST', `/v1/platform-tools/${id}/install`, {}),
   exposures: () => call<{ items: ExposureDto[]; ui: UiExposureDto | null }>('GET', '/v1/exposures'),
   exposeUi: () => call<UiExposureDto>('PUT', '/v1/ui-exposure', { via: 'tailnet' }),
   unexposeUi: () => call<void>('DELETE', '/v1/ui-exposure'),

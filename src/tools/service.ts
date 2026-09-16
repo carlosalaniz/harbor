@@ -1,5 +1,8 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import path from 'node:path';
+import { readToolInstallStatus } from '../bootstrap/tools-install-apply.js';
 import type { PlatformToolDto, UiExposureDto } from '../contracts/api.js';
 import type { Repo, PlatformToolRow } from '../state/repo.js';
 import type { Clock } from '../util.js';
@@ -34,12 +37,14 @@ export class PlatformToolsService {
     private readonly clock: Clock,
     private readonly probe: (url: string) => Promise<{ reachable: boolean; note: string | null }> = probeLoginPage,
     private readonly providers: ExposureProviders | null = null,
+    private readonly stateDir: string = '',
+    private readonly installStarter: ((unit: string) => Promise<void>) | null = null,
   ) {}
 
   // Exposure providers are observed live (CLI/admin API), not only from bootstrap records.
   private async providerTool(id: 'tailscale' | 'proxy', row: PlatformToolRow | undefined): Promise<PlatformToolDto> {
     const now = rfc3339(this.clock.now());
-    const base = { id, name: TOOL_NAMES[id]!, browserUrl: null, observedAt: now, mode: row?.mode ?? 'absent' } as const;
+    const base = { id, name: TOOL_NAMES[id]!, browserUrl: null, observedAt: now, mode: row?.mode ?? 'absent', install: null } as const;
     if (!this.providers) return { ...base, installationState: 'unknown', availability: 'unknown', note: 'provider observation not available' };
     if (id === 'tailscale') {
       const installed = await this.providers.tailscale.installed();
@@ -67,7 +72,7 @@ export class PlatformToolsService {
         continue;
       }
       if (!row || row.mode === 'absent') {
-        items.push({ id, name: TOOL_NAMES[id]!, installationState: row?.installationState ?? 'not_installed', availability: 'unknown', browserUrl: null, observedAt: row?.observedAt ?? null, note: row?.note ?? 'Not set up. Re-run bootstrap with --with-tools or bind an existing installation with `harbor tools bind`.', mode: row?.mode ?? 'absent' });
+        items.push({ id, name: TOOL_NAMES[id]!, installationState: row?.installationState ?? 'not_installed', availability: 'unknown', browserUrl: null, observedAt: row?.observedAt ?? null, note: row?.note ?? 'Not set up. Re-run bootstrap with --with-tools or bind an existing installation with `harbor tools bind`.', mode: row?.mode ?? 'absent', install: this.installStatus(id) ?? null });
         continue;
       }
       let availability: PlatformToolDto['availability'] = 'unknown';
@@ -187,7 +192,51 @@ export class PlatformToolsService {
   }
 
   private dto(t: PlatformToolRow): PlatformToolDto {
-    return { id: t.id, name: TOOL_NAMES[t.id] ?? t.id, installationState: t.installationState, availability: t.availability, browserUrl: t.browserUrl, observedAt: t.observedAt, note: t.note, mode: t.mode };
+    return { id: t.id, name: TOOL_NAMES[t.id] ?? t.id, installationState: t.installationState, availability: t.availability, browserUrl: t.browserUrl, observedAt: t.observedAt, note: t.note, mode: t.mode, install: this.installStatus(t.id) ?? null };
+  }
+
+  // One-click install from the console (cockpit/portainer only): start the root oneshot
+  // `harbor-tools-install@<id>.service` (allowed by the polkit rule bootstrap installs) and
+  // report the root step's progress from <stateDir>/platform/<id>/install-status.json.
+  // In fake mode (tests, pnpm dev) there is no systemd: refuse with the exact root command.
+  async install(id: string, actor: string): Promise<PlatformToolDto> {
+    if (!(BINDABLE_TOOL_IDS as readonly string[]).includes(id)) throw new HarborError('NOT_FOUND', `unknown or non-installable platform tool ${id}`);
+    const row = this.repo.platformTool(id);
+    if (row && row.mode === 'managed' && row.installationState === 'installed') throw new HarborError('INVALID_STATE', `${id} is already installed`);
+    const st = this.installStatus(id);
+    if (st && (st.state === 'requested' || st.state === 'installing')) throw new HarborError('BUSY', `an install of ${id} is already running (${st.message})`);
+    if (!this.installStarter) throw new HarborError('UNSUPPORTED_CAPABILITY', 'one-click install is not available on this machine', { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor bootstrap --yes --with-tools (or sudo /opt/harbor/bin/harbor tools-install ${id}).` });
+    this.writeInstallStatus(id, 'requested', `requested by ${actor}; starting the install`);
+    try {
+      await this.installStarter(`harbor-tools-install@${id}.service`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.writeInstallStatus(id, 'failed', `could not start the install: ${msg}`);
+      throw new HarborError('OPERATION_FAILED', `Harbor could not start the install (${msg})`, { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor tools-install ${id}` });
+    }
+    this.cache = null;
+    const fresh = this.repo.platformTool(id);
+    return this.dto(fresh ?? { id, mode: 'absent', browserUrl: null, installationState: 'not_installed', availability: 'unknown', observedAt: null, note: null, resources: null, updatedAt: '' });
+  }
+
+  installStatus(id: string): PlatformToolDto['install'] {
+    if (!this.stateDir) return null;
+    try {
+      return readToolInstallStatus(this.stateDir, id);
+    } catch {
+      return null;
+    }
+  }
+
+  private writeInstallStatus(id: string, state: 'requested' | 'installing' | 'succeeded' | 'failed', message: string): void {
+    if (!this.stateDir) return;
+    try {
+      const dir = path.join(this.stateDir, 'platform', id);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(dir, 'install-status.json'), JSON.stringify({ tool: id, state, message, at: rfc3339(this.clock.now()) }), { mode: 0o600 });
+    } catch {
+      /* status is best effort */
+    }
   }
 }
 
