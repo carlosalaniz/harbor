@@ -16,12 +16,16 @@ function greeting(): string {
 
 // The header greets the administrator by name ("Good morning, Carlos") once the
 // account endpoint answers; before that it falls back to the bare greeting.
+// The username is capitalized for display ("carlos" → "Carlos").
 function useGreeting(): string {
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     api
       .security()
-      .then((s) => setName(s.username?.trim() ? s.username.trim() : null))
+      .then((s) => {
+        const raw = s.username?.trim();
+        setName(raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : null);
+      })
       .catch(() => setName(null));
   }, []);
   const base = greeting();
