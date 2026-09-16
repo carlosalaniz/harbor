@@ -71,3 +71,21 @@ widget contract), a files app (a large product on its own; Nextcloud covers it),
 `harbor purge` per app exists), external disk formatting/mounting (TDD exclusion; the folder picker sees mounted
 disks), Harbor self-update from the console (TDD excludes an installer auto-update; the release archive +
 `bootstrap` is the update path), migration assistant, language settings.
+
+## External disk management for advanced users (recorded 2026-09-16, blocked on hardware)
+
+Harbor should HELP mount, format and partition EXTERNAL devices (never the system disk, never
+implicitly). Bring-your-own-folder stays mount-only; this is a separate advanced flow behind the
+Advanced tools acknowledgement. Blocked: needs a physical machine to test against — no hardware
+available at the moment.
+
+- Abstraction: **udisks2 over D-Bus** (standard on Ubuntu; enumerate, GPT partition, format
+  ext4/exFAT/NTFS/Btrfs, mount, LUKS, SMART — one API; GNOME Disks and Cockpit use it; Node via
+  `dbus-next`). Fallback/detection via **util-linux** (`lsblk --json`, `blkid`, `wipefs`,
+  `mkfs.*`). Reference implementation: **Cockpit `cockpit-storaged`**; simplest path may be a
+  deep link to Cockpit Storage rather than duplicating UI. OpenMediaVault/Rockstor are reference
+  only (too opinionated to embed).
+- Scope: removable/external disks allowlist only (never root disk), preview + typed confirmation,
+  privileged work through the existing root-oneshot pattern (`harbor-tools-install@`-style unit +
+  polkit). Test plan needs real USB/SATA hardware: enumerate, partition, format each filesystem,
+  mount, bind into an app, reboot persistence, refusal cases (system disk, mounted root).
