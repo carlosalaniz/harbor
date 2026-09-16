@@ -475,7 +475,7 @@ test('rotating wallpapers: turn on from Settings, a picture with credit appears,
   expect(await page.evaluate("document.documentElement.dataset.wallpaper")).toBe('photo');
   // Reddit needs credentials: choosing it turns rotation off until a key is saved
   await page.getByRole('radio', { name: /Reddit/ }).check();
-  await expect(page.getByText('Reddit app key')).toBeVisible();
+  await expect(page.getByText('Reddit app key needed')).toBeVisible();
   await expect(page.getByRole('switch', { name: 'Rotating wallpapers' })).not.toBeChecked();
   await page.getByLabel('Reddit client id').fill('demo-id');
   await page.getByLabel('Reddit secret').fill('demo-secret');
