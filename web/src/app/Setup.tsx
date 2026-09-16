@@ -87,8 +87,8 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
               <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" pattern="[A-Za-z][A-Za-z0-9._-]{1,31}" required aria-label="Username" />
             </label>
             <label>
-              Password <span className="muted small">(at least 12 characters)</span>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={12} required aria-label="Password" />
+              Password <span className="muted small">(at least 8 characters)</span>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required aria-label="Password" />
             </label>
             <label>
               Password again

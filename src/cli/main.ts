@@ -812,7 +812,7 @@ program
     }
     else if (process.stdin.isTTY && !opts.setupInBrowser) {
       passwordProvider = async () => {
-        const p1 = await promptHidden('Administrator password (min 12 chars): ');
+        const p1 = await promptHidden('Administrator password (min 8 chars): ');
         const p2 = await promptHidden('Repeat password: ');
         if (p1 !== p2) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
         return p1;
@@ -950,7 +950,7 @@ program
     let password: string;
     if (opts.passwordStdin) password = await readStdinAll();
     else {
-      password = await promptHidden('Password (min 12 chars): ');
+      password = await promptHidden('Password (min 8 chars): ');
       const again = await promptHidden('Repeat password: ');
       if (password !== again) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
     }

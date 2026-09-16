@@ -1,9 +1,18 @@
 import { useState } from 'react';
 import type { PlatformToolDto } from '../../../../src/contracts/api';
 import { api, ApiError } from '../../api';
-import { Pill } from '../components';
+import { Dialog, Pill } from '../components';
 import { fmtTime } from '../format';
 import type { Console } from '../store';
+
+const ADVANCED_ACK_KEY = 'harbor.advanced-tools-ack';
+function readAdvancedAck(): boolean {
+  try {
+    return localStorage.getItem(ADVANCED_ACK_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 const ORDER = ['tailscale', 'proxy', 'cockpit', 'portainer'];
 const BLURB: Record<string, string> = {
@@ -15,7 +24,18 @@ const BLURB: Record<string, string> = {
 
 export function Platform({ c }: { c: Console }) {
   const { data } = c;
+  const [advanced, setAdvanced] = useState<boolean>(() => readAdvancedAck());
+  const ack = () => {
+    try {
+      localStorage.setItem(ADVANCED_ACK_KEY, '1');
+    } catch {
+      /* per-browser convenience only; the page still works */
+    }
+    setAdvanced(true);
+  };
   const tools = [...data.tools].sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id));
+  const core = tools.filter((t) => t.id === 'tailscale' || t.id === 'proxy');
+  const extra = tools.filter((t) => t.id === 'cockpit' || t.id === 'portainer');
   return (
     <>
       <section className="card" aria-labelledby="sys-h">
@@ -46,10 +66,27 @@ export function Platform({ c }: { c: Console }) {
       <section className="card" aria-labelledby="tools-h">
         <h2 id="tools-h">Platform tools</h2>
         <ul className="grid tools">
-          {tools.map((t) => (
+          {core.map((t) => (
             <ToolCard key={t.id} t={t} />
           ))}
         </ul>
+      </section>
+      <section className="card" aria-labelledby="adv-h">
+        <h2 id="adv-h">Advanced tools</h2>
+        {!advanced ? (
+          <p className="muted small">
+            Cockpit and Portainer are system consoles for advanced users.{' '}
+            <button className="btn" onClick={ack}>
+              Show advanced tools
+            </button>
+          </p>
+        ) : (
+          <ul className="grid tools">
+            {extra.map((t) => (
+              <ToolCard key={t.id} t={t} />
+            ))}
+          </ul>
+        )}
       </section>
     </>
   );
@@ -58,6 +95,7 @@ export function Platform({ c }: { c: Console }) {
 function ToolCard({ t }: { t: PlatformToolDto }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState(false);
   const installing = t.install && (t.install.state === 'requested' || t.install.state === 'installing');
   const installable = (t.id === 'cockpit' || t.id === 'portainer') && (t.mode === 'absent' || t.installationState === 'not_installed') && !installing;
   const tone = t.installationState === 'installed' ? (t.availability === 'reachable' ? 'ok' : t.availability === 'unreachable' ? 'bad' : 'muted') : t.installationState === 'setup_required' ? 'warn' : 'muted';
@@ -97,9 +135,32 @@ function ToolCard({ t }: { t: PlatformToolDto }) {
         </div>
       </div>
       {installable && (
-        <button className="btn primary" onClick={() => void install()} disabled={busy} aria-label={`Set up ${t.name}`}>
+        <button className="btn primary" onClick={() => setConfirm(true)} disabled={busy} aria-label={`Set up ${t.name}`}>
           {busy ? 'Starting…' : `Set up ${t.name.split(' ')[0]}`}
         </button>
+      )}
+      {confirm && (
+        <Dialog title={`Set up ${t.name}?`} onClose={() => setConfirm(false)}>
+          <p>
+            {t.id === 'portainer'
+              ? 'Portainer gets full Docker authority (root-equivalent): it can start, stop and delete any container and volume on this machine. Only continue if you understand that.'
+              : 'Cockpit is an operating-system console: it can manage services, logs and updates with an OS account. Only continue if you understand that.'}
+          </p>
+          <div className="row end">
+            <button className="btn" onClick={() => setConfirm(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn primary"
+              onClick={() => {
+                setConfirm(false);
+                void install();
+              }}
+            >
+              I understand — set up
+            </button>
+          </div>
+        </Dialog>
       )}
       {installing && t.install && <p className="small" role="status">{t.install.message} This page refreshes by itself.</p>}
       {t.install?.state === 'failed' && (

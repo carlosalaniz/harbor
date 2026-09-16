@@ -42,7 +42,7 @@ export async function verifyPassword(password: string, stored: { hash: string; s
 }
 
 export function validatePasswordPolicy(password: string): string | null {
-  if (password.length < 12) return 'password must be at least 12 characters';
+  if (password.length < 8) return 'password must be at least 8 characters';
   if (password.length > 256) return 'password must be at most 256 characters';
   return null;
 }

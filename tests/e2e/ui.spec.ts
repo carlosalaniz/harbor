@@ -69,17 +69,24 @@ test('home shows the system strip and an empty launcher; store lists real packag
   await page.getByRole('link', { name: 'Platform' }).click();
   await expect(page.getByRole('heading', { name: 'Platform tools' })).toBeVisible();
   await expect(page.getByText(/Docker Engine/)).toBeVisible();
-  // Cockpit/Portainer are absent in this fixture: "Not set up", no fake Open link.
   // Tailscale/proxy come from the fake providers (installed) so the publishing flows can be exercised.
+  await expect(page.getByRole('heading', { name: 'Tailscale' })).toBeVisible();
+  // Cockpit/Portainer hide behind the advanced acknowledgement; revealing them shows
+  // "Not set up" with a one-click install (fake mode refuses with the root command).
+  await expect(page.getByRole('heading', { name: 'Cockpit' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show advanced tools' }).click();
   const tools = page.locator('.tool');
   await expect(tools).toHaveCount(4);
   await expect(tools.filter({ hasText: 'Cockpit' })).toContainText('Not set up');
   await expect(tools.filter({ hasText: 'Portainer' })).toContainText('Not set up');
-  await expect(tools.filter({ hasText: 'Tailscale' })).toContainText('Ready');
   await expect(page.getByRole('link', { name: /Open Cockpit|Open Portainer/ })).toHaveCount(0);
-  // one-click install is offered for the absent tools (fake mode refuses with the root command)
   await expect(page.getByRole('button', { name: 'Set up Cockpit' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Set up Portainer' })).toBeVisible();
+  // the Set up button asks for acknowledgement of the tool's authority first
+  await page.getByRole('button', { name: 'Set up Cockpit' }).click();
+  await expect(page.getByRole('heading', { name: 'Set up Cockpit?' })).toBeVisible();
+  await expect(page.getByText(/operating-system console/)).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
 
   await page.getByRole('link', { name: 'Publishing' }).click();
   await expect(page.getByRole('button', { name: 'Expose Harbor UI on tailnet' })).toBeVisible();

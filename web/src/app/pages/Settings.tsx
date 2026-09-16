@@ -432,7 +432,7 @@ function Account({ onLogout }: { onLogout: () => void }) {
       <TwoFactor />
       <section className="card" aria-labelledby="pw-h">
         <h2 id="pw-h">Change password</h2>
-        <p className="muted small">Use at least 12 characters. Every other logged-in browser or CLI is signed out when you change it.</p>
+        <p className="muted small">Use at least 8 characters. Every other logged-in browser or CLI is signed out when you change it.</p>
         <form className="stack" onSubmit={submit}>
           <label>
             Current password
@@ -440,7 +440,7 @@ function Account({ onLogout }: { onLogout: () => void }) {
           </label>
           <label>
             New password
-            <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} required minLength={12} />
+            <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} required minLength={8} />
           </label>
           <label>
             New password (again)
