@@ -8,7 +8,7 @@ test('first-run wizard: name the machine, create the account with the setup code
   await page.getByLabel('Device name').fill('Attic box');
   await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
-  await page.getByLabel('Username').fill('carlos');
+  await page.getByLabel('Username', { exact: true }).fill('carlos');
   await page.getByLabel('Password', { exact: true }).fill('first-run-FIXTURE-password');
   await page.getByLabel('Password again').fill('first-run-FIXTURE-password');
   await page.getByLabel('Setup code').fill('000000');
@@ -26,8 +26,8 @@ test('first-run wizard: name the machine, create the account with the setup code
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
   const st = await page.request.get('/v1/setup');
   expect((await st.json()).needed).toBe(false);
-  await page.getByLabel('Username').fill('carlos');
-  await page.getByLabel('Password').fill('first-run-FIXTURE-password');
+  await page.getByLabel('Username', { exact: true }).fill('carlos');
+  await page.getByLabel('Password', { exact: true }).fill('first-run-FIXTURE-password');
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
 });

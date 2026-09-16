@@ -5,8 +5,8 @@ const ADMIN = { username: 'admin', password: 'e2e-fixture-password' };
 async function login(page: Page) {
   await page.goto('/#/home');
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
-  await page.getByLabel('Username').fill(ADMIN.username);
-  await page.getByLabel('Password').fill(ADMIN.password);
+  await page.getByLabel('Username', { exact: true }).fill(ADMIN.username);
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
 }
@@ -31,8 +31,8 @@ test.describe.configure({ mode: 'serial' });
 
 test('login rejects bad credentials without revealing which field is wrong', async ({ page }) => {
   await page.goto('/');
-  await page.getByLabel('Username').fill('nobody');
-  await page.getByLabel('Password').fill('not-the-password');
+  await page.getByLabel('Username', { exact: true }).fill('nobody');
+  await page.getByLabel('Password', { exact: true }).fill('not-the-password');
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByRole('alert')).toContainText('invalid username or password');
 });
@@ -188,7 +188,7 @@ test('second package installs on a distinct port; drawer shows owned resources',
 test('logout returns to login and the API rejects the old token', async ({ page }) => {
   await login(page);
   await page.goto('/#/settings/account');
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
   const res = await page.request.get('/v1/instances');
   expect(res.status()).toBe(401);
@@ -637,10 +637,10 @@ test('two-factor login: set up with a live code, log in again with password + co
   await expect(page.getByRole('status')).toContainText('Two-factor login is on');
   // log out, log in: the code field appears only after a correct password
   await page.goto('/#/settings/account');
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
-  await page.getByLabel('Username').fill(ADMIN.username);
-  await page.getByLabel('Password').fill(ADMIN.password);
+  await page.getByLabel('Username', { exact: true }).fill(ADMIN.username);
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByLabel('Two-factor code')).toBeVisible();
   await page.getByLabel('Two-factor code').fill('000000');

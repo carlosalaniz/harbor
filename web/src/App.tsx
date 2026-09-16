@@ -211,7 +211,6 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
         <button className="btn primary auth-submit" type="submit" disabled={busy || (!needCode && (!username || !password)) || (needCode && !code)}>
           {busy ? 'Logging in…' : 'Log in'}
         </button>
-        {/* Enter submits; the button stays for assistive tech and no-JS-keyboard flows */}
       </form>
     </section>
   );

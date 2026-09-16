@@ -406,18 +406,10 @@ pre.code {
 }
 .auth-submit {
   justify-content: center;
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-.auth-submit:focus-visible {
-  position: static;
-  width: auto;
-  height: auto;
-  clip: auto;
+  width: 100%;
+  min-height: 48px;
+  border-radius: 12px;
+  font-size: 15px;
 }
 .auth-error {
   margin: 0;
