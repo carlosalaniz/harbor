@@ -332,6 +332,11 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     { preHandler: requireAuth, schema: { description: 'Instance detail with safe events, resource roles and setup guidance.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] } } },
     async (req) => service.instance((req.params as { id: string }).id),
   );
+  app.get(
+    '/v1/instances/:id/widget',
+    { preHandler: requireAuth, schema: { description: 'Home widget data proxied from the app (decision 81); null when the app declares none or the data is unusable.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] } } },
+    async (req) => service.widget((req.params as { id: string }).id),
+  );
   app.get('/v1/plans/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.plan((req.params as { id: string }).id));
   app.get('/v1/operations/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.operation((req.params as { id: string }).id));
   app.get('/v1/platform-tools', { preHandler: requireAuth, schema: { description: 'Cockpit/Portainer/Tailscale/proxy state and real links.' } }, async () => ({ items: await tools.list() }));

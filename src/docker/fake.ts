@@ -19,7 +19,8 @@ interface FakeContainer extends ContainerInfo {
 
 export interface FakeBehaviour {
   // Per-service HTTP responder: return status code for a path. Default 200.
-  respond?: (service: string, path: string) => number | 'hang' | 'refuse';
+  // Return { status, body } to serve a custom body (e.g. widget JSON in tests).
+  respond?: (service: string, path: string) => number | 'hang' | 'refuse' | { status: number; body: string };
   failPull?: string | null; // error message
   failUp?: string | null;
   failUpImage?: string | null; // fail `up` only when a service image contains this text (update rollback tests)
@@ -259,6 +260,12 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
         if (verdict === 'hang') return; // never respond
         if (verdict === 'refuse') {
           req.socket.destroy();
+          return;
+        }
+        if (typeof verdict === 'object') {
+          res.statusCode = verdict.status;
+          res.setHeader('content-type', 'application/json');
+          res.end(verdict.body);
           return;
         }
         res.statusCode = verdict;

@@ -188,6 +188,18 @@ export const MANIFEST_SCHEMA = {
         developer: plainText(80),
         website: { type: 'string', pattern: '^https://[^\\s<>"]{1,200}$' },
         releaseNotes: plainText(1000),
+        // Home widget (decision 81): the app exposes JSON on its own port; the daemon proxies it.
+        widget: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['endpoint', 'path', 'kind'],
+          properties: {
+            endpoint: idString,
+            path: { type: 'string', pattern: '^/[A-Za-z0-9._~/-]{1,200}$', maxLength: 200 },
+            kind: { enum: ['metrics', 'list'] },
+            refreshSeconds: { type: 'integer', minimum: 10, maximum: 3600 },
+          },
+        },
       },
     },
   },

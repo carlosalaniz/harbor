@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
 import { hostname } from 'node:os';
@@ -172,6 +172,53 @@ export class ApplicationService {
           this.ctx.log.warn(`redeploy of ${i.name} could not start: ${(e as Error).message}`);
         }
       }
+    }
+  }
+
+  // ---- Home widgets (decision 81): the daemon proxies the app's JSON so the browser never
+  // talks to the app cross-origin and CSP stays strict. Cached per refreshSeconds; malformed
+  // data hides the widget (null) and notifies once at info severity — never an error on Home.
+  private widgetCache = new Map<string, { at: number; value: WidgetDto | null }>();
+  async widget(id: string): Promise<WidgetDto | null> {
+    const row = this.instanceRow(id);
+    const meta = this.packageMeta(row);
+    const w = meta.widget;
+    if (!w || row.installState !== 'installed' || row.runtime !== 'running') return null;
+    const cached = this.widgetCache.get(id);
+    const ttl = (w.refreshSeconds ?? 30) * 1000;
+    if (cached && Date.now() - cached.at < ttl) return cached.value;
+    const value = await this.fetchWidget(row, w);
+    this.widgetCache.set(id, { at: Date.now(), value });
+    return value;
+  }
+  private async fetchWidget(row: InstanceRow, w: NonNullable<NonNullable<LoadedPackage['manifest']['presentation']>['widget']>): Promise<WidgetDto | null> {
+    const alloc = row.endpoints.find((e) => e.id === w!.endpoint);
+    if (!alloc) return null;
+    try {
+      const res = await fetch(`http://127.0.0.1:${alloc.hostPort}${w!.path}`, { signal: AbortSignal.timeout(2000), headers: { accept: 'application/json', connection: 'close' } });
+      if (!res.ok) return null;
+      const text = await res.text();
+      if (text.length > 64 * 1024) return null;
+      const body = JSON.parse(text) as { items?: unknown };
+      if (!body || !Array.isArray(body.items)) return null;
+      if (w!.kind === 'metrics') {
+        const items = body.items.slice(0, 4).map((x) => {
+          const o = x as { label?: unknown; value?: unknown; unit?: unknown };
+          if (typeof o.label !== 'string' || (typeof o.value !== 'string' && typeof o.value !== 'number')) return null;
+          return { label: o.label.slice(0, 40), value: typeof o.value === 'number' ? String(o.value) : o.value.slice(0, 40), ...(typeof o.unit === 'string' ? { unit: o.unit.slice(0, 12) } : {}) };
+        });
+        if (items.some((x) => x === null)) return null;
+        return { kind: 'metrics', items: items as { label: string; value: string; unit?: string }[] };
+      }
+      const items = body.items.slice(0, 5).map((x) => {
+        const o = x as { title?: unknown; subtitle?: unknown };
+        if (typeof o.title !== 'string') return null;
+        return { title: o.title.slice(0, 80), ...(typeof o.subtitle === 'string' ? { subtitle: o.subtitle.slice(0, 120) } : {}) };
+      });
+      if (items.some((x) => x === null)) return null;
+      return { kind: 'list', items: items as { title: string; subtitle?: string }[] };
+    } catch {
+      return null;
     }
   }
 
@@ -378,15 +425,15 @@ export class ApplicationService {
     return this.ctx.packages.list();
   }
 
-  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials'] } {
-    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest) });
+  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null } {
+    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null });
     try {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
         return from(this.ctx.packages.load(i.packageId));
       } catch {
-        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null };
+        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null };
       }
     }
   }

@@ -33,6 +33,8 @@ export interface PackagePresentation {
   developer?: string;
   website?: string;
   releaseNotes?: string;
+  // Home widget (decision 81): JSON the app serves on its own port, proxied by the daemon.
+  widget?: { endpoint: string; path: string; kind: 'metrics' | 'list'; refreshSeconds?: number };
 }
 
 export interface ManifestEndpoint {

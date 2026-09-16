@@ -793,6 +793,27 @@
         }
       }
     },
+    "/v1/instances/{id}/widget": {
+      "get": {
+        "description": "Home widget data proxied from the app (decision 81); null when the app declares none or the data is unusable.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/plans/{id}": {
       "get": {
         "parameters": [

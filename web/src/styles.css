@@ -1099,6 +1099,14 @@ progress {
   align-items: center;
   gap: 5px;
 }
+.icon-widget {
+  font-size: 11px;
+  color: var(--muted);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .icon-status .dot,
 .dot.tone-ok,
 .dot.tone-warn,

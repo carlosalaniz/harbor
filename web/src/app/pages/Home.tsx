@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CatalogItemDto, InstanceSummary, SystemMetricsDto } from '../../../../src/contracts/api';
+import type { CatalogItemDto, InstanceSummary, SystemMetricsDto, WidgetDto } from '../../../../src/contracts/api';
 import { api } from '../../api';
 import { AppIcon, InstanceIcon, Pill, appLabel, openUrl } from '../components';
 import { fmtBytes, fmtUptime, plainStatus } from '../format';
@@ -261,12 +261,46 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
           ⋯
         </button>
       )}
+      {!arranging && <WidgetLine inst={inst} />}
       {inst.updateAvailable && !arranging && (
         <span className="update-dot" title={`Update available: revision ${inst.updateAvailable.revision}`} aria-label={`Update available for ${inst.name}`}>
           ↑
         </span>
       )}
     </li>
+  );
+}
+
+// Home widget (decision 81): one line of live data under the icon, only when the app declares
+// a widget and the proxied JSON parses. Malformed data hides the line — never an error.
+function WidgetLine({ inst }: { inst: InstanceSummary }) {
+  const [w, setW] = useState<WidgetDto | null | undefined>(undefined);
+  useEffect(() => {
+    if (inst.installState !== 'installed' || inst.runtime !== 'running') {
+      setW(undefined);
+      return;
+    }
+    let live = true;
+    const load = () => {
+      void api
+        .widget(inst.id)
+        .then((v) => live && setW(v))
+        .catch(() => live && setW(null));
+    };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [inst.id, inst.installState, inst.runtime]);
+  if (!w) return null;
+  const text = w.kind === 'metrics' ? w.items.map((x) => (x.unit ? `${x.label} ${x.value}${x.unit}` : `${x.label} ${x.value}`)).join(' · ') : w.items.map((x) => x.title).join(' · ');
+  if (!text) return null;
+  return (
+    <span className="icon-widget" title={text}>
+      {text}
+    </span>
   );
 }
 
