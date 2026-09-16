@@ -39,8 +39,8 @@ test('login rejects bad credentials without revealing which field is wrong', asy
 
 test('home shows the system strip and an empty launcher; store lists real packages with icons; platform is honest about tools', async ({ page }) => {
   await login(page);
-  // the launcher greets the administrator by name (time-of-day + username)
-  await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening|night), admin/ })).toBeVisible();
+  // the launcher greets the administrator by name (time-of-day + username, capitalized)
+  await expect(page.getByRole('heading', { name: /Good (morning|afternoon|evening|night), Admin/ })).toBeVisible();
   await expect(page.getByRole('region', { name: 'System' })).toContainText('Processor');
   await expect(page.getByRole('region', { name: 'System' })).toContainText('Docker');
   await expect(page.getByText('No apps yet')).toBeVisible();
