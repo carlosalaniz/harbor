@@ -137,14 +137,23 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Manifest `defaultCredentials` → Store page, drawer and plan warning
 - [x] Tests: unit (release feed, version order, LAN host rules, setup code, systemd/polkit text), integration (setup flow, LAN mode Host/Origin + 0.0.0.0 render, self-update lifecycle), Playwright (first-run wizard in a second daemon, update card, default login)
 
+## Phase 15 — round 9: notifications, usage, git sources, auto-updates, widgets (2026-09-15, v0.9.0) ✅
+- [x] Notifications engine (schema v6 `notifications` + dedupe, ntfy/webhook/email channels, bell + Settings section), per-app usage + storage inventory, git-based app sources with redeploy-on-commit (`build:` trust extension), opt-in auto-updates, Home widgets proxy; decisions 76–82; docs/design/ROUND9.md
+- [x] Release automation: push to `main` publishes the GitHub Release via `.github/workflows/release.yml` (no manual `gh release create`)
+
+## Phase 16 — persistent login + console craft pass (2026-09-16, v0.10.0) ✅
+- [x] Password-only persistent login: `POST /v1/sessions {remember:true}` → 30-day session, `GET /v1/sessions` + `DELETE /v1/sessions/others`; schema v7; localStorage remember; Umbrel-style login hero; decisions 83–84
+- [x] Craft pass: one geometric Harbor mark (`web/src/app/icons.tsx`), palette dots, flat glyphs/monograms/wallpapers, logout only in Settings → Account, `pnpm dev:ui` fixture mode for fast UI iteration
+- [x] CI fix: visible Log in button + exact label matches in e2e (eye-toggle aria-label and log-out-others collisions)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 80 passed |
-| `pnpm test:integration` (fake adapter) | 76 passed (install, lifecycle, auth, tools, exposure, storage, settings, purge/domains, appearance, packages/updates, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 81 passed |
+| `pnpm test:integration` (fake adapter) | 109 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 21 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, own folder, settings, uninstall, domains + palette, customize, arrange, rotating wallpapers, upload + update, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
@@ -157,7 +166,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 None. The repository is public since 2026-09-15 (decision 75), after a `git filter-repo` history rewrite purged the credential-looking test fixtures that secret scanning had flagged. Unauthenticated `install.sh` and release downloads verified.
 
 ## Status
-**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette; `v0.5.0` adds rotating wallpapers (Bing / Wikimedia / Reddit with the operator's key), per-app names and icons, drag-to-arrange, the Settings Overview with Restart/Shut down, and the macOS-style visual pass; `v0.6.0` adds your own apps (package zip upload with digest pinning) and app updates with automatic rollback (both verified live on the droplet against Docker Hub); `v0.7.0` adds a terminal, troubleshoot logs, two-factor login, the device name and the Tailscale re-login self-heal; `v0.8.x` adds the one-line installer, the browser setup wizard, LAN mode with mDNS, Harbor self-update from GitHub Releases and the default-login field (verified on a brand-new droplet). `main` holds publishing (tailnet/public), the console, external storage and the 17-package catalog. Automated suites green; final fresh live run passed everything that can run without a Tailscale key; every catalog package qualified live.
+**Delivered and merged.** MVP tagged `v0.1.0-mvp`; `v0.2.0` adds publishing, the console, external storage and the 17-package catalog; `v0.3.0` adds the launcher, the self-service Settings (password, Tailscale, storage with a folder picker, appearance) and the Harbor data folder; `v0.4.0` adds full uninstall, the public-domains wizard, connected-service details, wallpaper upload and the ⌘K palette; `v0.5.0` adds rotating wallpapers (Bing / Wikimedia / Reddit with the operator's key), per-app names and icons, drag-to-arrange, the Settings Overview with Restart/Shut down, and the macOS-style visual pass; `v0.6.0` adds your own apps (package zip upload with digest pinning) and app updates with automatic rollback (both verified live on the droplet against Docker Hub); `v0.7.0` adds a terminal, troubleshoot logs, two-factor login, the device name and the Tailscale re-login self-heal; `v0.8.x` adds the one-line installer, the browser setup wizard, LAN mode with mDNS, Harbor self-update from GitHub Releases and the default-login field (verified on a brand-new droplet); `v0.9.0` adds notifications, per-app usage, git sources, auto-updates and Home widgets with automatic release publishing on merge; `v0.10.0` adds password-only persistent login (30-day remember), the Umbrel-style login hero and the console craft pass. Automated suites green (unit 81, integration 109, e2e 21); every catalog package qualified live.
 
 ## Exact next step
 None pending. The public paths are proven live on `harbor-test-3` (public one-liner install of 0.8.1, wizard, console self-update 0.8.1 → 0.8.2 from the GitHub feed; evidence `docs/evidence/install-2026-09-15-public/`). Droplets (~$0.07/h each): `harbor-test` (Carlos's, Harbor 0.7.0, logged out of the tailnet), `harbor-test-2` (0.8.1, LAN mode, admin `carlos`), `harbor-test-3` (0.8.2, public-path proof, admin `carlos`); destroy the disposable ones with `HARBOR_VM_NAME=<name> HARBOR_VM_STATE=.vmN.local.json node scripts/vm/do-vm.mjs destroy --yes` when done.

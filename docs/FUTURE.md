@@ -59,18 +59,18 @@ Reviewed the implementation against the four points; no code change was needed.
 - **Scheme-dependent configuration** (`format: if-https`, or a template) for Collabora's
   `ssl.termination` and similar switches.
 - **Storage inventory**: sizes of managed volumes per app (the Storage page lists disks and folders; volume sizes need `docker system df` plumbing). Full uninstall shipped in v0.4.0.
-- **App updates**: no update engine yet; a new package revision is a manual reinstall today.
+- **App updates**: shipped in v0.6.0 (update plans with automatic rollback; opt-in auto-updates
+  in v0.9.0). A new package revision is offered as an Update, not a manual reinstall.
 - **Cross-app links**: AnythingLLM could use the Ollama bundled with Open WebUI if instances could
   address each other; today every package is its own private network.
 
 ## Umbrel features reviewed on 2026-09-15 (v0.7.0)
 
-Adopted: terminal, troubleshoot/logs, two-factor login, device name (Settings), plus earlier rounds' wallpapers,
-launcher arranging, updates, own apps. Not adopted, on purpose: home widgets with live app data (needs a per-app
-widget contract), a files app (a large product on its own; Nextcloud covers it), factory reset (destructive;
+Adopted since: terminal, troubleshoot/logs, two-factor login, device name (Settings), plus earlier rounds' wallpapers,
+launcher arranging, updates, own apps, notifications, git sources, Home widgets, persistent login.
+Not adopted, on purpose: a files app (a large product on its own; Nextcloud covers it), factory reset (destructive;
 `harbor purge` per app exists), external disk formatting/mounting (TDD exclusion; the folder picker sees mounted
-disks), Harbor self-update from the console (TDD excludes an installer auto-update; the release archive +
-`bootstrap` is the update path), migration assistant, language settings.
+disks), migration assistant, language settings.
 
 ## External disk management for advanced users (recorded 2026-09-16, blocked on hardware)
 

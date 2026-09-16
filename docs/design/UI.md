@@ -110,5 +110,6 @@ after the password was accepted.
 
 ## 9. Out of scope now
 
-Widgets with live app data, multi-user, notifications center, app updates UI (no update engine yet),
-folders/pages on the launcher.
+Multi-user, factory reset, a files app. (Shipped since: notifications bell + Settings section,
+app updates UI with rollback, git-source flow, Home widgets, persistent login with a 30-day
+remember session, Umbrel-style login hero, one geometric Harbor mark replacing emoji.)

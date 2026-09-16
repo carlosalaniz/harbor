@@ -18,12 +18,13 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `TDD.md` (spec), `plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–75 so far) | `docs/DECISIONS.md` — **next number is 76**. Add a row for every non-obvious choice. |
-| Phase-by-phase progress, test counts, blockers, exact next step | `PROGRESS.md` (phases 0–14) |
+| Every design decision, numbered (1–84 so far) | `docs/DECISIONS.md` — **next number is 85**. Add a row for every non-obvious choice. |
+| Phase-by-phase progress, test counts, blockers, exact next step | `PROGRESS.md` (phases 0–14 + rounds 9–10) |
+| Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
 | What was verified live and how | `docs/VERIFICATION.md` (sections per version) + `docs/evidence/<dir>/` (screenshots/logs; VM IPs redacted as `<ip>`) |
 | Operator-facing manual | `docs/OPERATOR_GUIDE.md` (sections 2a one-line install, 4a–4e settings/own apps/updates) |
 | How to write a package | `docs/DEVELOPER_PACKAGES.md` |
-| Design addenda | `docs/design/UI.md`, `docs/design/CATALOG.md`, `docs/design/EXPOSURE.md` |
+| Design addenda | `docs/design/UI.md`, `docs/design/CATALOG.md`, `docs/design/EXPOSURE.md`, `docs/design/ROUND9.md` |
 | Deliberately not built | `docs/FUTURE.md` |
 | Generated API description | `docs/openapi.json` (`pnpm openapi`; unit test asserts the exact route list — update `tests/unit/openapi.test.ts` when adding routes) |
 | Persistent memory (Claude Code auto-memory) | `~/.claude/projects/-Users-carlos-Documents-devshit-harbor/memory/` (`harbor-project-context.md`, `user-working-style.md`) |
@@ -39,13 +40,13 @@ src/
   lifecycle/           service.ts (plans, catalog, instances, logs, self-update passthrough), runner.ts (serial operations incl. update+rollback, purge, expose; Caddy route builder), observer.ts (readiness, exposure re-checks, tailnet serve reconcile, Caddy reconcile), dto.ts, instance-dir.ts
   packages/            restricted YAML, manifest/compose validators, catalog loader, store.ts (bundled + uploaded packages, zip import, digest pinning via registry.ts), zip.ts (dependency-free reader/writer)
   planner/             identity, port allocation, Compose rendering (bindHost 127.0.0.1 or 0.0.0.0)
-  state/               SQLite schema v5 (db.ts migrations v1→v5), repo.ts (settings table = small JSON docs: appearance, home order, device.name, security.totp)
+  state/               SQLite schema v7 (db.ts migrations v1→v7), repo.ts (settings table = small JSON docs: appearance, home order, device.name, security.totp)
   exposure/            tailscale.ts (CLI provider, operator self-heal, URL streaming), caddy.ts (admin API client + renderer incl. LAN console server), urls.ts
   appearance/          wallpaper rotation (fetcher.ts, sources.ts Reddit/Bing/Wikimedia, service.ts)
   system/              metrics, host-storage, net (public IP/DNS), power (systemctl via polkit), terminal (python pty bridge), logs (journal + ring buffer), lan.ts, selfupdate.ts (GitHub feed, unit starter)
   bootstrap/           root-only installer/upgrader: bootstrap.ts, tools.ts (Cockpit/Portainer/Tailscale/Caddy), systemd.ts (units + polkit rule), selfupdate-apply.ts (root half of self-update)
   cli/main.ts          commander CLI (all console actions + bootstrap/self-update/setup-code/totp reset)
-web/src/               React 19 + Vite, plain CSS tokens (macOS-inspired), strict CSP (style-src allows inline for xterm); App.tsx, app/pages/*, app/dialogs.tsx, app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange)
+web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx, app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 catalog/               17 bundled packages (manifest.yaml, compose.yaml, README.md, release.json, icon)
 tests/unit tests/integration (fake Docker adapter, real HTTP) tests/e2e (Playwright, two dev daemons: normal + setup mode)
 scripts/               package.mjs (release archive), catalog-pin/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
@@ -56,10 +57,11 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 
 ## 4. Versions, tags, releases
 
-Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2.
-`package.json` version is **0.8.2**. GitHub Releases exist for v0.7.0, v0.8.0, v0.8.1, v0.8.2 (assets:
+Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0.
+`package.json` version is **0.10.0**. GitHub Releases exist for v0.7.0 → v0.10.0 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
-`pnpm build && pnpm package` → `release/`; publish with `gh release create v<v> release/harbor-<v>-linux-x64.tar.gz release/SHA256SUMS install.sh`.
+`pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
+push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
 Note: `gh release create` creates the remote tag itself; create the local tag afterwards or `git fetch --tags --force`.
 
 Round summary (what each version added): 0.2 publishing+console+catalog+own folders; 0.3 launcher, self-service
@@ -67,7 +69,9 @@ Settings, /srv/harbor; 0.4 purge, domains wizard, wallpaper upload, ⌘K palette
 (Bing/Wikimedia/Reddit-with-key), per-app name+icon, drag-to-arrange, Settings Overview + restart/shutdown,
 macOS visual pass; 0.6 uploaded packages (zip, digest pinning) + app updates with rollback; 0.7 terminal,
 troubleshoot logs, TOTP 2FA, device name, Tailscale operator self-heal; 0.8 install.sh, setup wizard,
-LAN mode + mDNS, Harbor self-update, defaultCredentials.
+LAN mode + mDNS, Harbor self-update, defaultCredentials; 0.9 round-9 (notifications, usage,
+git sources, auto-updates, widgets); 0.10 password-only persistent login (30-day remember) +
+Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logout in Settings).
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
@@ -116,8 +120,8 @@ The public install and self-update paths are proven (see above). Nothing is bloc
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 80), `pnpm test:integration` (76 + 3 live-Docker skipped; one file occasionally flakes at start in the full run, passes alone), `pnpm test:e2e` (21, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes, `pnpm build && pnpm package`.
-- Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode).
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 81), `pnpm test:integration` (109 + 3 live-Docker skipped), `pnpm test:e2e` (21, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.
 - Adding a setting: use the `settings` table (`repo.setting/setSetting/deleteSetting`), no migration needed. Schema changes: bump `SCHEMA_VERSION`, add `migrateVNtoVN+1`, extend `tests/unit/migration.test.ts`.
@@ -139,8 +143,8 @@ The public install and self-update paths are proven (see above). Nothing is bloc
 
 ## 9. Scope decisions that override TDD exclusions (all at Carlos's request)
 
-Purge (49), app updates and uploaded packages (60–62), MFA/TOTP (67), Harbor self-update and GitHub release publication (69–70), LAN exposure (71). Still not built on purpose: home widgets with live app data, files app, factory reset, external disk formatting, multi-user/SSO, backups (see `docs/FUTURE.md`).
+Purge (49), app updates and uploaded packages (60–62), MFA/TOTP (67), Harbor self-update and GitHub release publication (69–70), LAN exposure (71), notifications/usage/git-sources/auto-updates/widgets (76–82), persistent login + craft pass (83–84). Still not built on purpose: files app, factory reset, external disk formatting, multi-user/SSO, backups (see `docs/FUTURE.md`).
 
 ## 10. Feature map of the console (for UI work)
 
-Home (launcher: icons, status dots, drag-to-arrange, updates card, wallpaper credit) · App Store (catalog + *Your apps* filter + upload dialog) · Publishing (tailnet/public addresses) · Platform (Docker, Cockpit, Portainer, Tailscale, proxy) · Settings: Overview (device card, rename, power, machine facts, Harbor update card, wallpaper picker), Account (password, 2FA), Remote access (Tailscale), Public addresses (domains wizard), Storage (disks, folders, picker), Appearance (theme, wallpapers, rotation), Advanced access (terminal, SSH lines, CLI), Troubleshoot (journal + app logs), About · ⌘K palette · first-run Setup wizard · app drawer (open/publish/customize/start/stop/remove/update/uninstall completely).
+Home (launcher: icons, status dots, drag-to-arrange, updates card, wallpaper credit) · App Store (catalog + *Your apps* filter + upload dialog + git sources) · Publishing (tailnet/public addresses) · Platform (Docker, Cockpit, Portainer, Tailscale, proxy) · Settings: Overview (device card, rename, power, machine facts, Harbor update card, wallpaper picker), Account (password, 2FA, sessions, log-out-others, log out), Remote access (Tailscale), Public addresses (domains wizard), Storage (disks, folders, picker), Appearance (theme, wallpapers, rotation, opacity), Notifications (channels), Advanced access (terminal, SSH lines, CLI), Troubleshoot (journal + app logs), About · ⌘K palette · first-run Setup wizard · app drawer (open/publish/customize/start/stop/remove/update/uninstall completely) · notifications bell · Umbrel-style login hero.

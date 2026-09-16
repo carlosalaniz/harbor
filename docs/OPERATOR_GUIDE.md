@@ -36,7 +36,7 @@ is typed on the terminal.
 
 - `HARBOR_HOSTNAME=mybox` changes the mDNS name (`http://mybox.local`); `HARBOR_HOSTNAME=` keeps the current one.
 - `HARBOR_LAN=off` keeps LAN mode off (console and apps then answer only on the machine, over Tailscale, or via SSH forwarding). On a cloud server LAN mode stays off automatically: there, "every interface" would be the public internet.
-- `HARBOR_TOOLS=1` also sets up Cockpit and Portainer. `HARBOR_VERSION=0.8.0` pins a release.
+- `HARBOR_TOOLS=1` also sets up Cockpit and Portainer. `HARBOR_VERSION=0.10.0` pins a release.
 - Lost the setup code? On the machine: `sudo /opt/harbor/bin/harbor setup-code --config /etc/harbor/harbor.json`.
 
 **LAN mode** means the console (port 80) and every app port answer to any device on your local network,
@@ -147,8 +147,8 @@ There is no undo.
 
 - `remove` never deletes data volumes or generated secrets. `reinstall` verifies both (ownership
   token, creation time, key files) and refuses with `DATA_MISSING` / `SECRET_MISSING` rather than
-  initializing replacements. There is no purge command in this release; deleting a volume is a
-  manual `docker volume rm` decision by you.
+  initializing replacements. `purge` (full uninstall) deletes Harbor-created volumes after an
+  ownership check; deleting anything else is a manual `docker volume rm` decision by you.
 - Secrets live in `/var/lib/harbor/instances/<uuid>/secrets/` (0600) and appear in plaintext in the
   private generated Compose file. That is deliberate for the trusted local preview; there is no
   encrypted vault.
@@ -348,9 +348,10 @@ Notes:
 
 - The `harbor` service user is in the `docker` group and is therefore root-equivalent. The API is
   not a sandbox against anyone with Docker or root access.
-- HTTP only, on loopback. No LAN/public listener, no TLS, no proxy. Use SSH forwarding.
-- Not included: backups, app upgrades, purge, external disks, roles/SSO/MFA, remote catalogs,
-  Nextcloud/office integration (see `docs/FUTURE.md`).
+- Loopback by default; LAN mode, tailnet and public HTTPS are opt-in providers (section 6a).
+  The console itself is loopback + tailnet only, never public.
+- Not included: backups, multi-user roles/SSO, remote/community catalogs, external disk
+  formatting (blocked on hardware; see `docs/FUTURE.md`).
 
 ## 9. Uninstall (manual, by design)
 

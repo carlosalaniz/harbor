@@ -1,10 +1,13 @@
 # Harbor (working codename) — simple self-hosted application manager, local preview
 
-Harbor lets one administrator install a few self-hosted applications on one Ubuntu 24.04 x86-64
+Harbor lets one administrator install self-hosted applications on one Ubuntu 24.04 x86-64
 machine. Packages describe deployments; Harbor allocates non-conflicting loopback ports, starts
 normal Docker Compose projects, verifies readiness, and remembers what it owns.
 
-Bundled packages: **Excalidraw**, **BentoPDF**, **n8n + PostgreSQL** (all pinned by image digest).
+Catalog: **17 packages** (Excalidraw, BentoPDF, n8n + PostgreSQL, Open WebUI with Ollama,
+AnythingLLM, Jellyfin, Immich, Nextcloud, Vaultwarden, Uptime Kuma, Forgejo, FreshRSS,
+Actual Budget, Audiobookshelf, Navidrome, Memos, Mealie), all pinned by image digest —
+plus your own uploads (zip) and git sources (redeploy on commit).
 Platform tools: **Cockpit** and **Portainer** set up or bound by bootstrap, opened from Harbor.
 
 ## Install (Ubuntu 24.04 x86-64)
@@ -51,8 +54,12 @@ src/            daemon, domain, CLI, bootstrap (TypeScript, strict ESM)
   auth/ api/    scrypt + bearer sessions; Fastify routes with Host/Origin/JSON guards
   tools/        Cockpit/Portainer state and probes
   bootstrap/    root-only host bootstrap, Docker install, systemd unit, tool recipes
-web/            React + Vite UI (plain CSS, strict CSP, in-memory token)
-catalog/        the three bundled packages (manifest.yaml, compose.yaml, release.json, README.md)
+  exposure/     Tailscale + Caddy providers, URL rendering
+  appearance/   wallpapers and rotation fetcher
+  system/       metrics, storage, power, terminal, logs, LAN, self-update
+web/            React + Vite console (plain CSS, strict CSP; bearer token in memory,
+                30-day remember token in localStorage only when chosen)
+catalog/        the 17 bundled packages (manifest.yaml, compose.yaml, release.json, README.md)
 tests/          unit, integration (fake adapter; opt-in live Docker), e2e (Playwright), vm (live suite)
 scripts/        catalog hashing/verification, OpenAPI, release packager, VM controller
 release-assets/ shell launchers shipped in the archive
@@ -71,6 +78,9 @@ pnpm test:integration     # daemon in-process with the fake Docker adapter, temp
 pnpm build && pnpm test:e2e   # Playwright against the built UI + fake adapter
 pnpm dev                  # daemon on http://localhost:18000 with private .harbor-dev state (fake Docker)
 pnpm dev:web              # Vite dev server proxying to the daemon
+pnpm dev:ui               # console from fixtures only (no daemon): fastest UI iteration; ?screen=login previews login
+pnpm catalog:verify       # validate every package exactly as the daemon does
+pnpm openapi              # regenerate docs/openapi.json from the route schemas (unit test pins the route list)
 pnpm package              # release/harbor-<version>-linux-x64.tar.gz + SHA256SUMS
 ```
 
@@ -89,6 +99,8 @@ inventory hashes, `pnpm catalog:verify` to validate everything as the daemon doe
 
 ## Scope and limits
 
-This is a trusted local preview: loopback-only HTTP, one administrator, one daemon with Docker
-authority. Not included (by design): backups, app upgrades, purge, proxies/TLS, LAN or public
-administration, roles/SSO/MFA, remote catalogs, Nextcloud/office integration. See the operator guide.
+This is a trusted local preview: one administrator, one daemon with Docker (root-equivalent)
+authority. Apps and the console bind loopback by default; LAN mode, tailnet (Tailscale) and public
+HTTPS (Caddy + Let's Encrypt) are opt-in providers. Not included (by design): backups,
+multi-user roles/SSO, remote/community catalogs, external disk formatting (blocked on hardware).
+See the operator guide and docs/FUTURE.md.
