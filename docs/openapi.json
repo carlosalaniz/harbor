@@ -934,7 +934,7 @@
     },
     "/v1/account/security": {
       "get": {
-        "description": "Whether two-factor login is on.",
+        "description": "The administrator username (for the Home greeting) and whether two-factor login is on.",
         "responses": {
           "200": {
             "description": "Default Response"

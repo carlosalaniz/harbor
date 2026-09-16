@@ -361,7 +361,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   );
 
   // --- two-factor authentication (TOTP)
-  app.get('/v1/account/security', { preHandler: requireAuth, schema: { description: 'Whether two-factor login is on.' } }, async () => sessions.security());
+  app.get('/v1/account/security', { preHandler: requireAuth, schema: { description: 'The administrator username (for the Home greeting) and whether two-factor login is on.' } }, async () => sessions.security());
   app.post('/v1/account/totp/setup', { preHandler: requireAuth, schema: { description: 'Start two-factor setup: returns a fresh secret (base32) and an otpauth URL for a QR code. Not active until enabled with a live code.' } }, async () => sessions.setupTotp(`Harbor${service.system().deviceName ? ` (${service.system().deviceName})` : ''}`));
   app.post(
     '/v1/account/totp/enable',

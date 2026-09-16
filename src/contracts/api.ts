@@ -391,6 +391,7 @@ export interface SetupRequest {
 
 // ---- account security, logs, terminal
 export interface SecurityDto {
+  username: string; // the enrolled administrator (shown in the Home greeting)
   twoFactor: boolean;
   pending: boolean;
 }

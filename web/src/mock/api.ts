@@ -225,7 +225,7 @@ export const mockApi = {
   },
   setInstanceAppearance: async (id: string) => instances.find((i) => i.id === id) ?? instances[0]!,
   systemHost: async (): Promise<SystemHostDto> => mockHost(),
-  security: async () => ({ twoFactor: false, pending: false }),
+  security: async () => ({ username: 'carlos', twoFactor: false, pending: false }),
   totpSetup: async () => ({ secret: 'MOCK-SECRET', otpauthUrl: 'otpauth://totp/Harbor?secret=MOCK' }),
   totpEnable: async (): Promise<void> => {
     await beat(150);

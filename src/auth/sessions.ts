@@ -122,8 +122,8 @@ export class SessionService {
   // Password change by the logged-in administrator: current password required, policy applied,
   // every other session revoked so a stolen token does not outlive the change.
   // ---- two-factor (TOTP): setup creates a pending secret; enable confirms it with a live code; disable needs the password.
-  security(): { twoFactor: boolean; pending: boolean } {
-    return { twoFactor: this.repo.setting('security.totp') !== null, pending: this.repo.setting('security.totp.pending') !== null };
+  security(): { username: string; twoFactor: boolean; pending: boolean } {
+    return { username: this.repo.administrator()?.username ?? 'admin', twoFactor: this.repo.setting('security.totp') !== null, pending: this.repo.setting('security.totp.pending') !== null };
   }
   setupTotp(issuer: string): { secret: string; otpauthUrl: string } {
     if (this.repo.setting('security.totp')) throw new HarborError('INVALID_STATE', 'two-factor authentication is already on', { nextAction: 'Turn it off first to set up a new authenticator.' });

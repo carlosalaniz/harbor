@@ -14,6 +14,20 @@ function greeting(): string {
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
+// The header greets the administrator by name ("Good morning, Carlos") once the
+// account endpoint answers; before that it falls back to the bare greeting.
+function useGreeting(): string {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    api
+      .security()
+      .then((s) => setName(s.username?.trim() ? s.username.trim() : null))
+      .catch(() => setName(null));
+  }, []);
+  const base = greeting();
+  return name ? `${base}, ${name}` : base;
+}
+
 // Home is a launcher, the way a phone's home screen is: one icon per app, tap to open, hold (or Arrange)
 // to move things around. Everything else lives one tap away in the app's drawer.
 export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenApp: (i: InstanceSummary) => void; onGoStore: () => void; onPick: (item: CatalogItemDto) => void }) {
@@ -49,13 +63,14 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   const tiles = re.order.map((id) => byId.get(id)).filter((i): i is InstanceSummary => Boolean(i));
   const picture = data.appearance?.wallpaper.kind === 'rotating' ? data.appearance.wallpaper.current : null;
   const updates = active.filter((i) => i.updateAvailable && i.installState === 'installed');
+  const hello = useGreeting();
 
   return (
     <>
       <header className="page-head launcher-head">
         <div>
           <p className="clock">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-          <h1>{greeting()}</h1>
+          <h1>{hello}</h1>
           <p className="muted">{!loaded ? 'Loading your apps…' : data.instances.length === 0 ? 'Your own cloud, on this machine. Add your first app to get started.' : `${running} of ${active.length} app${active.length === 1 ? '' : 's'} running · ${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}`}</p>
         </div>
         <div className="row wrap head-actions">
