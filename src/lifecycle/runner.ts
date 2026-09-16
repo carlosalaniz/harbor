@@ -269,6 +269,20 @@ export class OperationRunner {
     return { username: pc.username ?? 'admin', password: readSecret(this.dirs(inst).secrets, PROVISIONED_SECRET) };
   }
 
+  // Build git-sourced services locally (decision 80). Contexts are the snapshot's build/<service>/
+  // folders — the exact bytes the import validated. 15-minute cap per service.
+  private async buildImages(op: OperationRow, pkg: LoadedPackage, packageDir: string): Promise<void> {
+    const builds = Object.entries(pkg.release.builds ?? {});
+    if (!builds.length) return;
+    for (const [service, b] of builds) {
+      const contextDir = path.join(packageDir, 'build', service);
+      if (!existsSync(contextDir)) throw new HarborError('DATA_MISSING', `build context for service ${service} is missing from the package`, { nextAction: 'Check the package source and re-add it.' });
+      this.phase(op, 'applying', 'building', `building ${service} from commit ${b.commit.slice(0, 12)} (${b.tag})`);
+      await this.ctx.compose.build({ contextDir, dockerfile: b.dockerfile ?? 'Dockerfile', tag: b.tag, timeoutMs: 15 * 60_000, onLog: (line) => this.event(op, 'building', line.slice(0, 300)) });
+      this.event(op, 'building', `built ${b.tag} from commit ${b.commit.slice(0, 12)}`);
+    }
+  }
+
   // URLs handed to `configuration` bindings follow the instance's primary exposure.
   private endpointUrlsFor(inst: InstanceRow, primary: PrimaryExposure = inst.primaryExposure): Record<string, string> {
     const exposures = this.ctx.repo.exposures(inst.id);
@@ -277,7 +291,8 @@ export class OperationRunner {
 
   private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure, provisioned?: { username: string; password: string } | null): Promise<string> {
     const externalStorage = Object.fromEntries(this.ctx.repo.resources(inst.id).filter((r) => r.kind === 'bind').map((r) => [r.role, { hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) }]));
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1', provisioned: provisioned ?? this.provisionedFor(pkg, inst) });
+    const builtImages = Object.fromEntries(Object.entries(pkg.release.builds ?? {}).map(([svc, b]) => [svc, b.tag]));
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1', provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages });
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
       await this.ctx.compose.config({ projectDir: runtimeDir, projectName: identity.project, file }, 60_000);
@@ -477,8 +492,11 @@ export class OperationRunner {
     const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values, undefined, provisioned);
     const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
 
-    this.phase(op, 'applying', 'pulling', `pulling ${Object.keys(pkg.release.images).length} image(s) by digest`);
-    await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+    await this.buildImages(op, pkg, dirs.release);
+    if (Object.keys(pkg.release.images).length) {
+      this.phase(op, 'applying', 'pulling', `pulling ${Object.keys(pkg.release.images).length} image(s) by digest`);
+      await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+    }
 
     this.phase(op, 'applying', 'starting', 'creating and starting the Compose project');
     repo.updateInstance(inst.id, { runtime: 'starting' });
@@ -526,8 +544,11 @@ export class OperationRunner {
     const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
     repo.updateInstance(inst.id, { installState: 'installing', desired: 'running' });
 
-    this.phase(op, 'applying', 'pulling', 'pulling exact stored images');
-    await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+    await this.buildImages(op, pkg, dirs.release);
+    if (Object.keys(pkg.release.images).length) {
+      this.phase(op, 'applying', 'pulling', 'pulling exact stored images');
+      await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+    }
     this.phase(op, 'applying', 'starting', 'recreating containers and network');
     repo.updateInstance(inst.id, { runtime: 'starting' });
     const containers = await this.upAndRecord(op, inv, identity, inst);
@@ -672,8 +693,11 @@ export class OperationRunner {
       const values = this.readSecrets(next, dirs.secrets, sink);
       const file = await this.renderAndValidate(op, next, identity, updated, dirs.runtime, values);
       const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
-      this.phase(op, 'applying', 'pulling', `pulling ${u.images.length || Object.keys(next.release.images).length} image(s) by digest`);
-      await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+      await this.buildImages(op, next, dirs.release);
+      if (Object.keys(next.release.images).length) {
+        this.phase(op, 'applying', 'pulling', `pulling ${u.images.length || Object.keys(next.release.images).length} image(s) by digest`);
+        await this.ctx.compose.pull(inv, config.imagePullTimeoutMs);
+      }
       this.phase(op, 'applying', 'starting', `starting ${next.manifest.metadata.name} revision ${next.revision}`);
       repo.updateInstance(inst.id, { runtime: 'starting' });
       const containers = await this.upAndRecord(op, inv, identity, updated);
@@ -694,6 +718,13 @@ export class OperationRunner {
         const values = this.readSecrets(current, dirs.secrets, sink);
         const file = await this.renderAndValidate(op, current, identity, restored, dirs.runtime, values);
         const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
+        // Best effort: the previously built tag still exists on the engine, so a rebuild failure
+        // (e.g. the builder is what broke) must not stop the rollback.
+        try {
+          await this.buildImages(op, current, dirs.release);
+        } catch (be) {
+          this.event(op, 'rollback', `rebuild of the previous images failed (${be instanceof Error ? be.message : String(be)}); using the images already on the engine`);
+        }
         repo.updateInstance(inst.id, { runtime: 'starting' });
         const containers = await this.upAndRecord(op, inv, identity, restored);
         await this.checkReadiness(op, current, restored, containers);

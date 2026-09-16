@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import type { LoadedPackage } from '../contracts/types.js';
 import { UUID_RE } from '../contracts/patterns.js';
@@ -64,6 +64,10 @@ export function writeReleaseSnapshot(releaseDir: string, pkg: LoadedPackage): vo
     }
     writeDurable(target, bytes, 0o600, false);
   }
+  // Git-sourced packages: snapshot the build contexts too (decision 80); reinstalls rebuild the same bytes.
+  const buildSrc = path.join(pkg.dir, 'build');
+  const buildDst = path.join(releaseDir, 'build');
+  if (existsSync(buildSrc) && !existsSync(buildDst)) cpSync(buildSrc, buildDst, { recursive: true });
 }
 
 export function loadReleaseSnapshot(releaseDir: string, packageId: string): LoadedPackage {

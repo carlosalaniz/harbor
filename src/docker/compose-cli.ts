@@ -109,6 +109,16 @@ export class ComposeCli implements ComposeRunner {
   start(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult> {
     return this.compose(inv, ['start'], timeoutMs);
   }
+
+  // docker build for git-sourced services (decision 80): plain CLI build, no BuildKit secrets,
+  // no network tricks — the Dockerfile decides what it pulls.
+  async build(opts: { contextDir: string; dockerfile: string; tag: string; timeoutMs: number; onLog?: (line: string) => void }): Promise<void> {
+    const args = ['build', '--file', path.join(opts.contextDir, opts.dockerfile), '--tag', opts.tag, opts.contextDir];
+    const r = await this.run(args, opts.contextDir, opts.timeoutMs);
+    if (opts.onLog) for (const line of (r.stderr + '\n' + r.stdout).split('\n').filter(Boolean).slice(-30)) opts.onLog(line);
+    if (r.timedOut) throw new ComposeError(`docker build timed out after ${Math.round(opts.timeoutMs / 1000)}s`, { command: args, exitCode: r.exitCode, stderrTail: tail(r.stderr), timedOut: true });
+    if (r.exitCode !== 0) throw new ComposeError(`docker build failed (exit ${r.exitCode}): ${tail(r.stderr, 400)}`, { command: args, exitCode: r.exitCode, stderrTail: tail(r.stderr), timedOut: false });
+  }
 }
 
 function tail(s: string, n = 2000): string {

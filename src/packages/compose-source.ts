@@ -5,8 +5,10 @@ import { compile, formatErrors } from '../contracts/validate.js';
 import { HarborError } from '../errors.js';
 
 // Keys that are explicitly unsupported get a clearer capability error than a generic schema failure.
+// `build` left this list in round 9 (decision 80): git-sourced packages may build from source;
+// zip uploads are still refused in the import pipeline before validation.
 const FORBIDDEN_SERVICE_KEYS = new Set([
-  'container_name', 'ports', 'restart', 'env_file', 'configs', 'secrets', 'build', 'extends', 'include',
+  'container_name', 'ports', 'restart', 'env_file', 'configs', 'secrets', 'extends', 'include',
   'command', 'entrypoint', 'network_mode', 'pid', 'ipc', 'uts', 'userns_mode', 'devices', 'cap_add', 'cap_drop',
   'privileged', 'security_opt', 'sysctls', 'networks', 'volumes_from', 'user', 'labels', 'logging', 'deploy',
   'links', 'external_links', 'expose', 'dns', 'extra_hosts', 'tmpfs', 'ulimits', 'cgroup_parent', 'runtime',
@@ -65,10 +67,13 @@ export function validateComposeSource(value: unknown, label = 'compose.yaml'): C
 
   const problems: string[] = [];
   for (const [svc, def] of Object.entries(compose.services)) {
+    // image XOR build (schema cannot express it under AJV strict mode)
+    if (def.image === undefined && def.build === undefined) problems.push(`service ${svc} needs image or build`);
+    if (def.image !== undefined && def.build !== undefined) problems.push(`service ${svc} declares both image and build; pick one`);
     for (const [k, v] of Object.entries(def.environment ?? {})) {
       if (INTERPOLATION_RE.test(v)) problems.push(`service ${svc} environment ${k} contains an interpolation expression`);
     }
-    if (INTERPOLATION_RE.test(def.image)) problems.push(`service ${svc} image contains an interpolation expression`);
+    if (def.image !== undefined && INTERPOLATION_RE.test(def.image)) problems.push(`service ${svc} image contains an interpolation expression`);
     const hc = def.healthcheck;
     if (hc) {
       for (const part of hc.test) if (INTERPOLATION_RE.test(part)) problems.push(`service ${svc} healthcheck contains an interpolation expression`);

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
 import { hostname } from 'node:os';
@@ -15,8 +15,9 @@ import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory, hostPathsOverlap } from '../storage/host-path.js';
-import type { InstanceRow, OperationRow, PlanProposal, PlanRow } from '../state/repo.js';
+import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
+import { validateGitSourceInput } from '../packages/git.js';
 import { ComposeError } from '../docker/adapter.js';
 import type { Ctx } from './context.js';
 import { exposureDto, instanceSummary, operationDto, planDto } from './dto.js';
@@ -51,6 +52,127 @@ export class ApplicationService {
   recordUsage(instanceId: string, usage: { cpuPercent: number; memoryBytes: number } | null): void {
     if (!usage) this.usageCache.delete(instanceId);
     else this.usageCache.set(instanceId, { ...usage, sampledAt: rfc3339(this.ctx.clock.now()) });
+  }
+
+  // ---- git package sources (decision 80)
+  private sourceDto(s: PackageSourceRow): PackageSourceDto {
+    return {
+      id: s.id,
+      kind: s.kind,
+      url: s.url,
+      ref: s.ref,
+      subpath: s.subpath,
+      packageId: s.packageId,
+      pinnedCommit: s.pinnedCommit,
+      lastSeenCommit: s.lastSeenCommit,
+      autoRedeploy: s.autoRedeploy,
+      createdAt: s.createdAt,
+      checkedAt: s.checkedAt,
+      note: s.note,
+      updateAvailable: Boolean(s.lastSeenCommit && s.pinnedCommit && s.lastSeenCommit !== s.pinnedCommit),
+    };
+  }
+  packageSources(): PackageSourceDto[] {
+    return this.ctx.repo.packageSources().map((s) => this.sourceDto(s));
+  }
+  async addPackageSource(req: { url: string; ref?: string; subpath?: string | null; autoRedeploy?: boolean }, actor: string): Promise<AddSourceResult> {
+    const url = req.url.trim().replace(/\.git$/, '');
+    const ref = req.ref?.trim() || 'main';
+    const subpath = req.subpath?.trim() || null;
+    validateGitSourceInput(url, ref, subpath);
+    if (this.ctx.repo.packageSources().some((s) => s.url === url && s.ref === ref && (s.subpath ?? null) === subpath)) {
+      throw new HarborError('NAME_CONFLICT', 'this repository, branch and path are already a source', { nextAction: 'Use "check now" on the existing source, or remove it first.' });
+    }
+    const tree = await this.ctx.git.fetch(url, ref);
+    try {
+      const r = await this.ctx.packages.importGitTree(tree, { url, ref, subpath });
+      const source: Omit<PackageSourceRow, 'createdAt' | 'checkedAt'> = {
+        id: this.ctx.ids.uuid(),
+        kind: 'git',
+        url,
+        ref,
+        subpath,
+        pinnedCommit: tree.commit,
+        lastSeenCommit: tree.commit,
+        autoRedeploy: req.autoRedeploy ?? false,
+        packageId: r.item.id,
+        note: null,
+      };
+      this.ctx.repo.insertPackageSource(source);
+      this.ctx.log.info('git source added', { url, ref, commit: tree.commit, packageId: r.item.id, actor });
+      const row = this.ctx.repo.packageSource(source.id)!;
+      return { source: this.sourceDto(row), import: { item: r.item, pinned: r.pinned, notes: r.notes, replacedRevision: r.replacedRevision, updatable: [] } };
+    } finally {
+      tree.cleanup();
+    }
+  }
+  removePackageSource(id: string): void {
+    const s = this.ctx.repo.packageSource(id);
+    if (!s) throw new HarborError('NOT_FOUND', `unknown source ${id}`);
+    // The package (and installed apps) stay; only the link to the repository goes.
+    this.ctx.repo.deletePackageSource(id);
+  }
+  setSourceAutoRedeploy(id: string, on: boolean): PackageSourceDto {
+    const s = this.ctx.repo.packageSource(id);
+    if (!s) throw new HarborError('NOT_FOUND', `unknown source ${id}`);
+    this.ctx.repo.updatePackageSource(id, { autoRedeploy: on });
+    return this.sourceDto(this.ctx.repo.packageSource(id)!);
+  }
+  // Fetch the branch head; import a newer commit as a new revision. Returns the refreshed source.
+  // Import + notify only — the update plan flows through the normal update machinery afterwards.
+  async checkPackageSource(id: string, actor: string): Promise<PackageSourceDto> {
+    const s = this.ctx.repo.packageSource(id);
+    if (!s) throw new HarborError('NOT_FOUND', `unknown source ${id}`);
+    const head = await this.ctx.git.head(s.url, s.ref);
+    this.ctx.repo.updatePackageSource(id, { lastSeenCommit: head.commit, checkedAt: rfc3339(this.ctx.clock.now()) });
+    if (head.commit !== s.pinnedCommit) {
+      const tree = await this.ctx.git.fetch(s.url, s.ref, { commit: head.commit });
+      try {
+        await this.ctx.packages.importGitTree(tree, { url: s.url, ref: s.ref, subpath: s.subpath, expectedId: s.packageId });
+        this.ctx.repo.updatePackageSource(id, { pinnedCommit: head.commit, note: null });
+        this.ctx.log.info('git source updated', { url: s.url, from: s.pinnedCommit, to: head.commit, actor });
+        this.ctx.notifier.notify({ kind: 'source-commit', severity: 'info', title: `New commit for ${s.packageId}`, body: `${s.url.replace(/^https:\/\//, '')} ${s.ref} moved to ${head.commit.slice(0, 12)}. ${s.autoRedeploy ? 'Redeploy starts automatically.' : 'Update the app from its drawer or Home.'}`, dedupeKey: `source-commit:${s.id}:${head.commit}` });
+      } catch (e) {
+        // A broken commit must not wedge the source: record the failure and keep the old revision installed.
+        const msg = e instanceof Error ? e.message : String(e);
+        this.ctx.repo.updatePackageSource(id, { note: `commit ${head.commit.slice(0, 12)} was not imported: ${msg}` });
+        this.ctx.notifier.notify({ kind: 'source-broken', severity: 'warning', title: `Commit ${head.commit.slice(0, 12)} of ${s.packageId} is not installable`, body: msg, dedupeKey: `source-broken:${s.id}:${head.commit}` });
+      } finally {
+        tree.cleanup();
+      }
+    }
+    return this.sourceDto(this.ctx.repo.packageSource(id)!);
+  }
+  // Called by the observer on its own cadence: check every source; auto-redeploy rides runAutoUpdates
+  // (an imported newer revision makes updateFor() fire; sources with autoRedeploy get the plan below).
+  async checkAllSources(): Promise<void> {
+    for (const s of this.ctx.repo.packageSources()) {
+      try {
+        await this.checkPackageSource(s.id, 'git-source');
+      } catch (e) {
+        this.ctx.log.warn(`source check ${s.url}@${s.ref} failed: ${(e as Error).message}`);
+      }
+    }
+    // Redeploy-on-commit: submit updates for instances of auto-redeploy sources.
+    const current = this.currentRevisionsSafe();
+    for (const s of this.ctx.repo.packageSources()) {
+      if (!s.autoRedeploy) continue;
+      for (const i of this.ctx.repo.listInstances()) {
+        if (i.packageId !== s.packageId || i.installState !== 'installed' || i.activeOperationId) continue;
+        const upd = this.updateFor(i, current);
+        if (!upd) continue;
+        const attempt = `${i.id}:${upd.revision}`;
+        if (this.autoUpdateAttempts.has(attempt)) continue;
+        this.autoUpdateAttempts.add(attempt);
+        try {
+          const plan = await this.createPlan({ kind: 'update', instanceId: i.id }, 'git-source');
+          this.submit(plan.id, this.ctx.ids.uuid(), 'git-source');
+          this.ctx.log.info('redeploy-on-commit submitted', { instanceId: i.id, to: upd.revision });
+        } catch (e) {
+          this.ctx.log.warn(`redeploy of ${i.name} could not start: ${(e as Error).message}`);
+        }
+      }
+    }
   }
 
   // ---- automatic updates (decision 78)
@@ -462,8 +584,10 @@ export class ApplicationService {
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
+          ...Object.entries(pkg.release.builds ?? {}).map(([svc, b]) => `Build ${svc} from source at commit ${b.commit.slice(0, 12)} (${b.tag})`),
         ],
         warnings: [
+          ...(Object.keys(pkg.release.builds ?? {}).length ? ['Parts of this app are built from source on this machine; their provenance is the git commit, not a registry digest.'] : []),
           ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
           ...(pkg.manifest.defaultCredentials ? [`This app ships with a default login (${pkg.manifest.defaultCredentials.username}); change it right after the first sign-in.`] : []),
@@ -563,7 +687,10 @@ export class ApplicationService {
     const fresh = missing.length ? (await this.allocatePorts({ ...next, manifest: { ...next.manifest, endpoints: Object.fromEntries(missing.map((id) => [id, next.manifest.endpoints[id]!])) } }, new Set(kept.map((e) => e.hostPort)))) : [];
     const endpoints = [...kept, ...fresh];
     const newSecrets = (next.manifest.secrets ?? []).filter((s) => !inst.secrets.some((r) => r.id === s.id)).map((s) => s.id);
-    const images = Object.keys(next.release.images).map((svc) => ({ service: svc, from: current.release.images[svc]?.reference ?? '(new service)', to: next.release.images[svc]!.reference })).filter((x) => x.from !== x.to);
+    const images = [
+      ...Object.keys(next.release.images).map((svc) => ({ service: svc, from: current.release.images[svc]?.reference ?? '(new service)', to: next.release.images[svc]!.reference })),
+      ...Object.keys(next.release.builds ?? {}).map((svc) => ({ service: svc, from: current.release.builds?.[svc] ? `built from ${current.release.builds[svc]!.commit.slice(0, 12)}` : '(new service)', to: `built from ${next.release.builds![svc]!.commit.slice(0, 12)}` })),
+    ].filter((x) => x.from !== x.to);
     const proposal: PlanProposal = {
       packageId: inst.packageId,
       revision: next.revision,
@@ -737,7 +864,8 @@ export class ApplicationService {
 
   // Non-mutating Compose canonical validation of the prospective model, in a scratch directory.
   private async validateProspective(pkg: LoadedPackage, identity: ReturnType<typeof identityFor>, endpoints: PlanProposal['endpoints']): Promise<void> {
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints, secretValues: null });
+    const builtImages = Object.fromEntries(Object.entries(pkg.release.builds ?? {}).map(([svc, b]) => [svc, b.tag]));
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints, secretValues: null, builtImages });
     const scratch = path.join(this.ctx.config.stateDir, 'scratch', identity.instanceId);
     mkdirSync(scratch, { recursive: true, mode: 0o700 });
     const file = path.join(scratch, 'compose.yaml');

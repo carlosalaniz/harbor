@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto } from '../../src/contracts/api';
 
 export class ApiError extends Error {
   constructor(
@@ -91,6 +91,11 @@ export const api = {
   setUpdatesPolicy: (autoDefault: boolean) => call<{ autoDefault: boolean }>('PUT', '/v1/updates/policy', { autoDefault }),
   setAutoUpdate: (instanceId: string, enabled: boolean) => call<InstanceSummary>('PUT', `/v1/instances/${instanceId}/auto-update`, { enabled }),
   applyAllUpdates: () => call<{ started: { instanceId: string; name: string; operationId: string }[]; skipped: { instanceId: string; name: string; reason: string }[] }>('POST', '/v1/updates/apply-all', {}),
+  packageSources: () => call<{ items: PackageSourceDto[] }>('GET', '/v1/package-sources').then((r) => r.items),
+  addPackageSource: (req: { url: string; ref?: string; subpath?: string; autoRedeploy?: boolean }) => call<AddSourceResult>('POST', '/v1/package-sources', req),
+  checkPackageSource: (id: string) => call<PackageSourceDto>('POST', `/v1/package-sources/${id}/check`, {}),
+  setSourceAutoRedeploy: (id: string, enabled: boolean) => call<PackageSourceDto>('PUT', `/v1/package-sources/${id}/auto-redeploy`, { enabled }),
+  removePackageSource: (id: string) => call<void>('DELETE', `/v1/package-sources/${id}`),
   folders: (path: string) => call<FolderListingDto>('GET', `/v1/host/folders?path=${encodeURIComponent(path)}`),
   createFolder: (parent: string, name: string) => call<{ name: string; path: string; writable: boolean }>('POST', '/v1/host/folders', { parent, name }),
   tailscaleLogin: (authKey?: string) => call<TailscaleLoginDto>('POST', '/v1/platform-tools/tailscale/login', authKey ? { authKey } : {}),

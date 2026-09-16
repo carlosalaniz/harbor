@@ -86,6 +86,28 @@ export interface NotificationsDto {
   items: NotificationDto[];
   unread: number;
 }
+// ---- git package sources (decision 80)
+export interface PackageSourceDto {
+  id: string;
+  kind: 'git';
+  url: string;
+  ref: string;
+  subpath: string | null;
+  packageId: string;
+  pinnedCommit: string | null;
+  lastSeenCommit: string | null;
+  autoRedeploy: boolean;
+  createdAt: string;
+  checkedAt: string | null;
+  note: string | null;
+  // a newer commit exists on the branch than the imported one
+  updateAvailable: boolean;
+}
+export interface AddSourceResult {
+  source: PackageSourceDto;
+  import: PackageImportResultDto;
+}
+
 // External delivery channels; secrets stay server-side (the GET returns them redacted).
 export type NotificationChannelDto =
   | { kind: 'ntfy'; server: string; topic: string; token?: string; minSeverity?: 'info' | 'warning' | 'error' }

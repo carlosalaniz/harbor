@@ -706,6 +706,24 @@ export function UploadPackageDialog({ onClose, onDone }: { onClose: () => void; 
   const [error, setError] = useState<{ message: string; next?: string; details?: string[] } | null>(null);
   const [result, setResult] = useState<PackageImportResultDto | null>(null);
   const [drag, setDrag] = useState(false);
+  const [mode, setMode] = useState<'zip' | 'git'>('zip');
+  const [gitUrl, setGitUrl] = useState('');
+  const [gitRef, setGitRef] = useState('main');
+  const [gitPath, setGitPath] = useState('');
+  const [gitAuto, setGitAuto] = useState(false);
+  const addGit = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const r = await api.addPackageSource({ url: gitUrl.trim(), ref: gitRef.trim() || 'main', ...(gitPath.trim() ? { subpath: gitPath.trim() } : {}), autoRedeploy: gitAuto });
+      setResult(r.import);
+      onDone(r.import);
+    } catch (e) {
+      setError(e instanceof ApiError ? { message: e.message, next: e.nextAction, details: (e as ApiError & { details?: string[] }).details } : { message: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
   const send = (f: File | undefined) => {
     setError(null);
     if (!f) return;
@@ -731,31 +749,73 @@ export function UploadPackageDialog({ onClose, onDone }: { onClose: () => void; 
     <Dialog title="Your own app" onClose={onClose}>
       {!result ? (
         <>
-          <p className="muted small">Bring an app of your own (or one you are developing) as a package zip. Harbor checks it the way it checks the built-in catalog, pins the images by digest for you and puts it in your App Store. Upload a higher revision later to update the apps installed from it.</p>
-          <div
-            className={`dropzone ${drag ? 'drag' : ''}`}
-            onDragOver={(e) => (e.preventDefault(), setDrag(true))}
-            onDragLeave={() => setDrag(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDrag(false);
-              send(e.dataTransfer.files[0]);
-            }}
-          >
-            <input ref={file} type="file" accept=".zip,application/zip" hidden onChange={(e) => send(e.target.files?.[0])} aria-label="Package zip file" />
-            <p className="empty-title">{busy ? 'Checking the package…' : 'Drop a package .zip here'}</p>
-            <button className="btn primary" disabled={busy} onClick={() => file.current?.click()}>
-              Choose a zip…
+          <div role="radiogroup" aria-label="How to add the app" className="seg">
+            <button role="radio" aria-checked={mode === 'zip'} className={`seg-btn ${mode === 'zip' ? 'active' : ''}`} onClick={() => setMode('zip')}>
+              Package zip
+            </button>
+            <button role="radio" aria-checked={mode === 'git'} className={`seg-btn ${mode === 'git' ? 'active' : ''}`} onClick={() => setMode('git')}>
+              Git repository
             </button>
           </div>
+          {mode === 'zip' && (
+            <>
+              <p className="muted small">Bring an app of your own (or one you are developing) as a package zip. Harbor checks it the way it checks the built-in catalog, pins the images by digest for you and puts it in your App Store. Upload a higher revision later to update the apps installed from it.</p>
+              <div
+                className={`dropzone ${drag ? 'drag' : ''}`}
+                onDragOver={(e) => (e.preventDefault(), setDrag(true))}
+                onDragLeave={() => setDrag(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDrag(false);
+                  send(e.dataTransfer.files[0]);
+                }}
+              >
+                <input ref={file} type="file" accept=".zip,application/zip" hidden onChange={(e) => send(e.target.files?.[0])} aria-label="Package zip file" />
+                <p className="empty-title">{busy ? 'Checking the package…' : 'Drop a package .zip here'}</p>
+                <button className="btn primary" disabled={busy} onClick={() => file.current?.click()}>
+                  Choose a zip…
+                </button>
+              </div>
+            </>
+          )}
+          {mode === 'git' && (
+            <>
+              <p className="muted small">
+                Point Harbor at a repository with a <code>harbor/</code> folder (manifest + compose). Services can be built from your own <code>Dockerfile</code>; Harbor imports the branch head, and every new commit becomes an update — deployed automatically if you want.
+              </p>
+              <div className="stack">
+                <label>
+                  Repository URL
+                  <input value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/you/your-app" aria-label="Repository URL" />
+                </label>
+                <div className="row wrap">
+                  <label>
+                    Branch <input value={gitRef} onChange={(e) => setGitRef(e.target.value)} aria-label="Branch" />
+                  </label>
+                  <label>
+                    Folder (optional) <input value={gitPath} onChange={(e) => setGitPath(e.target.value)} placeholder="apps/notes" aria-label="Folder inside the repository" />
+                  </label>
+                </div>
+                <label className="row">
+                  <input type="checkbox" checked={gitAuto} onChange={(e) => setGitAuto(e.target.checked)} aria-label="Redeploy on commit" />
+                  <span className="muted small">Redeploy on commit: new pushes to the branch deploy themselves (a failed deployment rolls back)</span>
+                </label>
+                <div className="row end">
+                  <button className="btn primary" disabled={busy || !gitUrl.trim()} onClick={() => void addGit()}>
+                    {busy ? 'Fetching the repository…' : 'Add from the repository'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
           <details>
-            <summary className="muted small">What goes in the zip</summary>
+            <summary className="muted small">{mode === 'zip' ? 'What goes in the zip' : 'What goes in the repository'}</summary>
             <ul className="steps">
               <li>
-                <code>manifest.yaml</code>: id, name, description, <code>release.revision</code> (raise it for every new version), services, the endpoint people open, a health path.
+                <code>{mode === 'git' ? 'harbor/manifest.yaml' : 'manifest.yaml'}</code>: id, name, description, <code>release.revision</code>{mode === 'zip' ? ' (raise it for every new version)' : ' (the commit date is appended for you)'}, services, the endpoint people open, a health path.
               </li>
               <li>
-                <code>compose.yaml</code>: the services with <code>image:</code> (tags are fine, Harbor pins them), environment, named volumes. No host ports, no privileged flags.
+                <code>{mode === 'git' ? 'harbor/compose.yaml' : 'compose.yaml'}</code>: services with <code>image:</code> (tags are fine, Harbor pins them){mode === 'git' ? ' or build: {context: ../app} pointing at your Dockerfile' : ''}, environment, named volumes. No host ports, no privileged flags.
               </li>
               <li>
                 Optional: <code>README.md</code>, <code>icon.svg</code>/<code>.png</code>, screenshots named in <code>presentation.gallery</code>.

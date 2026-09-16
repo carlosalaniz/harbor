@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -311,6 +311,69 @@ packagesCmd
   .action(async (id: string) => {
     await client().delete(`/v1/packages/${encodeURIComponent(id)}`);
     out({ removed: id }, () => `Removed uploaded package ${id}.`);
+  });
+
+// Git app sources (decision 80): point Harbor at a repository, pin to a branch, optionally redeploy on commit.
+const sourcesCmd = program.command('sources').description('git app sources: add a repository, check for commits, toggle redeploy-on-commit');
+sourcesCmd.action(async () => {
+  const { items } = await client().get<{ items: PackageSourceDto[] }>('/v1/package-sources');
+  out(items, () =>
+    items.length
+      ? table([
+          ['APP', 'REPOSITORY', 'BRANCH', 'COMMIT', 'REDEPLOY', 'STATE'],
+          ...items.map((s) => [s.packageId, s.url.replace(/^https:\/\//, ''), s.ref + (s.subpath ? ` (${s.subpath})` : ''), s.pinnedCommit?.slice(0, 12) ?? '-', s.autoRedeploy ? 'on commit' : 'manual', s.note ? `⚠ ${s.note}` : s.updateAvailable ? 'new commit seen' : 'up to date']),
+        ])
+      : 'No git sources. Add one with: harbor sources add https://github.com/you/your-app',
+  );
+});
+sourcesCmd
+  .command('add <url>')
+  .description('fetch the repository, import its harbor/ folder as a package (services may build from source)')
+  .option('--branch <ref>', 'branch to follow', 'main')
+  .option('--path <subpath>', 'folder inside the repository that holds the app')
+  .option('--auto-redeploy', 'deploy new commits automatically (failed deployments roll back)', false)
+  .action(async (url: string, opts: { branch: string; path?: string; autoRedeploy: boolean }) => {
+    const r = await client().post<AddSourceResult>('/v1/package-sources', { url, ref: opts.branch, ...(opts.path ? { subpath: opts.path } : {}), autoRedeploy: opts.autoRedeploy });
+    out(r, () =>
+      [
+        `${r.import.item.name} (${r.import.item.id}) revision ${r.import.item.revision} imported from ${r.source.url}@${r.source.pinnedCommit?.slice(0, 12)}.`,
+        ...r.import.pinned.map((p) => `  pinned ${p.service}: ${p.from} -> ${p.to}`),
+        ...r.import.notes.map((n) => `  note: ${n}`),
+        r.source.autoRedeploy ? '  new commits deploy automatically (a failed deployment rolls back).' : `  new commits only notify; redeploy with: harbor update <instance> after a check.`,
+        `Install with: harbor install ${r.import.item.id}`,
+      ].join('\n'),
+    );
+  });
+sourcesCmd
+  .command('check <app-id>')
+  .description('fetch the branch head now; a newer commit becomes an update for installed apps')
+  .action(async (appId: string) => {
+    const { items } = await client().get<{ items: PackageSourceDto[] }>('/v1/package-sources');
+    const s = items.find((x) => x.packageId === appId);
+    if (!s) throw new HarborError('NOT_FOUND', `no source for app ${appId}`);
+    const r = await client().post<PackageSourceDto>(`/v1/package-sources/${s.id}/check`, {});
+    out(r, () => (r.note ? `Checked: ${r.note}` : r.pinnedCommit === s.pinnedCommit ? `Up to date at ${r.pinnedCommit?.slice(0, 12)}.` : `Imported commit ${r.pinnedCommit?.slice(0, 12)} as a new revision; installed apps now show an update.`));
+  });
+sourcesCmd
+  .command('redeploy <app-id> <on|off>')
+  .description('toggle redeploy-on-commit for the source of this app')
+  .action(async (appId: string, mode: string) => {
+    if (mode !== 'on' && mode !== 'off') throw new HarborError('INVALID_REQUEST', 'use on or off');
+    const { items } = await client().get<{ items: PackageSourceDto[] }>('/v1/package-sources');
+    const s = items.find((x) => x.packageId === appId);
+    if (!s) throw new HarborError('NOT_FOUND', `no source for app ${appId}`);
+    const r = await client().post<PackageSourceDto>(`/v1/package-sources/${s.id}/auto-redeploy`, { enabled: mode === 'on' }, {}, 'PUT');
+    out(r, () => `Redeploy-on-commit is ${r.autoRedeploy ? 'on' : 'off'} for ${appId}.`);
+  });
+sourcesCmd
+  .command('remove <app-id>')
+  .description('forget the repository link (the package and installed apps stay)')
+  .action(async (appId: string) => {
+    const { items } = await client().get<{ items: PackageSourceDto[] }>('/v1/package-sources');
+    const s = items.find((x) => x.packageId === appId);
+    if (!s) throw new HarborError('NOT_FOUND', `no source for app ${appId}`);
+    await client().delete(`/v1/package-sources/${s.id}`);
+    out({ removed: appId }, () => `Removed the source of ${appId}; the package and installed apps stay.`);
   });
 
 program

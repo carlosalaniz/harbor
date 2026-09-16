@@ -42,15 +42,23 @@ export function verifyInventory(
   }
   if (release.package.id !== manifest.metadata.id) problems.push(`package id ${release.package.id} does not match manifest ${manifest.metadata.id}`);
   if (release.package.revision !== manifest.release.revision) problems.push(`revision ${release.package.revision} does not match manifest ${manifest.release.revision}`);
+  // Every compose service is either a registry image (pinned by digest) or a git-source build
+  // (pinned by commit, decision 80); the inventory must cover each exactly once.
   const services = Object.keys(compose.services).sort();
-  const imageServices = Object.keys(release.images).sort();
-  if (services.join(',') !== imageServices.join(',')) problems.push(`images [${imageServices.join(', ')}] must cover exactly the compose services [${services.join(', ')}]`);
+  const covered = [...Object.keys(release.images), ...Object.keys(release.builds ?? {})].sort();
+  if (services.join(',') !== covered.join(',')) problems.push(`images [${Object.keys(release.images).sort().join(', ')}] and builds [${Object.keys(release.builds ?? {}).sort().join(', ')}] must cover exactly the compose services [${services.join(', ')}]`);
   for (const svc of services) {
     const img = release.images[svc];
-    const ref = compose.services[svc]!.image;
+    const build = release.builds?.[svc];
+    const def = compose.services[svc]!;
+    if (img && build) problems.push(`service ${svc} appears in both images and builds`);
+    if (img && def.build) problems.push(`service ${svc} declares build: but the inventory records a registry image`);
+    if (build && def.image) problems.push(`service ${svc} declares image: but the inventory records a build`);
+    const ref = def.image;
     if (img && img.reference !== ref) problems.push(`service ${svc} image ${ref} does not equal inventory reference ${img.reference}`);
     if (img && !img.reference.startsWith(`${img.repository}@`)) problems.push(`service ${svc} inventory repository ${img.repository} does not match reference`);
     if (img && /(^|:)latest$/.test(img.reference)) problems.push(`service ${svc} uses a floating tag`);
+    if (build && (def.build?.context ?? '.') !== build.context) problems.push(`service ${svc} build context ${def.build?.context} does not equal inventory context ${build.context}`);
   }
   if (problems.length) throw new HarborError('INVALID_PACKAGE', `${label}: ${problems[0]}`, { details: problems });
   return hashes;

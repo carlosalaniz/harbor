@@ -6,6 +6,11 @@ build one and upload it from the console (**App Store → + Your own app**) or t
 catalog, pins the images by digest for you, and puts it in *your* App Store. Upload a higher
 `release.revision` later and Harbor offers an **Update** to every app installed from it.
 
+Developing in a repository? Point Harbor at it instead (**App Store → + Your own app → Git
+repository**, or `harbor sources add https://github.com/you/your-app`): Harbor fetches the branch,
+imports the `harbor/` folder below, and every new commit becomes an update — deployed automatically
+if you turn on *redeploy on commit*. See §7.
+
 ## 1. The zip
 
 ```
@@ -159,3 +164,44 @@ harbor list                           # UPDATE column shows "-> 2 (1.1.0)" when 
 harbor update my-app --yes            # update; rolls back automatically on failure
 harbor packages remove my-app         # only after every app from it is uninstalled completely
 ```
+
+## 7. Apps from a git repository (develop → push → redeploy)
+
+A repository layout Harbor understands:
+
+```
+your-app/
+  harbor/
+    manifest.yaml     required (same template as §2)
+    compose.yaml      required (same subset as §3, plus `build:` below)
+    README.md         optional
+    icon.svg          optional
+  app/
+    Dockerfile        your code, built on the machine at install/update time
+    …                 whatever the Dockerfile needs
+```
+
+`compose.yaml` services may declare `build:` **instead of** `image:` (git sources only; zip uploads
+refuse it):
+
+```yaml
+services:
+  web:
+    build:
+      context: ../app        # relative to harbor/; may step up into the repo, never out of it
+      dockerfile: Dockerfile # optional, defaults to Dockerfile
+```
+
+What Harbor does: shallow-clones the branch, records the **commit SHA** (the provenance pin for
+built services — registry digests still pin `image:` services), appends the committer date to
+`release.revision` so every commit orders as a newer revision, snapshots the build contexts into
+the package, and runs the same validation as a zip. At install/update time Harbor runs
+`docker build` (15-minute cap, progress in the operation events) and tags the image
+`harbor-src/<app>-<service>:<shortsha>`. A failed build or a failed start rolls back exactly like
+any other update.
+
+Redeploy on commit: Harbor polls the branch (`git ls-remote`, default every 15 minutes — no inbound
+webhooks needed, which matters behind NAT). With the toggle on, a new commit is imported and the
+update plan submitted automatically (actor `git-source`); off, you get a notification and update
+manually. A commit that does not validate is recorded on the source and skipped — the running app
+is never touched. `harbor sources add/check/redeploy/remove` mirror the console's Store section.

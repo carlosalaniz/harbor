@@ -16,11 +16,14 @@ export class Observer {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
   private caddyApplied: string | null = null;
+  private lastSourceCheck = 0;
 
   constructor(
     private readonly ctx: Ctx,
     private readonly service: ApplicationService,
     private readonly intervalMs: number,
+    // git sources are polled on their own, much slower cadence (decision 80; default 15 min)
+    private readonly sourceCheckMs: number = 15 * 60_000,
   ) {}
 
   start(): void {
@@ -98,6 +101,10 @@ export class Observer {
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
       }
       this.notifyUpdatesAndDisk();
+      if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
+        this.lastSourceCheck = Date.now();
+        await this.service.checkAllSources();
+      }
       await this.service.runAutoUpdates();
       await this.verifyExposures(now);
     } catch (e) {

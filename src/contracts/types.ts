@@ -62,7 +62,10 @@ export type ConfigurationFormat = 'url' | 'origin' | 'authority' | 'host' | 'sch
 export interface ConfigurationBinding { service: string; environment: string; endpoint: string; format?: ConfigurationFormat }
 
 export interface ComposeSourceService {
-  image: string;
+  // image XOR build (decision 80): built services exist only in git-sourced packages;
+  // Harbor builds them locally and pins provenance by the commit SHA.
+  image?: string;
+  build?: { context: string; dockerfile?: string };
   environment?: Record<string, string>;
   depends_on?: Record<string, { condition: 'service_started' | 'service_healthy' }>;
   healthcheck?: { test: string[]; interval?: string; timeout?: string; retries?: number; start_period?: string };
@@ -89,6 +92,8 @@ export interface ReleaseInventory {
   files: Record<'manifest.yaml' | 'compose.yaml' | 'README.md', { sha256: string }>;
   assets?: Record<string, { sha256: string }>;
   images: Record<string, ReleaseImage>;
+  // services built from a git source (decision 80): provenance = the commit
+  builds?: Record<string, { context: string; dockerfile?: string; commit: string; tag: string }>;
   qualification: {
     status: 'passed' | 'blocked' | 'pending';
     date: string;

@@ -14,6 +14,7 @@ import { FakeReleaseFeed, FakeUnitStarter } from '../../src/system/selfupdate.js
 import { FakeCaddyAdmin } from '../../src/exposure/caddy.js';
 import { FakeVerifier } from '../../src/exposure/verify.js';
 import { FakeTransport } from '../../src/notify/notifier.js';
+import { FakeGit } from '../../src/packages/git.js';
 import { startDaemon, type Daemon, type DaemonOverrides } from '../../src/daemon.js';
 import { initializeState } from '../../src/state/db.js';
 import { enrollAdministrator } from '../../src/maintenance.js';
@@ -58,6 +59,7 @@ export interface Harness {
   caddy: FakeCaddyAdmin;
   verifier: FakeVerifier;
   notifyTransport: FakeTransport;
+  git: FakeGit;
   config: DaemonConfig;
   stateDir: string;
   catalogDir: string;
@@ -161,7 +163,8 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   const caddy = new FakeCaddyAdmin();
   const verifier = new FakeVerifier();
   const notifyTransport = new FakeTransport();
-  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, tailscale, caddy, verify: verifier.fn, net, fetcher, power, registry, releaseFeed, unitStarter, notifyTransport, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
+  const git = new FakeGit();
+  const start = () => startDaemon(config, { docker: fake, compose: fake, clock, observerIntervalMs: 500, sourceCheckMs: 700, tailscale, caddy, verify: verifier.fn, net, fetcher, power, registry, releaseFeed, unitStarter, notifyTransport, git, ...(opts.overrides ?? {}), toolsProbe: opts.overrides?.toolsProbe ?? (async () => ({ reachable: false, note: 'not probed in tests' })) });
   let daemon = await start();
   const baseUrl = `http://localhost:${port}`;
   const api = new Api(baseUrl, null);
@@ -184,6 +187,7 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     caddy,
     verifier,
     notifyTransport,
+    git,
     config,
     stateDir,
     catalogDir,

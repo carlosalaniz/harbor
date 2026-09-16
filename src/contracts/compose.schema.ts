@@ -16,9 +16,22 @@ export const COMPOSE_SOURCE_SCHEMA = {
       additionalProperties: {
         type: 'object',
         additionalProperties: false,
-        required: ['image'],
+        // image XOR build (checked in code: AJV strict mode dislikes oneOf/required here):
+        // registry images are pinned by digest; `build` is allowed only in git-sourced
+        // packages (decision 80) and is built locally, pinned by the commit.
         properties: {
           image: { type: 'string', pattern: IMAGE_REF_PATTERN, maxLength: 400 },
+          build: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['context'],
+            // relative to the harbor/ folder; may step up into the repository ("../app") but the
+            // importer verifies it never leaves the fetched tree
+            properties: {
+              context: { type: 'string', pattern: '^\\.{1,2}(/[A-Za-z0-9._-]{1,64}){0,8}$', maxLength: 220 },
+              dockerfile: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}(/[A-Za-z0-9._-]{1,64}){0,8}$', maxLength: 220 },
+            },
+          },
           environment: {
             type: 'object',
             maxProperties: 64,

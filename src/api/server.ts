@@ -284,6 +284,48 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     async (req) => service.setInstanceAutoUpdate((req.params as { id: string }).id, (req.body as { enabled: boolean }).enabled),
   );
   app.post('/v1/updates/apply-all', { preHandler: requireAuth, schema: { description: 'Submit one update per app with a newer package revision (serial queue; per-app rollback).' } }, async (req) => service.applyAllUpdates(req.actor!));
+
+  // --- git package sources (decision 80)
+  app.get('/v1/package-sources', { preHandler: requireAuth, schema: { description: 'Git repositories Harbor watches as app sources.' } }, async () => ({ items: service.packageSources() }));
+  app.post(
+    '/v1/package-sources',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Add a git repository as an app source: fetch the branch, import harbor/ as a package (services may build from source; provenance is the commit).',
+        body: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['url'],
+          properties: {
+            url: { type: 'string', minLength: 12, maxLength: 512 },
+            ref: { type: 'string', minLength: 1, maxLength: 120 },
+            subpath: { type: 'string', minLength: 1, maxLength: 200 },
+            autoRedeploy: { type: 'boolean' },
+          },
+        },
+      },
+    },
+    async (req, reply) => reply.status(201).send(await service.addPackageSource(req.body as { url: string; ref?: string; subpath?: string; autoRedeploy?: boolean }, req.actor!)),
+  );
+  app.post(
+    '/v1/package-sources/:id/check',
+    { preHandler: requireAuth, schema: { description: 'Fetch the branch head now; a newer commit becomes a new package revision.', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } },
+    async (req) => service.checkPackageSource((req.params as { id: string }).id, req.actor!),
+  );
+  app.put(
+    '/v1/package-sources/:id/auto-redeploy',
+    { preHandler: requireAuth, schema: { description: 'Turn redeploy-on-commit for this source on or off.', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] }, body: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } } } },
+    async (req) => service.setSourceAutoRedeploy((req.params as { id: string }).id, (req.body as { enabled: boolean }).enabled),
+  );
+  app.delete(
+    '/v1/package-sources/:id',
+    { preHandler: requireAuth, schema: { description: 'Forget the repository link; the imported package and installed apps stay.', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } },
+    async (req, reply) => {
+      service.removePackageSource((req.params as { id: string }).id);
+      return reply.status(204).send();
+    },
+  );
   app.get('/v1/instances', { preHandler: requireAuth, schema: { description: 'All instances including retained records.' } }, async () => ({ items: service.instances() }));
   app.get(
     '/v1/instances/:id',

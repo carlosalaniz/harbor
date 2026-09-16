@@ -36,6 +36,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { hostname } from 'node:os';
 import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/registry.js';
 import { FakeTransport, Notifier, realTransport, type NotifyTransport } from './notify/notifier.js';
+import { FakeGit, GitCli, type GitFetcher } from './packages/git.js';
 
 export function productVersion(): string {
   try {
@@ -54,6 +55,7 @@ export interface DaemonOverrides {
   ids?: Ids;
   log?: Logger;
   observerIntervalMs?: number;
+  sourceCheckMs?: number;
   toolsProbe?: ConstructorParameters<typeof PlatformToolsService>[2];
   tailscale?: TailscaleProvider;
   caddy?: CaddyAdmin;
@@ -65,6 +67,7 @@ export interface DaemonOverrides {
   releaseFeed?: ReleaseFeed;
   unitStarter?: UnitStarter;
   notifyTransport?: NotifyTransport;
+  git?: GitFetcher;
 }
 
 export interface Daemon {
@@ -136,12 +139,13 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const selfUpdate = new SelfUpdateService(version, feed, unitStarter, config.stateDir, clock, log);
     const notifyTransport = overrides.notifyTransport ?? (fakeMode ? new FakeTransport() : realTransport());
     const notifier = new Notifier(repo, ids, log, notifyTransport, () => repo.setting<string>('device.name') ?? hostname());
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate, notifier };
+    const git = overrides.git ?? (fakeMode ? new FakeGit() : new GitCli());
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate, notifier, git };
     const service = new ApplicationService(ctx);
     const runner = new OperationRunner(ctx);
     const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
     const tools = new PlatformToolsService(repo, clock, overrides.toolsProbe, { tailscale, caddy });
-    const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000);
+    const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000, overrides.sourceCheckMs ?? 15 * 60_000);
     const power = overrides.power ?? (fakeMode ? new FakePower() : new SystemdPower());
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode

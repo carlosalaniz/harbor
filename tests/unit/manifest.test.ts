@@ -141,9 +141,13 @@ describe('compose source subset', () => {
     expectCode(() => composeOf('services:\n  web:\n    image: ${IMAGE}\n'), 'INVALID_PACKAGE', /image/);
   });
   it('rejects forbidden service keys with UNSUPPORTED_CAPABILITY', () => {
-    for (const k of ['container_name: x', 'ports: ["80:80"]', 'restart: always', 'privileged: true', 'env_file: .env', 'build: .', 'command: sh', 'entrypoint: sh', 'network_mode: host', 'pid: host', 'cap_add: [SYS_ADMIN]', 'devices: [/dev/sda]', 'extends: {service: a}', 'user: root', 'networks: [foo]']) {
+    for (const k of ['container_name: x', 'ports: ["80:80"]', 'restart: always', 'privileged: true', 'env_file: .env', 'command: sh', 'entrypoint: sh', 'network_mode: host', 'pid: host', 'cap_add: [SYS_ADMIN]', 'devices: [/dev/sda]', 'extends: {service: a}', 'user: root', 'networks: [foo]']) {
       expectCode(() => composeOf(MINIMAL_COMPOSE + '    ' + k + '\n'), 'UNSUPPORTED_CAPABILITY', /unsupported key/);
     }
+    // `build` is schema-valid since round 9 (git sources, decision 80) but exclusive with image,
+    // and it must be an object; zip uploads reject it in the import pipeline instead.
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    build: {context: ./app}\n'), 'INVALID_PACKAGE', /both image and build/);
+    expectCode(() => composeOf('services:\n  web:\n    environment: {A: b}\n'), 'INVALID_PACKAGE', /image or build/);
   });
   it('rejects bind mounts, short-form volumes, external/global volume names and root networks', () => {
     expectCode(() => composeOf(MINIMAL_COMPOSE + '    volumes:\n      - {type: bind, source: /etc, target: /x}\n'), 'UNSUPPORTED_CAPABILITY', /bind/);

@@ -97,6 +97,8 @@ export interface ComposeRunner {
   pull(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
   up(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
   start(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
+  // docker build for git-sourced services (decision 80). onLog receives progress lines.
+  build(opts: { contextDir: string; dockerfile: string; tag: string; timeoutMs: number; onLog?: (line: string) => void }): Promise<void>;
 }
 
 export class ComposeError extends Error {

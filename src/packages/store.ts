@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CatalogIndex, LoadedPackage, Manifest, ReleaseInventory } from '../contracts/types.js';
 import { HarborError } from '../errors.js';
@@ -10,6 +10,7 @@ import { validateManifestReferences, validateManifestShape } from './manifest.js
 import { parseImageRef, type ImageResolver } from './registry.js';
 import { parseRestrictedYaml } from './yaml.js';
 import { readZip } from './zip.js';
+import { readPackageTree, type GitTree } from './git.js';
 
 // Every package Harbor can install: the bundled, hash-verified catalog plus packages the operator uploaded
 // ("your own apps"). Uploaded packages go through the same validation as bundled ones; Harbor pins their
@@ -90,11 +91,36 @@ export class PackageStore {
 
   // ---- uploads
   async importZip(zip: Buffer, opts: { fileName: string; actor: string }): Promise<ImportResult> {
-    const files = readZip(zip);
+    return this.importFiles(readZip(zip), { source: `upload ${opts.fileName} by ${opts.actor}`, allowBuilds: null });
+  }
+
+  // Git source (decision 80): the harbor/ folder of a fetched repository. Services may declare
+  // `build:` (built locally at apply time, pinned by the commit); the revision gets the committer
+  // date as a numeric suffix so every commit orders as a newer revision.
+  async importGitTree(tree: GitTree, opts: { url: string; ref: string; subpath: string | null; expectedId?: string }): Promise<ImportResult & { revision: string }> {
+    const files = readPackageTree(tree, opts.subpath);
+    const manifestRaw = files.get('manifest.yaml');
+    if (manifestRaw) {
+      // Suffix the revision before validation so hashes and stored files agree with it.
+      const text = manifestRaw.toString('utf8');
+      const m = text.match(/^(\s*revision:\s*["']?)([A-Za-z0-9._-]+)(["']?\s*)$/m);
+      if (m) files.set('manifest.yaml', Buffer.from(text.replace(m[0], `${m[1]}${m[2]}.${tree.committerDateUnix}${m[3]}`), 'utf8'));
+    }
+    const base = opts.subpath ? path.join(tree.dir, opts.subpath) : tree.dir;
+    const r = await this.importFiles(files, {
+      source: `git ${opts.url}@${tree.commit.slice(0, 12)} (${opts.ref}${opts.subpath ? `, ${opts.subpath}` : ''})`,
+      // contexts are written relative to harbor/; they may step up but never out of the fetched tree
+      allowBuilds: { commit: tree.commit, contextRoot: path.join(base, 'harbor'), boundary: tree.dir },
+      expectedId: opts.expectedId ?? null,
+    });
+    return { ...r, revision: r.item.id ? r.item.revision : '' };
+  }
+
+  private async importFiles(files: Map<string, Buffer>, ctx: { source: string; allowBuilds: { commit: string; contextRoot: string; boundary: string } | null; expectedId?: string | null }): Promise<ImportResult> {
     const notes: string[] = [];
     const need = (name: string) => {
       const b = files.get(name);
-      if (!b) throw new HarborError('INVALID_PACKAGE', `the package has no ${name}`, { nextAction: 'A package is a zip with manifest.yaml, compose.yaml, optionally README.md and the icon/screenshots the manifest names. See docs/DEVELOPER_PACKAGES.md.' });
+      if (!b) throw new HarborError('INVALID_PACKAGE', `the package has no ${name}`, { nextAction: 'A package is a zip (or a harbor/ folder in a git repository) with manifest.yaml, compose.yaml, optionally README.md and the icon/screenshots the manifest names. See docs/DEVELOPER_PACKAGES.md.' });
       return b;
     };
     const manifestRaw = need('manifest.yaml');
@@ -103,17 +129,33 @@ export class PackageStore {
     const manifest = validateManifestShape(parseRestrictedYaml(manifestRaw, 'manifest.yaml'), 'manifest.yaml');
     const id = manifest.metadata.id;
     if (readCatalogIndex(this.bundledDir).packages[id]) throw new HarborError('INVALID_PACKAGE', `the id "${id}" belongs to a built-in app`, { nextAction: 'Choose another metadata.id for your package.' });
+    if (ctx.expectedId && id !== ctx.expectedId) throw new HarborError('INVALID_PACKAGE', `the repository now declares metadata.id ${id}, but this source was added for ${ctx.expectedId}`, { nextAction: 'A source is bound to one app id. Add the repository again as a new source if the id really changed.' });
 
     // Pin images: any service image that is not already repository@sha256 is resolved at the registry.
+    // `build:` services (git sources only) are recorded with the commit instead.
     const composeText0 = composeRaw0.toString('utf8');
-    const composeAny = parseRestrictedYaml(composeRaw0, 'compose.yaml') as { services?: Record<string, { image?: unknown }> };
+    const composeAny = parseRestrictedYaml(composeRaw0, 'compose.yaml') as { services?: Record<string, { image?: unknown; build?: { context?: unknown; dockerfile?: unknown } }> };
     if (!composeAny || typeof composeAny !== 'object' || !composeAny.services || typeof composeAny.services !== 'object') throw new HarborError('INVALID_PACKAGE', 'compose.yaml must declare services');
     const pinned: ImportResult['pinned'] = [];
     const images: ReleaseInventory['images'] = {};
+    const builds: NonNullable<ReleaseInventory['builds']> = {};
     let composeText = composeText0;
     for (const [service, def] of Object.entries(composeAny.services)) {
       const ref = def?.image;
-      if (typeof ref !== 'string' || !ref.trim()) throw new HarborError('INVALID_PACKAGE', `service ${service} has no image`);
+      if (typeof ref !== 'string' || !ref.trim()) {
+        const build = def?.build;
+        if (build && typeof build === 'object' && typeof build.context === 'string') {
+          if (!ctx.allowBuilds) throw new HarborError('INVALID_PACKAGE', `service ${service} declares build:, which only git-sourced packages may use`, { nextAction: 'Point Harbor at the git repository instead of uploading a zip, or reference a published image.' });
+          const context = build.context;
+          const dockerfile = typeof build.dockerfile === 'string' ? build.dockerfile : 'Dockerfile';
+          const abs = path.resolve(ctx.allowBuilds.contextRoot, context);
+          if (abs !== path.resolve(ctx.allowBuilds.boundary) && !abs.startsWith(path.resolve(ctx.allowBuilds.boundary) + path.sep)) throw new HarborError('INVALID_PACKAGE', `service ${service}: build context escapes the repository`);
+          if (!existsSync(path.join(abs, dockerfile))) throw new HarborError('INVALID_PACKAGE', `service ${service}: no ${dockerfile} in build context ${context}`);
+          builds[service] = { context, ...(dockerfile !== 'Dockerfile' ? { dockerfile } : {}), commit: ctx.allowBuilds.commit, tag: `harbor-src/${id}-${service}:${ctx.allowBuilds.commit.slice(0, 12)}` };
+          continue;
+        }
+        throw new HarborError('INVALID_PACKAGE', `service ${service} has no image`);
+      }
       let resolved;
       try {
         resolved = await this.registry.resolve(ref);
@@ -135,7 +177,7 @@ export class PackageStore {
     const compose = validateComposeSource(parseRestrictedYaml(composeRaw, 'compose.yaml'), 'compose.yaml');
     validateManifestReferences(manifest, compose, 'manifest.yaml');
 
-    const readmeRaw = files.get('README.md') ?? Buffer.from(`# ${manifest.metadata.name}\n\n${manifest.metadata.description}\n\nUploaded to Harbor by ${opts.actor} on ${rfc3339(this.clock.now()).slice(0, 10)}.\n`, 'utf8');
+    const readmeRaw = files.get('README.md') ?? Buffer.from(`# ${manifest.metadata.name}\n\n${manifest.metadata.description}\n\nAdded to Harbor (${ctx.source}) on ${rfc3339(this.clock.now()).slice(0, 10)}.\n`, 'utf8');
     if (!files.has('README.md')) notes.push('No README.md in the package: Harbor wrote a short one from the manifest.');
     const assets: Record<string, Buffer> = {};
     for (const name of [...(manifest.presentation?.icon ? [manifest.presentation.icon] : []), ...(manifest.presentation?.gallery ?? [])]) {
@@ -174,10 +216,15 @@ export class PackageStore {
       files: { 'manifest.yaml': { sha256: sha256Hex(manifestRaw) }, 'compose.yaml': { sha256: sha256Hex(composeRaw) }, 'README.md': { sha256: sha256Hex(readmeRaw) } },
       ...(Object.keys(assets).length ? { assets: Object.fromEntries(Object.entries(assets).map(([n, b]) => [n, { sha256: sha256Hex(b) }])) } : {}),
       images,
+      ...(Object.keys(builds).length ? { builds } : {}),
       qualification: {
         status: 'pending',
         date: rfc3339(this.clock.now()).slice(0, 10),
-        notes: [`Uploaded by ${opts.actor} from ${opts.fileName}; not qualified by the Harbor project.`, ...(pinned.length ? [`Images pinned by Harbor at upload: ${pinned.map((p) => `${p.from} -> ${p.to.slice(p.to.indexOf('@') + 1, p.to.indexOf('@') + 20)}…`).join('; ')}`] : ['All images were already pinned by digest.'])],
+        notes: [
+          `Added from ${ctx.source}; not qualified by the Harbor project.`,
+          ...(pinned.length ? [`Images pinned by Harbor at import: ${pinned.map((p) => `${p.from} -> ${p.to.slice(p.to.indexOf('@') + 1, p.to.indexOf('@') + 20)}…`).join('; ')}`] : []),
+          ...(Object.keys(builds).length ? [`Built from source at commit ${ctx.allowBuilds!.commit}: ${Object.keys(builds).join(', ')} (provenance is the commit, not a registry digest).`] : []),
+        ],
       },
     };
     // Stage, validate the way the engine will load it, then swap into place.
@@ -190,6 +237,14 @@ export class PackageStore {
     writeFileSync(path.join(staging, 'README.md'), readmeRaw, { mode: 0o600 });
     writeFileSync(path.join(staging, 'release.json'), JSON.stringify(release, null, 2), { mode: 0o600 });
     for (const [n, b] of Object.entries(assets)) writeFileSync(path.join(staging, n), b, { mode: 0o600 });
+    // Built services: snapshot each build context into the package so the exact bytes that were
+    // imported are what `docker build` sees at apply time (and reinstalls stay reproducible).
+    for (const [service, b] of Object.entries(builds)) {
+      const src = path.resolve(ctx.allowBuilds!.contextRoot, b.context);
+      const dst = path.join(staging, 'build', service);
+      mkdirSync(path.dirname(dst), { recursive: true, mode: 0o700 });
+      cpSync(src, dst, { recursive: true, verbatimSymlinks: false, filter: (p) => !p.includes(`${path.sep}.git`) });
+    }
     try {
       loadPackageDir(staging, id, `upload:${id}`);
     } catch (e) {

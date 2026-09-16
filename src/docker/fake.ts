@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
 import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type NetworkInfo, type VolumeInfo } from './adapter.js';
@@ -22,6 +23,7 @@ export interface FakeBehaviour {
   failPull?: string | null; // error message
   failUp?: string | null;
   failUpImage?: string | null; // fail `up` only when a service image contains this text (update rollback tests)
+  failBuild?: string | null; // fail docker build (git-source tests)
   engineDown?: boolean;
   // Usage a running container reports (defaults below); keyed by container name, fallback '*'.
   stats?: Record<string, ContainerStats>;
@@ -236,6 +238,16 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
       if (c.project === inv.projectName && c.state !== 'running') await this.startContainer(c.id);
     }
     return { stdout: '', stderr: '' };
+  }
+  // docker build (git sources): records the tag; behaviour.failBuild simulates a broken Dockerfile.
+  builtTags: string[] = [];
+  async build(opts: { contextDir: string; dockerfile: string; tag: string; timeoutMs: number; onLog?: (line: string) => void }): Promise<void> {
+    this.assertUp();
+    if (this.behaviour.failBuild) throw new ComposeError(`docker build failed: ${this.behaviour.failBuild}`, { command: ['build'], exitCode: 1, stderrTail: this.behaviour.failBuild, timedOut: false });
+    if (!readFileSync(path.join(opts.contextDir, opts.dockerfile), 'utf8').trim()) throw new ComposeError('docker build failed: empty Dockerfile', { command: ['build'], exitCode: 1, stderrTail: 'empty Dockerfile', timedOut: false });
+    this.builtTags.push(opts.tag);
+    opts.onLog?.(`#1 building ${opts.tag} (fake)`);
+    this.log.push(`build ${opts.tag}`);
   }
 
   // --- fake app listeners

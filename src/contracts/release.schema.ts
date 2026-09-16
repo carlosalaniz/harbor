@@ -33,9 +33,24 @@ export const RELEASE_SCHEMA = {
       propertyNames: { pattern: '^[a-z0-9][a-z0-9._-]{0,63}\\.(svg|png|jpg|jpeg|webp)$' },
       additionalProperties: { type: 'object', additionalProperties: false, required: ['sha256'], properties: { sha256: { type: 'string', pattern: SHA256_HEX_PATTERN } } },
     },
+    // Built services (git sources, decision 80): provenance is the commit, the image is local-only.
+    builds: {
+      type: 'object',
+      propertyNames: { pattern: ID_PATTERN },
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['context', 'commit', 'tag'],
+        properties: {
+          context: { type: 'string', maxLength: 220 },
+          dockerfile: { type: 'string', maxLength: 220 },
+          commit: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+          tag: { type: 'string', maxLength: 200 },
+        },
+      },
+    },
     images: {
       type: 'object',
-      minProperties: 1,
       propertyNames: { pattern: ID_PATTERN },
       additionalProperties: {
         type: 'object',

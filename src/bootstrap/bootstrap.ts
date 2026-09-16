@@ -211,6 +211,14 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     }
     await execOk('/usr/bin/systemctl', ['enable', '--now', 'avahi-daemon'], { timeoutMs: 60_000 });
   }
+  // git: transport for git app sources (decision 80; tiny, Ubuntu archive)
+  {
+    const q = await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', 'git'], { timeoutMs: 10_000 });
+    if (!q.stdout.includes('install ok installed')) {
+      log('installing git (transport for app sources from your repositories)');
+      await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'git'], { timeoutMs: 10 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
+    }
+  }
 
   // 8. State (explicit initialization, never on accidental absence)
   let installationId: string;

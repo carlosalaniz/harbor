@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import type { CatalogItemDto } from '../../../../src/contracts/api';
+import { useEffect, useState } from 'react';
+import type { CatalogItemDto, PackageSourceDto } from '../../../../src/contracts/api';
+import { api } from '../../api';
 import { StoreCard } from '../components';
 import { categoryLabel } from '../format';
 import type { Console } from '../store';
@@ -44,6 +45,65 @@ export function Store({ c, onOpen, onInstall, onUpload }: { c: Console; onOpen: 
           {items.length === 0 && <li className="muted">No apps match.</li>}
         </ul>
       )}
+      <GitSources />
+    </section>
+  );
+}
+
+// Repositories Harbor watches as app sources (decision 80): check now, toggle redeploy, forget.
+function GitSources() {
+  const [sources, setSources] = useState<PackageSourceDto[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => api.packageSources().then(setSources, () => setSources([]));
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => void load(), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  if (sources.length === 0) return null;
+  const act = async (id: string, fn: () => Promise<unknown>) => {
+    setBusy(id);
+    setError(null);
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <section aria-labelledby="sources-h" className="git-sources">
+      <h3 id="sources-h">Apps from your repositories</h3>
+      {error && <p className="error small">{error}</p>}
+      <ul className="plain">
+        {sources.map((s) => (
+          <li key={s.id} className="row between wrap">
+            <span>
+              <strong>{s.packageId}</strong>{' '}
+              <span className="muted small">
+                {s.url.replace(/^https:\/\//, '')} · {s.ref}
+                {s.subpath ? ` · ${s.subpath}` : ''} · at {s.pinnedCommit?.slice(0, 12) ?? '—'}
+                {s.note ? ` · ⚠ ${s.note}` : ''}
+              </span>
+            </span>
+            <span className="row wrap">
+              <label className="row small muted" title="New pushes to the branch deploy themselves; a failed deployment rolls back">
+                <input type="checkbox" checked={s.autoRedeploy} disabled={busy === s.id} onChange={(e) => void act(s.id, () => api.setSourceAutoRedeploy(s.id, e.target.checked))} aria-label={`Redeploy ${s.packageId} on commit`} />
+                on commit
+              </label>
+              <button className="btn small" disabled={busy === s.id} onClick={() => void act(s.id, () => api.checkPackageSource(s.id))}>
+                Check now
+              </button>
+              <button className="btn ghost small" disabled={busy === s.id} onClick={() => void act(s.id, () => api.removePackageSource(s.id))} title="The app and its package stay; only the repository link goes">
+                Forget
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

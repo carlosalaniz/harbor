@@ -9,6 +9,7 @@ import type { Clock, Ids } from '../util.js';
 import type { TailscaleProvider } from '../exposure/tailscale.js';
 import type { NetProvider } from '../system/net.js';
 import type { PackageStore } from '../packages/store.js';
+import type { GitFetcher } from '../packages/git.js';
 import type { CaddyAdmin } from '../exposure/caddy.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
@@ -40,6 +41,7 @@ export interface Ctx {
   logBuffer: LogBuffer;
   selfUpdate: SelfUpdateService;
   notifier: Notifier;
+  git: GitFetcher;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

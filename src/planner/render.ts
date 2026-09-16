@@ -20,6 +20,8 @@ export interface RenderInput {
   externalStorage?: Record<string, { hostPath: string; readOnly: boolean }>;
   // decision 79: the admin credential Harbor provisioned for this instance (placeholders when null)
   provisioned?: { username: string; password: string } | null;
+  // decision 80: service -> locally built image tag (from release.json builds)
+  builtImages?: Record<string, string>;
 }
 
 export interface RenderedCompose {
@@ -100,8 +102,11 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((e) => ({ target: e.containerPort, published: String(e.hostPort), host_ip: input.bindHost ?? '127.0.0.1', protocol: 'tcp', mode: 'host' }));
 
+    // Built services (git sources, decision 80) reference the locally built tag from release.json.
+    const builtTag = input.builtImages?.[service];
+    if (!src.image && !builtTag) throw new Error(`service ${service} has no image and no recorded build tag`);
     const def: Record<string, unknown> = {
-      image: src.image,
+      image: src.image ?? builtTag,
       restart: 'unless-stopped',
       labels: { ...labels, [LABELS.service]: service, [LABELS.kind]: manifest.deployment.services[service] ?? 'application' },
       networks: ['default'],

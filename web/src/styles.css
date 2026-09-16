@@ -1717,6 +1717,24 @@ button.vital:hover {
   padding: 0 5px;
 }
 
+/* ---- git sources on the Store page ---- */
+.git-sources {
+  margin-top: 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.git-sources h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.git-sources li {
+  padding: 6px 0;
+}
+.git-sources label.row {
+  gap: 6px;
+  align-items: center;
+}
+
 /* ---- auto-update toggles ---- */
 .auto-upd {
   margin-top: 10px;
