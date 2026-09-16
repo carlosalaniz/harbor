@@ -13,8 +13,8 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
 - Trust model: the `harbor` service user is in the `docker` group and is therefore
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
-- Product truth: `TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **86**). `plan.md` is the historical build order; `PROGRESS.md` is the changelog.
+- Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
+  next number is **86**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -109,7 +109,7 @@ Key separations (do not blur them):
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant
      `docs/design/*.md`.
-   - New version behavior → `docs/VERIFICATION.md` section + `PROGRESS.md` phase row + counts.
+   - New version behavior → `docs/VERIFICATION.md` section + `docs/dev/PROGRESS.md` phase row + counts.
    - New routes → `docs/openapi.json` via `pnpm openapi` (never hand-edit).
 6. **Commit + ship**: commit on `main`, push — CI publishes the release. Bump `package.json`
    `version` when the change deserves a release (CI tags `v<version>` from it). Never run

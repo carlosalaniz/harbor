@@ -1,7 +1,7 @@
 # Design addendum: exposure (private tailnet and public HTTPS)
 
 **Status:** approved direction (Carlos, 2026-09-14), implementation on branch `exposure`.
-**Extends:** [TDD.md](../../TDD.md) sections 2, 5, 7, 8, 10. Everything the TDD says about the MVP
+**Extends:** [TDD.md](../spec/TDD.md) sections 2, 5, 7, 8, 10. Everything the TDD says about the MVP
 stays true; this adds an *exposure* layer on top of the loopback-only baseline.
 
 ## 1. Goal

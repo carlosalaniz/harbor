@@ -1,6 +1,6 @@
 # Harbor — build progress
 
-Generated during the autonomous build. Authoritative requirements: [TDD.md](TDD.md); order: [plan.md](plan.md).
+Generated during the autonomous build. Authoritative requirements: [TDD.md](../spec/TDD.md); order: [plan.md](../spec/plan.md).
 Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICATION.md](docs/VERIFICATION.md) (written in Phase 5).
 
 ## Environment facts (recorded 2026-09-14)

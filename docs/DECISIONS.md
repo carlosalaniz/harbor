@@ -1,7 +1,7 @@
 # Decision log
 
 Small technical decisions made during the autonomous build, in the order they were taken. Product
-scope and behaviour come from [TDD.md](../TDD.md); these are the implementation calls it left open.
+scope and behaviour come from [TDD.md](spec/TDD.md); these are the implementation calls it left open.
 
 | # | Date | Decision | Why |
 |---|---|---|---|

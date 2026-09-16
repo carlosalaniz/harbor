@@ -110,8 +110,14 @@ describe('terminal over WebSocket', () => {
     expect(h.daemon.app.hasRoute({ method: 'GET', url: '/v1/terminal' })).toBe(true);
     ws.send(JSON.stringify({ type: 'input', data: 'echo harbor-term-$((6*7)); stty size\n' }));
     const deadline = Date.now() + 15_000;
-    while (Date.now() < deadline && !Buffer.concat(out).toString().includes('harbor-term-42')) await new Promise((r) => setTimeout(r, 100));
-    const text = Buffer.concat(out).toString();
+    let text = '';
+    // stty reports the pty size, but the shell may echo the command before the resize
+    // lands; wait until BOTH the command output and the size line are present.
+    while (Date.now() < deadline) {
+      text = Buffer.concat(out).toString();
+      if (text.includes('harbor-term-42') && /30 100/.test(text)) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
     expect(text).toContain('harbor-term-42');
     expect(text).toMatch(/30 100/); // the pty took the requested size
     ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
