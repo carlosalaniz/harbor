@@ -129,7 +129,7 @@
     },
     "/v1/sessions": {
       "post": {
-        "description": "Log in the local administrator. Rate limited.",
+        "description": "Log in the local administrator. Rate limited. `remember` issues a 30-day session for this browser instead of the configured TTL.",
         "requestBody": {
           "required": true,
           "content": {
@@ -156,6 +156,9 @@
                     "type": "string",
                     "minLength": 6,
                     "maxLength": 12
+                  },
+                  "remember": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -273,11 +276,29 @@
             }
           }
         }
+      },
+      "get": {
+        "description": "Active sessions for this administrator (no token material; the current one is marked).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
       }
     },
     "/v1/sessions/current": {
       "delete": {
         "description": "Revoke the current session.",
+        "responses": {
+          "204": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/sessions/others": {
+      "delete": {
+        "description": "Revoke every session except the current one.",
         "responses": {
           "204": {
             "description": "Default Response"

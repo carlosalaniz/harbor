@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type { SetupStatusDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
 import { WALLPAPERS, applyWallpaper, type Wallpaper } from './theme';
+import { Mark } from './icons';
 
 // First run: this Harbor has no administrator yet. Three screens, Umbrel-style: name it, create the
 // account (with the setup code from the installer), pick a look; then straight into the console, logged in.
@@ -37,7 +38,7 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
       <section className="card glass setup" aria-labelledby="setup-h">
         <div className="brand">
           <span className="logo" aria-hidden="true">
-            ⚓
+            <Mark size={22} />
           </span>
           <h1>Harbor</h1>
         </div>

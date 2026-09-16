@@ -1,4 +1,5 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
+import { isMockUi, mockApi } from './mock/api';
 
 export class ApiError extends Error {
   constructor(
@@ -12,15 +13,55 @@ export class ApiError extends Error {
   }
 }
 
-// The bearer token lives only in this module's memory. Never cookies, localStorage or sessionStorage:
-// a reload requires logging in again, then the UI resumes from server state.
+// Session token storage. The short session lives only in memory (a reload asks for the
+// password again). "Remember this browser" keeps the 30-day token in localStorage so a
+// reload resumes silently; the daemon only ever sees the bearer token.
 let token: string | null = null;
+
+const REMEMBER_KEY = 'harbor.remember';
+
+function lsGet(k: string): string | null {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+function lsSet(k: string, v: string): void {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* ignore */
+  }
+}
+function lsDel(k: string): void {
+  try {
+    localStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+}
 
 export function hasToken(): boolean {
   return token !== null;
 }
 export function forgetToken(): void {
   token = null;
+}
+// A remembered browser resumes silently: restore the stored token into memory.
+// Returns false when there is nothing stored (full login needed).
+export function restoreRemembered(): boolean {
+  if (token) return true;
+  const saved = lsGet(REMEMBER_KEY);
+  if (!saved) return false;
+  token = saved;
+  return true;
+}
+export function saveRemembered(tok: string): void {
+  lsSet(REMEMBER_KEY, tok);
+}
+export function clearRemembered(): void {
+  lsDel(REMEMBER_KEY);
 }
 
 async function call<T>(method: string, url: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
@@ -39,10 +80,15 @@ async function call<T>(method: string, url: string, body?: unknown, headers: Rec
   return parsed as T;
 }
 
-export const api = {
-  async login(username: string, password: string, code?: string): Promise<SessionDto> {
-    const s = await call<SessionDto>('POST', '/v1/sessions', { username, password, ...(code ? { code } : {}) });
+// Design mode (`pnpm dev:ui`, `?mock=1`, or localStorage harbor.ui-mock=1): the console renders
+// from in-memory fixtures with no daemon and no login. The mock object mirrors this module's
+// surface; unknown keys fall back to the real fetch path so new endpoints fail loudly.
+const realApi = {
+  async login(username: string, password: string, code?: string, remember = false): Promise<SessionDto> {
+    const s = await call<SessionDto>('POST', '/v1/sessions', { username, password, ...(code ? { code } : {}), ...(remember ? { remember: true } : {}) });
     token = s.token;
+    if (remember) saveRemembered(s.token);
+    else clearRemembered();
     return s;
   },
   // the terminal authenticates with the session token in its first WebSocket message
@@ -63,8 +109,11 @@ export const api = {
       await call<void>('DELETE', '/v1/sessions/current');
     } finally {
       token = null;
+      clearRemembered();
     }
   },
+  sessions: () => call<{ items: SessionInfoDto[] }>('GET', '/v1/sessions').then((r) => r.items),
+  revokeOtherSessions: () => call<void>('DELETE', '/v1/sessions/others'),
   system: () => call<SystemDto>('GET', '/v1/system'),
   metrics: () => call<SystemMetricsDto>('GET', '/v1/system/metrics'),
   catalog: () => call<{ items: CatalogItemDto[] }>('GET', '/v1/catalog').then((r) => r.items),
@@ -129,6 +178,7 @@ export const api = {
   clearWallpaper: () => call<void>('DELETE', '/v1/appearance/wallpaper'),
   hasWallpaper: async (): Promise<boolean> => {
     try {
+      if (isMockUi()) return false;
       const r = await fetch('/v1/appearance/wallpaper', { method: 'HEAD' });
       return r.ok;
     } catch {
@@ -136,6 +186,16 @@ export const api = {
     }
   },
 };
+
+// Design mode (`pnpm dev:ui`, `?mock=1`, or localStorage harbor.ui-mock=1): the console renders
+// from in-memory fixtures with no daemon and no login. The mock object mirrors this module's
+// surface; unknown keys fall back to the real fetch path so new endpoints fail loudly.
+export const api: typeof realApi = new Proxy(realApi, {
+  get(target, prop, receiver) {
+    if (typeof prop === 'string' && isMockUi() && prop in mockApi) return Reflect.get(mockApi, prop);
+    return Reflect.get(target, prop, receiver);
+  },
+});
 
 // crypto.randomUUID needs a secure context; LAN mode serves the console over plain http://harbor.local, where
 // only getRandomValues is available. Same entropy, hand-formatted.

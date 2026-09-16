@@ -200,12 +200,12 @@ The console's **Settings** page covers what a household operator needs after boo
 
 | Section | What you can do |
 |---|---|
-| Account | change the administrator password (every other logged-in browser or CLI is signed out) |
+| Account | change the administrator password (every other logged-in browser or CLI is signed out); *Remember this browser* (30-day session), the session list, *Log out of other sessions*, *Log out* |
 | Remote access | connect this machine to your Tailscale tailnet by clicking *Log in with Tailscale* (opens the approval page) or by pasting an auth key; see the node name; turn *Harbor on your tailnet* on or off; log out of the tailnet |
 | Public addresses | the wizard for publishing on the internet: this machine's public address, your domains with a DNS check (*Points here* / *Points elsewhere* / *No DNS record yet*), which app uses each, re-check and forget; certificates are automatic |
 | Remote access (details) | tailnet addresses, node key expiry, link to the Tailscale admin console; the auth key you used is single-use and is not stored |
 | Storage | disks with free space, the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
-| Overview | the landing page: your machine's name, what it runs on, Harbor version, uptime, storage/memory/temperature, *Log out*, *Restart* and *Shut down* (each asks first), and the wallpaper picker |
+| Overview | the landing page: your machine's name, what it runs on, Harbor version, uptime, storage/memory/temperature, *Restart* and *Shut down* (each asks first), and the wallpaper picker |
 | Appearance | theme (match device / dark / light), wallpaper presets, your own picture (PNG/JPEG/WebP up to 6 MB), or **rotating wallpapers**: Harbor itself fetches a new picture on a schedule from Bing or Wikimedia Commons (no account) or from your favourite subreddits (needs a free Reddit "script" app key; Settings walks you through it). The picture and its credit show on Home. |
 | Advanced access | a **terminal** on the machine (shell of the Harbor service account: `docker`, `harbor …`), the SSH forwarding lines with copy buttons, and the CLI equivalents |
 | Troubleshoot | Harbor's own log (systemd journal) and each app's container logs, copyable |
@@ -339,7 +339,7 @@ Notes:
 | `OWNERSHIP_CONFLICT` | A same-named resource exists that Harbor did not create for this instance. Inspect manually. |
 | `DOCKER_UNAVAILABLE` (503) | `systemctl status docker`. |
 | Login 429 | Rate limited after repeated failures; wait ten minutes. |
-| UI says "session ended" after reload | Expected: tokens live in memory only. Log in again; running operations continue. |
+| UI says "session ended" after reload | Expected unless you ticked *Remember this browser*: short sessions live in memory only. Log in again; running operations continue. |
 | Public address stays `degraded` | Check `dig +short <hostname>` resolves to this host and that 80/443 are open in your cloud firewall; `journalctl -u caddy` shows certificate attempts. |
 | Tailnet address stays `degraded` | `tailscale status` must show the node online; enable HTTPS certificates in the admin console; `tailscale serve status` lists Harbor's entries. |
 | Portainer login page loads but no admin form, or the form refuses to submit | The 5-minute window expired (restart its container, above) or the setup token is missing (read it from the container log). |

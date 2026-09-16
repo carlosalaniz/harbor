@@ -14,24 +14,23 @@ export interface PaletteItem {
   subtitle: string;
   icon?: { packageId: string; icon: string | null; name: string };
   inst?: InstanceSummary;
-  glyph?: string;
   run: () => void;
 }
 
-const PAGES: { route: Route; title: string; glyph: string; words: string }[] = [
-  { route: { page: 'home' }, title: 'Home', glyph: '⌂', words: 'home launcher apps' },
-  { route: { page: 'store' }, title: 'App Store', glyph: '▦', words: 'store install catalog apps' },
-  { route: { page: 'publishing' }, title: 'Publishing', glyph: '⇗', words: 'publish addresses tailnet public expose' },
-  { route: { page: 'platform' }, title: 'Platform', glyph: '⚙', words: 'docker cockpit portainer tools system' },
-  { route: { page: 'settings' }, title: 'Settings', glyph: '⚙', words: 'settings overview restart shut down device machine wallpaper' },
-  { route: { page: 'settings', section: 'account' }, title: 'Settings · Account', glyph: '👤', words: 'password session log out two-factor 2fa authenticator' },
-  { route: { page: 'settings', section: 'remote' }, title: 'Settings · Remote access', glyph: '🛰', words: 'tailscale tailnet vpn remote key' },
-  { route: { page: 'settings', section: 'public' }, title: 'Settings · Public addresses', glyph: '🌐', words: 'domain dns certificate https letsencrypt caddy public internet' },
-  { route: { page: 'settings', section: 'storage' }, title: 'Settings · Storage', glyph: '💽', words: 'disks folders data volumes' },
-  { route: { page: 'settings', section: 'appearance' }, title: 'Settings · Appearance', glyph: '🎨', words: 'theme wallpaper dark light picture rotating reddit bing wikimedia' },
-  { route: { page: 'settings', section: 'access' }, title: 'Settings · Advanced access', glyph: '⌨️', words: 'ssh cli command line terminal shell console' },
-  { route: { page: 'settings', section: 'troubleshoot' }, title: 'Settings · Troubleshoot', glyph: '🩺', words: 'logs errors debug journal docker' },
-  { route: { page: 'settings', section: 'about' }, title: 'Settings · About', glyph: 'ℹ️', words: 'version about' },
+const PAGES: { route: Route; title: string; words: string }[] = [
+  { route: { page: 'home' }, title: 'Home', words: 'home launcher apps' },
+  { route: { page: 'store' }, title: 'App Store', words: 'store install catalog apps' },
+  { route: { page: 'publishing' }, title: 'Publishing', words: 'publish addresses tailnet public expose' },
+  { route: { page: 'platform' }, title: 'Platform', words: 'docker cockpit portainer tools system' },
+  { route: { page: 'settings' }, title: 'Settings', words: 'settings overview restart shut down device machine wallpaper' },
+  { route: { page: 'settings', section: 'account' }, title: 'Settings · Account', words: 'password session log out two-factor 2fa authenticator' },
+  { route: { page: 'settings', section: 'remote' }, title: 'Settings · Remote access', words: 'tailscale tailnet vpn remote key' },
+  { route: { page: 'settings', section: 'public' }, title: 'Settings · Public addresses', words: 'domain dns certificate https letsencrypt caddy public internet' },
+  { route: { page: 'settings', section: 'storage' }, title: 'Settings · Storage', words: 'disks folders data volumes' },
+  { route: { page: 'settings', section: 'appearance' }, title: 'Settings · Appearance', words: 'theme wallpaper dark light picture rotating reddit bing wikimedia' },
+  { route: { page: 'settings', section: 'access' }, title: 'Settings · Advanced access', words: 'ssh cli command line terminal shell console' },
+  { route: { page: 'settings', section: 'troubleshoot' }, title: 'Settings · Troubleshoot', words: 'logs errors debug journal docker' },
+  { route: { page: 'settings', section: 'about' }, title: 'Settings · About', words: 'version about' },
 ];
 
 export function usePaletteShortcut(open: () => void) {
@@ -84,7 +83,7 @@ export function Palette({ c, go, onOpenApp, onAbout, onClose }: { c: Console; go
     }
     for (const p of PAGES) {
       if (!has(p.title, p.words)) continue;
-      out.push({ id: `page-${p.title}`, kind: p.route.page === 'settings' ? 'setting' : 'page', title: p.title, subtitle: p.route.page === 'settings' ? 'Settings' : 'Page', glyph: p.glyph, run: () => go(p.route) });
+      out.push({ id: `page-${p.title}`, kind: p.route.page === 'settings' ? 'setting' : 'page', title: p.title, subtitle: p.route.page === 'settings' ? 'Settings' : 'Page', run: () => go(p.route) });
     }
     return out.slice(0, 12);
   }, [q, c.data.instances, c.data.catalog, go, onOpenApp, onAbout]);
@@ -122,9 +121,7 @@ export function Palette({ c, go, onOpenApp, onAbout, onClose }: { c: Console; go
               ) : it.icon ? (
                 <AppIcon packageId={it.icon.packageId} icon={it.icon.icon} name={it.icon.name} size={28} />
               ) : (
-                <span className="appicon small monogram palette-glyph" aria-hidden="true">
-                  {it.glyph}
-                </span>
+                <span className="palette-dot" aria-hidden="true" />
               )}
               <span className="palette-text">
                 <span className="palette-title">{it.title}</span>

@@ -1,28 +1,97 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
-import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
+import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
+import { Mark, PencilIcon } from '../icons';
 import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
-import { WALLPAPERS, applyTheme, applyWallpaper, hasExplicitWallpaper, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
+import { WALLPAPERS, applySurfacesOpacity, applyTheme, applyWallpaper, hasExplicitWallpaper, readSurfacesOpacity, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
 type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
-const SECTIONS: { id: Section; label: string; glyph: string; blurb: string }[] = [
-  { id: 'overview', label: 'Overview', glyph: '◉', blurb: 'This machine at a glance' },
-  { id: 'account', label: 'Account', glyph: '👤', blurb: 'Password and session' },
-  { id: 'remote', label: 'Remote access', glyph: '🛰', blurb: 'Reach Harbor from your other devices' },
-  { id: 'public', label: 'Public addresses', glyph: '🌐', blurb: 'Publishing apps on the internet' },
-  { id: 'storage', label: 'Storage', glyph: '💽', blurb: 'Disks and folders your apps use' },
-  { id: 'appearance', label: 'Appearance', glyph: '🎨', blurb: 'Theme and wallpapers' },
-  { id: 'notifications', label: 'Notifications', glyph: '🔔', blurb: 'Reach you when something needs attention' },
-  { id: 'access', label: 'Advanced access', glyph: '⌨️', blurb: 'Terminal, SSH forwarding, CLI' },
-  { id: 'troubleshoot', label: 'Troubleshoot', glyph: '🩺', blurb: 'Harbor and app logs' },
-  { id: 'about', label: 'About', glyph: 'ℹ️', blurb: 'Version and trust boundary' },
+// One 16px stroke set for the settings rail: same weight, same box, no emoji.
+const SECTION_ICON: Record<Section, ReactNode> = {
+  overview: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <circle cx="8" cy="8" r="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  account: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+      <circle cx="8" cy="5.5" r="2.8" />
+      <path d="M2.8 13.5c.8-2.6 2.8-3.8 5.2-3.8s4.4 1.2 5.2 3.8" />
+    </svg>
+  ),
+  remote: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+      <path d="M2.5 9.5a6.5 6.5 0 0 1 11 0" />
+      <path d="M4.8 11.5a3.4 3.4 0 0 1 6.4 0" />
+      <circle cx="8" cy="13.2" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  public: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M2.5 8h11M8 2.5c-3.6 3.4-3.6 7.6 0 11 3.6-3.4 3.6-7.6 0-11Z" />
+    </svg>
+  ),
+  storage: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden="true">
+      <ellipse cx="8" cy="4.5" rx="5" ry="2" />
+      <path d="M3 4.5v7c0 1.1 2.2 2 5 2s5-.9 5-2v-7" />
+      <path d="M3 8c0 1.1 2.2 2 5 2s5-.9 5-2" />
+    </svg>
+  ),
+  appearance: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <circle cx="6" cy="6.5" r="1" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="6" r="1" fill="currentColor" stroke="none" />
+      <path d="M4.5 10.5c1 1.2 2.2 1.8 3.5 1.8 1 0 1.9-.3 2.7-.9" />
+    </svg>
+  ),
+  notifications: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 2.8c-2.4 0-3.8 1.6-3.8 4v2.1L3 10.5h10l-1.2-1.6V6.8c0-2.4-1.4-4-3.8-4Z" />
+      <path d="M6.7 12.3c.2.8.7 1.2 1.3 1.2s1.1-.4 1.3-1.2" />
+    </svg>
+  ),
+  access: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="11" height="8" rx="1.5" />
+      <path d="m5 6.5 1.5 1.5L5 9.5M8 9.5h3M4.5 13.5h7" />
+    </svg>
+  ),
+  troubleshoot: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 2.5a2 2 0 0 1 4 0v5.2l2.5 4.1a1.5 1.5 0 0 1-1.3 2.2H4.8a1.5 1.5 0 0 1-1.3-2.2L6 7.7V2.5Z" />
+      <path d="M4.5 10.5h7" />
+    </svg>
+  ),
+  about: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 7.3v3.2" />
+      <circle cx="8" cy="5.3" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+};
+const SECTIONS: { id: Section; label: string; blurb: string }[] = [
+  { id: 'overview', label: 'Overview', blurb: 'This machine at a glance' },
+  { id: 'account', label: 'Account', blurb: 'Password and session' },
+  { id: 'remote', label: 'Remote access', blurb: 'Reach Harbor from your other devices' },
+  { id: 'public', label: 'Public addresses', blurb: 'Publishing apps on the internet' },
+  { id: 'storage', label: 'Storage', blurb: 'Disks and folders your apps use' },
+  { id: 'appearance', label: 'Appearance', blurb: 'Theme and wallpapers' },
+  { id: 'notifications', label: 'Notifications', blurb: 'Reach you when something needs attention' },
+  { id: 'access', label: 'Advanced access', blurb: 'Terminal, SSH forwarding, CLI' },
+  { id: 'troubleshoot', label: 'Troubleshoot', blurb: 'Harbor and app logs' },
+  { id: 'about', label: 'About', blurb: 'Version and trust boundary' },
 ];
 
-export function Settings({ c, onLogout, initialSection, onSection }: { c: Console; onLogout: () => void; initialSection?: string; onSection?: (s: string) => void }) {
+export function Settings({ c, initialSection, onSection }: { c: Console; initialSection?: string; onSection?: (s: string) => void }) {
   const [section, setSectionState] = useState<Section>((SECTIONS.some((s) => s.id === initialSection) ? initialSection : 'overview') as Section);
   useEffect(() => {
     if (SECTIONS.some((s) => s.id === initialSection)) setSectionState(initialSection as Section);
@@ -39,8 +108,8 @@ export function Settings({ c, onLogout, initialSection, onSection }: { c: Consol
           {SECTIONS.map((s) => (
             <li key={s.id}>
               <button className={`settings-link ${section === s.id ? 'active' : ''}`} onClick={() => setSection(s.id)} aria-current={section === s.id ? 'page' : undefined}>
-                <span className="glyph" aria-hidden="true">
-                  {s.glyph}
+                <span className="nav-icon" aria-hidden="true">
+                  {SECTION_ICON[s.id]}
                 </span>
                 <span>
                   <span className="settings-label">{s.label}</span>
@@ -52,8 +121,8 @@ export function Settings({ c, onLogout, initialSection, onSection }: { c: Consol
         </ul>
       </nav>
       <div className="settings-body">
-        {section === 'overview' && <Overview c={c} onLogout={onLogout} go={setSection} />}
-        {section === 'account' && <Account onLogout={onLogout} />}
+        {section === 'overview' && <Overview c={c} go={setSection} />}
+        {section === 'account' && <Account />}
         {section === 'remote' && <RemoteAccess c={c} />}
         {section === 'public' && <PublicAddresses c={c} />}
         {section === 'storage' && <Storage />}
@@ -211,7 +280,7 @@ function AutoUpdateDefault() {
 }
 
 // The Umbrel-style landing: the machine, its vitals, power, and the wallpaper picker right there.
-function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (s: Section) => void }) {
+function Overview({ c, go }: { c: Console; go: (s: Section) => void }) {
   const m = c.data.metrics;
   const [host, setHost] = useState<SystemHostDto | null>(null);
   const [confirm, setConfirm] = useState<'reboot' | 'poweroff' | null>(null);
@@ -246,7 +315,9 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
       <section className="card device" aria-labelledby="dev-h">
         <div className="device-preview" aria-hidden="true">
           <div className="device-screen">
-            <span className="device-anchor">⚓</span>
+            <span className="device-anchor">
+              <Mark size={14} />
+            </span>
             <span className="device-greeting">Good evening</span>
             <span className="device-dots">
               {c.data.instances
@@ -259,9 +330,6 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
           </div>
         </div>
         <div className="row wrap device-actions">
-          <button className="btn" onClick={onLogout}>
-            Log out
-          </button>
           <button className="btn" onClick={() => setConfirm('reboot')} disabled={host ? !host.power.available : false}>
             Restart
           </button>
@@ -303,7 +371,7 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
               aria-label="Rename this machine"
               title="Rename"
             >
-              ✎
+              <PencilIcon />
             </button>
           </h2>
         )}
@@ -404,7 +472,7 @@ function Overview({ c, onLogout, go }: { c: Console; onLogout: () => void; go: (
   );
 }
 
-function Account({ onLogout }: { onLogout: () => void }) {
+function Account() {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [again, setAgain] = useState('');
@@ -459,13 +527,41 @@ function Account({ onLogout }: { onLogout: () => void }) {
         </form>
       </section>
       <section className="card" aria-labelledby="sess-h">
-        <h2 id="sess-h">This session</h2>
-        <p className="muted small">Your login lives in this tab only. Reloading asks you to log in again; running operations continue on the server.</p>
-        <button className="btn" onClick={onLogout}>
-          Log out
-        </button>
+        <h2 id="sess-h">Sessions</h2>
+        <p className="muted small">A remembered browser stays logged in for 30 days; anything else ends when the tab closes or after 12 hours. “Log out of other sessions” keeps this one and revokes the rest.</p>
+        <SessionList />
+        <div className="row wrap">
+          <button className="btn" onClick={() => void api.revokeOtherSessions().then(() => location.reload())}>
+            Log out of other sessions
+          </button>
+          <button className="btn danger" onClick={() => void api.logout().then(() => location.reload())}>
+            Log out
+          </button>
+        </div>
       </section>
     </>
+  );
+}
+
+function SessionList() {
+  const [items, setItems] = useState<SessionInfoDto[] | null>(null);
+  useEffect(() => {
+    api.sessions().then(setItems, () => setItems(null));
+  }, []);
+  if (!items || items.length === 0) return null;
+  return (
+    <ul className="plain sessions">
+      {items.map((s, i) => (
+        <li key={i} className="row between wrap">
+          <span>
+            {s.current ? <strong>This browser</strong> : s.kind === 'remember' ? 'Remembered browser' : 'Session'}
+            <span className="muted small"> · since {new Date(s.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+            {s.lastSeenAt && <span className="muted small"> · last seen {new Date(s.lastSeenAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+          </span>
+          <span className="muted small">expires {new Date(s.expiresAt).toLocaleDateString()}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -504,11 +600,8 @@ function TwoFactor() {
     });
   return (
     <section className="card" aria-labelledby="tfa-h">
-      <div className="row between wrap">
-        <div>
-          <h2 id="tfa-h">Two-factor login</h2>
-          <p className="muted small">A 6-digit code from an authenticator app (1Password, Google Authenticator, Authy…) is asked at every login, on top of the password.</p>
-        </div>
+      <div className="tfa-head">
+        <h2 id="tfa-h">Two-factor login</h2>
         {sec && (
           <Pill tone={sec.twoFactor ? 'ok' : 'muted'}>
             <span className="dot" aria-hidden="true" />
@@ -516,8 +609,9 @@ function TwoFactor() {
           </Pill>
         )}
       </div>
+      <p className="muted small">A 6-digit code from an authenticator app (1Password, Google Authenticator, Authy…) is asked at every login, on top of the password.</p>
       {sec && !sec.twoFactor && !setup && (
-        <button className="btn primary" disabled={busy} onClick={() => void start()}>
+        <button className="btn primary tfa-cta" disabled={busy} onClick={() => void start()}>
           Turn on two-factor login
         </button>
       )}
@@ -1072,6 +1166,7 @@ function Storage() {
 
 function Appearance({ c }: { c: Console }) {
   const [theme, setTheme] = useState<Theme>(readTheme());
+  const [opacity, setOpacity] = useState<number>(readSurfacesOpacity());
   return (
     <>
       <section className="card" aria-labelledby="theme-h">
@@ -1082,6 +1177,37 @@ function Appearance({ c }: { c: Console }) {
               {t === 'system' ? 'Match device' : t === 'dark' ? 'Dark' : 'Light'}
             </button>
           ))}
+        </div>
+        <h4>Readability over pictures</h4>
+        <p className="muted small">When a photo wallpaper makes text hard to read, make cards and panels more solid. This stays on this browser only.</p>
+        <div className="opacity-row">
+          <input
+            type="range"
+            min={0.5}
+            max={1}
+            step={0.01}
+            value={opacity}
+            aria-label="Surface opacity"
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setOpacity(v);
+              applySurfacesOpacity(v);
+            }}
+          />
+          <span className="muted small" aria-live="polite">
+            {opacity >= 0.995 ? 'Solid' : `${Math.round(opacity * 100)}%`}
+          </span>
+          {Math.abs(opacity - 0.82) > 0.001 && (
+            <button
+              className="btn ghost"
+              onClick={() => {
+                setOpacity(0.82);
+                applySurfacesOpacity(0.82);
+              }}
+            >
+              Reset
+            </button>
+          )}
         </div>
       </section>
       <WallpaperPicker c={c} />

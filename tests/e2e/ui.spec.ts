@@ -187,9 +187,9 @@ test('second package installs on a distinct port; drawer shows owned resources',
 
 test('logout returns to login and the API rejects the old token', async ({ page }) => {
   await login(page);
+  await page.goto('/#/settings/account');
   await page.getByRole('button', { name: 'Log out' }).click();
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
-  await expect(page.getByText('Logged out.')).toBeVisible();
   const res = await page.request.get('/v1/instances');
   expect(res.status()).toBe(401);
 });
@@ -474,6 +474,14 @@ test('arrange the launcher: drag an icon to the front, the order survives a relo
 test('rotating wallpapers: turn on from Settings, a picture with credit appears, next picture works; Reddit asks for a key', async ({ page }) => {
   await login(page);
   await page.goto('/#/settings/appearance');
+  await expect(page.getByRole('heading', { name: 'Readability over pictures' })).toBeVisible();
+  const slider = page.getByLabel('Surface opacity');
+  await expect(slider).toBeVisible();
+  await slider.fill('1');
+  expect(await page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--surfaces-opacity').trim()")).toBe('1');
+  expect(await page.evaluate("localStorage.getItem('harbor.surfaces-opacity')")).toBe('1');
+  await page.getByRole('button', { name: 'Reset' }).click();
+  expect(await page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--surfaces-opacity').trim()")).toBe('0.82');
   await expect(page.getByRole('heading', { name: 'Rotating wallpapers' })).toBeVisible();
   await page.getByRole('switch', { name: 'Rotating wallpapers' }).check();
   await expect(page.getByRole('status')).toContainText(/Now showing .* \(Bing\)/);
@@ -628,7 +636,8 @@ test('two-factor login: set up with a live code, log in again with password + co
   await page.getByRole('button', { name: 'Confirm and turn on' }).click();
   await expect(page.getByRole('status')).toContainText('Two-factor login is on');
   // log out, log in: the code field appears only after a correct password
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'Log out' }).click();
+  await page.goto('/#/settings/account');
+  await page.getByRole('button', { name: 'Log out' }).click();
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
   await page.getByLabel('Username').fill(ADMIN.username);
   await page.getByLabel('Password').fill(ADMIN.password);

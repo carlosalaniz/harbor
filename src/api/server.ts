@@ -186,20 +186,25 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     '/v1/sessions',
     {
       schema: {
-        description: 'Log in the local administrator. Rate limited.',
+        description: 'Log in the local administrator. Rate limited. `remember` issues a 30-day session for this browser instead of the configured TTL.',
         security: [],
-        body: { type: 'object', additionalProperties: false, required: ['username', 'password'], properties: { username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, code: { type: 'string', minLength: 6, maxLength: 12 } } },
+        body: { type: 'object', additionalProperties: false, required: ['username', 'password'], properties: { username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, code: { type: 'string', minLength: 6, maxLength: 12 }, remember: { type: 'boolean' } } },
         response: { 201: { type: 'object', properties: { token: { type: 'string' }, expiresAt: { type: 'string' } }, required: ['token', 'expiresAt'] }, 401: errorBodySchema, 429: errorBodySchema },
       },
     },
     async (req, reply) => {
-      const { username, password, code } = req.body as { username: string; password: string; code?: string };
-      const result = await sessions.login(username, password, req.ip, code);
+      const { username, password, code, remember } = req.body as { username: string; password: string; code?: string; remember?: boolean };
+      const result = await sessions.login(username, password, req.ip, code, { remember: remember === true });
       return reply.status(201).send(result);
     },
   );
+  app.get('/v1/sessions', { preHandler: requireAuth, schema: { description: 'Active sessions for this administrator (no token material; the current one is marked).' } }, async (req) => ({ items: sessions.sessions(req.bearer!) }));
   app.delete('/v1/sessions/current', { preHandler: requireAuth, schema: { description: 'Revoke the current session.', response: { 204: { type: 'null' } } } }, async (req, reply) => {
     sessions.logout(req.bearer!);
+    return reply.status(204).send();
+  });
+  app.delete('/v1/sessions/others', { preHandler: requireAuth, schema: { description: 'Revoke every session except the current one.', response: { 204: { type: 'null' } } } }, async (req, reply) => {
+    sessions.revokeOthers(req.bearer!);
     return reply.status(204).send();
   });
 

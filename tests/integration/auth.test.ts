@@ -115,6 +115,22 @@ describe('authentication and request controls', () => {
     expect(await h.api.instances()).toEqual([]);
   });
 
+  it('remember-me issues a 30-day session; session list marks current; revoke-others keeps only this session', async () => {
+    const anon = new Api(h.baseUrl, null);
+    const r = await anon.json<{ token: string; expiresAt: string }>('POST', '/v1/sessions', { username: ADMIN.username, password: ADMIN.password, remember: true });
+    expect(r.status).toBe(201);
+    const exp = new Date(r.body.expiresAt).getTime() - Date.now();
+    expect(exp).toBeGreaterThan(29 * 24 * 3600_000);
+    const me = new Api(h.baseUrl, r.body.token);
+    const list = await me.expect<{ items: { kind: string; current: boolean }[] }>(200, 'GET', '/v1/sessions');
+    expect(list.items.some((s) => s.current && s.kind === 'remember')).toBe(true);
+    expect((await me.raw('DELETE', '/v1/sessions/others')).status).toBe(204);
+    expect((await me.json('GET', '/v1/system')).status).toBe(200);
+    expect((await h.api.json('GET', '/v1/system')).status).toBe(401);
+    // re-login the harness session for the tests that follow
+    h.api.token = (await anon.login()).token;
+  });
+
   it('logout revokes the token; expired sessions are rejected; sessions store only hashes', async () => {
     const anon = new Api(h.baseUrl, null);
     const s = await anon.login();

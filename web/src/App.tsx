@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
-import { ApiError, api, forgetToken, hasToken } from './api';
+import { ApiError, api, forgetToken, hasToken, restoreRemembered } from './api';
 import { EventList, openUrl as appOpenUrl } from './app/components';
+import { EyeIcon, EyeOffIcon, Mark } from './app/icons';
 import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
 import { Home } from './app/pages/Home';
 import { Platform } from './app/pages/Platform';
@@ -9,7 +10,8 @@ import { Publishing } from './app/pages/Publishing';
 import { Settings } from './app/pages/Settings';
 import { Store } from './app/pages/Store';
 import { useRoute, type Route } from './app/router';
-import { applyTheme, applyWallpaper, applyWallpaperPhoto, readTheme, readWallpaper, syncWallpaperPicture } from './app/theme';
+import { applySurfacesOpacity, applyTheme, applyWallpaper, applyWallpaperPhoto, readSurfacesOpacity, readTheme, readWallpaper, syncWallpaperPicture } from './app/theme';
+import { isMockUi } from './mock/api';
 import { Palette, usePaletteShortcut } from './app/Palette';
 import { SetupWizard } from './app/Setup';
 import type { SetupStatusDto } from '../../src/contracts/api';
@@ -18,10 +20,30 @@ import { isFinal, useConsole } from './app/store';
 type View = { kind: 'login' } | { kind: 'console' };
 applyTheme(readTheme());
 applyWallpaper(readWallpaper());
+applySurfacesOpacity(readSurfacesOpacity());
 void api.hasWallpaper().then(applyWallpaperPhoto);
 
 export function App() {
-  const [view, setView] = useState<View>(hasToken() ? { kind: 'console' } : { kind: 'login' });
+  // Design mode renders the console straight from fixtures: no daemon, no login.
+  // Preview the login screen with ?screen=login for visual review.
+  if (isMockUi()) {
+    try {
+      const screen = new URLSearchParams(window.location.search).get('screen');
+      if (screen === 'login')
+        return (
+          <main className="login-wrap auth-wrap">
+            <AuthHero name="homelab" />
+            <Login notice={null} onDone={() => undefined} />
+          </main>
+        );
+    } catch {
+      /* ignore */
+    }
+    return <ConsoleShell onAuthLost={() => undefined} />;
+  }
+  // A remembered browser resumes silently: the stored token is restored into memory
+  // and the first poll decides (valid → console, expired/revoked → login).
+  const [view, setView] = useState<View>(() => (hasToken() || restoreRemembered() ? { kind: 'console' } : { kind: 'login' }));
   const [notice, setNotice] = useState<string | null>(null);
   // first run: no administrator yet → the setup wizard instead of the login form
   const [setup, setSetup] = useState<SetupStatusDto | null | undefined>(undefined);
@@ -40,8 +62,8 @@ export function App() {
   }
   if (view.kind === 'login') {
     return (
-      <main className="login-wrap">
-        <LockClock />
+      <main className="login-wrap auth-wrap">
+        <AuthHero />
         <Login
           notice={notice}
           onDone={() => {
@@ -55,17 +77,25 @@ export function App() {
   return <ConsoleShell onAuthLost={onAuthLost} />;
 }
 
-// macOS lock-screen touch: a large, thin clock above the login card.
-function LockClock() {
-  const [now, setNow] = useState(() => new Date());
+// Umbrel-style auth hero: the Harbor mark, a lowercase greeting, one quiet line.
+// The device name comes from the daemon when known (mock preview uses "homelab").
+function AuthHero({ name, sub }: { name?: string | null; sub?: string }) {
+  const [device, setDevice] = useState<string | null>(name ?? null);
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 15_000);
-    return () => clearInterval(t);
-  }, []);
+    if (name !== undefined) return;
+    api
+      .system()
+      .then((s) => setDevice(s.deviceName ?? s.hostname ?? null))
+      .catch(() => setDevice(null));
+  }, [name]);
+  const label = device?.trim() ? device.trim() : 'your Harbor';
   return (
-    <div className="lock-clock" aria-hidden="true">
-      <div className="lock-date">{now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</div>
-      <div className="lock-time">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+    <div className="auth-hero">
+      <span className="auth-mark" aria-hidden="true">
+        <Mark size={88} />
+      </span>
+      <h1 className="auth-title">welcome back</h1>
+      <p className="auth-sub">{sub ?? `Enter the password to log in to ${label}`}</p>
     </div>
   );
 }
@@ -73,8 +103,10 @@ function LockClock() {
 function Login({ onDone, notice }: { onDone: () => void; notice: string | null }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
   const [code, setCode] = useState('');
   const [needCode, setNeedCode] = useState(false);
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
@@ -82,7 +114,7 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
     setBusy(true);
     setError(null);
     try {
-      await api.login(username, password, needCode ? code.replace(/\s/g, '') : undefined);
+      await api.login(username, password, needCode ? code.replace(/\s/g, '') : undefined, remember);
       setPassword('');
       setCode('');
       onDone();
@@ -94,51 +126,152 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
     }
   };
   return (
-    <section className="card login glass" aria-labelledby="login-h">
-      <div className="brand">
-        <span className="logo" aria-hidden="true">
-          ⚓
-        </span>
-        <h1>Harbor</h1>
-      </div>
-      <p className="tagline">Your own cloud, at home. Apps, files, photos and more on a machine you control.</p>
-      <h2 id="login-h">Log in</h2>
-      {notice && <p className="notice">{notice}</p>}
+    <section className="auth-card" aria-labelledby="login-h">
+      <h2 id="login-h" className="visually-hidden">
+        Log in
+      </h2>
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      )}
       <form onSubmit={submit}>
-        <label>
-          Username
-          <input name="username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
-        </label>
-        <label>
-          Password
-          <input name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </label>
-        {needCode && (
-          <label>
+        {!needCode && (
+          <div className="auth-field">
+            <label className="visually-hidden" htmlFor="login-username">
+              Username
+            </label>
+            <input
+              id="login-username"
+              className="auth-input"
+              name="username"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              required
+              autoFocus
+            />
+          </div>
+        )}
+        {needCode ? (
+          <label className="visually-hidden" htmlFor="login-code">
             Two-factor code
-            <input name="code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="6 digits from your authenticator" required autoFocus />
           </label>
+        ) : null}
+        {needCode ? (
+          <input
+            id="login-code"
+            className="auth-input"
+            name="code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="6-digit code"
+            required
+            autoFocus
+          />
+        ) : (
+          <div className="auth-field">
+            <label className="visually-hidden" htmlFor="login-password">
+              Password
+            </label>
+            <input
+              id="login-password"
+              className="auth-input"
+              name="password"
+              type={show ? 'text' : 'password'}
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              required
+            />
+            <button
+              className="auth-eye"
+              type="button"
+              onClick={() => setShow((v) => !v)}
+              aria-label={show ? 'Hide password' : 'Show password'}
+              aria-pressed={show}
+            >
+              {show ? <EyeOffIcon /> : <EyeIcon />}
+            </button>
+          </div>
         )}
         {error && (
-          <p className="error" role="alert">
+          <p className="error auth-error" role="alert">
             {error}
           </p>
         )}
-        <button className="btn primary" type="submit" disabled={busy}>
+        <label className="auth-remember">
+          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+          Remember this browser for 30 days
+        </label>
+        <button className="btn primary auth-submit" type="submit" disabled={busy || (!needCode && (!username || !password)) || (needCode && !code)}>
           {busy ? 'Logging in…' : 'Log in'}
         </button>
+        {/* Enter submits; the button stays for assistive tech and no-JS-keyboard flows */}
       </form>
-      <p className="muted small">This console only answers on this machine (or your tailnet, if you enabled it). Your login is never stored in the browser; reloading asks you to log in again.</p>
     </section>
   );
 }
 
-const NAV: { route: Route; label: string; glyph: string }[] = [
-  { route: { page: 'home' }, label: 'Home', glyph: '⌂' },
-  { route: { page: 'store' }, label: 'App Store', glyph: '▦' },
-  { route: { page: 'publishing' }, label: 'Publishing', glyph: '⇗' },
-  { route: { page: 'platform' }, label: 'Platform', glyph: '⚙' },
-  { route: { page: 'settings' }, label: 'Settings', glyph: '☰' },
+const NAV: { route: Route; label: string; icon: (active: boolean) => ReactNode }[] = [
+  {
+    route: { page: 'home' },
+    label: 'Home',
+    icon: (active) => (
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3.5 10.5 10 4l6.5 6.5" />
+        <path d="M5.5 9.5V16h9V9.5" />
+      </svg>
+    ),
+  },
+  {
+    route: { page: 'store' },
+    label: 'App Store',
+    icon: (active) => (
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="3.5" y="3.5" width="5.5" height="5.5" rx="1.5" />
+        <rect x="11" y="3.5" width="5.5" height="5.5" rx="1.5" />
+        <rect x="3.5" y="11" width="5.5" height="5.5" rx="1.5" />
+        <rect x="11" y="11" width="5.5" height="5.5" rx="1.5" />
+      </svg>
+    ),
+  },
+  {
+    route: { page: 'publishing' },
+    label: 'Publishing',
+    icon: (active) => (
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="10" cy="10" r="6.5" />
+        <path d="M3.5 10h13M10 3.5c-4.5 4.2-4.5 8.8 0 13 4.5-4.2 4.5-8.8 0-13Z" />
+      </svg>
+    ),
+  },
+  {
+    route: { page: 'platform' },
+    label: 'Platform',
+    icon: (active) => (
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="10" cy="10" r="2.6" />
+        <path d="M10 2.8v2.4M10 14.8v2.4M2.8 10h2.4M14.8 10h2.4M5 5l1.7 1.7M13.3 13.3 15 15M15 5l-1.7 1.7M6.7 13.3 5 15" />
+      </svg>
+    ),
+  },
+  {
+    route: { page: 'settings' },
+    label: 'Settings',
+    icon: (active) => (
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M4 6.5h12M4 10h12M4 13.5h12" />
+        <circle cx="8" cy="6.5" r="1.8" fill="var(--bg-2)" />
+        <circle cx="13" cy="10" r="1.8" fill="var(--bg-2)" />
+        <circle cx="7" cy="13.5" r="1.8" fill="var(--bg-2)" />
+      </svg>
+    ),
+  },
 ];
 
 function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
@@ -181,46 +314,47 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   const liveDrawer = drawer ? (c.data.instances.find((i) => i.id === drawer.id) ?? drawer) : null;
   const livePublishing = publishing ? (c.data.instances.find((i) => i.id === publishing.id) ?? publishing) : null;
 
-  const logout = async () => {
-    const pending = api.logout(); // token is read synchronously; drop the UI session right away
-    onAuthLost('Logged out.');
-    await pending.catch(() => undefined);
-  };
-
   const page = route.page === 'app' ? 'home' : route.page;
+  const mock = isMockUi();
   return (
     <div className="shell">
+      {mock && (
+        <p className="mock-banner" role="status">
+          Design mode — fixtures only, nothing runs. <a href="#/store">Store</a> · <a href="#/settings/appearance">Appearance</a> · <a href="#/settings">Settings</a>
+        </p>
+      )}
       <nav className="sidebar" aria-label="Main">
         <div className="brand">
           <span className="logo" aria-hidden="true">
-            ⚓
+            <Mark size={20} />
           </span>
           <span className="brand-name">Harbor</span>
         </div>
         <button className="btn ghost search-btn" onClick={openPalette} aria-label="Search (Cmd+K)" title="Search apps, store and settings (⌘K)">
-          <span className="glyph" aria-hidden="true">
-            ⌕
-          </span>
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+            <circle cx="9" cy="9" r="5.5" />
+            <path d="m13.5 13.5 3 3" />
+          </svg>
           <span>Search</span>
           <kbd aria-hidden="true">⌘K</kbd>
         </button>
-        <NotificationBell c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} />
         <ul>
-          {NAV.map((n) => (
-            <li key={n.route.page}>
-              <a href={`#/${n.route.page}`} className={page === n.route.page ? 'active' : ''} aria-current={page === n.route.page ? 'page' : undefined}>
-                <span className="glyph" aria-hidden="true">
-                  {n.glyph}
-                </span>
-                <span>{n.label}</span>
-              </a>
-            </li>
-          ))}
+          {NAV.map((n) => {
+            const active = page === n.route.page;
+            return (
+              <li key={n.route.page}>
+                <a href={`#/${n.route.page}`} className={active ? 'active' : ''} aria-current={active ? 'page' : undefined}>
+                  <span className="nav-icon" aria-hidden="true">
+                    {n.icon(active)}
+                  </span>
+                  <span>{n.label}</span>
+                </a>
+              </li>
+            );
+          })}
         </ul>
+        <NotificationBell c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} />
         <div className="side-foot">
-          <button className="btn ghost logout" onClick={() => void logout()}>
-            Log out
-          </button>
           <span className="muted small">{c.data.system ? `Harbor ${c.data.system.version}` : ''}</span>
         </div>
       </nav>
@@ -242,7 +376,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
         {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => (item.claims.some((cl) => cl.external) ? setStoreItem(item) : void c.start({ kind: 'install', packageId: item.id, name: '' }))} onUpload={() => setUploading(true)} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
-        {page === 'settings' && <Settings c={c} onLogout={() => void logout()} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go(s === 'overview' ? { page: 'settings' } : { page: 'settings', section: s })} />}
+        {page === 'settings' && <Settings c={c} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go(s === 'overview' ? { page: 'settings' } : { page: 'settings', section: s })} />}
       </main>
 
       {uploading && (
@@ -357,10 +491,13 @@ function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; 
   const markRead = (id: string) => api.markNotificationRead(id).then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
   const markAll = () => api.markAllNotificationsRead().then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
   return (
-    <div className="bell-wrap" ref={panelRef}>
-      <button className="btn ghost search-btn" onClick={() => setOpen((v) => !v)} aria-label={unread ? `Notifications: ${unread} unread` : 'Notifications'} aria-expanded={open} title="Notifications">
-        <span className="glyph" aria-hidden="true">
-          🔔
+    <div className="bell-wrap bell-bottom" ref={panelRef}>
+      <button className="btn ghost bell-btn" onClick={() => setOpen((v) => !v)} aria-label={unread ? `Notifications: ${unread} unread` : 'Notifications'} aria-expanded={open} title="Notifications">
+        <span className="nav-icon" aria-hidden="true">
+          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={open || unread > 0 ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M10 3.5c-3 0-4.8 2-4.8 5v2.6L3.8 13h12.4l-1.4-1.9V8.5c0-3-1.8-5-4.8-5Z" />
+            <path d="M8.3 15.5c.3 1 1 1.5 1.7 1.5s1.4-.5 1.7-1.5" />
+          </svg>
         </span>
         <span>Notifications</span>
         {unread > 0 && <span className="badge">{unread > 99 ? '99+' : unread}</span>}

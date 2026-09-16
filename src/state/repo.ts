@@ -377,12 +377,24 @@ export class Repo {
   }
 
   // sessions
-  insertSession(tokenHash: string, actor: string, expiresAt: string): void {
-    this.db.prepare('INSERT INTO sessions (token_hash, actor, created_at, expires_at) VALUES (?, ?, ?, ?)').run(tokenHash, actor, this.now(), expiresAt);
+  insertSession(tokenHash: string, actor: string, expiresAt: string, kind: 'session' | 'remember' = 'session'): void {
+    this.db.prepare('INSERT INTO sessions (token_hash, actor, created_at, expires_at, kind, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)').run(tokenHash, actor, this.now(), expiresAt, kind, this.now());
   }
-  session(tokenHash: string): { actor: string; expiresAt: string; revokedAt: string | null } | null {
-    const r = this.db.prepare('SELECT actor, expires_at, revoked_at FROM sessions WHERE token_hash = ?').get(tokenHash) as Raw | undefined;
-    return r ? { actor: r['actor'] as string, expiresAt: r['expires_at'] as string, revokedAt: (r['revoked_at'] as string | null) ?? null } : null;
+  session(tokenHash: string): { actor: string; expiresAt: string; revokedAt: string | null; kind: 'session' | 'remember' } | null {
+    const r = this.db.prepare('SELECT actor, expires_at, revoked_at, kind FROM sessions WHERE token_hash = ?').get(tokenHash) as Raw | undefined;
+    return r ? { actor: r['actor'] as string, expiresAt: r['expires_at'] as string, revokedAt: (r['revoked_at'] as string | null) ?? null, kind: ((r['kind'] as string | undefined) ?? 'session') as 'session' | 'remember' } : null;
+  }
+  touchSession(tokenHash: string): void {
+    this.db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ? AND revoked_at IS NULL').run(this.now(), tokenHash);
+  }
+  listSessions(currentHash: string): { createdAt: string; expiresAt: string; lastSeenAt: string | null; kind: 'session' | 'remember'; current: boolean }[] {
+    return (this.db.prepare('SELECT token_hash, created_at, expires_at, last_seen_at, kind FROM sessions WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 20').all() as Raw[]).map((r) => ({
+      createdAt: r['created_at'] as string,
+      expiresAt: r['expires_at'] as string,
+      lastSeenAt: (r['last_seen_at'] as string | null) ?? null,
+      kind: ((r['kind'] as string | undefined) ?? 'session') as 'session' | 'remember',
+      current: (r['token_hash'] as string) === currentHash,
+    }));
   }
   revokeSession(tokenHash: string): void {
     this.db.prepare('UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL').run(this.now(), tokenHash);

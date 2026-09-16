@@ -3,10 +3,23 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { api } from '../api';
+import { isMockUi } from '../mock/api';
 
 // A shell on the machine (Settings → Advanced access). WebSocket to the daemon; the first message carries the
 // session token, then keystrokes go up as JSON and terminal bytes come down as binary frames.
 export function Terminal({ onStatus }: { onStatus?: (s: 'connecting' | 'open' | 'closed', note?: string) => void }) {
+  // Design mode has no daemon and no socket: say so instead of spinning on a dead WebSocket.
+  if (isMockUi()) {
+    return (
+      <div className="terminal-wrap">
+        <div className="terminal" role="application" aria-label="Terminal (unavailable in design mode)">
+          <p className="muted small" style={{ padding: 12 }}>
+            The terminal needs a running daemon. Run <code>pnpm dev</code> for the live console; this design mode is fixtures only.
+          </p>
+        </div>
+      </div>
+    );
+  }
   const host = useRef<HTMLDivElement>(null);
   const [gen, setGen] = useState(0);
   const [state, setState] = useState<'connecting' | 'open' | 'closed'>('connecting');

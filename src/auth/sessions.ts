@@ -55,7 +55,7 @@ export class SessionService {
     return w;
   }
 
-  async login(username: string, password: string, client: string, code?: string): Promise<{ token: string; expiresAt: string }> {
+  async login(username: string, password: string, client: string, code?: string, opts: { remember?: boolean } = {}): Promise<{ token: string; expiresAt: string }> {
     const nowMs = this.clock.now().getTime();
     const w = this.windowFor(client);
     if (w.blocked(nowMs) || this.global.blocked(nowMs)) {
@@ -84,21 +84,39 @@ export class SessionService {
       this.repo.setSetting('security.totp', { ...totp, lastStep: step });
     }
     const token = this.ids.token(32).toString('base64url');
-    const expiresAt = rfc3339(addSeconds(this.clock.now(), this.ttlSeconds));
-    this.repo.insertSession(hashToken(token), username, expiresAt);
+    // "Remember this browser": a 30-day session instead of the configured TTL (default 12 h).
+    // Same bearer mechanics, same revocation; only the expiry differs.
+    const ttl = opts.remember ? 30 * 24 * 3600 : this.ttlSeconds;
+    const expiresAt = rfc3339(addSeconds(this.clock.now(), ttl));
+    this.repo.insertSession(hashToken(token), username, expiresAt, opts.remember ? 'remember' : 'session');
     return { token, expiresAt };
   }
 
   authenticate(token: string | undefined): Session {
     if (!token) throw new HarborError('UNAUTHENTICATED', 'missing bearer token');
-    const s = this.repo.session(hashToken(token));
+    const h = hashToken(token);
+    const s = this.repo.session(h);
     if (!s || s.revokedAt) throw new HarborError('UNAUTHENTICATED', 'session is not valid');
     if (new Date(s.expiresAt).getTime() <= this.clock.now().getTime()) throw new HarborError('UNAUTHENTICATED', 'session expired');
+    // best-effort activity stamp for the session list; never fails the request
+    try {
+      this.repo.touchSession(h);
+    } catch {
+      /* ignore */
+    }
     return { actor: s.actor, expiresAt: s.expiresAt };
+  }
+
+  sessions(currentToken: string): { createdAt: string; expiresAt: string; lastSeenAt: string | null; kind: 'session' | 'remember'; current: boolean }[] {
+    return this.repo.listSessions(hashToken(currentToken));
   }
 
   logout(token: string): void {
     this.repo.revokeSession(hashToken(token));
+  }
+
+  revokeOthers(token: string): number {
+    return this.repo.revokeOtherSessions(hashToken(token));
   }
 
   // Password change by the logged-in administrator: current password required, policy applied,

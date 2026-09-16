@@ -4,7 +4,7 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { rfc3339, type Clock, type Ids } from '../util.js';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 export const SCHEMA_SQL = `
 CREATE TABLE installation (
@@ -27,7 +27,9 @@ CREATE TABLE sessions (
   actor TEXT NOT NULL,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  revoked_at TEXT
+  revoked_at TEXT,
+  kind TEXT NOT NULL DEFAULT 'session' CHECK (kind IN ('session','remember')),
+  last_seen_at TEXT
 );
 CREATE TABLE instances (
   id TEXT PRIMARY KEY,
@@ -263,6 +265,10 @@ export function openState(stateDir: string, opts: { readonly?: boolean } = {}): 
           migrateV5toV6(db);
           version = 6;
         }
+        if (version === 6) {
+          migrateV6toV7(db);
+          version = 7;
+        }
       } finally {
         db.pragma('foreign_keys = ON');
       }
@@ -293,6 +299,17 @@ function migrateV4toV5(db: Db): void {
       );
     `);
     db.pragma('user_version = 5');
+  })();
+}
+
+// v7: long-lived "remember this browser" sessions: kind + last-seen for rotation/visibility.
+function migrateV6toV7(db: Db): void {
+  db.transaction(() => {
+    db.exec(`
+      ALTER TABLE sessions ADD COLUMN kind TEXT NOT NULL DEFAULT 'session' CHECK (kind IN ('session','remember'));
+      ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;
+    `);
+    db.pragma('user_version = 7');
   })();
 }
 

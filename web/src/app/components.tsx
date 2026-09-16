@@ -11,7 +11,7 @@ export function AppIcon({ packageId, icon, name, size = 44, custom = null }: { p
   const src = custom?.kind === 'image' ? custom.url : icon ? `/v1/catalog/${packageId}/asset/${icon}` : null;
   if (custom?.kind === 'glyph')
     return (
-      <span className={`${cls} monogram glyph-icon`} aria-hidden="true" style={{ background: `linear-gradient(145deg, ${custom.color}, color-mix(in srgb, ${custom.color} 55%, black))` }}>
+      <span className={`${cls} monogram glyph-icon`} aria-hidden="true" style={{ background: custom.color }}>
         {custom.glyph}
       </span>
     );

@@ -255,6 +255,14 @@ export interface SessionDto {
   expiresAt: string;
 }
 
+export interface SessionInfoDto {
+  createdAt: string;
+  expiresAt: string;
+  lastSeenAt: string | null;
+  kind: 'session' | 'remember';
+  current: boolean;
+}
+
 export interface ApiErrorBody {
   error: { code: string; message: string; nextAction: string; operationId?: string; details?: string[] };
 }

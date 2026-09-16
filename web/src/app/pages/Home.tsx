@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CatalogItemDto, InstanceSummary, SystemMetricsDto, WidgetDto } from '../../../../src/contracts/api';
 import { api } from '../../api';
 import { AppIcon, InstanceIcon, Pill, appLabel, openUrl } from '../components';
+import { ArrowUpIcon, EllipsisIcon } from '../icons';
 import { fmtBytes, fmtUptime, plainStatus } from '../format';
 import { useReorder } from '../reorder';
 import type { Console } from '../store';
@@ -240,7 +241,7 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
     >
       {canOpen ? (
         <a className="icon-btn" href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`} title={`${label} — ${status.label}${usageText}`} onClick={guard} draggable={false}>
-          <InstanceIcon inst={inst} size={72} />
+          <InstanceIcon inst={inst} size={64} />
           <span className="icon-label">{label}</span>
           <span className="icon-status">
             <span className={`dot tone-${status.tone}`} aria-hidden="true" />
@@ -249,7 +250,7 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
         </a>
       ) : (
         <button className="icon-btn" onClick={(e) => (arranging || reorder?.suppressClick(inst.id) ? guard(e) : onDetails())} aria-label={arranging ? `Move ${inst.name}` : `Manage ${inst.name}`} title={`${label} — ${status.label}${usageText}`}>
-          <InstanceIcon inst={inst} size={72} />
+          <InstanceIcon inst={inst} size={64} />
           <span className="icon-label">{label}</span>
           <span className="icon-status small">
             <span className={`dot tone-${status.tone}`} aria-hidden="true" /> {arranging ? 'drag to move' : status.label}
@@ -258,13 +259,13 @@ function AppIconTile({ inst, onDetails, reorder }: { inst: InstanceSummary; onDe
       )}
       {!arranging && (
         <button className="btn ghost icon more" onClick={onDetails} aria-label={`Details of ${inst.name}`} title="Details and actions">
-          ⋯
+          <EllipsisIcon />
         </button>
       )}
       {!arranging && <WidgetLine inst={inst} />}
       {inst.updateAvailable && !arranging && (
         <span className="update-dot" title={`Update available: revision ${inst.updateAvailable.revision}`} aria-label={`Update available for ${inst.name}`}>
-          ↑
+          <ArrowUpIcon />
         </span>
       )}
     </li>

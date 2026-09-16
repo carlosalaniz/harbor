@@ -65,6 +65,27 @@ export function hasExplicitWallpaper(): boolean {
     return false;
   }
 }
+// Surface opacity: how solid cards/sidebar/dialogs are over the wallpaper (0.5 translucent → 1 solid).
+// Per-browser like theme/wallpaper; CSS derives --card/--card-2 from --surfaces-opacity.
+export function readSurfacesOpacity(): number {
+  try {
+    const raw = localStorage.getItem('harbor.surfaces-opacity');
+    const v = raw === null ? NaN : Number(raw);
+    return Number.isFinite(v) ? Math.min(1, Math.max(0.5, v)) : 0.82;
+  } catch {
+    return 0.82;
+  }
+}
+export function applySurfacesOpacity(v: number): void {
+  const clamped = Math.min(1, Math.max(0.5, v));
+  try {
+    if (Math.abs(clamped - 0.82) < 0.001) localStorage.removeItem('harbor.surfaces-opacity');
+    else localStorage.setItem('harbor.surfaces-opacity', String(clamped));
+  } catch {
+    /* ignore */
+  }
+  document.documentElement.style.setProperty('--surfaces-opacity', String(clamped));
+}
 function applyWallpaperRuntime(w: Wallpaper): void {
   document.documentElement.dataset['wallpaper'] = w;
 }
