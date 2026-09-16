@@ -139,7 +139,12 @@ const files = [];
 const listFile = path.join(releaseDir, 'stage', `${name}.files`);
 writeFileSync(listFile, files.join('\n') + '\n');
 // bsdtar (macOS) would embed xattr/provenance headers that GNU tar warns about; disable them.
-run('tar', ['--uid', '0', '--gid', '0', '--numeric-owner', '--no-xattrs', '--no-mac-metadata', '--no-acls', '-czf', archive, '-C', path.join(releaseDir, 'stage'), '-T', listFile, '-n'], { env: { ...process.env, COPYFILE_DISABLE: '1' } });
+// GNU tar (Linux/CI) does not know --no-xattrs/--no-mac-metadata/--no-acls: use only portable flags there.
+const gnu = process.platform !== 'darwin';
+const tarArgs = gnu
+  ? ['--owner=0', '--group=0', '--numeric-owner', '--sort=name', '-czf', archive, '-C', path.join(releaseDir, 'stage'), '-T', listFile]
+  : ['--uid', '0', '--gid', '0', '--numeric-owner', '--no-xattrs', '--no-mac-metadata', '--no-acls', '-czf', archive, '-C', path.join(releaseDir, 'stage'), '-T', listFile, '-n'];
+run('tar', tarArgs, { env: { ...process.env, COPYFILE_DISABLE: '1', GZIP: '-n' } });
 rmSync(listFile);
 const sum = sha256(archive);
 writeFileSync(path.join(releaseDir, 'SHA256SUMS'), `${sum}  ${path.basename(archive)}\n`);
