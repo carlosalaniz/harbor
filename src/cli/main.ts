@@ -811,12 +811,17 @@ program
       if (opts.tailscaleAuthkeyStdin) tailscaleAuthKey = (lines.shift() ?? '').trim() || null;
     }
     else if (process.stdin.isTTY && !opts.setupInBrowser) {
-      passwordProvider = async () => {
-        const p1 = await promptHidden('Administrator password (min 8 chars): ');
-        const p2 = await promptHidden('Repeat password: ');
-        if (p1 !== p2) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
-        return p1;
-      };
+      // Only prompt for a password on a fresh installation: a re-run that only
+      // adds a tool must never touch the existing administrator.
+      const { existsSync: exists } = await import('node:fs');
+      if (!exists(`${PRODUCT.paths.var}/harbor.db`)) {
+        passwordProvider = async () => {
+          const p1 = await promptHidden('Administrator password (min 8 chars): ');
+          const p2 = await promptHidden('Repeat password: ');
+          if (p1 !== p2) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
+          return p1;
+        };
+      }
     }
     const result = await bootstrap({
       releaseDir,

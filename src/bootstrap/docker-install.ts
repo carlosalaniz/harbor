@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { exec, execOk } from './exec.js';
+import { exec, execOk, aptGet } from './exec.js';
 import { HarborError } from '../errors.js';
 
 // Approved Docker Engine installation from Docker's authenticated apt repository (Ubuntu 24.04
@@ -32,9 +32,9 @@ export async function installDocker(log: (m: string) => void): Promise<void> {
   const codename = (await execOk('/usr/bin/lsb_release', ['-cs'])).stdout.trim() || 'noble';
   writeFileSync(SOURCES, `deb [arch=amd64 signed-by=${KEYRING}] https://download.docker.com/linux/ubuntu ${codename} stable\n`, { mode: 0o644 });
   log('apt-get update');
-  await execOk('/usr/bin/apt-get', ['update', '-q'], { timeoutMs: 10 * 60_000 });
+  await aptGet(log, ['update', '-q'], { timeoutMs: 10 * 60_000 });
   log(`apt-get install ${PACKAGES.join(' ')}`);
-  await execOk('/usr/bin/apt-get', ['install', '-y', '-q', '--no-install-recommends', ...PACKAGES], { timeoutMs: 20 * 60_000 });
+  await aptGet(log, ['install', '-y', '-q', '--no-install-recommends', ...PACKAGES], { timeoutMs: 20 * 60_000 });
   await execOk('/usr/bin/systemctl', ['enable', '--now', 'docker'], { timeoutMs: 120_000 });
   const v = await exec('/usr/bin/docker', ['version', '--format', '{{.Server.Version}}'], { timeoutMs: 60_000 });
   if (v.code !== 0) throw new HarborError('DOCKER_UNAVAILABLE', `Docker installed but the daemon is not answering: ${v.stderr.trim()}`);

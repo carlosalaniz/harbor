@@ -53,6 +53,24 @@ export async function execOk(file: string, args: string[], opts: Parameters<type
   return r;
 }
 
+// apt-get with retries around the dpkg frontend lock: Ubuntu's unattended-upgrades
+// routinely holds it on a fresh boot, and failing the whole bootstrap for that is wrong.
+// Only lock contention (exit 100 + lock message) is retried; real failures throw immediately.
+export async function aptGet(log: (m: string) => void, args: string[], opts: { timeoutMs?: number } = {}): Promise<ExecResult> {
+  const waits = [15_000, 30_000, 60_000, 120_000];
+  for (let attempt = 0; ; attempt++) {
+    const r = await exec('/usr/bin/apt-get', args, { timeoutMs: opts.timeoutMs ?? 20 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
+    if (r.code === 0) return r;
+    const locked = r.code === 100 && /lock|unattended-upgr|dpkg.*busy|another process/i.test(r.stderr + r.stdout);
+    if (!locked || attempt >= waits.length) {
+      throw new HarborError('OPERATION_FAILED', `/usr/bin/apt-get ${args.join(' ')} failed (exit ${r.code}): ${r.stderr.trim().split('\n').slice(-5).join(' | ') || r.stdout.trim().slice(-400)}`);
+    }
+    const waitMs = waits[attempt]!;
+    log(`apt is locked by another process (unattended upgrades?); waiting ${Math.round(waitMs / 1000)}s and retrying (${attempt + 1}/${waits.length})`);
+    await new Promise((r2) => setTimeout(r2, waitMs));
+  }
+}
+
 export async function which(name: string): Promise<string | null> {
   for (const dir of ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']) {
     const p = `${dir}/${name}`;

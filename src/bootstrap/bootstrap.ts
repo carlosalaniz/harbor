@@ -10,7 +10,7 @@ import { acquireLock } from '../state/lock.js';
 import { loopbackPortFree } from '../docker/ports.js';
 import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
-import { exec, execOk } from './exec.js';
+import { exec, execOk, aptGet } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
 import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit } from './systemd.js';
 import { privateInterfaces, lanUrl as lanUrlFor } from '../system/lan.js';
@@ -99,14 +99,21 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
     throw new HarborError('UNSUPPORTED_CAPABILITY', 'LAN mode asked for, but this machine has no private-network address (it looks like a cloud server): its ports would face the internet', { nextAction: 'Leave LAN mode off here (use Tailscale or publishing), or pass --lan-force if you really want that.' });
   }
 
-  // 3. Preview of the Harbor installation itself
+  // 3. Preview of the Harbor installation itself. An existing administrator is
+  // never touched: re-running bootstrap to add a tool must not prompt for (or
+  // reset) the password.
+  const adminPreview = facts.existing.state
+    ? 'Keep the existing administrator'
+    : opts.setupInBrowser
+      ? 'Create the administrator later in the browser (setup wizard with a printed setup code)'
+      : `Enroll the local administrator (${opts.adminUsername ?? 'prompted'})`;
   const preview = [
     `${facts.existing.optDir === 'harbor' ? `Replace release files in ${PRODUCT.paths.opt} (current ${facts.existing.optReleaseVersion ?? '?'} -> ${release.version})` : `Install release ${release.version} to ${PRODUCT.paths.opt}`}`,
     facts.existing.user ? `Keep service account ${PRODUCT.serviceUser}` : `Create system user ${PRODUCT.serviceUser} (nologin) and add it to the docker group (root-equivalent authority)`,
     `Ensure ${PRODUCT.paths.etc} (root:${PRODUCT.serviceUser} 0750), ${PRODUCT.paths.var} (${PRODUCT.serviceUser} 0700) and the data folder ${PRODUCT.paths.data} (${PRODUCT.serviceUser} 0755)`,
     facts.existing.config ? `Keep ${CONFIG_FILE}` : `Write ${CONFIG_FILE} (listen 127.0.0.1:${opts.port}, app ports ${PRODUCT.defaults.appPortRange.from}-${PRODUCT.defaults.appPortRange.to}, socket ${facts.docker.socket})`,
     facts.existing.state ? `Keep existing state in ${PRODUCT.paths.var} (apps, keys, administrator untouched)` : `Initialize fresh state in ${PRODUCT.paths.var}`,
-    facts.existing.state ? 'Keep the existing administrator' : opts.setupInBrowser ? 'Create the administrator later in the browser (setup wizard with a printed setup code)' : `Enroll the local administrator (${opts.adminUsername ?? 'prompted'})`,
+    adminPreview,
     ...(opts.hostname ? [`Set the machine hostname to ${opts.hostname} (mDNS name ${opts.hostname}.local)`] : []),
     ...(opts.lan ? [`LAN mode: install avahi (mDNS), console on port ${lanPort} and app ports on every interface of this machine`] : []),
     `${facts.existing.unit === 'harbor' ? 'Rewrite' : 'Install'} systemd unit ${PRODUCT.paths.systemdUnit} and (re)start it`,
@@ -207,7 +214,7 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     }
     if (missing.length) {
       log('installing avahi-daemon (mDNS: this machine answers as <hostname>.local on your network)');
-      await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'avahi-daemon', 'avahi-utils', 'libnss-mdns'], { timeoutMs: 10 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
+      await aptGet(log, ['install', '-y', '-q', 'avahi-daemon', 'avahi-utils', 'libnss-mdns'], { timeoutMs: 10 * 60_000 });
     }
     await execOk('/usr/bin/systemctl', ['enable', '--now', 'avahi-daemon'], { timeoutMs: 60_000 });
   }
@@ -216,7 +223,7 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     const q = await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', 'git'], { timeoutMs: 10_000 });
     if (!q.stdout.includes('install ok installed')) {
       log('installing git (transport for app sources from your repositories)');
-      await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'git'], { timeoutMs: 10 * 60_000, env: { DEBIAN_FRONTEND: 'noninteractive' } });
+      await aptGet(log, ['install', '-y', '-q', 'git'], { timeoutMs: 10 * 60_000 });
     }
   }
 
@@ -239,26 +246,28 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
     log(`existing state found (installation ${installationId}); apps, keys and administrator preserved`);
   }
 
-  // 9. Administrator: on the terminal, or later in the browser (setup wizard guarded by a printed code)
+  // 9. Administrator: on the terminal, or later in the browser (setup wizard guarded by a printed code).
+  // An existing administrator is never re-enrolled: a re-run that only adds a tool
+  // must not prompt for a password (and must not reset the account).
   let adminCreated = false;
   let setupCode: string | null = null;
   {
     const db = openState(config.stateDir);
-    const hasAdmin = new Repo(db, systemClock).administrator() !== null;
+    const existingAdmin = new Repo(db, systemClock).administrator();
     db.close();
-    if (!hasAdmin) {
+    if (existingAdmin) {
+      log(`keeping administrator ${existingAdmin.username}`);
+    } else if (opts.setupInBrowser || !opts.passwordProvider) {
       // No administrator and no password here means "finish in the browser": keep (or create) the setup code.
       // This is also what an upgrade of a not-yet-claimed machine goes through.
-      if (opts.setupInBrowser || !opts.passwordProvider) {
-        setupCode = readSetupCode(config.stateDir) ?? writeSetupCode(config.stateDir);
-        log('administrator will be created in the browser (setup wizard)');
-      } else {
-        const username = opts.adminUsername ?? 'admin';
-        const password = await opts.passwordProvider();
-        await enrollAdministrator(config, username, password, { reset: false });
-        adminCreated = true;
-        log(`enrolled administrator ${username}`);
-      }
+      setupCode = readSetupCode(config.stateDir) ?? writeSetupCode(config.stateDir);
+      log('administrator will be created in the browser (setup wizard)');
+    } else {
+      const username = opts.adminUsername ?? 'admin';
+      const password = await opts.passwordProvider();
+      await enrollAdministrator(config, username, password, { reset: false });
+      adminCreated = true;
+      log(`enrolled administrator ${username}`);
     }
   }
   chownTree(config.stateDir, uid, gid);

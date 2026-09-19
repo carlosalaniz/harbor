@@ -7,7 +7,7 @@ import { ComposeCli } from '../docker/compose-cli.js';
 import { DockerodeAdapter } from '../docker/dockerode-adapter.js';
 import { loopbackPortFree } from '../docker/ports.js';
 import type { PlatformToolRow } from '../state/repo.js';
-import { exec, execOk, httpGetStatus } from './exec.js';
+import { exec, execOk, aptGet, httpGetStatus } from './exec.js';
 import { cockpitSocketDropIn } from './systemd.js';
 import { suggestedUpArgs } from '../exposure/tailscale.js';
 
@@ -44,8 +44,8 @@ export async function setupCockpit(log: (m: string) => void, existing: { install
     };
   }
   log('apt-get install cockpit');
-  await execOk('/usr/bin/apt-get', ['update', '-q'], { timeoutMs: 10 * 60_000 });
-  await execOk('/usr/bin/apt-get', ['install', '-y', '-q', '--no-install-recommends', 'cockpit'], { timeoutMs: 20 * 60_000 });
+  await aptGet(log, ['update', '-q'], { timeoutMs: 10 * 60_000 });
+  await aptGet(log, ['install', '-y', '-q', '--no-install-recommends', 'cockpit'], { timeoutMs: 20 * 60_000 });
   const dropDir = '/etc/systemd/system/cockpit.socket.d';
   mkdirSync(dropDir, { recursive: true, mode: 0o755 });
   writeFileSync(path.join(dropDir, 'harbor-loopback.conf'), cockpitSocketDropIn(COCKPIT_PORT), { mode: 0o644 });
@@ -197,8 +197,8 @@ export async function setupTailscale(log: (m: string) => void, existing: { insta
     const listText = await list.text();
     if (!listText.includes('pkgs.tailscale.com') || !listText.includes(TS_KEYRING)) throw new HarborError('OPERATION_FAILED', 'unexpected tailscale apt list content');
     writeFileSync(TS_LIST, listText, { mode: 0o644 });
-    await execOk('/usr/bin/apt-get', ['update', '-q'], { timeoutMs: 10 * 60_000 });
-    await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'tailscale'], { timeoutMs: 20 * 60_000 });
+    await aptGet(log, ['update', '-q'], { timeoutMs: 10 * 60_000 });
+    await aptGet(log, ['install', '-y', '-q', 'tailscale'], { timeoutMs: 20 * 60_000 });
     await execOk('/usr/bin/systemctl', ['enable', '--now', 'tailscaled'], { timeoutMs: 60_000 });
   }
   // the operator grant first: `tailscale up` below must mention it (the CLI insists on all non-default flags)
@@ -284,8 +284,8 @@ export async function setupCaddy(log: (m: string) => void, existing: { installed
     const list = await fetch('https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt');
     if (!list.ok) throw new HarborError('OPERATION_FAILED', `cannot download caddy apt list: HTTP ${list.status}`);
     writeFileSync(CADDY_LIST, await list.text(), { mode: 0o644 });
-    await execOk('/usr/bin/apt-get', ['update', '-q'], { timeoutMs: 10 * 60_000 });
-    await execOk('/usr/bin/apt-get', ['install', '-y', '-q', 'caddy'], { timeoutMs: 20 * 60_000 });
+    await aptGet(log, ['update', '-q'], { timeoutMs: 10 * 60_000 });
+    await aptGet(log, ['install', '-y', '-q', 'caddy'], { timeoutMs: 20 * 60_000 });
   }
   if (!existing.harborConfig) {
     mkdirSync('/etc/caddy', { recursive: true, mode: 0o755 });
