@@ -1188,7 +1188,7 @@ function Storage() {
                     className="btn small"
                     disabled={busyDevice !== null}
                     onClick={() => unmount(d.name)}
-                    aria-label={`Eject ${d.label ?? d.name}`}
+                    aria-label={busyDevice === d.name ? `Ejecting ${d.label ?? d.name}` : `Eject ${d.label ?? d.name}`}
                     aria-busy={busyDevice === d.name}
                   >
                     {busyDevice === d.name ? (
@@ -1204,7 +1204,7 @@ function Storage() {
                     className="btn small"
                     disabled={busyDevice !== null}
                     onClick={() => mount(d.name)}
-                    aria-label={`Mount ${d.label ?? d.name}`}
+                    aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
                     aria-busy={busyDevice === d.name}
                   >
                     {busyDevice === d.name ? (

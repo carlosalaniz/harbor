@@ -38,6 +38,11 @@ export default defineConfig({
         HARBOR_DEV_PORT_TO: String(PORT + 99),
         HARBOR_DEV_PASSWORD: 'e2e-fixture-password',
         HARBOR_DEV_LOG_LEVEL: 'warn',
+        // Fake removable hardware: macOS/CI have no lsblk, so inject one
+        // unmounted USB stick for the Mount/Eject click test below.
+        HARBOR_DEVICES_JSON: JSON.stringify({
+          blockdevices: [{ name: 'sdb', size: '14.4G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdb1', size: '14.4G', type: 'part', mountpoint: null, fstype: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', rm: true, hotplug: true }] }],
+        }),
       },
     },
     {

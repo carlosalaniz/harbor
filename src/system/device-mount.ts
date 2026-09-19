@@ -18,6 +18,9 @@ export class DeviceMountService {
     private readonly clock: Clock,
     private readonly stateDir: string = '',
     private readonly mountStarter: ((unit: string) => Promise<void>) | null = null,
+    // E2E/dev seam: HARBOR_DEVICES_JSON mode has no systemd and no real mount,
+    // so simulate the root oneshot (requested → mounted/unmounted) in-process.
+    private readonly simulateRoot: boolean = process.env['HARBOR_DEVICES_JSON'] !== undefined,
   ) {}
 
   status(name: string): DeviceMountStatus | null {
@@ -36,6 +39,14 @@ export class DeviceMountService {
     if (dev.mounted && dev.mountpoint) return { device: name, state: 'mounted', message: `already mounted at ${dev.mountpoint}`, mountpoint: dev.mountpoint, at: rfc3339(this.clock.now()) };
     const st = this.status(name);
     if (st && (st.state === 'requested' || st.state === 'mounting' || st.state === 'unmounting')) throw new HarborError('BUSY', `a mount operation for ${name} is already running (${st.message})`);
+    if (this.simulateRoot) {
+      // Fake-hardware mode: no systemd, no real mount. Complete the oneshot
+      // in-process after a beat so the UI's Mounting… spinner is exercised.
+      this.writeStatus(name, 'requested', `requested by ${actor}; starting the mount`, null);
+      const mp = `/mnt/${name}`;
+      setTimeout(() => this.writeStatus(name, 'mounted', `mounted at ${mp}`, mp), 1200).unref?.();
+      return { device: name, state: 'requested', message: 'mount requested', mountpoint: null, at: rfc3339(this.clock.now()) };
+    }
     if (!this.mountStarter) throw new HarborError('UNSUPPORTED_CAPABILITY', 'device mount is not available on this machine', { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor device-mount ${name}:mount` });
     this.writeStatus(name, 'requested', `requested by ${actor}; starting the mount`, null);
     try {
@@ -62,6 +73,11 @@ export class DeviceMountService {
     }
     const st = this.status(name);
     if (st && (st.state === 'requested' || st.state === 'mounting' || st.state === 'unmounting')) throw new HarborError('BUSY', `a mount operation for ${name} is already running (${st.message})`);
+    if (this.simulateRoot) {
+      this.writeStatus(name, 'requested', `requested by ${actor}; starting the unmount`, dev.mountpoint);
+      setTimeout(() => this.writeStatus(name, 'unmounted', 'unmounted', null), 1200).unref?.();
+      return { device: name, state: 'requested', message: 'unmount requested', mountpoint: dev.mountpoint, at: rfc3339(this.clock.now()) };
+    }
     if (!this.mountStarter) throw new HarborError('UNSUPPORTED_CAPABILITY', 'device unmount is not available on this machine', { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor device-mount ${name}:unmount` });
     this.writeStatus(name, 'requested', `requested by ${actor}; starting the unmount`, dev.mountpoint);
     try {

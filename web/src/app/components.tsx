@@ -290,7 +290,7 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                       className="btn small"
                       disabled={busyDevice !== null}
                       onClick={() => mount(d.name)}
-                      aria-label={`Mount ${d.label ?? d.name}`}
+                      aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
                       aria-busy={busyDevice === d.name}
                     >
                       {busyDevice === d.name ? (

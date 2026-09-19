@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { HarborError } from '../errors.js';
@@ -153,11 +153,43 @@ export function parseDevices(lsblkJson: string): DeviceInfo[] {
   return out.sort((a, b) => a.device.localeCompare(b.device));
 }
 
-export function listDevices(run: (args: string[]) => string = defaultLsblk): DeviceInfo[] {
+export function listDevices(run: (args: string[]) => string = defaultLsblk, fixtureJson?: string): DeviceInfo[] {
   try {
+    // E2E/dev fixture: HARBOR_DEVICES_JSON injects a fake lsblk document so the
+    // removable UI (Mount spinner, Eject, insert/remove poll) can be clicked
+    // on machines with no removable hardware (macOS, CI). A simulated mount
+    // overlays the fixture: after the fake oneshot completes, the device
+    // reports mounted at /mnt/<name> (mirrors DeviceMountService.simulateRoot).
+    const doc = fixtureJson ?? process.env['HARBOR_DEVICES_JSON'];
+    if (doc) {
+      const devices = parseDevices(doc);
+      return devices.map((d) => {
+        const st = readSimulatedMountState(d.name);
+        if (st === 'mounted') return { ...d, mounted: true, mountpoint: `/mnt/${d.name}` };
+        return d;
+      });
+    }
     return parseDevices(run(['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG']));
   } catch {
     return [];
+  }
+}
+
+// Reads the simulated mount state written by DeviceMountService in fixture
+// mode (<stateDir>/devices/<name>/mount-status.json is per-daemon; the env
+// pointer below tells listDevices which state dir to consult).
+function readSimulatedMountState(name: string): 'mounted' | 'unmounted' | null {
+  try {
+    const stateDir = process.env['HARBOR_DEVICES_STATE_DIR'];
+    if (!stateDir || !/^[a-z]+[0-9]+$/.test(name)) return null;
+    const file = path.join(stateDir, 'devices', name, 'mount-status.json');
+    if (!existsSync(file)) return null;
+    const st = JSON.parse(readFileSync(file, 'utf8')) as { state?: string };
+    if (st.state === 'mounted') return 'mounted';
+    if (st.state === 'unmounted') return 'unmounted';
+    return null;
+  } catch {
+    return null;
   }
 }
 

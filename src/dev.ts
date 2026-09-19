@@ -16,6 +16,9 @@ const root = path.resolve(process.env['HARBOR_DEV_ROOT'] ?? '.harbor-dev');
 mkdirSync(root, { recursive: true, mode: 0o700 });
 const stateDir = path.join(root, 'state');
 mkdirSync(path.join(root, 'data'), { recursive: true });
+// Fixture-hardware mode (HARBOR_DEVICES_JSON): listDevices overlays the
+// simulated mount state from this daemon's state dir (see host-storage.ts).
+if (process.env['HARBOR_DEVICES_JSON']) process.env['HARBOR_DEVICES_STATE_DIR'] = stateDir;
 const socket = process.env['HARBOR_DEV_DOCKER_SOCKET'];
 const port = Number(process.env['HARBOR_DEV_PORT'] ?? 18000);
 const config = normalizeConfig(

@@ -360,6 +360,25 @@ test('settings: change password and back, remote access login flow, storage over
   await expect(page.getByText('Media e2e')).toBeVisible(); // from the Jellyfin install above
 });
 
+test('storage: removable device mount locks with a spinner, then flips to mounted', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Storage Disks/ }).click();
+  const mount = page.getByRole('button', { name: 'Mount' });
+  await expect(mount).toBeVisible();
+  await mount.click();
+  // the button locks instantly with a spinner: no double-submit while the POST is in flight
+  const mounting = page.getByRole('button', { name: /Mounting/ });
+  await expect(mounting).toBeVisible();
+  await expect(mounting).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Eject' })).toBeVisible({ timeout: 15_000 });
+  // and back again
+  const eject = page.getByRole('button', { name: 'Eject' });
+  await eject.click();
+  await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Mount' })).toBeVisible({ timeout: 15_000 });
+});
+
 test('full uninstall: typed confirmation, data deleted, name free again', async ({ page }) => {
   await login(page);
   await installFromStore(page, 'Memos');

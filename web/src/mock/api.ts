@@ -54,8 +54,26 @@ const beat = (ms = 350) => new Promise((r) => setTimeout(r, ms));
 let instances = mockInstances();
 let notifications = mockNotifications();
 let channels = mockChannels();
+let storage = mockStorage();
 const appearance = mockAppearance();
 let order: string[] = [];
+
+// Design-mode device state: mount/unmount flip the fixture so the row, the
+// spinner and the 2s poll can be exercised with clicks, like the real daemon.
+function mockMountDevice(name: string): void {
+  storage = {
+    ...storage,
+    mounts: storage.mounts.some((m) => m.mountpoint === `/mnt/${name}`) ? storage.mounts : [...storage.mounts, { mountpoint: `/mnt/${name}`, device: `/dev/${name}`, fsType: 'vfat', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 4 * 1024 * 1024 * 1024, writable: true, label: `Drive "${name}"` }],
+    devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: true, mountpoint: `/mnt/${name}` } : d)),
+  };
+}
+function mockUnmountDevice(name: string): void {
+  storage = {
+    ...storage,
+    mounts: storage.mounts.filter((m) => m.mountpoint !== `/mnt/${name}`),
+    devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: false, mountpoint: null } : d)),
+  };
+}
 
 const planFor = (kind: PlanDto['kind'], instanceId: string, packageId: string, name: string): PlanDto => ({
   id: `plan-mock-${kind}`,
@@ -151,17 +169,24 @@ export const mockApi = {
     await beat();
     return { revokedSessions: 1 };
   },
-  hostStorage: async (): Promise<HostStorageDto> => mockStorage(),
+  hostStorage: async (): Promise<HostStorageDto> => storage,
   mountDevice: async (name: string) => {
-    await beat();
-    const dev = mockStorage().devices.find((d) => d.name === name);
+    await beat(1200); // slow enough that the Mounting… spinner + disabled lock is visible
+    mockMountDevice(name);
+    const dev = storage.devices.find((d) => d.name === name);
     return { device: name, state: 'mounted', message: `mounted at ${dev?.mountpoint ?? '/mnt/mock'} (mock)`, mountpoint: dev?.mountpoint ?? '/mnt/mock' };
   },
   unmountDevice: async (name: string) => {
-    await beat();
+    await beat(1200);
+    mockUnmountDevice(name);
     return { device: name, state: 'unmounted', message: 'unmounted (mock)', mountpoint: null };
   },
-  deviceStatus: async (name: string) => ({ device: name, state: 'mounted', message: 'mounted (mock)', mountpoint: '/mnt/mock' }),
+  deviceStatus: async (name: string) => {
+    const dev = storage.devices.find((d) => d.name === name);
+    return dev?.mounted
+      ? { device: name, state: 'mounted', message: `mounted at ${dev.mountpoint} (mock)`, mountpoint: dev.mountpoint }
+      : { device: name, state: 'unmounted', message: 'unmounted (mock)', mountpoint: null };
+  },
   storageUsage: async (): Promise<StorageUsageDto> => mockStorageUsage(),
   notifications: async (): Promise<NotificationsDto> => notifications,
   markNotificationRead: async (id: string): Promise<NotificationsDto> => {
