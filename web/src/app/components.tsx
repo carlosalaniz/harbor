@@ -212,8 +212,12 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
           setStorage(s);
           setListing((cur) => {
             if (!cur) return cur;
-            // The open folder vanished (drive removed): fall back to the data folder.
-            const stillThere = s.mounts.some((m) => m.mountpoint === cur.path) || s.devices.some((d) => d.mountpoint === cur.path) || cur.path === s.dataFolder.path || cur.path === '/';
+            // Still there if it is a known mount, a known device mountpoint,
+            // the data folder, the root, or a subfolder of any of those (for
+            // example /mnt/usb20fd/immich inside the mounted drive — the old
+            // exact-match check kicked the user back to /srv/harbor here).
+            const roots = [...s.mounts.map((m) => m.mountpoint), ...s.devices.flatMap((d) => (d.mountpoint ? [d.mountpoint] : [])), s.dataFolder.path, '/'];
+            const stillThere = roots.some((r) => cur.path === r || (r !== '/' && cur.path.startsWith(r + '/')));
             if (!stillThere) {
               setError('That folder is no longer available (the drive was removed).');
               open(s.dataFolder.exists ? s.dataFolder.path : '/');
@@ -322,14 +326,16 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                 {!listing.writable && listing.path !== '/' && <Pill tone="warn">Harbor cannot create folders here</Pill>}
               </div>
               <ul className="plain folders" aria-label="Folders">
-                {listing.entries.map((e) => (
-                  <li key={e.path}>
-                    <button className="btn ghost folder" onClick={() => open(e.path)} aria-label={`Open folder ${e.name}`}>
-                      <span aria-hidden="true">📁</span> {e.name}
-                    </button>
-                  </li>
-                ))}
-                {listing.entries.length === 0 && <li className="muted small">No subfolders.</li>}
+                {listing.entries
+                  .filter((e) => e.name !== 'System Volume Information' || listing.entries.length === 1)
+                  .map((e) => (
+                    <li key={e.path}>
+                      <button className="btn ghost folder" onClick={() => open(e.path)} aria-label={`Open folder ${e.name}`}>
+                        <span aria-hidden="true">📁</span> {e.name}
+                      </button>
+                    </li>
+                  ))}
+                {listing.entries.length === 0 && <li className="muted small">Empty — create a folder below, or pick this one.</li>}
               </ul>
               {listing.writable && (
                 <div className="row wrap new-folder">

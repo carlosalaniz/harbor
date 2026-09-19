@@ -23,7 +23,7 @@ import { hostFacts } from '../system/metrics.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
 import { PRODUCT } from '../naming.js';
-import { createFolder, listDevices, listFolders, listMounts } from '../system/host-storage.js';
+import { createFolder, listBlockDeviceNodes, listDevices, listFolders, listMounts } from '../system/host-storage.js';
 import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 
 export interface ApiDeps {
@@ -470,9 +470,21 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     // section. The generic disk list skips its device node so it never shows twice.
     const devices = listDevices();
     const removableNodes = new Set(devices.filter((d) => d.mounted).map((d) => d.device));
+    // A physically yanked drive can leave a stale /proc mount row behind
+    // (kernel cleanup races the pull). Hide any /mnt or /media mount whose
+    // /dev/* node no longer exists in lsblk — the drive is gone even if the
+    // row is not. Never hide on a failed probe (null): a broken lsblk must
+    // not make real disks vanish.
+    const liveNodes = listBlockDeviceNodes();
+    const mounts = listMounts(undefined, removableNodes).filter((m) => {
+      if (!liveNodes) return true;
+      if (!m.device.startsWith('/dev/')) return true;
+      if (liveNodes.has(m.device)) return true;
+      return !(m.mountpoint === '/mnt' || m.mountpoint.startsWith('/mnt/') || m.mountpoint === '/media' || m.mountpoint.startsWith('/media/'));
+    });
     return {
       dataFolder: { path: config.userDataDir, exists: fsExists(config.userDataDir), writable: fsExists(config.userDataDir) && writable(config.userDataDir) },
-      mounts: listMounts(undefined, removableNodes),
+      mounts,
       devices,
       inUse: service.foldersInUse(),
     };

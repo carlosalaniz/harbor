@@ -197,6 +197,32 @@ function defaultLsblk(args: string[]): string {
   return execFileSync('lsblk', args, { encoding: 'utf8', timeout: 10_000 });
 }
 
+// Every /dev/* node lsblk knows about (disks, partitions, everything — not
+// just removable). Used to spot stale pulls: a mount under /mnt or /media on
+// a /dev/* node that no longer exists is a yanked drive whose kernel entry
+// has not been cleaned up yet. Returns null when lsblk is unavailable so
+// callers never hide real disks on a failed probe.
+export function listBlockDeviceNodes(run: (args: string[]) => string = defaultLsblk, fixtureJson?: string): Set<string> | null {
+  try {
+    const doc = fixtureJson ?? process.env['HARBOR_DEVICES_JSON'];
+    const root = (doc ? JSON.parse(doc) : JSON.parse(run(['--json', '-o', 'NAME']))) as { blockdevices?: { name?: string; children?: { name?: string }[] }[] };
+    const nodes = new Set<string>();
+    const walk = (devs: { name?: string; children?: { name?: string }[] }[] | undefined) => {
+      for (const b of devs ?? []) {
+        if (b.name) nodes.add(`/dev/${b.name}`);
+        if (b.children) {
+          for (const c of b.children) if (c.name) nodes.add(`/dev/${c.name}`);
+          walk(b.children as { name?: string; children?: { name?: string }[] }[]);
+        }
+      }
+    };
+    walk(root.blockdevices);
+    return nodes;
+  } catch {
+    return null;
+  }
+}
+
 // Mount-point suggestion for a removable device: /mnt/<label-or-name>, sanitized.
 export function suggestedMountpoint(d: Pick<DeviceInfo, 'name' | 'label'>): string {
   const raw = (d.label ?? d.name).toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || d.name;

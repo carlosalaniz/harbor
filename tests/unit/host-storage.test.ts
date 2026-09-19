@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createFolder, listFolders, listMounts, parseDevices, parseMounts } from '../../src/system/host-storage.js';
+import { createFolder, listBlockDeviceNodes, listFolders, listMounts, parseDevices, parseMounts } from '../../src/system/host-storage.js';
 
 describe('host storage', () => {
   it('parses /proc/mounts down to real disks and hides system and Docker mounts', () => {
@@ -51,6 +51,12 @@ describe('host storage', () => {
     const text = ['/dev/vda1 / ext4 rw 0 0', '/dev/sdb1 /mnt/usb20fd vfat rw 0 0'].join('\n');
     expect(listMounts(text).map((m) => m.mountpoint)).toEqual(['/', '/mnt/usb20fd']);
     expect(listMounts(text, new Set(['/dev/sdb1'])).map((m) => m.mountpoint)).toEqual(['/']);
+  });
+
+  it('lists every /dev node so a yanked drive with a stale mount row can be spotted', () => {
+    const json = JSON.stringify({ blockdevices: [{ name: 'sda', children: [{ name: 'sda1' }] }, { name: 'sdb', children: [{ name: 'sdb1' }] }] });
+    expect(listBlockDeviceNodes(() => json)).toEqual(new Set(['/dev/sda', '/dev/sda1', '/dev/sdb', '/dev/sdb1']));
+    expect(listBlockDeviceNodes(() => 'not json')).toBeNull();
   });
 
   it('lists only directories, hides dot folders and system locations, creates one named folder', () => {
