@@ -10,6 +10,7 @@ import type { AppearanceService } from '../appearance/service.js';
 import type { PowerControl } from '../system/power.js';
 import type { TerminalService } from '../system/terminal.js';
 import type { SetupService } from '../auth/setup.js';
+import type { DeviceMountService } from '../system/device-mount.js';
 
 // Generate the OpenAPI document from the real route schemas. Handlers are never invoked.
 export async function generateOpenApi(version = '0.0.0-doc'): Promise<Record<string, unknown>> {
@@ -17,7 +18,7 @@ export async function generateOpenApi(version = '0.0.0-doc'): Promise<Record<str
   try {
     const config = normalizeConfig({ stateDir: dir, catalogDir: dir, docker: { mode: 'fake' }, listen: { host: '127.0.0.1', port: 18000 } }, dir);
     const noop = { debug() {}, info() {}, warn() {}, error() {} };
-    const app = await buildApi({ config, service: {} as ApplicationService, sessions: {} as SessionService, tools: {} as PlatformToolsService, appearance: {} as AppearanceService, power: {} as PowerControl, terminals: {} as TerminalService, setup: {} as SetupService, tailscaleFacts: async () => ({ installed: false, loggedIn: false }), log: noop, version });
+    const app = await buildApi({ config, service: {} as ApplicationService, sessions: {} as SessionService, tools: {} as PlatformToolsService, devices: {} as DeviceMountService, appearance: {} as AppearanceService, power: {} as PowerControl, terminals: {} as TerminalService, setup: {} as SetupService, tailscaleFacts: async () => ({ installed: false, loggedIn: false }), log: noop, version });
     await app.ready();
     const doc = app.swagger() as Record<string, unknown>;
     await app.close();

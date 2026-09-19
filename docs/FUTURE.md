@@ -72,12 +72,15 @@ Not adopted, on purpose: a files app (a large product on its own; Nextcloud cove
 `harbor purge` per app exists), external disk formatting/mounting (TDD exclusion; the folder picker sees mounted
 disks), migration assistant, language settings.
 
-## External disk management for advanced users (recorded 2026-09-16, blocked on hardware)
+## External disk management for advanced users (recorded 2026-09-16, partially unblocked 2026-09-20)
 
 Harbor should HELP mount, format and partition EXTERNAL devices (never the system disk, never
 implicitly). Bring-your-own-folder stays mount-only; this is a separate advanced flow behind the
-Advanced tools acknowledgement. Blocked: needs a physical machine to test against — no hardware
-available at the moment.
+Advanced tools acknowledgement. **Update 2026-09-20: the mount half is now built and the hardware
+blocker is gone** — a physical Ubuntu box (carlos-desktop) with a USB stick is available, and
+decision 88 ships enumerate + mount/unmount at `/mnt/<label>` with insert/remove notifications,
+missing-folder warnings, and the `.harbor-bind.json` marker. What remains future: **partition,
+format, LUKS, SMART** (still no UI, still no formatting code path).
 
 - Abstraction: **udisks2 over D-Bus** (standard on Ubuntu; enumerate, GPT partition, format
   ext4/exFAT/NTFS/Btrfs, mount, LUKS, SMART — one API; GNOME Disks and Cockpit use it; Node via

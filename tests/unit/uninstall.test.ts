@@ -27,6 +27,7 @@ describe('uninstall preview', () => {
     expect(text).toContain('/var/lib/harbor');
     expect(text).toContain('/srv/harbor');
     expect(text).toContain('harbor.service');
+    expect(text).toContain('harbor-device-mount@.service');
     expect(text).toContain('49-harbor-power.rules');
     expect(text).toContain('Delete service user harbor');
     expect(text).toContain('Leave untouched');

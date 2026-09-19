@@ -11,6 +11,7 @@ import type { SessionService } from '../auth/sessions.js';
 import type { ApplicationService } from '../lifecycle/service.js';
 import type { Logger } from '../lifecycle/context.js';
 import type { PlatformToolsService } from '../tools/service.js';
+import type { DeviceMountService } from '../system/device-mount.js';
 import type { AppearanceService } from '../appearance/service.js';
 import type { PowerControl } from '../system/power.js';
 import type { TerminalService, TerminalSession } from '../system/terminal.js';
@@ -30,6 +31,7 @@ export interface ApiDeps {
   service: ApplicationService;
   sessions: SessionService;
   tools: PlatformToolsService;
+  devices: DeviceMountService;
   appearance: AppearanceService;
   power: PowerControl;
   terminals: TerminalService;
@@ -69,7 +71,7 @@ const errorBodySchema = {
 } as const;
 
 export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
-  const { config, service, sessions, tools, log, appearance, power, terminals, setup, tailscaleFacts } = deps;
+  const { config, service, sessions, tools, devices, log, appearance, power, terminals, setup, tailscaleFacts } = deps;
   const origin = managementOrigin(config);
   const allowedOrigins = new Set([origin, `http://127.0.0.1:${config.listen.port}`]);
   const allowedHosts = new Set([`localhost:${config.listen.port}`, `127.0.0.1:${config.listen.port}`]);
@@ -482,6 +484,21 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       if (b.parent === config.userDataDir && !fsExists(config.userDataDir)) mkdirSync(config.userDataDir, { recursive: true, mode: 0o755 });
       return reply.status(201).send(createFolder(b.parent, b.name));
     },
+  );
+  app.post(
+    '/v1/host/devices/:name/mount',
+    { preHandler: requireAuth, schema: { description: 'Mount a removable device to /mnt/<label> (root oneshot, polkit-allowed); poll GET /v1/host/storage for the result.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req, reply) => reply.status(202).send(await devices.mount((req.params as { name: string }).name, req.actor!)),
+  );
+  app.post(
+    '/v1/host/devices/:name/unmount',
+    { preHandler: requireAuth, schema: { description: 'Unmount a removable device (refused while an app uses a folder on it).', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req, reply) => reply.status(202).send(await devices.unmount((req.params as { name: string }).name, req.actor!)),
+  );
+  app.get(
+    '/v1/host/devices/:name/status',
+    { preHandler: requireAuth, schema: { description: 'Mount/unmount progress for one removable device.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req) => devices.status((req.params as { name: string }).name) ?? { device: (req.params as { name: string }).name, state: 'unmounted', message: 'no mount operation recorded', mountpoint: null, at: null },
   );
 
   // --- public domains (wizard for publishing on the internet)

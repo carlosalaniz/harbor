@@ -946,6 +946,16 @@ program
     await applyToolInstall(tool, (m) => process.stderr.write(`[tools-install] ${m}\n`));
   });
 
+program
+  .command('device-mount <spec>')
+  .description('ROOT, run by harbor-device-mount@<name:action>.service: mount or unmount removable media (spec is "<name>:mount" or "<name>:unmount")')
+  .action(async (spec: string) => {
+    const m = /^([a-z]+[0-9]+):(mount|unmount)$/.exec(spec);
+    if (!m) throw new HarborError('INVALID_REQUEST', `device-mount expects <name>:<mount|unmount>, got ${spec}`);
+    const { applyDeviceMount } = await import('../bootstrap/device-mount-apply.js');
+    await applyDeviceMount(m[1]!, m[2] as 'mount' | 'unmount', (msg) => process.stderr.write(`[device-mount] ${msg}\n`));
+  });
+
 function selfUpdateText(s: SelfUpdateStatusDto): string {
   const lines = [`Installed: Harbor ${s.current}`];
   if (s.latest) lines.push(`Newest release: ${s.latest.version}${s.latest.publishedAt ? ` (${s.latest.publishedAt.slice(0, 10)})` : ''}${s.available ? ' — UPDATE AVAILABLE (harbor self-update start)' : ' — up to date'}`);

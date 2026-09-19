@@ -7,6 +7,7 @@ import { LABELS } from '../naming.js';
 import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type InstanceIdentity } from '../planner/identity.js';
 import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory } from '../storage/host-path.js';
+import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
@@ -180,6 +181,7 @@ export class OperationRunner {
         // Operator-chosen folder: re-checked now (the plan may be minutes old); recorded as a 'bind' resource. Never created or chowned.
         const { path: hostPath } = checkHostDirectory(choice.hostPath);
         repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: claim.composeVolume, dockerId: null, name: hostPath, token: null, metadata: { storageId: claim.id, readOnly: choice.readOnly ?? false } });
+        writeBindMarker(hostPath, inst.id, claim.id);
         this.event(op, 'preparing', `using your folder ${hostPath} for ${claim.purpose}${choice.readOnly ? ' (read-only)' : ''}`);
         continue;
       }
@@ -206,6 +208,7 @@ export class OperationRunner {
       if (bind) {
         try {
           checkHostDirectory(bind.name);
+          verifyBindMarker(bind.name, inst.id, claim.id);
         } catch (e) {
           throw new HarborError('DATA_MISSING', `your folder ${bind.name} (${claim.purpose}) is not available: ${e instanceof Error ? e.message : String(e)}`, { nextAction: 'Mount or restore the folder at the same path, then retry. Harbor will not start the app against a missing folder.' });
         }

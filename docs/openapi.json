@@ -1165,6 +1165,72 @@
         }
       }
     },
+    "/v1/host/devices/{name}/mount": {
+      "post": {
+        "description": "Mount a removable device to /mnt/<label> (root oneshot, polkit-allowed); poll GET /v1/host/storage for the result.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z]+[0-9]+$",
+              "maxLength": 16
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/host/devices/{name}/unmount": {
+      "post": {
+        "description": "Unmount a removable device (refused while an app uses a folder on it).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z]+[0-9]+$",
+              "maxLength": 16
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/host/devices/{name}/status": {
+      "get": {
+        "description": "Mount/unmount progress for one removable device.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z]+[0-9]+$",
+              "maxLength": 16
+            },
+            "in": "path",
+            "name": "name",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/domains": {
       "get": {
         "description": "Registered public domains with DNS check results, this machine's public address and which app uses each domain.",

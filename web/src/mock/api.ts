@@ -152,6 +152,15 @@ export const mockApi = {
     return { revokedSessions: 1 };
   },
   hostStorage: async (): Promise<HostStorageDto> => mockStorage(),
+  mountDevice: async (name: string) => {
+    await beat();
+    return { device: name, state: 'requested', message: 'mount requested (mock)', mountpoint: null };
+  },
+  unmountDevice: async (name: string) => {
+    await beat();
+    return { device: name, state: 'requested', message: 'unmount requested (mock)', mountpoint: null };
+  },
+  deviceStatus: async (name: string) => ({ device: name, state: 'unmounted', message: 'no mount operation recorded (mock)', mountpoint: null }),
   storageUsage: async (): Promise<StorageUsageDto> => mockStorageUsage(),
   notifications: async (): Promise<NotificationsDto> => notifications,
   markNotificationRead: async (id: string): Promise<NotificationsDto> => {

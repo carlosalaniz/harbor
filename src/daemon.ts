@@ -167,6 +167,18 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     );
     const observer = new Observer(ctx, service, overrides.observerIntervalMs ?? 10_000, overrides.sourceCheckMs ?? 15 * 60_000);
     const power = overrides.power ?? (fakeMode ? new FakePower() : new SystemdPower());
+    const { DeviceMountService } = await import('./system/device-mount.js');
+    const startUnit = async (unit: string) => {
+      const { spawn } = await import('node:child_process');
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn('/usr/bin/systemctl', ['start', '--no-block', unit], { env: { PATH: '/usr/bin:/bin', LANG: 'C.UTF-8' }, stdio: ['ignore', 'pipe', 'pipe'] });
+        let err = '';
+        child.stderr.on('data', (d: Buffer) => (err += d.toString()));
+        child.on('error', reject);
+        child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(err.trim() || `systemctl exited ${code}`))));
+      });
+    };
+    const devices = new DeviceMountService(repo, clock, config.stateDir, fakeMode ? null : startUnit);
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode
     const terminals = new TerminalService(log, fakeMode ? { shell: [process.env['SHELL'] ?? '/bin/bash', '-il'], env: { HOME: process.env['HOME'] ?? config.stateDir, USER: process.env['USER'] ?? 'harbor' }, cwd: config.stateDir } : { shell: ['/bin/bash', '-il'], env: { HOME: config.stateDir, USER: 'harbor', LOGNAME: 'harbor' }, cwd: config.stateDir });
@@ -186,7 +198,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
         return { installed: false, loggedIn: false };
       }
     };
-    const app = await buildApi({ config, service, sessions, tools, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version });
+    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version });
     await app.listen({ host: config.listen.host, port: config.listen.port });
     // LAN mode: a second listener on every interface hands requests (and WebSocket upgrades) to the same routes.
     let lanServer: HttpServer | null = null;

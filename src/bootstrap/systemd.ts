@@ -80,6 +80,12 @@ polkit.addRule(function (action, subject) {
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
+  // Removable-device mount/unmount from the console: start harbor-device-mount@<name>:<action>.service
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("harbor-device-mount@") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
   return polkit.Result.NOT_HANDLED;
 });
 `;
@@ -133,5 +139,24 @@ Description=Harbor platform tool install (%i: cockpit or portainer)
 Type=oneshot
 ExecStart=${PRODUCT.paths.opt}/bin/harbor tools-install %i
 TimeoutStartSec=1800
+`;
+}
+
+export const DEVICE_MOUNT_UNIT = 'harbor-device-mount.service';
+
+// Oneshot unit for mounting/unmounting removable media from the console.
+// The daemon (harbor user, allowed by the polkit rule) starts it with the device
+// name and action; the root step runs `harbor device-mount <name> <mount|unmount>`,
+// which validates the removable-only allowlist itself. Progress goes to
+// <stateDir>/devices/<name>/mount-status.json.
+export function deviceMountUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor removable-device mount (%i: <name>:<mount|unmount>)
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor device-mount %i
+TimeoutStartSec=300
 `;
 }

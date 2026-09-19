@@ -153,13 +153,22 @@ export function parseDevices(lsblkJson: string): DeviceInfo[] {
   return out.sort((a, b) => a.device.localeCompare(b.device));
 }
 
-export function listDevices(): DeviceInfo[] {
+export function listDevices(run: (args: string[]) => string = defaultLsblk): DeviceInfo[] {
   try {
-    const json = execFileSync('lsblk', ['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG'], { encoding: 'utf8', timeout: 10_000 });
-    return parseDevices(json);
+    return parseDevices(run(['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG']));
   } catch {
     return [];
   }
+}
+
+function defaultLsblk(args: string[]): string {
+  return execFileSync('lsblk', args, { encoding: 'utf8', timeout: 10_000 });
+}
+
+// Mount-point suggestion for a removable device: /mnt/<label-or-name>, sanitized.
+export function suggestedMountpoint(d: Pick<DeviceInfo, 'name' | 'label'>): string {
+  const raw = (d.label ?? d.name).toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || d.name;
+  return `/mnt/${raw}`;
 }
 
 export function listMounts(procMountsText = safeRead('/proc/self/mounts')): MountInfo[] {

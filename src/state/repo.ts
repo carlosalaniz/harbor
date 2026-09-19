@@ -648,6 +648,9 @@ export class Repo {
   resources(instanceId: string): ResourceRow[] {
     return (this.db.prepare('SELECT * FROM resources WHERE instance_id = ? ORDER BY kind, role').all(instanceId) as Raw[]).map(resourceFrom);
   }
+  resourcesByKind(kind: ResourceRow['kind']): ResourceRow[] {
+    return (this.db.prepare('SELECT * FROM resources WHERE kind = ? ORDER BY instance_id, role').all(kind) as Raw[]).map(resourceFrom);
+  }
   upsertResource(r: Omit<ResourceRow, 'id' | 'createdAt'>): void {
     this.db
       .prepare(

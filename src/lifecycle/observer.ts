@@ -10,6 +10,8 @@ import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyRoutesFromState, caddySignature } from './runner.js';
 import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
+import { listDevices } from '../system/host-storage.js';
+import { checkHostDirectory } from '../storage/host-path.js';
 
 // Periodic observation of what actually exists. Never mutates Docker.
 export class Observer {
@@ -17,7 +19,7 @@ export class Observer {
   private busy = false;
   private caddyApplied: string | null = null;
   private lastSourceCheck = 0;
-
+  private lastDevices: string | null = null;
   constructor(
     private readonly ctx: Ctx,
     private readonly service: ApplicationService,
@@ -101,6 +103,8 @@ export class Observer {
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
       }
       this.notifyUpdatesAndDisk();
+      this.notifyDevices();
+      this.notifyMissingFolders();
       if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
         this.lastSourceCheck = Date.now();
         await this.service.checkAllSources();
@@ -143,6 +147,59 @@ export class Observer {
     const su = this.ctx.selfUpdate.status();
     if (su.available && su.latest) {
       this.ctx.notifier.notify({ kind: 'harbor-update', severity: 'info', title: `Harbor ${su.latest.version} is available`, body: 'Update from Settings → Overview. Apps keep running; the console is briefly unavailable.', dedupeKey: `harbor-update:${su.latest.version}` });
+    }
+  }
+
+  // Removable media insert/remove: one info row per device, resolved when the
+  // condition clears (reinserted / removed). Apps keep running throughout —
+  // the runner refuses to start against a missing folder, and the row below
+  // explains which app is affected.
+  private notifyDevices(): void {
+    let devices: { name: string; label: string | null; mounted: boolean; mountpoint: string | null }[];
+    try {
+      devices = listDevices();
+    } catch {
+      return;
+    }
+    const seen = new Set(devices.map((d) => d.name));
+    const snapshot = JSON.stringify(devices.map((d) => `${d.name}:${d.mounted ? d.mountpoint : ''}`).sort());
+    if (this.lastDevices !== null && snapshot !== this.lastDevices) {
+      const prev = new Set((JSON.parse(this.lastDevices) as string[]).map((s) => s.split(':')[0]!));
+      for (const d of devices) {
+        if (!prev.has(d.name)) {
+          this.ctx.notifier.notify({ kind: 'device-inserted', severity: 'info', title: `${d.label ?? d.name} connected`, body: d.mounted && d.mountpoint ? `Mounted at ${d.mountpoint}. Point an app at a folder on it from Settings → Storage.` : 'Inserted but not mounted. Mount it from Settings → Storage before pointing an app at it.', dedupeKey: `device:${d.name}` });
+        }
+      }
+      for (const name of prev) {
+        if (!seen.has(name)) this.ctx.notifier.resolve(`device:${name}`);
+      }
+    }
+    this.lastDevices = snapshot;
+  }
+
+  // An app folder that vanished (drive removed or unmounted): warn per app,
+  // keep the app running, resolve when the folder is back. The runner already
+  // refuses restarts against a missing folder; this is the bell half.
+  private notifyMissingFolders(): void {
+    try {
+      for (const r of this.ctx.repo.resourcesByKind('bind')) {
+        const key = `storage-missing:${r.instanceId}:${r.role}`;
+        let missing = false;
+        try {
+          checkHostDirectory(r.name);
+        } catch {
+          missing = true;
+        }
+        if (missing) {
+          const inst = this.ctx.repo.instance(r.instanceId);
+          const purpose = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
+          this.ctx.notifier.notify({ kind: 'storage-missing', severity: 'warning', title: `${inst?.displayName ?? inst?.name ?? 'An app'} lost its folder`, body: `${r.name} (${purpose}) is not available — the drive may have been removed. The app keeps running with what it has in memory; re-insert or re-mount the drive at the same path. Harbor will not restart it until the folder is back.`, instanceId: r.instanceId, dedupeKey: key });
+        } else {
+          this.ctx.notifier.resolve(key);
+        }
+      }
+    } catch {
+      /* repo trouble is reported elsewhere */
     }
   }
 

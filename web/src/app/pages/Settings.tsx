@@ -1126,6 +1126,37 @@ function Storage() {
                   {d.fsType ? ` · ${d.fsType}` : ''}
                 </span>
               </div>
+              <div className="row wrap">
+                {d.mounted && d.mountpoint ? (
+                  <button
+                    className="btn small"
+                    onClick={() => {
+                      setError(null);
+                      api.unmountDevice(d.name).then(
+                        () => api.hostStorage().then(setS, (e: Error) => setError(e.message)),
+                        (e: Error) => setError(e.message),
+                      );
+                    }}
+                    aria-label={`Eject ${d.label ?? d.name}`}
+                  >
+                    Eject
+                  </button>
+                ) : (
+                  <button
+                    className="btn small"
+                    onClick={() => {
+                      setError(null);
+                      api.mountDevice(d.name).then(
+                        () => api.hostStorage().then(setS, (e: Error) => setError(e.message)),
+                        (e: Error) => setError(e.message),
+                      );
+                    }}
+                    aria-label={`Mount ${d.label ?? d.name}`}
+                  >
+                    Mount
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>

@@ -53,12 +53,12 @@ scripts/               package.mjs (release archive), catalog-pin/qualify, opena
 install.sh             curl one-liner (published as a release asset too)
 ```
 
-Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`, `/var/lib/harbor` (state, instances, icons, packages, updates/status.json, setup-code), `/srv/harbor` (user data folder). Service user `harbor` (docker + systemd-journal groups, NoNewPrivileges). Root actions go through polkit-allowed systemd oneshots: `harbor-tailscale-operator.service`, `harbor-self-update@<version>.service`; reboot/poweroff via logind rule (`/etc/polkit-1/rules.d/49-harbor-power.rules`).
+Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`, `/var/lib/harbor` (state, instances, icons, packages, updates/status.json, setup-code, devices/<name>/mount-status.json), `/srv/harbor` (user data folder). Service user `harbor` (docker + systemd-journal groups, NoNewPrivileges). Root actions go through polkit-allowed systemd oneshots: `harbor-tailscale-operator.service`, `harbor-self-update@<version>.service`, `harbor-tools-install@<id>.service`, `harbor-device-mount@<name:action>.service` (removable media, mounts at `/mnt/<label>`); reboot/poweroff via logind rule (`/etc/polkit-1/rules.d/49-harbor-power.rules`).
 
 ## 4. Versions, tags, releases
 
-Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0.
-`package.json` version is **0.10.0**. GitHub Releases exist for v0.7.0 → v0.10.0 (assets:
+Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0.
+`package.json` version is **0.11.0**. GitHub Releases exist for v0.7.0 → v0.11.0 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
 push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
@@ -71,7 +71,8 @@ macOS visual pass; 0.6 uploaded packages (zip, digest pinning) + app updates wit
 troubleshoot logs, TOTP 2FA, device name, Tailscale operator self-heal; 0.8 install.sh, setup wizard,
 LAN mode + mDNS, Harbor self-update, defaultCredentials; 0.9 round-9 (notifications, usage,
 git sources, auto-updates, widgets); 0.10 password-only persistent login (30-day remember) +
-Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logout in Settings).
+Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logout in Settings);
+0.11 `harbor uninstall`, apt-lock retry, keep-existing-admin, removable-media phase 1 (lsblk devices in Places).
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 

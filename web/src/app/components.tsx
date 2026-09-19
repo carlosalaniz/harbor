@@ -166,6 +166,28 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
       },
       (e: Error) => setError(e.message),
     );
+    // Removable media can appear or vanish while the picker is open: re-read
+    // the device list every 5s and drop the selection if its mountpoint is gone.
+    const t = setInterval(() => {
+      api.hostStorage().then(
+        (s) => {
+          setStorage(s);
+          setListing((cur) => {
+            if (!cur) return cur;
+            // The open folder vanished (drive removed): fall back to the data folder.
+            const stillThere = s.mounts.some((m) => m.mountpoint === cur.path) || s.devices.some((d) => d.mountpoint === cur.path) || cur.path === s.dataFolder.path || cur.path === '/';
+            if (!stillThere) {
+              setError('That folder is no longer available (the drive was removed).');
+              open(s.dataFolder.exists ? s.dataFolder.path : '/');
+              return cur;
+            }
+            return cur;
+          });
+        },
+        (e: Error) => setError(e.message),
+      );
+    }, 5000);
+    return () => clearInterval(t);
   }, [initial]);
   const create = () => {
     if (!listing || !newName.trim()) return;
@@ -218,12 +240,27 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                     </span>
                   </button>
                 ) : (
-                  <span className="btn ghost place" aria-disabled="true" title="Inserted but not mounted">
-                    <span aria-hidden="true">▢</span> {d.label ?? d.name}
-                    <span className="muted small">
-                      {d.size}
-                      {d.fsType ? ` · ${d.fsType}` : ''} · not mounted
+                  <span className="place-row">
+                    <span className="btn ghost place" aria-disabled="true" title="Inserted but not mounted">
+                      <span aria-hidden="true">▢</span> {d.label ?? d.name}
+                      <span className="muted small">
+                        {d.size}
+                        {d.fsType ? ` · ${d.fsType}` : ''} · not mounted
+                      </span>
                     </span>
+                    <button
+                      className="btn small"
+                      onClick={() => {
+                        setError(null);
+                        api.mountDevice(d.name).then(
+                          () => api.hostStorage().then(setStorage, (e: Error) => setError(e.message)),
+                          (e: Error) => setError(e.message),
+                        );
+                      }}
+                      aria-label={`Mount ${d.label ?? d.name}`}
+                    >
+                      Mount
+                    </button>
                   </span>
                 )}
               </li>

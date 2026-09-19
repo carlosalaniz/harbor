@@ -1792,6 +1792,15 @@ button.vital:hover {
 .place > span:first-child {
   color: var(--accent);
 }
+.place-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.place-row .place {
+  flex: 1;
+  min-width: 0;
+}
 .picker-main {
   display: grid;
   gap: 10px;

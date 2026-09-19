@@ -10,7 +10,7 @@ import { HarborError } from '../errors.js';
 import { LABELS, PRODUCT } from '../naming.js';
 import { exec } from './exec.js';
 import { gatherHostFacts, UNIT_MARKER, type HostFacts } from './host.js';
-import { POLKIT_RULE_PATH, SELF_UPDATE_UNIT_FILE, TAILSCALE_OPERATOR_UNIT, TOOLS_INSTALL_UNIT } from './systemd.js';
+import { POLKIT_RULE_PATH, SELF_UPDATE_UNIT_FILE, TAILSCALE_OPERATOR_UNIT, TOOLS_INSTALL_UNIT, DEVICE_MOUNT_UNIT } from './systemd.js';
 
 export interface UninstallOptions {
   yes: boolean;
@@ -40,7 +40,7 @@ export function uninstallPreview(facts: HostFacts, opts: { keepData: boolean }):
     `Remove ${PRODUCT.paths.etc} (daemon config)`,
     opts.keepData ? `Keep ${PRODUCT.paths.var} (state, secrets, release snapshots)` : `Remove ${PRODUCT.paths.var} (state, secrets, release snapshots — apps' data volumes are already gone above)`,
     `Remove ${PRODUCT.paths.data} only if empty (your folders inside it are never deleted)`,
-    `Remove Harbor-owned systemd units (${TAILSCALE_OPERATOR_UNIT}, ${SELF_UPDATE_UNIT_FILE}, ${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}) and ${POLKIT_RULE_PATH}`,
+    `Remove Harbor-owned systemd units (${TAILSCALE_OPERATOR_UNIT}, ${SELF_UPDATE_UNIT_FILE}, ${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}, ${DEVICE_MOUNT_UNIT.replace('.service', '@.service')}) and ${POLKIT_RULE_PATH}`,
     `Delete service user ${PRODUCT.serviceUser}`,
     'Leave untouched: Docker Engine, Cockpit/Tailscale/Caddy packages, your own folders, non-Harbor Docker objects',
   ];
@@ -173,7 +173,7 @@ export async function uninstall(opts: UninstallOptions): Promise<UninstallResult
   }
 
   // 4. Harbor-owned systemd extras + polkit rule.
-  for (const unit of [TAILSCALE_OPERATOR_UNIT, SELF_UPDATE_UNIT_FILE, TOOLS_INSTALL_UNIT.replace('.service', '@.service')]) {
+  for (const unit of [TAILSCALE_OPERATOR_UNIT, SELF_UPDATE_UNIT_FILE, TOOLS_INSTALL_UNIT.replace('.service', '@.service'), DEVICE_MOUNT_UNIT.replace('.service', '@.service')]) {
     const p = `/etc/systemd/system/${unit}`;
     if (unitIsOurs(p)) {
       rmSync(p, { force: true });

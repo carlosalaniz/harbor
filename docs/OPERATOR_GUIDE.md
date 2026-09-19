@@ -193,6 +193,22 @@ Rules and behaviour:
 - Harbor does not change permissions. The packaged apps run as root inside their containers or take
   ownership on first start (Nextcloud); keep the folder for one app only.
 - Read-only claims (Navidrome's music) are mounted read-only.
+- When you claim a folder, Harbor writes a small `.harbor-bind.json` marker inside it (which app
+  and claim). If a different drive ends up mounted at the same path, start and reinstall refuse
+  with `DATA_MISSING` instead of writing into the wrong disk — mount the right drive back.
+
+## 4a1. Removable drives (USB sticks, external disks)
+
+Plug in a drive and it appears under **Settings → Storage → Removable** and in the folder
+picker's *Removable* section — mounted drives open like any disk, unmounted ones show *Mount*.
+Mounting puts the drive at `/mnt/<label>` (the label, lowercased and sanitized, or the device
+name); unmounting is the *Eject* button. Harbor only ever mounts removable media — system disks
+are never touched.
+
+- Insert and removal also raise a bell notification (one row per drive, resolved when it leaves).
+- If a drive holding an app folder is removed, the app keeps running and the bell warns which
+  app lost its folder. Restarting that app is refused (`DATA_MISSING`) until the drive is back
+  at the same path; nothing is ever started against a missing folder.
 
 ## 4b. Settings in the console (for people who do not use a terminal)
 
@@ -204,7 +220,7 @@ The console's **Settings** page covers what a household operator needs after boo
 | Remote access | connect this machine to your Tailscale tailnet by clicking *Log in with Tailscale* (opens the approval page) or by pasting an auth key; see the node name; turn *Harbor on your tailnet* on or off; log out of the tailnet |
 | Public addresses | the wizard for publishing on the internet: this machine's public address, your domains with a DNS check (*Points here* / *Points elsewhere* / *No DNS record yet*), which app uses each, re-check and forget; certificates are automatic |
 | Remote access (details) | tailnet addresses, node key expiry, link to the Tailscale admin console; the auth key you used is single-use and is not stored |
-| Storage | disks with free space, the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
+| Storage | disks with free space, removable drives (mount/eject), the Harbor data folder (`/srv/harbor`, where Harbor may create folders for you), folders currently used by apps, and a folder browser with *Create folder here* |
 | Overview | the landing page: your machine's name, what it runs on, Harbor version, uptime, storage/memory/temperature, *Restart* and *Shut down* (each asks first), and the wallpaper picker |
 | Appearance | theme (match device / dark / light), wallpaper presets, your own picture (PNG/JPEG/WebP up to 6 MB), or **rotating wallpapers**: Harbor itself fetches a new picture on a schedule from Bing or Wikimedia Commons (no account) or from your favourite subreddits (needs a free Reddit "script" app key; Settings walks you through it). The picture and its credit show on Home. |
 | Advanced access | a **terminal** on the machine (shell of the Harbor service account: `docker`, `harbor …`), the SSH forwarding lines with copy buttons, and the CLI equivalents |

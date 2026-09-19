@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cockpitSocketDropIn, harborUnit } from '../../src/bootstrap/systemd.js';
+import { cockpitSocketDropIn, deviceMountUnit, harborUnit, polkitPowerRule } from '../../src/bootstrap/systemd.js';
 
 describe('systemd unit text', () => {
   it('runs as the harbor user with docker group, control-group kill, and does not stop when Docker stops', () => {
@@ -14,5 +14,10 @@ describe('systemd unit text', () => {
   });
   it('restricts the Cockpit socket to loopback', () => {
     expect(cockpitSocketDropIn(9090)).toContain('ListenStream=\nListenStream=127.0.0.1:9090');
+  });
+  it('mounts removable media through a root oneshot the harbor user may start', () => {
+    expect(deviceMountUnit()).toContain('ExecStart=/opt/harbor/bin/harbor device-mount %i');
+    expect(deviceMountUnit()).toContain('TimeoutStartSec=300');
+    expect(polkitPowerRule()).toContain('harbor-device-mount@');
   });
 });

@@ -12,7 +12,7 @@ import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
 import { exec, execOk, aptGet } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
-import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit } from './systemd.js';
+import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit } from './systemd.js';
 import { privateInterfaces, lanUrl as lanUrlFor } from '../system/lan.js';
 import { readSetupCode, writeSetupCode } from '../auth/setup.js';
 import { hostname as osHostname } from 'node:os';
@@ -335,6 +335,7 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   writeFileSync(`/etc/systemd/system/${TAILSCALE_OPERATOR_UNIT}`, tailscaleOperatorUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${SELF_UPDATE_UNIT_FILE}`, selfUpdateUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}`, toolsInstallUnit(), { mode: 0o644 });
+  writeFileSync(`/etc/systemd/system/${DEVICE_MOUNT_UNIT.replace('.service', '@.service')}`, deviceMountUnit(), { mode: 0o644 });
   await execOk('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['enable', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['restart', PRODUCT.paths.systemdUnit], { timeoutMs: 120_000 });
