@@ -1079,11 +1079,18 @@ function Storage() {
   useEffect(() => {
     void load();
     api.storageUsage().then(setUsage, () => setUsage(null)); // best-effort: Docker may be down
+    // Physical pull feels real-time: re-read the device list every 2s so an
+    // inserted or yanked drive appears/disappears without a manual reload.
+    const t = setInterval(() => {
+      api.hostStorage().then(setS, () => undefined);
+    }, 2000);
+    return () => clearInterval(t);
   }, []);
   // A mount/unmount is a root oneshot that takes seconds: poll the per-device
   // status until it settles, then reload the list so the row flips by itself.
+  // The busy flag is already set by mount()/unmount() so the button locks
+  // instantly on click (no double-submit while the POST is in flight).
   const watchDevice = (name: string) => {
-    setBusyDevice(name);
     let tries = 0;
     const t = setInterval(() => {
       tries += 1;
@@ -1106,16 +1113,26 @@ function Storage() {
   };
   const mount = (name: string) => {
     setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
     api.mountDevice(name).then(
       () => watchDevice(name),
-      (e: Error) => setError(e.message),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
     );
   };
   const unmount = (name: string) => {
     setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
     api.unmountDevice(name).then(
       () => watchDevice(name),
-      (e: Error) => setError(e.message),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
     );
   };
   return (
@@ -1169,20 +1186,34 @@ function Storage() {
                 {d.mounted && d.mountpoint ? (
                   <button
                     className="btn small"
-                    disabled={busyDevice === d.name}
+                    disabled={busyDevice !== null}
                     onClick={() => unmount(d.name)}
                     aria-label={`Eject ${d.label ?? d.name}`}
+                    aria-busy={busyDevice === d.name}
                   >
-                    {busyDevice === d.name ? 'Ejecting…' : 'Eject'}
+                    {busyDevice === d.name ? (
+                      <>
+                        <span className="spin" aria-hidden="true" /> Ejecting…
+                      </>
+                    ) : (
+                      'Eject'
+                    )}
                   </button>
                 ) : (
                   <button
                     className="btn small"
-                    disabled={busyDevice === d.name}
+                    disabled={busyDevice !== null}
                     onClick={() => mount(d.name)}
                     aria-label={`Mount ${d.label ?? d.name}`}
+                    aria-busy={busyDevice === d.name}
                   >
-                    {busyDevice === d.name ? 'Mounting…' : 'Mount'}
+                    {busyDevice === d.name ? (
+                      <>
+                        <span className="spin" aria-hidden="true" /> Mounting…
+                      </>
+                    ) : (
+                      'Mount'
+                    )}
                   </button>
                 )}
                 {busyDevice === d.name && <span className="muted small" role="status">Working… the row updates by itself.</span>}

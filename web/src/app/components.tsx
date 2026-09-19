@@ -161,8 +161,9 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
   };
   // A mount is a root oneshot that takes seconds: poll the per-device status
   // until it settles, then reload Places so the row flips by itself.
+  // The busy flag is already set by mount() so the button locks instantly
+  // on click (no double-submit while the POST is in flight).
   const watchDevice = (name: string) => {
-    setBusyDevice(name);
     let tries = 0;
     const t = setInterval(() => {
       tries += 1;
@@ -185,9 +186,14 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
   };
   const mount = (name: string) => {
     setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
     api.mountDevice(name).then(
       () => watchDevice(name),
-      (e: Error) => setError(e.message),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
     );
   };
   useEffect(() => {
@@ -282,11 +288,18 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                     </span>
                     <button
                       className="btn small"
-                      disabled={busyDevice === d.name}
+                      disabled={busyDevice !== null}
                       onClick={() => mount(d.name)}
                       aria-label={`Mount ${d.label ?? d.name}`}
+                      aria-busy={busyDevice === d.name}
                     >
-                      {busyDevice === d.name ? 'Mounting…' : 'Mount'}
+                      {busyDevice === d.name ? (
+                        <>
+                          <span className="spin" aria-hidden="true" /> Mounting…
+                        </>
+                      ) : (
+                        'Mount'
+                      )}
                     </button>
                   </span>
                 )}
