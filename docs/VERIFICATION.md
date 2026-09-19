@@ -1,6 +1,6 @@
 # Verification report
 
-Harbor local preview, version 0.10.0. This report lists what actually ran, where, with which versions,
+Harbor local preview, version 0.12.0. This report lists what actually ran, where, with which versions,
 and the outcome. Nothing here is asserted without a recorded run. Live runs are stored under
 `docs/evidence/<run-id>/` (report.md, report.json, bootstrap logs, screenshots, exported files).
 
@@ -18,12 +18,26 @@ and the outcome. Nothing here is asserted without a recorded run. Live runs are 
 |---|---|---|
 | `pnpm typecheck` | server + web strict TS | pass |
 | `pnpm lint` | ESLint (ts, tsx, mjs) | pass |
-| `pnpm test` | unit: YAML restrictions, manifest/Compose schemas and cross-references, catalog/hash verification (incl. presentation assets), planner and renderer (bind mounts, configuration formats), host-path rules, exposure config/URLs, schema migrations v1→v7, OpenAPI, systemd/release files | 81 passed |
+| `pnpm test` | unit: YAML restrictions, manifest/Compose schemas and cross-references, catalog/hash verification (incl. presentation assets), planner and renderer (bind mounts, configuration formats), host-path rules, exposure config/URLs, schema migrations v1→v7, OpenAPI, systemd/release files, device mount + bind marker | 93 passed |
 | `pnpm test:integration` | daemon in-process with the fake Docker adapter: install flow, idempotency, port claims, readiness timeout, coexistence, sentinel non-interference, restart→needs_action, Docker-down, volumes/secrets retention (synthetic stateful package), auth controls (incl. 30-day remember sessions, session list, revoke-others), tool binding, exposure (tailnet/public/primary/degraded/withdraw, UI exposure), external storage (validation, bind mounts, overlap, reinstall verification, DATA_MISSING), purge/domains, appearance/rotation, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update | 109 passed (+3 live-Docker skipped without opt-in) |
 | `HARBOR_LIVE_DOCKER_SOCKET=~/.docker/run/docker.sock pnpm test:integration` | real Dockerode + `docker compose` against the authorized Docker Desktop engine: Excalidraw install/stop/start/remove/reinstall, BentoPDF coexistence, COOP/COEP headers | 3 passed (plus the 49 above) |
 | `pnpm build && pnpm test:e2e` | Playwright against the built console with the fake adapter: Umbrel-style login hero (incl. bad-credentials, reload→re-login→resume, logout revokes), Home/App Store/Platform/Publishing pages (icons served with sandboxed CSP, category filter, search), app page + plan review + double-click safety, drawer stop/start/remove/reinstall, coexistence + owned resources, publish wizard (tailnet, public with one-time credentials, withdraw), phone width, bring-your-own-folder validation and mount, settings (password, Tailscale, storage, appearance, opacity slider, rotation, terminal, logs, rename, 2FA), first-run wizard, Harbor update card | 21 passed |
 
 Fake-adapter results prove the engine, API and UI contracts. They are not evidence for A03/A09/A11/A14/A16; those come from section 3.
+
+## 3a. Removable media on physical hardware (2026-09-19, Harbor 0.11.0 → 0.12.0 via console self-update)
+
+Physical Ubuntu 24.04.3 x86_64 box (`harbor`, 94 GB RAM), PNY USB stick `sdb1` 14.4 GB vfat label `USB20FD`, unmounted. All calls loopback `http://127.0.0.1:18000` over SSH with the administrator password.
+
+| Step | Result |
+|---|---|
+| `GET /v1/host/storage` on 0.12.0 | `devices: [(sdb1, USB20FD, 14.4G, unmounted)]`, `mounts: [(/, System disk)]` — the stick is visible before any mount |
+| `POST /v1/host/devices/sdb1/mount` → `GET …/status` | `requested` → `mounted at /mnt/usb20fd` (< 10 s); `lsblk` confirms `sdb1 → /mnt/usb20fd`; mountpoint owned `harbor:harbor`, stick contents listed |
+| `GET /v1/host/storage` while mounted | `devices: [(sdb1, mounted, /mnt/usb20fd)]`, `mounts` gains `(/mnt/usb20fd, Drive "usb20fd")`; `GET /v1/host/folders?path=/mnt/usb20fd` lists entries, `writable: true` |
+| `POST /v1/host/devices/sdb1/unmount` → `GET …/status` | `requested` → `unmounted`; `lsblk` shows `sdb1` with no mountpoint — clean round-trip |
+| Self-update 0.11.0 → 0.12.0 | `POST /v1/system/update/check` finds 0.12.0, `POST …/apply` → `succeeded` in ~8 s; console back on 0.12.0 |
+
+Unit/integration cover the rest: unmount refused while a `bind` resource lives underneath (names the apps), insert/remove + per-app `storage-missing` notifications, `.harbor-bind.json` marker round-trip and wrong-drive refusal.
 
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
