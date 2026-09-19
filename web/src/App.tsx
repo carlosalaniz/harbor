@@ -106,7 +106,10 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
   const [show, setShow] = useState(false);
   const [code, setCode] = useState('');
   const [needCode, setNeedCode] = useState(false);
-  const [remember, setRemember] = useState(false);
+  // Checked by default: a reload resumes silently (30-day session) and the
+  // explicit Log out button in Settings → Account is the manual lock.
+  // Untick for an ephemeral session that ends with the tab / after 12 h.
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
@@ -206,7 +209,7 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
         )}
         <label className="auth-remember">
           <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-          Remember this browser for 30 days
+          Stay logged in on this browser for 30 days
         </label>
         <button className="btn primary auth-submit" type="submit" disabled={busy || (!needCode && (!username || !password)) || (needCode && !code)}>
           {busy ? 'Logging in…' : 'Log in'}

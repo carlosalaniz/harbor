@@ -7,6 +7,9 @@ async function login(page: Page) {
   await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
   await page.getByLabel('Username', { exact: true }).fill(ADMIN.username);
   await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  // the box is checked by default: untick for the ephemeral in-memory session
+  // the other tests rely on (reload asks for the password again).
+  await page.getByLabel(/Stay logged in/).uncheck();
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
 }
@@ -126,6 +129,8 @@ test('store app page, install with plan review, progress tray, Open link; duplic
 test('reload requires login and then resumes existing state; no token in browser storage or cookies', async ({ page, context }) => {
   await login(page);
   await expect(page.locator('.instance')).toHaveCount(1);
+  // Unticked "stay logged in": the session lives only in memory, so nothing
+  // lands in storage and a reload asks for the password again.
   expect(await page.evaluate(() => JSON.stringify({ ls: { ...localStorage }, ss: { ...sessionStorage } }))).toBe('{"ls":{},"ss":{}}');
   expect(await context.cookies()).toEqual([]);
   await page.reload();
@@ -134,6 +139,24 @@ test('reload requires login and then resumes existing state; no token in browser
   await login(page);
   await expect(page.locator('.instance')).toHaveCount(1); // found, not recreated
   await expect(page.locator('.instance').first()).toContainText(/excalidraw/i);
+});
+
+test('staying logged in survives a reload; logging out clears it', async ({ page }) => {
+  await page.goto('/#/home');
+  await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
+  await page.getByLabel('Username', { exact: true }).fill(ADMIN.username);
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  await page.getByLabel(/Stay logged in/).check();
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('harbor.remember'))).toBeTruthy();
+  await page.reload();
+  // the remembered session resumes silently: no login form, same state
+  await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
+  await page.goto('/#/settings/account');
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Log in' })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('harbor.remember'))).toBeNull();
 });
 
 test('app drawer: stop, start, remove (data kept wording) and reinstall', async ({ page }) => {

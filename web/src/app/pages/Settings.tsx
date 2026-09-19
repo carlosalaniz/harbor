@@ -528,7 +528,7 @@ function Account() {
       </section>
       <section className="card" aria-labelledby="sess-h">
         <h2 id="sess-h">Sessions</h2>
-        <p className="muted small">A remembered browser stays logged in for 30 days; anything else ends when the tab closes or after 12 hours. “Log out of other sessions” keeps this one and revokes the rest.</p>
+        <p className="muted small">Staying logged in keeps this browser signed in for 30 days; anything else ends when the tab closes or after 12 hours. “Log out” here is the manual lock — use it when you walk away. “Log out of other sessions” keeps this one and revokes the rest.</p>
         <SessionList />
         <div className="row wrap">
           <button className="btn" onClick={() => void api.revokeOtherSessions().then(() => location.reload())}>
@@ -1074,11 +1074,50 @@ function Storage() {
   const [usage, setUsage] = useState<StorageUsageDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
+  const [busyDevice, setBusyDevice] = useState<string | null>(null);
   const load = () => api.hostStorage().then(setS, (e: Error) => setError(e.message));
   useEffect(() => {
     void load();
     api.storageUsage().then(setUsage, () => setUsage(null)); // best-effort: Docker may be down
   }, []);
+  // A mount/unmount is a root oneshot that takes seconds: poll the per-device
+  // status until it settles, then reload the list so the row flips by itself.
+  const watchDevice = (name: string) => {
+    setBusyDevice(name);
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      api.deviceStatus(name).then(
+        (st) => {
+          if (st.state === 'mounted' || st.state === 'unmounted' || st.state === 'failed' || tries >= 20) {
+            clearInterval(t);
+            setBusyDevice(null);
+            if (st.state === 'failed') setError(st.message);
+            void load();
+          }
+        },
+        (e: Error) => {
+          clearInterval(t);
+          setBusyDevice(null);
+          setError(e.message);
+        },
+      );
+    }, 1500);
+  };
+  const mount = (name: string) => {
+    setError(null);
+    api.mountDevice(name).then(
+      () => watchDevice(name),
+      (e: Error) => setError(e.message),
+    );
+  };
+  const unmount = (name: string) => {
+    setError(null);
+    api.unmountDevice(name).then(
+      () => watchDevice(name),
+      (e: Error) => setError(e.message),
+    );
+  };
   return (
     <>
       <section className="card" aria-labelledby="disks-h">
@@ -1130,32 +1169,23 @@ function Storage() {
                 {d.mounted && d.mountpoint ? (
                   <button
                     className="btn small"
-                    onClick={() => {
-                      setError(null);
-                      api.unmountDevice(d.name).then(
-                        () => api.hostStorage().then(setS, (e: Error) => setError(e.message)),
-                        (e: Error) => setError(e.message),
-                      );
-                    }}
+                    disabled={busyDevice === d.name}
+                    onClick={() => unmount(d.name)}
                     aria-label={`Eject ${d.label ?? d.name}`}
                   >
-                    Eject
+                    {busyDevice === d.name ? 'Ejecting…' : 'Eject'}
                   </button>
                 ) : (
                   <button
                     className="btn small"
-                    onClick={() => {
-                      setError(null);
-                      api.mountDevice(d.name).then(
-                        () => api.hostStorage().then(setS, (e: Error) => setError(e.message)),
-                        (e: Error) => setError(e.message),
-                      );
-                    }}
+                    disabled={busyDevice === d.name}
+                    onClick={() => mount(d.name)}
                     aria-label={`Mount ${d.label ?? d.name}`}
                   >
-                    Mount
+                    {busyDevice === d.name ? 'Mounting…' : 'Mount'}
                   </button>
                 )}
+                {busyDevice === d.name && <span className="muted small" role="status">Working… the row updates by itself.</span>}
               </div>
             </li>
           ))}

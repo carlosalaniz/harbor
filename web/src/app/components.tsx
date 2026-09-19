@@ -154,9 +154,41 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [typed, setTyped] = useState(initial ?? '');
+  const [busyDevice, setBusyDevice] = useState<string | null>(null);
   const open = (p: string) => {
     setError(null);
     api.folders(p).then(setListing, (e: Error) => setError(e.message));
+  };
+  // A mount is a root oneshot that takes seconds: poll the per-device status
+  // until it settles, then reload Places so the row flips by itself.
+  const watchDevice = (name: string) => {
+    setBusyDevice(name);
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      api.deviceStatus(name).then(
+        (st) => {
+          if (st.state === 'mounted' || st.state === 'unmounted' || st.state === 'failed' || tries >= 20) {
+            clearInterval(t);
+            setBusyDevice(null);
+            if (st.state === 'failed') setError(st.message);
+            api.hostStorage().then(setStorage, (e: Error) => setError(e.message));
+          }
+        },
+        (e: Error) => {
+          clearInterval(t);
+          setBusyDevice(null);
+          setError(e.message);
+        },
+      );
+    }, 1500);
+  };
+  const mount = (name: string) => {
+    setError(null);
+    api.mountDevice(name).then(
+      () => watchDevice(name),
+      (e: Error) => setError(e.message),
+    );
   };
   useEffect(() => {
     api.hostStorage().then(
@@ -250,16 +282,11 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                     </span>
                     <button
                       className="btn small"
-                      onClick={() => {
-                        setError(null);
-                        api.mountDevice(d.name).then(
-                          () => api.hostStorage().then(setStorage, (e: Error) => setError(e.message)),
-                          (e: Error) => setError(e.message),
-                        );
-                      }}
+                      disabled={busyDevice === d.name}
+                      onClick={() => mount(d.name)}
                       aria-label={`Mount ${d.label ?? d.name}`}
                     >
-                      Mount
+                      {busyDevice === d.name ? 'Mounting…' : 'Mount'}
                     </button>
                   </span>
                 )}

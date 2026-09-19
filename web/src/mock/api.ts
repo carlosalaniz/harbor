@@ -154,13 +154,14 @@ export const mockApi = {
   hostStorage: async (): Promise<HostStorageDto> => mockStorage(),
   mountDevice: async (name: string) => {
     await beat();
-    return { device: name, state: 'requested', message: 'mount requested (mock)', mountpoint: null };
+    const dev = mockStorage().devices.find((d) => d.name === name);
+    return { device: name, state: 'mounted', message: `mounted at ${dev?.mountpoint ?? '/mnt/mock'} (mock)`, mountpoint: dev?.mountpoint ?? '/mnt/mock' };
   },
   unmountDevice: async (name: string) => {
     await beat();
-    return { device: name, state: 'requested', message: 'unmount requested (mock)', mountpoint: null };
+    return { device: name, state: 'unmounted', message: 'unmounted (mock)', mountpoint: null };
   },
-  deviceStatus: async (name: string) => ({ device: name, state: 'unmounted', message: 'no mount operation recorded (mock)', mountpoint: null }),
+  deviceStatus: async (name: string) => ({ device: name, state: 'mounted', message: 'mounted (mock)', mountpoint: '/mnt/mock' }),
   storageUsage: async (): Promise<StorageUsageDto> => mockStorageUsage(),
   notifications: async (): Promise<NotificationsDto> => notifications,
   markNotificationRead: async (id: string): Promise<NotificationsDto> => {
