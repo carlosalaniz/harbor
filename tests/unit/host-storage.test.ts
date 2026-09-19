@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createFolder, listFolders, parseDevices, parseMounts } from '../../src/system/host-storage.js';
+import { createFolder, listFolders, listMounts, parseDevices, parseMounts } from '../../src/system/host-storage.js';
 
 describe('host storage', () => {
   it('parses /proc/mounts down to real disks and hides system and Docker mounts', () => {
@@ -45,6 +45,12 @@ describe('host storage', () => {
       { name: 'sdc1', device: '/dev/sdc1', size: '1.9T', fsType: 'ext4', label: 'backup', uuid: 'uuid-1', removable: true, mounted: true, mountpoint: '/mnt/backup' },
     ]);
     expect(parseDevices('not json')).toEqual([]);
+  });
+
+  it('hides a mounted removable device from the generic disk list (it lives in Removable only)', () => {
+    const text = ['/dev/vda1 / ext4 rw 0 0', '/dev/sdb1 /mnt/usb20fd vfat rw 0 0'].join('\n');
+    expect(listMounts(text).map((m) => m.mountpoint)).toEqual(['/', '/mnt/usb20fd']);
+    expect(listMounts(text, new Set(['/dev/sdb1'])).map((m) => m.mountpoint)).toEqual(['/']);
   });
 
   it('lists only directories, hides dot folders and system locations, creates one named folder', () => {

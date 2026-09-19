@@ -203,8 +203,10 @@ export function suggestedMountpoint(d: Pick<DeviceInfo, 'name' | 'label'>): stri
   return `/mnt/${raw}`;
 }
 
-export function listMounts(procMountsText = safeRead('/proc/self/mounts')): MountInfo[] {
-  return parseMounts(procMountsText).map((m) => ({ ...m, ...usage(m.mountpoint), writable: isWritable(m.mountpoint), label: labelFor(m.mountpoint, m.device) }));
+export function listMounts(procMountsText = safeRead('/proc/self/mounts'), excludeDevices: Set<string> = new Set()): MountInfo[] {
+  return parseMounts(procMountsText)
+    .filter((m) => !excludeDevices.has(m.device))
+    .map((m) => ({ ...m, ...usage(m.mountpoint), writable: isWritable(m.mountpoint), label: labelFor(m.mountpoint, m.device) }));
 }
 
 function safeRead(p: string): string {

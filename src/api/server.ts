@@ -465,12 +465,18 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       return false;
     }
   };
-  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), removable devices, the Harbor data folder and folders in use by apps.' } }, async () => ({
-    dataFolder: { path: config.userDataDir, exists: fsExists(config.userDataDir), writable: fsExists(config.userDataDir) && writable(config.userDataDir) },
-    mounts: listMounts(),
-    devices: listDevices(),
-    inUse: service.foldersInUse(),
-  }));
+  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), removable devices, the Harbor data folder and folders in use by apps.' } }, async () => {
+    // A mounted removable drive lives in exactly one place: the Removable
+    // section. The generic disk list skips its device node so it never shows twice.
+    const devices = listDevices();
+    const removableNodes = new Set(devices.filter((d) => d.mounted).map((d) => d.device));
+    return {
+      dataFolder: { path: config.userDataDir, exists: fsExists(config.userDataDir), writable: fsExists(config.userDataDir) && writable(config.userDataDir) },
+      mounts: listMounts(undefined, removableNodes),
+      devices,
+      inUse: service.foldersInUse(),
+    };
+  });
   app.get(
     '/v1/host/folders',
     { preHandler: requireAuth, schema: { description: 'Subfolders of a host folder (system locations hidden).', querystring: { type: 'object', additionalProperties: false, required: ['path'], properties: { path: { type: 'string', minLength: 1, maxLength: 4096 } } } } },
