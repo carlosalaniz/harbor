@@ -22,7 +22,7 @@ import { hostFacts } from '../system/metrics.js';
 import { ID_PATTERN, UUID_PATTERN } from '../contracts/patterns.js';
 import { HOSTNAME_RE } from '../exposure/urls.js';
 import { PRODUCT } from '../naming.js';
-import { createFolder, listFolders, listMounts } from '../system/host-storage.js';
+import { createFolder, listDevices, listFolders, listMounts } from '../system/host-storage.js';
 import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 
 export interface ApiDeps {
@@ -463,9 +463,10 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       return false;
     }
   };
-  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), the Harbor data folder and folders in use by apps.' } }, async () => ({
+  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), removable devices, the Harbor data folder and folders in use by apps.' } }, async () => ({
     dataFolder: { path: config.userDataDir, exists: fsExists(config.userDataDir), writable: fsExists(config.userDataDir) && writable(config.userDataDir) },
     mounts: listMounts(),
+    devices: listDevices(),
     inUse: service.foldersInUse(),
   }));
   app.get(

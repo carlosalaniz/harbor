@@ -1100,7 +1100,7 @@
     },
     "/v1/host/storage": {
       "get": {
-        "description": "Disks (mounts), the Harbor data folder and folders in use by apps.",
+        "description": "Disks (mounts), removable devices, the Harbor data folder and folders in use by apps.",
         "responses": {
           "200": {
             "description": "Default Response"

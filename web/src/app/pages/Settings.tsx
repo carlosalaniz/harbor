@@ -1110,7 +1110,24 @@ function Storage() {
               </li>
             );
           })}
-          {s && s.mounts.length === 0 && <li className="muted small">No disks detected (this happens on non-Linux development hosts).</li>}
+          {s && s.mounts.length === 0 && s.devices.length === 0 && <li className="muted small">No disks detected (this happens on non-Linux development hosts).</li>}
+          {s && s.devices.length > 0 && (
+            <li className="muted small" aria-hidden="true">
+              Removable
+            </li>
+          )}
+          {s?.devices.map((d) => (
+            <li key={d.device} className="disk">
+              <div className="row between wrap">
+                <strong>{d.label ?? d.name}</strong>
+                <span className="muted small">
+                  {d.mounted && d.mountpoint ? `${d.mountpoint} · ` : 'inserted but not mounted · '}
+                  {d.size}
+                  {d.fsType ? ` · ${d.fsType}` : ''}
+                </span>
+              </div>
+            </li>
+          ))}
         </ul>
       </section>
       <section className="card" aria-labelledby="df-h">

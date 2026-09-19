@@ -289,6 +289,8 @@ export interface DomainsDto {
 export interface HostStorageDto {
   dataFolder: { path: string; exists: boolean; writable: boolean };
   mounts: { mountpoint: string; device: string; fsType: string; totalBytes: number | null; usedBytes: number | null; writable: boolean; label: string }[];
+  // removable block devices (USB sticks, external drives), mounted or not
+  devices: { name: string; device: string; size: string; fsType: string | null; label: string | null; uuid: string | null; removable: boolean; mounted: boolean; mountpoint: string | null }[];
   // folders currently used by apps (bind resources), with the instance that uses each
   inUse: { path: string; instanceId: string; instanceName: string; purpose: string; readOnly: boolean }[];
 }

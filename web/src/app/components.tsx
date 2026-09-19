@@ -203,6 +203,31 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                 </button>
               </li>
             ))}
+            {(storage?.devices.length ?? 0) > 0 && (
+              <li aria-hidden="true">
+                <h4 className="muted small">Removable</h4>
+              </li>
+            )}
+            {storage?.devices.map((d) => (
+              <li key={d.device}>
+                {d.mounted && d.mountpoint ? (
+                  <button className="btn ghost place" onClick={() => open(d.mountpoint!)}>
+                    <span aria-hidden="true">▢</span> {d.label ?? d.name}
+                    <span className="muted small">
+                      {d.mountpoint} · {d.size}
+                    </span>
+                  </button>
+                ) : (
+                  <span className="btn ghost place" aria-disabled="true" title="Inserted but not mounted">
+                    <span aria-hidden="true">▢</span> {d.label ?? d.name}
+                    <span className="muted small">
+                      {d.size}
+                      {d.fsType ? ` · ${d.fsType}` : ''} · not mounted
+                    </span>
+                  </span>
+                )}
+              </li>
+            ))}
           </ul>
         </aside>
         <div className="picker-main">

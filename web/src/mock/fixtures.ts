@@ -427,6 +427,9 @@ export function mockStorage(): HostStorageDto {
       { mountpoint: '/', device: '/dev/sda1', fsType: 'ext4', totalBytes: 100 * GiB, usedBytes: 40 * GiB, writable: true, label: 'System disk' },
       { mountpoint: '/mnt/photos', device: '/dev/sdb1', fsType: 'ext4', totalBytes: 500 * GiB, usedBytes: 410 * GiB, writable: true, label: 'Photos' },
     ],
+    devices: [
+      { name: 'sdc1', device: '/dev/sdc1', size: '14.4G', fsType: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', removable: true, mounted: false, mountpoint: null },
+    ],
     inUse: [{ path: '/mnt/photos', instanceId: 'inst-immich', instanceName: 'Immich', purpose: 'Photo library', readOnly: false }],
   };
 }

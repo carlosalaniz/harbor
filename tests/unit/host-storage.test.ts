@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createFolder, listFolders, parseMounts } from '../../src/system/host-storage.js';
+import { createFolder, listFolders, parseDevices, parseMounts } from '../../src/system/host-storage.js';
 
 describe('host storage', () => {
   it('parses /proc/mounts down to real disks and hides system and Docker mounts', () => {
@@ -28,6 +28,23 @@ describe('host storage', () => {
       { device: '/dev/sdb1', mountpoint: '/mnt/photos', fsType: 'ext4' },
       { device: '/dev/sdc1', mountpoint: '/mnt/with space', fsType: 'exfat' },
     ]);
+  });
+
+  it('parses lsblk JSON down to removable partitions, mounted or not', () => {
+    const json = JSON.stringify({
+      blockdevices: [
+        { name: 'sda', size: '931.5G', type: 'disk', rm: false, hotplug: false, children: [{ name: 'sda1', size: '1M', type: 'part', rm: false }] },
+        { name: 'sdb', size: '14.4G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdb1', size: '14.4G', type: 'part', mountpoint: null, fstype: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', rm: true, hotplug: true }] },
+        { name: 'sdc', size: '1.9T', type: 'disk', rm: true, hotplug: false, children: [{ name: 'sdc1', size: '1.9T', type: 'part', mountpoint: '/mnt/backup', fstype: 'ext4', label: 'backup', uuid: 'uuid-1', rm: true, hotplug: false }] },
+        { name: 'loop0', size: '4K', type: 'loop', mountpoint: '/snap/bare/5' },
+        { name: 'nvme1n1', size: '931.5G', type: 'disk', rm: false, children: [{ name: 'nvme1n1p3', size: '926.5G', type: 'part', fstype: 'crypto_LUKS', rm: false }] },
+      ],
+    });
+    expect(parseDevices(json)).toEqual([
+      { name: 'sdb1', device: '/dev/sdb1', size: '14.4G', fsType: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', removable: true, mounted: false, mountpoint: null },
+      { name: 'sdc1', device: '/dev/sdc1', size: '1.9T', fsType: 'ext4', label: 'backup', uuid: 'uuid-1', removable: true, mounted: true, mountpoint: '/mnt/backup' },
+    ]);
+    expect(parseDevices('not json')).toEqual([]);
   });
 
   it('lists only directories, hides dot folders and system locations, creates one named folder', () => {

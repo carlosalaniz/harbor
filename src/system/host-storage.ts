@@ -1,4 +1,5 @@
 import { accessSync, constants, mkdirSync, readFileSync, readdirSync, statSync, statfsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { normalizeHostPath } from '../storage/host-path.js';
@@ -83,6 +84,82 @@ function labelFor(mountpoint: string, device: string): string {
   if (/^\/media\/|^\/mnt\//.test(mountpoint)) return `Drive "${base}"`;
   if (device.startsWith('//') || device.includes(':/')) return `Network share "${base}"`;
   return base || mountpoint;
+}
+
+export interface DeviceInfo {
+  name: string; // kernel name, e.g. sdb1
+  device: string; // /dev/sdb1
+  size: string; // human size from lsblk, e.g. 14.4G
+  fsType: string | null;
+  label: string | null;
+  uuid: string | null;
+  removable: boolean;
+  mounted: boolean;
+  mountpoint: string | null;
+}
+
+interface LsblkDevice {
+  name?: string;
+  size?: string;
+  type?: string;
+  mountpoint?: string | null;
+  fstype?: string | null;
+  label?: string | null;
+  uuid?: string | null;
+  rm?: boolean;
+  hotplug?: boolean;
+  children?: LsblkDevice[];
+}
+
+// Removable block devices (USB sticks, external drives), mounted or not. Partitions
+// only: the whole-disk node is skipped when it has children. Internal disks are
+// excluded unless hotpluggable. Never throws: an empty list means "no devices seen".
+export function parseDevices(lsblkJson: string): DeviceInfo[] {
+  let root: { blockdevices?: LsblkDevice[] };
+  try {
+    root = JSON.parse(lsblkJson) as { blockdevices?: LsblkDevice[] };
+  } catch {
+    return [];
+  }
+  const out: DeviceInfo[] = [];
+  const walk = (devs: LsblkDevice[] | undefined) => {
+    for (const b of devs ?? []) {
+      const kids = b.children ?? [];
+      const isPart = b.type === 'part';
+      const wholeWithParts = b.type === 'disk' && kids.length > 0;
+      if ((isPart || !wholeWithParts) && b.type !== 'loop' && b.type !== 'rom') {
+        const removable = Boolean(b.rm || b.hotplug);
+        // Internal partitions are not removable media; whole disks without
+        // partitions (e.g. a freshly inserted stick) are included when removable.
+        if (removable || (b.type === 'disk' && kids.length === 0)) {
+          const mp = typeof b.mountpoint === 'string' && b.mountpoint.length ? b.mountpoint : null;
+          out.push({
+            name: b.name ?? '?',
+            device: `/dev/${b.name ?? '?'}`,
+            size: b.size ?? '?',
+            fsType: b.fstype ?? null,
+            label: b.label ?? null,
+            uuid: b.uuid ?? null,
+            removable,
+            mounted: mp !== null,
+            mountpoint: mp,
+          });
+        }
+      }
+      walk(kids);
+    }
+  };
+  walk(root.blockdevices);
+  return out.sort((a, b) => a.device.localeCompare(b.device));
+}
+
+export function listDevices(): DeviceInfo[] {
+  try {
+    const json = execFileSync('lsblk', ['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG'], { encoding: 'utf8', timeout: 10_000 });
+    return parseDevices(json);
+  } catch {
+    return [];
+  }
 }
 
 export function listMounts(procMountsText = safeRead('/proc/self/mounts')): MountInfo[] {
