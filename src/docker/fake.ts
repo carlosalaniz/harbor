@@ -125,6 +125,10 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const n = this.networks.get(idOrName) ?? [...this.networks.values()].find((x) => x.name === idOrName);
     return n ? { ...n, labels: { ...n.labels }, containerIds: [...n.containerIds] } : null;
   }
+  async listNetworks(labels?: Record<string, string>): Promise<NetworkInfo[]> {
+    this.assertUp();
+    return [...this.networks.values()].filter((n) => matches(n.labels, labels)).map((n) => ({ ...n, labels: { ...n.labels }, containerIds: [...n.containerIds] }));
+  }
   async removeNetwork(id: string): Promise<void> {
     this.assertUp();
     const n = this.networks.get(id);

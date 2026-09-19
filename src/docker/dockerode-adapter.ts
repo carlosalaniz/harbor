@@ -135,6 +135,13 @@ export class DockerodeAdapter implements DockerAdapter {
     }
   }
 
+  async listNetworks(labels?: Record<string, string>): Promise<NetworkInfo[]> {
+    const filters: Record<string, string[]> = {};
+    if (labels) filters['label'] = Object.entries(labels).map(([k, v]) => `${k}=${v}`);
+    const list = await this.docker.listNetworks({ filters: JSON.stringify(filters) });
+    return list.map((n) => ({ id: n.Id, name: n.Name, labels: (n.Labels ?? {}) as Record<string, string>, containerIds: Object.keys((n as { Containers?: Record<string, unknown> }).Containers ?? {}) }));
+  }
+
   async removeNetwork(id: string): Promise<void> {
     try {
       await this.docker.getNetwork(id).remove();

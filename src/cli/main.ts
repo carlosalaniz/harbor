@@ -867,6 +867,28 @@ program
 // ---------------- local maintenance (direct state access, no HTTP)
 
 program
+  .command('uninstall')
+  .description('remove Harbor itself from this Ubuntu host (run as root): stop the daemon, delete Harbor-labelled Docker objects, release/config/state, units and the service account')
+  .option('--yes', 'approve all previewed steps non-interactively', false)
+  .option('--keep-data', 'keep /var/lib/harbor (state, secrets, release snapshots)', false)
+  .action(async (opts: { yes: boolean; keepData: boolean }) => {
+    const { uninstall } = await import('../bootstrap/uninstall.js');
+    const log = (m: string) => process.stderr.write(`[uninstall] ${m}\n`);
+    const confirmStep = async (question: string, preview: string[]) => {
+      process.stderr.write(`\n${question}\n${preview.map((p) => `  - ${p}`).join('\n')}\n`);
+      if (opts.yes) {
+        process.stderr.write('  (approved with --yes)\n');
+        return true;
+      }
+      return confirm('Proceed?');
+    };
+    const result = await uninstall({ yes: opts.yes, keepData: opts.keepData, log, confirm: confirmStep });
+    out(result, () =>
+      [`Harbor removed from this machine.`, ...result.removed.map((r) => `  - removed ${r}`), ...result.kept.map((k) => `  - kept ${k}`), 'Your own folders were left alone.'].join('\n'),
+    );
+  });
+
+program
   .command('setup-code')
   .description('print the setup code for the browser wizard (root, on the machine; only while no administrator exists)')
   .requiredOption('--config <file>', 'daemon config JSON (usually /etc/harbor/harbor.json)')

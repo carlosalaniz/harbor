@@ -353,15 +353,18 @@ Notes:
 - Not included: backups, multi-user roles/SSO, remote/community catalogs, external disk
   formatting (blocked on hardware; see `docs/FUTURE.md`).
 
-## 9. Uninstall (manual, by design)
+## 9. Uninstall
 
 ```sh
-sudo systemctl disable --now harbor
-# applications keep running until you remove them with `harbor remove` first, or manually via docker
-sudo rm -rf /opt/harbor /etc/harbor /etc/systemd/system/harbor.service
-sudo rm -rf /var/lib/harbor            # DELETES state, secrets and release snapshots; volumes stay in Docker
-sudo userdel harbor
+sudo /opt/harbor/bin/harbor uninstall        # previewed; stops the daemon, deletes Harbor-labelled
+                                             # Docker objects (apps, platform tools), release/config/state,
+                                             # units and the service account; frees every port
+sudo /opt/harbor/bin/harbor uninstall --yes  # non-interactive
+sudo /opt/harbor/bin/harbor uninstall --keep-data  # keep /var/lib/harbor (state, secrets, snapshots)
 ```
+
+Your own folders are never deleted (`/srv/harbor` is removed only when empty). Docker Engine and the
+Cockpit/Tailscale/Caddy packages stay installed. Non-Harbor Docker objects are never touched.
 
 ## 10. The catalog
 
