@@ -71,11 +71,16 @@ storage:
   The plan says `Use your folder /mnt/photos for Photos and videos; Harbor never deletes it`.
 - Rendering: the service volume entry becomes a bind mount with `create_host_path: false` (and
   `read_only` when the claim says so); no Docker volume is created or declared for that claim.
-- Records: a `bind` resource (`name` = the folder, `metadata.storageId`, `metadata.readOnly`) next to
-  the `volume` resources. `inspect` lists it with `present` = folder exists. Schema v3 widens the
+- Records: a `bind` resource (`name` = the folder, `metadata.storageId`, `metadata.readOnly`,
+  `metadata.driveId`) next to the `volume` resources. `inspect` lists it with `present` = folder exists. Schema v3 widens the
   `resources.kind` CHECK; the migration rebuilds the table in place.
-- Reinstall and start verify the folder still exists; if not, the operation fails with
-  `DATA_MISSING` and a next action ("mount or restore the folder at the same path"). Nothing starts.
+- Claiming a folder stamps an app-generated `driveId` into its `.harbor-bind.json` marker
+  (random at install, kept on restore, fresh on replacement — never a hardware UUID; see
+  decisions 89–90). Reinstall and start verify folder + marker; a missing, foreign or swapped
+  folder fails with `DATA_MISSING` and a next action. The observer stops the app through the
+  queue when its drive leaves (`needsDrive` on the summary, Start refused), auto-mounts fresh
+  inserts and auto-starts recovered apps (both policy-gated), and `adopt-drive` accepts a
+  replacement folder. Nothing ever starts against the wrong folder.
 - Remove leaves the folder untouched and says so in the events. Harbor never chowns or deletes an
   external folder; it creates one only when the operator names it in the folder picker, inside a parent
   the service account may already write to (the Harbor data folder `/srv/harbor` by default). Permissions are the app's business: the packaged images run as root

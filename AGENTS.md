@@ -14,7 +14,7 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **86**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **91**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -26,12 +26,17 @@ src/            daemon (TypeScript strict ESM, Node 24.12, pnpm 10.16)
   planner/      identity, port allocation, Compose rendering (PURE functions, no I/O)
   state/        SQLite (better-sqlite3, SCHEMA_VERSION 7, migrations v1→v7), repositories
   docker/       adapter interface, Dockerode adapter, Compose CLI runner, FAKE adapter, port probe
-  lifecycle/    plans/operations service, serial runner, readiness, observer, DTO mapping
+  lifecycle/    plans/operations service, serial runner, readiness, observer (drive-guard stop,
+              auto-mount on insert, auto-start on return), DTO mapping
   auth/ api/    scrypt + bearer sessions (+TOTP), Fastify routes with Host/Origin/JSON guards
   exposure/     Tailscale + Caddy providers, URL rendering
-  appearance/   wallpapers + rotation fetcher        system/  metrics, storage, power, terminal, logs, LAN, self-update
-  bootstrap/    root-only installer/upgrader         cli/     commander CLI (mirrors every console action)
-  notify/       notifications engine + channels (ntfy/webhook/email)
+  appearance/   wallpapers + rotation fetcher        system/  metrics, storage (lsblk devices,
+              mounts, folders), device-mount service, power, terminal, logs, LAN, self-update
+  storage/      bring-your-own-folder validation + `.harbor-bind.json` drive identity
+  bootstrap/    root-only installer/upgrader (units + polkit; harbor.service grants
+              ReadWritePaths `/var/lib/harbor /srv/harbor /mnt /media` so markers backfill)
+  cli/          commander CLI (mirrors every console action)
+  notify/       notifications engine + channels (ntfy/webhook/email; resolved rows delete fully)
 web/src/        React 19 + Vite, plain CSS tokens, strict CSP; App.tsx, app/pages/*, app/icons.tsx,
                 mock/ fixtures for `pnpm dev:ui`
 catalog/<id>/   one package = manifest.yaml + compose.yaml + README.md + release.json (+ icon)
@@ -97,14 +102,14 @@ Key separations (do not blur them):
 4. **Gate before commit** (ALL must pass — this is exactly what CI runs):
    ```sh
    pnpm lint && pnpm typecheck
-   pnpm test                    # unit (81)
-   pnpm test:integration        # 109 + 3 live-Docker skipped (~3.5 min)
-   pnpm build && pnpm test:e2e  # 21 Playwright (~1.5 min, ports 18500/18700)
+   pnpm test                    # unit (96)
+   pnpm test:integration        # 112 + 3 live-Docker skipped (~3.5 min)
+   pnpm build && pnpm test:e2e  # 23 Playwright (~1.5 min, ports 18500/18700)
    pnpm catalog:verify && pnpm openapi -- --check
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **86**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **91**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant
@@ -170,7 +175,11 @@ The non-negotiable subset:
 - [ ] Tests added first; `lint`, `typecheck`, unit, integration, `build` + e2e,
       `catalog:verify`, `openapi --check` all green locally (= CI green)
 - [ ] No new engine branch per app; no direct Docker writes outside the runner; no secrets
-      in DTOs/logs/storage
+      in DTOs/logs/storage; observer never touches Docker (drive-guard stops go through
+      plan → operation with actor `drive-guard`)
+- [ ] Drive-guard semantics kept: guard stops leave `desired` running (operator stops flip it);
+      `adopt-drive` refuses only while containers run (`runtime`), not on `desired`;
+      `needsDrive` stays a read-time model (no migration); resolved notifications delete fully
 - [ ] `docs/DECISIONS.md` row (if non-obvious), operator/dev docs updated, READMEs updated
       (package README for catalog changes), `docs/openapi.json` regenerated (if routes changed)
 - [ ] Committed on `main` + pushed (CI releases); version bumped if release-worthy

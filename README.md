@@ -34,7 +34,8 @@ install your first app. No Docker knowledge, no YAML, no terminal required after
 AnythingLLM, Jellyfin, Immich, Nextcloud (files + office), Vaultwarden, Uptime Kuma, Forgejo,
 FreshRSS, Actual Budget, Audiobookshelf, Navidrome, Memos, Mealie. Every image pinned by digest
 and qualified on a real machine. Apps with big data (photos, media, files) can live in a folder
-of yours instead of a Docker volume.
+of yours instead of a Docker volume — on a removable drive if you like (Harbor mounts it,
+notices when it leaves, stops the app to protect its data, and starts it again when it returns).
 
 **Plus your own apps** — upload a zip or point Harbor at a git repo; every push can redeploy
 automatically. See [Build your own app](docs/DEVELOPER_PACKAGES.md).
@@ -57,7 +58,7 @@ actually use (password + two-factor, tailnet, domains, storage picker, appearanc
 
 ## Status
 
-Harbor is a **trusted local preview** (v0.10.0): one administrator, one daemon with Docker
+Harbor is a **trusted local preview** (v0.12.5): one administrator, one daemon with Docker
 authority. It is not a hardened multi-user service. See
 [what's deliberately not built](docs/FUTURE.md) and the [evidence log](docs/VERIFICATION.md)
 for what was actually verified, where, and how.

@@ -18,10 +18,10 @@ and the outcome. Nothing here is asserted without a recorded run. Live runs are 
 |---|---|---|
 | `pnpm typecheck` | server + web strict TS | pass |
 | `pnpm lint` | ESLint (ts, tsx, mjs) | pass |
-| `pnpm test` | unit: YAML restrictions, manifest/Compose schemas and cross-references, catalog/hash verification (incl. presentation assets), planner and renderer (bind mounts, configuration formats), host-path rules, exposure config/URLs, schema migrations v1→v7, OpenAPI, systemd/release files, device mount + bind marker | 93 passed |
-| `pnpm test:integration` | daemon in-process with the fake Docker adapter: install flow, idempotency, port claims, readiness timeout, coexistence, sentinel non-interference, restart→needs_action, Docker-down, volumes/secrets retention (synthetic stateful package), auth controls (incl. 30-day remember sessions, session list, revoke-others), tool binding, exposure (tailnet/public/primary/degraded/withdraw, UI exposure), external storage (validation, bind mounts, overlap, reinstall verification, DATA_MISSING), purge/domains, appearance/rotation, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update | 109 passed (+3 live-Docker skipped without opt-in) |
+| `pnpm test` | unit: YAML restrictions, manifest/Compose schemas and cross-references, catalog/hash verification (incl. presentation assets), planner and renderer (bind mounts, configuration formats), host-path rules, exposure config/URLs, schema migrations v1→v7, OpenAPI (68 paths), systemd/release files (incl. `/mnt /media` writes), device mount + bind marker (round-trip, restore keeps id, replacement fresh, legacy verifies) | 96 passed |
+| `pnpm test:integration` | daemon in-process with the fake Docker adapter: install flow, idempotency, port claims, readiness timeout, coexistence, sentinel non-interference, restart→needs_action, Docker-down, volumes/secrets retention (synthetic stateful package), auth controls (incl. 30-day remember sessions, session list, revoke-others), tool binding, exposure (tailnet/public/primary/degraded/withdraw, UI exposure), external storage (validation, bind mounts, overlap, reinstall verification, DATA_MISSING, drive guard: swap→stop+refuse+adopt, restore→auto-start, policy toggles), purge/domains, appearance/rotation, packages/updates, git sources, notifications (resolved rows delete), security/terminal, setup/LAN/self-update | 112 passed (+3 live-Docker skipped without opt-in) |
 | `HARBOR_LIVE_DOCKER_SOCKET=~/.docker/run/docker.sock pnpm test:integration` | real Dockerode + `docker compose` against the authorized Docker Desktop engine: Excalidraw install/stop/start/remove/reinstall, BentoPDF coexistence, COOP/COEP headers | 3 passed (plus the 49 above) |
-| `pnpm build && pnpm test:e2e` | Playwright against the built console with the fake adapter: Umbrel-style login hero (incl. bad-credentials, reload→re-login→resume, logout revokes), Home/App Store/Platform/Publishing pages (icons served with sandboxed CSP, category filter, search), app page + plan review + double-click safety, drawer stop/start/remove/reinstall, coexistence + owned resources, publish wizard (tailnet, public with one-time credentials, withdraw), phone width, bring-your-own-folder validation and mount, settings (password, Tailscale, storage, appearance, opacity slider, rotation, terminal, logs, rename, 2FA), first-run wizard, Harbor update card | 21 passed |
+| `pnpm build && pnpm test:e2e` | Playwright against the built console with the fake adapter: Umbrel-style login hero (incl. bad-credentials, reload→re-login→resume, logout revokes), Home/App Store/Platform/Publishing pages (icons served with sandboxed CSP, category filter, search), app page + plan review + double-click safety, drawer stop/start/remove/reinstall, coexistence + owned resources, publish wizard (tailnet, public with one-time credentials, withdraw), phone width, bring-your-own-folder validation and mount, settings (password, Tailscale, storage incl. mount spinner + auto-mount/auto-start toggles, appearance, opacity slider, rotation, terminal, logs, rename, 2FA), first-run wizard, Harbor update card | 23 passed |
 
 Fake-adapter results prove the engine, API and UI contracts. They are not evidence for A03/A09/A11/A14/A16; those come from section 3.
 
@@ -38,6 +38,18 @@ Physical Ubuntu 24.04.3 x86_64 box (`harbor`, 94 GB RAM), PNY USB stick `sdb1` 1
 | Self-update 0.11.0 → 0.12.0 | `POST /v1/system/update/check` finds 0.12.0, `POST …/apply` → `succeeded` in ~8 s; console back on 0.12.0 |
 
 Unit/integration cover the rest: unmount refused while a `bind` resource lives underneath (names the apps), insert/remove + per-app `storage-missing` notifications, `.harbor-bind.json` marker round-trip and wrong-drive refusal.
+
+## 3b. Drive guard + auto-mount/auto-start on physical hardware (2026-09-20, Harbor 0.12.3 → 0.12.5 via local archive self-update)
+
+Same box and stick as §3a, now with Immich installed and its `library` claim at `/mnt/usb20fd/immich`. Deployed with `pnpm package` → `scp` tarball + `SHA256SUMS` to `/tmp/` → `sudo /opt/harbor/bin/harbor self-update apply --to <ver> --archive /tmp/harbor-<ver>-linux-x64.tar.gz` (the `--archive` path reads `SHA256SUMS` from the archive's directory — it must be copied next to the tarball).
+
+| Step | Result |
+|---|---|
+| Yank with 0.12.3 guard | observer stops Immich through the queue (actor `drive-guard`, `desired` stays running), `storage-missing` error row, `needsDrive {path, purpose, detail}` set, Start refused `DATA_MISSING` |
+| Legacy marker gap | pre-guard marker had no `driveId`; resource backfilled one, but the daemon could not write it back — `ProtectSystem=strict` made `/mnt` read-only for the service. Fixed in 0.12.5 (`ReadWritePaths` + `/mnt /media`); marker on disk now carries the same `driveId` as the resource |
+| Ghost mounts | `/proc` outlived the pull: four stacked mounts (`sdb1`–`sde1` on `/mnt/usb20fd`) hid the yank with an empty top layer. Marker check (not mount presence) is what catches this |
+| 0.12.5 steady state | Immich `desired`/`runtime` running, `readiness` healthy, `needsDrive` null; `storage-missing` row deleted on resolve (read rows no longer linger); `storagePolicy {autoMount: true, autoStart: true}` |
+| Auto paths | covered by integration tests (swap→stop+refuse+adopt, restore→auto-start, policy toggles persist); live reinsert exercises the same observer code (auto-mount one attempt per device, auto-start one attempt per folder) |
 
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 

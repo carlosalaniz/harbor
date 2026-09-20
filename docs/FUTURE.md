@@ -79,7 +79,9 @@ implicitly). Bring-your-own-folder stays mount-only; this is a separate advanced
 Advanced tools acknowledgement. **Update 2026-09-20: the mount half is now built and the hardware
 blocker is gone** — a physical Ubuntu box (carlos-desktop) with a USB stick is available, and
 decision 88 ships enumerate + mount/unmount at `/mnt/<label>` with insert/remove notifications,
-missing-folder warnings, and the `.harbor-bind.json` marker. What remains future: **partition,
+missing-folder warnings, and the `.harbor-bind.json` marker; decisions 89–90 add the drive guard
+(app-generated identity, auto-stop, adopt), auto-mount on insert and auto-start on return
+(policy toggles, both default on). What remains future: **partition,
 format, LUKS, SMART** (still no UI, still no formatting code path).
 
 - Abstraction: **udisks2 over D-Bus** (standard on Ubuntu; enumerate, GPT partition, format
