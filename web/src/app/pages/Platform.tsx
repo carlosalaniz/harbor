@@ -162,7 +162,7 @@ function ToolCard({ t }: { t: PlatformToolDto }) {
           </div>
         </Dialog>
       )}
-      {installing && t.install && <p className="small" role="status">{t.install.message} This page refreshes by itself.</p>}
+      {installing && t.install && <p className="small" role="status">{t.install.message}</p>}
       {t.install?.state === 'failed' && (
         <p className="error small" role="alert">
           Install failed: {t.install.message}

@@ -230,7 +230,7 @@ function HarborUpdate({ c }: { c: Console }) {
       {st.applying && (
         <p className={`small ${st.applying.state === 'failed' ? 'error' : st.applying.state === 'succeeded' ? 'notice' : ''}`} role="status">
           {running ? <progress aria-label="update progress" /> : null}
-          {st.applying.state === 'succeeded' ? `Updated to ${st.applying.version}.` : st.applying.state === 'failed' ? `Update to ${st.applying.version} failed: ${st.applying.message}` : `Updating to ${st.applying.version}: ${st.applying.message}. Harbor restarts for a minute; this page reconnects by itself.`}
+          {st.applying.state === 'succeeded' ? `Updated to ${st.applying.version}.` : st.applying.state === 'failed' ? `Update to ${st.applying.version} failed: ${st.applying.message}` : `Updating to ${st.applying.version}: ${st.applying.message}. Harbor restarts for a minute, then reconnects.`}
         </p>
       )}
       {msg && (
@@ -528,7 +528,7 @@ function Account() {
       </section>
       <section className="card" aria-labelledby="sess-h">
         <h2 id="sess-h">Sessions</h2>
-        <p className="muted small">Staying logged in keeps this browser signed in for 30 days; anything else ends when the tab closes or after 12 hours. “Log out” here is the manual lock — use it when you walk away. “Log out of other sessions” keeps this one and revokes the rest.</p>
+        <p className="muted small">Staying logged in lasts 30 days. Otherwise the session ends with the tab or after 12 hours. “Log out” locks this browser; “Log out of other sessions” keeps this one.</p>
         <SessionList />
         <div className="row wrap">
           <button className="btn" onClick={() => void api.revokeOtherSessions().then(() => location.reload())}>
@@ -1139,7 +1139,7 @@ function Storage() {
     <>
       <section className="card" aria-labelledby="disks-h">
         <h2 id="disks-h">Disks</h2>
-        <p className="muted small">Where your apps can keep big data. When you install an app such as Immich or Jellyfin, you can point it at a folder on any of these.</p>
+        <p className="muted small">Where your apps keep big data. Point an app at a folder on any disk when you install it.</p>
         {error && <p className="error">{error}</p>}
         <ul className="plain disks">
           {s?.mounts.map((m) => {
@@ -1166,7 +1166,7 @@ function Storage() {
               </li>
             );
           })}
-          {s && s.mounts.length === 0 && s.devices.length === 0 && <li className="muted small">No disks detected (this happens on non-Linux development hosts).</li>}
+          {s && s.mounts.length === 0 && s.devices.length === 0 && <li className="muted small">No disks detected.</li>}
           {s && s.devices.length > 0 && (
             <li className="muted small" aria-hidden="true">
               Removable
@@ -1177,7 +1177,7 @@ function Storage() {
               <div className="row between wrap">
                 <strong>{d.label ?? d.name}</strong>
                 <span className="muted small">
-                  {d.mounted && d.mountpoint ? `${d.mountpoint} · ` : 'inserted but not mounted · '}
+                  {d.mounted && d.mountpoint ? `${d.mountpoint} · ` : 'Not mounted · '}
                   {d.size}
                   {d.fsType ? ` · ${d.fsType}` : ''}
                 </span>
@@ -1216,7 +1216,7 @@ function Storage() {
                     )}
                   </button>
                 )}
-                {busyDevice === d.name && <span className="muted small" role="status">Working… the row updates by itself.</span>}
+                {busyDevice === d.name && <span className="muted small" role="status">Working…</span>}
               </div>
             </li>
           ))}
@@ -1230,7 +1230,7 @@ function Storage() {
             {s.dataFolder.exists ? (s.dataFolder.writable ? <Pill tone="ok">ready</Pill> : <Pill tone="warn">exists, Harbor cannot write</Pill>) : <Pill tone="muted">created on first use</Pill>}
           </p>
         )}
-        <p className="muted small">The one place where Harbor itself may create folders for you (for example "Photos" for Immich). Folders elsewhere must already exist; Harbor never deletes any folder.</p>
+        <p className="muted small">Harbor can create folders here (for example “Photos” for Immich). Elsewhere, folders must already exist. Harbor never deletes folders.</p>
         <button className="btn" onClick={() => setBrowsing(true)}>
           Browse and create folders…
         </button>
