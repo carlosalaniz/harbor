@@ -206,3 +206,48 @@ describe('app home error mapping', () => {
     }
   });
 });
+
+describe('cross-machine portability (non-negotiable)', () => {
+  it('a foreign machine unlocks with just the passphrase: machine key never leaves home', async () => {
+    // Machine A installs the app: master key + machine-A wrapping in state.
+    const { descriptor, masterKey } = await makeHome();
+    const machineKeyA = Buffer.alloc(32, 0xa1);
+    const wrappedForA = wrapMasterKeyForMachine(masterKey, machineKeyA);
+    const sealed = sealPayload(masterKey, Buffer.from('precious app data'));
+    zeroKey(masterKey);
+
+    // The drive moves to machine B: different machine key, no shared state.
+    // Only the folder travels (manifest.json + vault/).
+    const machineKeyB = Buffer.alloc(32, 0xb2);
+    // Machine B's key cannot open machine A's wrapping…
+    expect(() => unwrapMasterKeyForMachine(wrappedForA, machineKeyB)).toThrowError(/failed authentication/);
+    // …but the passphrase alone recovers the SAME master key, and the vault opens.
+    const recovered = await unlockAppHome(descriptor.home, 'correct horse passphrase');
+    try {
+      expect(openPayload(recovered, sealed).toString('utf8')).toBe('precious app data');
+      // Machine B now wraps for itself so future launches are silent.
+      const wrappedForB = wrapMasterKeyForMachine(recovered, machineKeyB);
+      const liveB = unwrapMasterKeyForMachine(wrappedForB, machineKeyB);
+      try {
+        expect(openPayload(liveB, sealed).toString('utf8')).toBe('precious app data');
+      } finally {
+        zeroKey(liveB);
+      }
+    } finally {
+      zeroKey(recovered);
+    }
+  });
+
+  it('passphrase envelope is self-contained: no machine state needed to parse it', async () => {
+    const { descriptor, masterKey } = await makeHome();
+    zeroKey(masterKey);
+    // A stranger's machine reads only the folder: manifest parses, vault exists.
+    const foreign = describeAppHome(descriptor.home);
+    expect(foreign.manifest.encryption.passphrase.salt).toMatch(/^[a-f0-9]+$/);
+    expect(foreign.manifest.encryption.passphrase.wrappedKey).toMatch(/^[a-f0-9]+$/);
+    // Wrong passphrase fails closed; right passphrase opens — nothing else involved.
+    await expect(unlockAppHome(descriptor.home, 'wrong passphrase here')).rejects.toThrowError(/wrong passphrase/);
+    const key = await unlockAppHome(descriptor.home, 'correct horse passphrase');
+    zeroKey(key);
+  });
+});
