@@ -155,17 +155,22 @@ describe('external storage', () => {
     // swap the library folder for an empty replacement (same path, no marker)
     renameSync(path.join(root, 'photos'), path.join(root, 'photos-orig'));
     mkdirSync(path.join(root, 'photos'));
-    // the observer stops the app and the summary reports the missing drive
+    // the observer stops the app (desired stays running: guard stops halt
+    // containers but keep the intent, so the app auto-starts on return) and
+    // the summary reports the missing drive
     const deadline = Date.now() + 15_000;
     let summary: InstanceSummary | undefined;
     for (;;) {
       summary = (await h.api.instances()).find((i) => i.id === inst.id);
-      if (summary?.needsDrive && summary.desired === 'stopped') break;
+      // wait for the guard stop to finish (runtime halted, no op in flight)
+      // before asserting the refusal: a start plan issued mid-stop would hit
+      // "already running" instead of the drive refusal.
+      if (summary?.needsDrive && summary.desired === 'running' && summary.runtime === 'stopped' && !summary.operationId) break;
       if (Date.now() > deadline) break;
       await new Promise((r) => setTimeout(r, 500));
     }
     expect(summary?.needsDrive?.path).toBe(path.join(root, 'photos'));
-    expect(summary?.desired).toBe('stopped');
+    expect(summary?.desired).toBe('running');
     // start is refused while the wrong folder is in place
     const refused = await h.api.expectError(409, 'DATA_MISSING', 'POST', '/v1/plans', { kind: 'start', instanceId: inst.id });
     expect(refused.error.message).toMatch(/needs its drive/);
@@ -183,5 +188,56 @@ describe('external storage', () => {
     renameSync(path.join(root, 'photos-repl'), path.join(root, 'photos-tmp'));
     const { rmSync } = await import('node:fs');
     rmSync(path.join(root, 'photos-tmp'), { recursive: true, force: true });
+  });
+
+  it('drive guard: restoring the folder auto-starts the app (desired stays running)', async () => {
+    // after the previous test the original folder is adopted back and the app
+    // is running again (adopt works on a guard-stopped app, then start).
+    // Yank it again: the observer stops it, desired stays running.
+    const cur = (await h.api.instances()).find((i) => i.id === inst.id);
+    if (!cur) throw new Error('mediaapp instance missing after previous test');
+    if (cur.desired !== 'running' || cur.runtime !== 'running') {
+      const start = await h.api.run({ kind: 'start', instanceId: inst.id });
+      expect(start.op.state, JSON.stringify(start.op.error)).toBe('succeeded');
+    }
+    renameSync(path.join(root, 'photos'), path.join(root, 'photos-gone'));
+    // observer stops it (desired stays running for guard stops)
+    const stopDeadline = Date.now() + 15_000;
+    for (;;) {
+      const s = (await h.api.instances()).find((i) => i.id === inst.id);
+      if (s?.needsDrive && s.desired === 'running') break;
+      if (Date.now() > stopDeadline) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const stopped = (await h.api.instances()).find((i) => i.id === inst.id)!;
+    expect(stopped.needsDrive?.path).toBe(path.join(root, 'photos'));
+    expect(stopped.desired).toBe('running');
+    // restore the folder (marker included): the observer auto-starts, no manual start needed
+    renameSync(path.join(root, 'photos-gone'), path.join(root, 'photos'));
+    // poll until the auto-start operation finishes and the lock clears
+    const end = Date.now() + 30_000;
+    let back: InstanceSummary | undefined;
+    for (;;) {
+      const s = (await h.api.instances()).find((i) => i.id === inst.id)!;
+      if (!s.needsDrive && !s.operationId) {
+        back = s;
+        break;
+      }
+      if (Date.now() > end) {
+        back = s;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(back?.needsDrive).toBeNull();
+  });
+
+  it('storage policy toggles persist (auto-mount and auto-start)', async () => {
+    const p = await h.api.expect<{ autoMount: boolean; autoStart: boolean }>(200, 'PUT', '/v1/host/storage/policy', { autoMount: false });
+    expect(p.autoMount).toBe(false);
+    expect(p.autoStart).toBe(true);
+    const s = await h.api.expect<{ storagePolicy: { autoMount: boolean; autoStart: boolean } }>(200, 'GET', '/v1/host/storage');
+    expect(s.storagePolicy).toEqual({ autoMount: false, autoStart: true });
+    await h.api.expect<{ autoMount: boolean; autoStart: boolean }>(200, 'PUT', '/v1/host/storage/policy', { autoMount: true, autoStart: true });
   });
 });

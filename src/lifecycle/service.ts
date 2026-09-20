@@ -231,6 +231,17 @@ export class ApplicationService {
     this.ctx.repo.setSetting('updates.autoDefault', p.autoDefault);
     return this.updatesPolicy();
   }
+  // ---- removable-drive behaviour: auto-mount on insert + auto-start apps
+  // whose drive came back. Both on by default; stored as settings (no
+  // migration). The drive guard still stops apps on removal either way.
+  storagePolicy(): { autoMount: boolean; autoStart: boolean } {
+    return { autoMount: this.ctx.repo.setting<boolean>('storage.autoMount') ?? true, autoStart: this.ctx.repo.setting<boolean>('storage.autoStart') ?? true };
+  }
+  setStoragePolicy(p: { autoMount?: boolean; autoStart?: boolean }): { autoMount: boolean; autoStart: boolean } {
+    if (p.autoMount !== undefined) this.ctx.repo.setSetting('storage.autoMount', p.autoMount);
+    if (p.autoStart !== undefined) this.ctx.repo.setSetting('storage.autoStart', p.autoStart);
+    return this.storagePolicy();
+  }
   setInstanceAutoUpdate(id: string, enabled: boolean): InstanceSummary {
     const row = this.instanceRow(id);
     this.ctx.repo.setAutoUpdate(row.id, enabled);
@@ -520,7 +531,11 @@ export class ApplicationService {
     const inst = this.instanceRow(instanceId);
     if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `cannot adopt a drive for an app in state ${inst.installState}`);
     if (inst.activeOperationId) throw new HarborError('BUSY', `instance ${inst.name} has an active operation`, { operationId: inst.activeOperationId });
-    if (inst.desired === 'running') throw new HarborError('INVALID_STATE', `${inst.name} is still running`, { nextAction: 'Stop the app first, then adopt the folder.' });
+    // Refused while containers are still running — stop first so nothing
+    // writes into the new folder mid-adoption. A drive-guard stop leaves
+    // desired running (runtime stopped), which must NOT block adoption:
+    // that is exactly when the operator needs to accept a replacement.
+    if (inst.runtime === 'running' || inst.runtime === 'starting') throw new HarborError('INVALID_STATE', `${inst.name} is still running`, { nextAction: 'Stop the app first, then adopt the folder.' });
     const bind = this.ctx.repo.resources(instanceId).find((x) => x.kind === 'bind' && ((x.metadata?.['storageId'] as string | undefined) ?? x.role) === storageId);
     if (!bind) throw new HarborError('NOT_FOUND', `no external folder for storage claim ${storageId} on ${inst.name}`);
     const { path: hostPath } = checkHostDirectory(bind.name);

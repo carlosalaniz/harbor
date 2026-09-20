@@ -1,6 +1,7 @@
 import type { SelfUpdateService } from '../system/selfupdate.js';
 import type { LogBuffer } from '../system/logs.js';
 import type { Notifier } from '../notify/notifier.js';
+import type { DeviceMountService } from '../system/device-mount.js';
 import type { DaemonConfig } from '../config.js';
 import type { ComposeRunner, DockerAdapter } from '../docker/adapter.js';
 import type { PortObserver } from '../docker/ports.js';
@@ -42,6 +43,10 @@ export interface Ctx {
   selfUpdate: SelfUpdateService;
   notifier: Notifier;
   git: GitFetcher;
+  // Removable-device mounts (root oneshot via polkit). Set after construction
+  // in daemon.ts — the observer's auto-mount uses it; null in tests/dev that
+  // never wire it (auto-mount then skips quietly).
+  devices?: DeviceMountService | null;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

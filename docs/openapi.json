@@ -1273,6 +1273,35 @@
         }
       }
     },
+    "/v1/host/storage/policy": {
+      "put": {
+        "description": "Removable-drive behaviour: auto-mount on insert, auto-start apps whose drive came back (both on by default).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "autoMount": {
+                    "type": "boolean"
+                  },
+                  "autoStart": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/domains": {
       "get": {
         "description": "Registered public domains with DNS check results, this machine's public address and which app uses each domain.",

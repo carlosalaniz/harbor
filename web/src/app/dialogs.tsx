@@ -410,7 +410,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           <div className="row wrap">
             <button
               className="btn"
-              disabled={busy || adopting || inst.desired === 'running'}
+              disabled={busy || adopting || inst.runtime === 'running' || inst.runtime === 'starting'}
               onClick={() => {
                 setAdopting(true);
                 setAdoptMsg(null);
@@ -421,7 +421,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
                   .finally(() => setAdopting(false));
               }}
               aria-label={`Accept the current folder as the new home for ${inst.name}`}
-              title={inst.desired === 'running' ? 'Stop the app first' : 'Stamp the current folder with a new identity and use it from now on'}
+              title={inst.runtime === 'running' || inst.runtime === 'starting' ? 'Stop the app first' : 'Stamp the current folder with a new identity and use it from now on'}
             >
               {adopting ? 'Accepting…' : 'Use this folder instead'}
             </button>

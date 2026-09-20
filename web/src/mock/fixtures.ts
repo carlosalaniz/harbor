@@ -432,6 +432,7 @@ export function mockStorage(): HostStorageDto {
       { name: 'sdc1', device: '/dev/sdc1', size: '14.4G', fsType: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', removable: true, mounted: false, mountpoint: null },
     ],
     inUse: [{ path: '/mnt/photos', instanceId: 'inst-immich', instanceName: 'Immich', purpose: 'Photo library', readOnly: false }],
+    storagePolicy: { autoMount: true, autoStart: true },
   };
 }
 

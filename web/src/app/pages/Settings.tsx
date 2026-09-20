@@ -1141,6 +1141,40 @@ function Storage() {
         <h2 id="disks-h">Disks</h2>
         <p className="muted small">Where your apps keep big data. Point an app at a folder on any disk when you install it.</p>
         {error && <p className="error">{error}</p>}
+        {s?.storagePolicy && (
+          <div className="stack" role="group" aria-label="Removable-drive behaviour">
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={s.storagePolicy.autoMount}
+                onChange={(e) => {
+                  const next = { autoMount: e.target.checked };
+                  setS((cur) => (cur ? { ...cur, storagePolicy: { ...cur.storagePolicy, ...next } } : cur));
+                  void api.setStoragePolicy(next).then(
+                    (p) => setS((cur) => (cur ? { ...cur, storagePolicy: p } : cur)),
+                    (err: Error) => setError(err.message),
+                  );
+                }}
+              />
+              <span className="muted small">Mount drives automatically when plugged in</span>
+            </label>
+            <label className="row">
+              <input
+                type="checkbox"
+                checked={s.storagePolicy.autoStart}
+                onChange={(e) => {
+                  const next = { autoStart: e.target.checked };
+                  setS((cur) => (cur ? { ...cur, storagePolicy: { ...cur.storagePolicy, ...next } } : cur));
+                  void api.setStoragePolicy(next).then(
+                    (p) => setS((cur) => (cur ? { ...cur, storagePolicy: p } : cur)),
+                    (err: Error) => setError(err.message),
+                  );
+                }}
+              />
+              <span className="muted small">Start apps again when their drive comes back</span>
+            </label>
+          </div>
+        )}
         <ul className="plain disks">
           {s?.mounts.map((m) => {
             const pct = m.totalBytes && m.usedBytes !== null ? Math.round((m.usedBytes / m.totalBytes) * 100) : null;

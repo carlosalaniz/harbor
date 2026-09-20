@@ -297,6 +297,9 @@ export interface HostStorageDto {
   devices: { name: string; device: string; size: string; fsType: string | null; label: string | null; uuid: string | null; removable: boolean; mounted: boolean; mountpoint: string | null }[];
   // folders currently used by apps (bind resources), with the instance that uses each
   inUse: { path: string; instanceId: string; instanceName: string; purpose: string; readOnly: boolean }[];
+  // removable-drive behaviour: auto-mount on insert, and auto-start apps whose
+  // drive came back (both on; the drive guard still stops apps on removal).
+  storagePolicy: { autoMount: boolean; autoStart: boolean };
 }
 
 export interface FolderListingDto {

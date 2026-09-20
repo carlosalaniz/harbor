@@ -131,6 +131,7 @@ const realApi = {
   // settings
   changePassword: (currentPassword: string, newPassword: string) => call<{ revokedSessions: number }>('PUT', '/v1/account/password', { currentPassword, newPassword }),
   hostStorage: () => call<HostStorageDto>('GET', '/v1/host/storage'),
+  setStoragePolicy: (p: { autoMount?: boolean; autoStart?: boolean }) => call<{ autoMount: boolean; autoStart: boolean }>('PUT', '/v1/host/storage/policy', p),
   mountDevice: (name: string) => call<{ device: string; state: string; message: string; mountpoint: string | null }>('POST', `/v1/host/devices/${name}/mount`, {}),
   unmountDevice: (name: string) => call<{ device: string; state: string; message: string; mountpoint: string | null }>('POST', `/v1/host/devices/${name}/unmount`, {}),
   deviceStatus: (name: string) => call<{ device: string; state: string; message: string; mountpoint: string | null }>('GET', `/v1/host/devices/${name}/status`),

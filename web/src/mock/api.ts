@@ -170,6 +170,11 @@ export const mockApi = {
     return { revokedSessions: 1 };
   },
   hostStorage: async (): Promise<HostStorageDto> => storage,
+  setStoragePolicy: async (p: { autoMount?: boolean; autoStart?: boolean }): Promise<{ autoMount: boolean; autoStart: boolean }> => {
+    await beat(150);
+    storage = { ...storage, storagePolicy: { autoMount: p.autoMount ?? storage.storagePolicy.autoMount, autoStart: p.autoStart ?? storage.storagePolicy.autoStart } };
+    return storage.storagePolicy;
+  },
   mountDevice: async (name: string) => {
     await beat(1200); // slow enough that the Mounting… spinner + disabled lock is visible
     mockMountDevice(name);

@@ -492,6 +492,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       mounts,
       devices,
       inUse: service.foldersInUse(),
+      storagePolicy: service.storagePolicy(),
     };
   });
   app.get(
@@ -522,6 +523,11 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     '/v1/host/devices/:name/status',
     { preHandler: requireAuth, schema: { description: 'Mount/unmount progress for one removable device.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
     async (req) => devices.status((req.params as { name: string }).name) ?? { device: (req.params as { name: string }).name, state: 'unmounted', message: 'no mount operation recorded', mountpoint: null, at: null },
+  );
+  app.put(
+    '/v1/host/storage/policy',
+    { preHandler: requireAuth, schema: { description: 'Removable-drive behaviour: auto-mount on insert, auto-start apps whose drive came back (both on by default).', body: { type: 'object', additionalProperties: false, properties: { autoMount: { type: 'boolean' }, autoStart: { type: 'boolean' } } } } },
+    async (req) => service.setStoragePolicy(req.body as { autoMount?: boolean; autoStart?: boolean }),
   );
 
   // --- public domains (wizard for publishing on the internet)

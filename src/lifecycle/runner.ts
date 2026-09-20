@@ -112,7 +112,7 @@ export class OperationRunner {
         case 'install': await this.install(op, plan, inst, secretValues); break;
         case 'reinstall': await this.reinstall(op, plan, inst, secretValues); break;
         case 'start': await this.start(op, plan, inst); break;
-        case 'stop': await this.stop(op, inst); break;
+        case 'stop': await this.stop(op, inst, plan.actor); break;
         case 'remove': await this.remove(op, inst); break;
         case 'purge': await this.purge(op, inst); break;
         case 'update': await this.update(op, plan, inst, secretValues); break;
@@ -212,7 +212,14 @@ export class OperationRunner {
       if (bind) {
         try {
           checkHostDirectory(bind.name);
-          verifyBindMarker(bind.name, inst.id, claim.id, (bind.metadata?.['driveId'] as string | undefined) ?? null);
+          // A legacy marker (no drive id) verifies by instance + claim alone;
+          // backfill the resource so future comparisons have an id.
+          let driveId = (bind.metadata?.['driveId'] as string | undefined) ?? null;
+          if (!driveId) {
+            driveId = writeBindMarker(bind.name, inst.id, claim.id);
+            repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: bind.role, dockerId: bind.dockerId, name: bind.name, token: bind.token, metadata: { ...(bind.metadata ?? {}), storageId: claim.id, driveId } });
+          }
+          verifyBindMarker(bind.name, inst.id, claim.id, driveId);
         } catch (e) {
           throw new HarborError('DATA_MISSING', `your folder ${bind.name} (${claim.purpose}) is not available: ${e instanceof Error ? e.message : String(e)}`, { nextAction: 'Mount or restore the folder at the same path, then retry. Harbor will not start the app against a missing folder.' });
         }
@@ -589,11 +596,15 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { installState: 'installed', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
   }
 
-  private async stop(op: OperationRow, inst: InstanceRow): Promise<void> {
+  private async stop(op: OperationRow, inst: InstanceRow, actor: string): Promise<void> {
     const { repo, docker } = this.ctx;
     this.phase(op, 'applying', 'stopping', 'persisting desired state stopped');
     await this.engineOrThrow();
-    repo.updateInstance(inst.id, { desired: 'stopped' });
+    // A drive-guard stop halts containers but leaves desired running: the app
+    // was healthy and should come back by itself once its drive is back (the
+    // observer's auto-start handles that). Operator stops keep desired stopped.
+    const guardStop = actor === 'drive-guard';
+    if (!guardStop) repo.updateInstance(inst.id, { desired: 'stopped' });
     const recorded = repo.resources(inst.id).filter((r) => r.kind === 'container');
     // Application services first, then infrastructure, so dependents shut down before their dependencies.
     for (const r of recorded) {

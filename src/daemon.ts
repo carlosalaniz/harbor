@@ -179,6 +179,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       });
     };
     const devices = new DeviceMountService(repo, clock, config.stateDir, fakeMode ? null : startUnit);
+    ctx.devices = devices;
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode
     const terminals = new TerminalService(log, fakeMode ? { shell: [process.env['SHELL'] ?? '/bin/bash', '-il'], env: { HOME: process.env['HOME'] ?? config.stateDir, USER: process.env['USER'] ?? 'harbor' }, cwd: config.stateDir } : { shell: ['/bin/bash', '-il'], env: { HOME: config.stateDir, USER: 'harbor', LOGNAME: 'harbor' }, cwd: config.stateDir });
