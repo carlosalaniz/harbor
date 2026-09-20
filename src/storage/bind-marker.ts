@@ -86,9 +86,8 @@ export function verifyBindMarker(dir: string, instanceId: string, storageId: str
     });
   }
   if (typeof marker.driveId !== 'string' || marker.driveId.length === 0) {
-    // Legacy marker: the right folder, predates drive ids. Accept it here;
-    // the resource backfill below records an id for future comparisons.
-    if (!expectedDriveId) return;
+    // Legacy marker: the right folder, predates drive ids. Accept it; the
+    // resource backfill records an id for future comparisons.
     return;
   }
   if (expectedDriveId && marker.driveId !== expectedDriveId) {
