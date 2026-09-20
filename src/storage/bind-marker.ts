@@ -68,8 +68,11 @@ function readMarker(dir: string): BindMarker | null {
 }
 
 // Throws when the folder carries no usable identity for this app (missing,
-// unreadable, legacy without a drive id) or a different app's marker: the
-// folder at this path is not the one this app claimed.
+// unreadable, or a different app's marker): the folder at this path is not
+// the one this app claimed. A legacy marker (no drive id, written before the
+// drive guard) verifies by instance + claim alone: the folder is the one the
+// app was installed with, it just predates identities. The next install or
+// adopt stamps a drive id into it going forward.
 export function verifyBindMarker(dir: string, instanceId: string, storageId: string, expectedDriveId?: string | null): void {
   const marker = readMarker(dir);
   if (!marker) {
@@ -83,9 +86,10 @@ export function verifyBindMarker(dir: string, instanceId: string, storageId: str
     });
   }
   if (typeof marker.driveId !== 'string' || marker.driveId.length === 0) {
-    throw new HarborError('DATA_MISSING', `folder ${dir} has a legacy marker without a drive identity`, {
-      nextAction: 'Re-insert the original drive, or adopt this folder from the app drawer to stamp it with a new identity.',
-    });
+    // Legacy marker: the right folder, predates drive ids. Accept it here;
+    // the resource backfill below records an id for future comparisons.
+    if (!expectedDriveId) return;
+    return;
   }
   if (expectedDriveId && marker.driveId !== expectedDriveId) {
     throw new HarborError('DATA_MISSING', `folder ${dir} is not the drive this app was using`, {

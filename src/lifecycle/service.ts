@@ -475,6 +475,9 @@ export class ApplicationService {
   // fails (missing, foreign, or swapped). Null means the app's folders are
   // the ones it was installed with. Computed at read time so the drawer,
   // tiles and Start refusal all see the same state without a migration.
+  // Legacy markers (no drive id) and resources (no recorded drive id) are
+  // backfilled on sight: the folder is the one the app was installed with,
+  // it just predates identities, so stamp and record going forward.
   // Adopting a replacement drive re-stamps the folder with a new identity
   // (the old data is gone; the operator accepts the folder as the new home).
   private needsDrive(instanceId: string): InstanceSummary['needsDrive'] {
@@ -485,7 +488,17 @@ export class ApplicationService {
         try {
           checkHostDirectory(r.name);
           const storageId = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
-          const driveId = (r.metadata?.['driveId'] as string | undefined) ?? null;
+          let driveId = (r.metadata?.['driveId'] as string | undefined) ?? null;
+          if (!driveId) {
+            // Pre-guard resource: adopt the folder's marker (or stamp a fresh
+            // one) so future comparisons have an id to check against.
+            try {
+              driveId = writeBindMarker(r.name, inst.id, storageId);
+              this.ctx.repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: r.role, dockerId: r.dockerId, name: r.name, token: r.token, metadata: { ...(r.metadata ?? {}), storageId, driveId } });
+            } catch {
+              /* read-only folders stay unmarked; the verify below still applies */
+            }
+          }
           verifyBindMarker(r.name, inst.id, storageId, driveId);
         } catch (e) {
           const purpose = (r.metadata?.['storageId'] as string | undefined) ?? r.role;

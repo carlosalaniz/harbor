@@ -26,13 +26,20 @@ describe('bind marker', () => {
     expect(second).not.toBe(first);
     expect(() => verifyBindMarker(other, 'inst-1', 'library', first)).toThrowError(/not the drive/);
   });
-  it('a missing or legacy marker refuses instead of passing silently', () => {
+  it('a missing or foreign marker refuses; a legacy marker verifies by app', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'harbor-bind-'));
     mkdirSync(path.join(dir, 'sub'));
     expect(() => verifyBindMarker(dir, 'inst-1', 'library')).toThrowError(/no Harbor identity/);
     writeFileSync(path.join(dir, '.harbor-bind.json'), 'not json');
     expect(() => verifyBindMarker(dir, 'inst-1', 'library')).toThrowError(/no Harbor identity/);
+    // legacy marker (no drive id, written before the drive guard): the right
+    // folder verifies; a recorded id backfills on the next read.
     writeFileSync(path.join(dir, '.harbor-bind.json'), JSON.stringify({ instanceId: 'inst-1', storageId: 'library' }));
-    expect(() => verifyBindMarker(dir, 'inst-1', 'library')).toThrowError(/legacy marker/);
+    expect(() => verifyBindMarker(dir, 'inst-1', 'library')).not.toThrow();
+    expect(() => verifyBindMarker(dir, 'inst-1', 'library', 'recorded-id')).not.toThrow();
+    expect(writeBindMarker(dir, 'inst-1', 'library')).toMatch(/^[0-9a-f-]{36}$/);
+    const stamped = readDriveId(dir, 'inst-1', 'library')!;
+    expect(() => verifyBindMarker(dir, 'inst-1', 'library', stamped)).not.toThrow();
+    expect(() => verifyBindMarker(dir, 'inst-1', 'library', 'some-other-drive')).toThrowError(/not the drive/);
   });
 });

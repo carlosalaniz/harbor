@@ -12,7 +12,7 @@ import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
 import { listDevices } from '../system/host-storage.js';
 import { checkHostDirectory } from '../storage/host-path.js';
-import { verifyBindMarker } from '../storage/bind-marker.js';
+import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 
 // Periodic observation of what actually exists. Never mutates Docker.
 export class Observer {
@@ -197,7 +197,18 @@ export class Observer {
           checkHostDirectory(r.name);
           const inst = this.ctx.repo.instance(r.instanceId);
           const storageId = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
-          const driveId = (r.metadata?.['driveId'] as string | undefined) ?? null;
+          let driveId = (r.metadata?.['driveId'] as string | undefined) ?? null;
+          if (inst && !driveId) {
+            // Pre-guard install: backfill the identity from the folder's
+            // legacy marker (or stamp a fresh one) so the check below and
+            // future ticks compare against a recorded id.
+            try {
+              driveId = writeBindMarker(r.name, inst.id, storageId);
+              this.ctx.repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: r.role, dockerId: r.dockerId, name: r.name, token: r.token, metadata: { ...(r.metadata ?? {}), storageId, driveId } });
+            } catch {
+              /* read-only folders stay unmarked; the verify below still applies */
+            }
+          }
           if (inst) verifyBindMarker(r.name, inst.id, storageId, driveId);
         } catch (e) {
           reason = e instanceof Error ? e.message : String(e);
