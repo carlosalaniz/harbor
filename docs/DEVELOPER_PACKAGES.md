@@ -62,6 +62,10 @@ storage:                         # optional: one claim per named volume
     purpose: Uploaded files
     retention: retain
     external: {hint: "Pick a folder with room, e.g. /srv/harbor/MyApp", required: false, readOnly: false}
+    # Claiming a folder stamps an app-generated drive id into its `.harbor-bind.json` marker
+    # (random at install, kept on restore, fresh on replacement). A missing, foreign or
+    # swapped folder refuses Start with DATA_MISSING; the observer stops the app when its
+    # drive leaves and auto-starts it when the right folder is back (see decisions 89–90).
 secrets:                         # optional: Harbor generates and keeps these
   - id: app-secret
     bytes: 32
