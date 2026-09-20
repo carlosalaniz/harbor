@@ -4,6 +4,8 @@ import { HarborError } from '../errors.js';
 import { addSeconds, rfc3339, type Clock, type Ids } from '../util.js';
 import { hashPassword, validatePasswordPolicy, verifyPassword } from './password.js';
 import { newTotpSecret, otpauthUrl, verifyTotp } from './totp.js';
+import { unsealMachineKey, zeroMachineKey, type SealedMachineKey } from './machine-key.js';
+import type { MachineKeyHolder } from './machine-holder.js';
 
 export interface Session {
   actor: string;
@@ -43,7 +45,29 @@ export class SessionService {
     private readonly clock: Clock,
     private readonly ids: Ids,
     private readonly ttlSeconds: number,
+    private readonly machineKey?: MachineKeyHolder,
   ) {}
+
+  // BFU -> AFU: the first successful login after boot unseals the machine key
+  // into memory. Best-effort: a missing/corrupt blob (or no app homes yet)
+  // never fails the login itself.
+  private unlockMachineKey(password: string): void {
+    if (!this.machineKey || this.machineKey.unlocked) return;
+    const sealed = this.repo.setting<SealedMachineKey>('security.machineKey');
+    if (!sealed) return;
+    void unsealMachineKey(sealed, password)
+      .then((key) => {
+        try {
+          this.machineKey!.hold(key);
+        } finally {
+          zeroMachineKey(key);
+        }
+      })
+      .catch(() => {
+        // Wrong-password logins never reach here (they fail above); a damaged
+        // blob stays damaged until the next login retry. Stay BFU.
+      });
+  }
 
   private windowFor(client: string): FailureWindow {
     let w = this.perClient.get(client);
@@ -89,6 +113,7 @@ export class SessionService {
     const ttl = opts.remember ? 30 * 24 * 3600 : this.ttlSeconds;
     const expiresAt = rfc3339(addSeconds(this.clock.now(), ttl));
     this.repo.insertSession(hashToken(token), username, expiresAt, opts.remember ? 'remember' : 'session');
+    this.unlockMachineKey(password);
     return { token, expiresAt };
   }
 
@@ -160,7 +185,22 @@ export class SessionService {
     if (policy) throw new HarborError('INVALID_REQUEST', policy);
     if (newPassword === currentPassword) throw new HarborError('INVALID_REQUEST', 'the new password must differ from the current one');
     const hashed = await hashPassword(newPassword);
-    this.repo.setAdministrator({ username: admin.username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
+    // Re-seal the live machine key under the new password so AFU survives the
+    // change. When BFU (no live key — e.g. the sealed blob predates app
+    // homes), there is nothing to re-seal; the next login unseals as usual.
+    // A password change without the old password is impossible here (the
+    // current password is required), so the blob is never orphaned by this path.
+    const live = this.machineKey?.take() ?? null;
+    try {
+      const { resealMachineKey } = await import('./machine-key.js');
+      const resealed = live ? await resealMachineKey(live, newPassword) : null;
+      this.repo.transaction(() => {
+        this.repo.setAdministrator({ username: admin.username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
+        if (resealed) this.repo.setSetting('security.machineKey', resealed);
+      });
+    } finally {
+      if (live) zeroMachineKey(live);
+    }
     return { revokedSessions: this.repo.revokeOtherSessions(hashToken(token)) };
   }
 }

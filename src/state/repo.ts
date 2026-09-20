@@ -130,7 +130,9 @@ export interface PlanProposal {
   project: string;
   endpoints: EndpointAllocation[];
   // external claims: hostPath set, volumeName null (nothing is created in Docker)
-  storage: { id: string; composeVolume: string; volumeName: string | null; purpose: string; hostPath?: string; readOnly?: boolean }[];
+  storage: { id: string; composeVolume: string; volumeName: string | null; purpose: string; hostPath?: string; readOnly?: boolean; homePath?: string }[];
+  // install-location: the whole app lives in an encrypted home under this dir
+  location: { dir: string } | null;
   secrets: { id: string }[];
   changes: string[];
   warnings: string[];

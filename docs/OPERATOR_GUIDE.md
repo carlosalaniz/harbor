@@ -218,7 +218,27 @@ are never touched.
   When the right folder is back, Harbor starts the app again by itself
   (*Automatically start apps when their drive returns*, on by default) and the
   bell row disappears.
+## 4a2. Install a whole app on a drive (encrypted, portable)
 
+Some apps keep everything in a database that cannot live in one of your own
+folders — and on a machine with tiny onboard storage even the database needs to
+move. At install time the wizard asks **where the app should live**: the system
+disk (this machine only), or any eligible drive folder (for example
+`/mnt/photos/harbor-apps`). A drive choice asks for an **encryption passphrase**
+(8+ characters, or a generated recovery key) — write it down; losing it loses
+the data. The review step names the encrypted home and warns about the drive
+and the passphrase.
+
+The whole app — database included — then lives encrypted in one folder on the
+drive (`<folder>/<app>/{manifest.json, vault/}`). Unplug the drive and the app
+stops; plug it into another Harbor machine and it appears under **Settings →
+Storage → Found apps**, where *Adopt* (with the passphrase) installs it there
+with fresh ports. Only ext4/btrfs/xfs/zfs/apfs drives qualify (a database on
+exFAT/NTFS is corruption, not portability — those are greyed out with a reason).
+
+CLI: `harbor install <package> --location /mnt/photos/harbor-apps` (prompts for
+the passphrase; `--passphrase-stdin` reads it from a pipe), `harbor found-apps`,
+`harbor adopt <home-folder>`.
 ## 4b. Settings in the console (for people who do not use a terminal)
 
 The console's **Settings** page covers what a household operator needs after bootstrap:

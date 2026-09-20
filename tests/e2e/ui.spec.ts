@@ -272,6 +272,34 @@ test('phone width: bottom tabs navigate, tiles render in two columns, dialogs op
   expect(await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')).toBe(true);
 });
 
+test('install page: choose where the app lives; a drive install asks for a passphrase and reviews encrypted', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'About BentoPDF' }).click();
+  const where = page.getByRole('dialog');
+  await expect(where).toContainText('Where should the app live?');
+  await expect(where.getByRole('radio', { name: /System disk/ })).toBeChecked();
+  // the data-folder candidate is offered (created on demand); picking it asks for a passphrase
+  await where.getByRole('radio', { name: /Harbor data folder/ }).check();
+  await expect(where.getByLabel('Encryption passphrase for this app')).toBeVisible();
+  await where.getByLabel('Encryption passphrase for this app').fill('short');
+  await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeDisabled();
+  await where.getByLabel('Encryption passphrase for this app').fill('correct horse battery staple');
+  await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeEnabled();
+  await where.getByRole('button', { name: 'Install BentoPDF now' }).click();
+  const review = page.getByRole('dialog');
+  await expect(review).toContainText('Review install');
+  await expect(review).toContainText(/encrypted at .*harbor-apps/);
+  await review.getByText(/Exactly what Harbor will do/).click();
+  await expect(review).toContainText(/Install the whole app encrypted at/);
+  await review.getByRole('button', { name: 'Install' }).click();
+  await trayDone(page, 'Install');
+  await page.getByRole('link', { name: 'Home' }).click();
+  // BentoPDF was already installed on the system disk earlier in the suite;
+  // this one is the drive install (bentopdf-2).
+  await expect(page.locator('.instance').filter({ hasText: 'bentopdf-2' }).first()).toBeVisible();
+});
+
 test('install page: bring your own folder validates the path in the plan and mounts it', async ({ page }) => {
   let folder = ''; // eslint-disable-line no-useless-assignment -- assigned from the picker below
   await login(page);

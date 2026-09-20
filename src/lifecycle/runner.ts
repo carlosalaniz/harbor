@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { cpSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import type { Ctx } from './context.js';
 import { HarborError, type ErrorCode } from '../errors.js';
 import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
@@ -8,6 +8,8 @@ import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type In
 import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
+import { createAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { zeroMachineKey } from '../auth/machine-key.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
@@ -173,7 +175,15 @@ export class OperationRunner {
     if (!ping.available) throw new HarborError('DOCKER_UNAVAILABLE', `Docker Engine is not reachable: ${ping.error ?? 'unknown error'}`);
   }
 
-  private async createOwnedVolumes(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, planned: PlanRow['proposal']['storage']): Promise<void> {
+  // App-home root for an install-location instance: <dir>/<name>/volumes/<claim>.
+  // The home itself is created by createAppHome (manifest + vault); the
+  // per-claim subdirectories are Harbor-owned (created here, never chowned
+  // away) and each managed volume is rooted at its own subdirectory.
+  private homeVolumeDir(home: string, composeVolume: string): string {
+    return path.join(home, 'volumes', composeVolume);
+  }
+
+  private async createOwnedVolumes(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, planned: PlanRow['proposal']['storage'], homeDir: string | null = null): Promise<void> {
     const { docker, repo, ids } = this.ctx;
     for (const claim of pkg.manifest.storage ?? []) {
       const choice = planned.find((s) => s.id === claim.id);
@@ -197,6 +207,19 @@ export class OperationRunner {
         });
       }
       const token = ids.token(16).toString('hex');
+      if (homeDir) {
+        // Install-location: the volume lives inside the encrypted app home.
+        const device = this.homeVolumeDir(homeDir, claim.composeVolume);
+        try {
+          mkdirSync(device, { recursive: true, mode: 0o700 });
+        } catch (e) {
+          throw new HarborError('STATE_UNAVAILABLE', `cannot create app data folder ${device}: ${(e as Error).message}`);
+        }
+        const created = await docker.createVolume(name, volumeLabels(identity, claim.composeVolume, token), { driverOpts: { type: 'none', o: 'bind', device } });
+        repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: claim.composeVolume, dockerId: null, name, token, metadata: { createdAt: created.createdAt, storageId: claim.id, homePath: device } });
+        this.event(op, 'preparing', `created retained volume ${name} on the drive (${device})`);
+        continue;
+      }
       const created = await docker.createVolume(name, volumeLabels(identity, claim.composeVolume, token));
       repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: claim.composeVolume, dockerId: null, name, token, metadata: { createdAt: created.createdAt, storageId: claim.id } });
       this.event(op, 'preparing', `created retained volume ${name}`);
@@ -229,6 +252,18 @@ export class OperationRunner {
       const rec = resources.find((r) => r.role === claim.composeVolume);
       const name = ownedVolumeName(identity, claim.composeVolume);
       if (!rec) throw new HarborError('DATA_MISSING', `no ownership record for volume ${name}`);
+      // Install-location volumes live on the drive: the home must exist and
+      // the backing dir must be there before Docker is touched.
+      const homePath = rec.metadata?.['homePath'] as string | undefined;
+      if (homePath) {
+        const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+        if (!home) throw new HarborError('DATA_MISSING', `app home for ${inst.name} is not recorded`, { nextAction: 'Re-insert the drive that holds this app, then retry.' });
+        try {
+          checkHostDirectory(home.name);
+        } catch (e) {
+          throw new HarborError('DATA_MISSING', `app home ${home.name} is not available: ${e instanceof Error ? e.message : String(e)}`, { nextAction: 'Re-insert the drive that holds this app at the same path, then retry. Harbor will not start the app against a missing drive.' });
+        }
+      }
       const vol = await docker.inspectVolume(rec.name);
       if (!vol) throw new HarborError('DATA_MISSING', `retained volume ${rec.name} no longer exists`, { nextAction: 'The data volume is gone. Restore it from your own backup or remove the instance; Harbor will not create an empty replacement.' });
       const createdAt = (rec.metadata?.['createdAt'] as string | null) ?? null;
@@ -499,7 +534,16 @@ export class OperationRunner {
     const dirs = this.dirs(inst);
     writeReleaseSnapshot(dirs.release, pkg);
     this.event(op, 'preparing', `stored release snapshot for ${pkg.id} revision ${pkg.revision}`);
-    await this.createOwnedVolumes(op, pkg, identity, inst, plan.proposal.storage);
+    // Install-location: create the encrypted app home first (manifest + vault),
+    // then root every managed volume inside it. The passphrase arrives with the
+    // submission (never in the plan); the machine wrapping is stored on the
+    // instance resource so silent unlock works while this machine holds the key.
+    // Adopt path: createAppHomeForInstall reuses the pre-recorded home.
+    let homeDir: string | null = null;
+    if (plan.proposal.location) {
+      homeDir = await this.createAppHomeForInstall(op, plan, inst, pkg);
+    }
+    await this.createOwnedVolumes(op, pkg, identity, inst, plan.proposal.storage, homeDir);
     this.generateSecrets(op, pkg, inst, dirs.secrets);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     const provisioned = this.readProvisioned(pkg, dirs.secrets, sink);
@@ -519,6 +563,59 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
     // The provisioned admin credential appears once, in this operation's result (same UX as exposure basic-auth).
     if (provisioned) this.opResult = { ...(this.opResult ?? {}), credentials: provisioned, ...(pkg.manifest.provisionedCredentials?.note ? { credentialsNote: pkg.manifest.provisionedCredentials.note } : {}) };
+  }
+
+  // Create the encrypted app home for an install-location install. Returns the
+  // home dir. Records a 'home' resource (the home itself) plus the machine
+  // wrapping of the master key, so this machine unlocks silently while AFU.
+  // Adopt plans skip creation (the home already exists) but still consume the
+  // pre-seeded secret so single-use semantics hold for every location plan.
+  private async createAppHomeForInstall(op: OperationRow, plan: PlanRow, inst: InstanceRow, pkg: LoadedPackage): Promise<string> {
+    const { repo } = this.ctx;
+    const loc = plan.proposal.location!;
+    const passphrase = this.ctx.service.takeInstallLocationSecret(plan.id);
+    if (!passphrase) throw new HarborError('STATE_CHANGED', 'the encryption passphrase for this install is gone', { nextAction: 'Create a new plan and submit it with the passphrase.' });
+    if (passphrase === 'adopted') {
+      const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+      if (!home) throw new HarborError('STATE_CHANGED', 'adopted app home is not recorded', { nextAction: 'Adopt the app again from Storage.' });
+      return home.name;
+    }
+    try {
+      const { descriptor, masterKey } = await createAppHome({
+        parentDir: loc.dir,
+        name: plan.proposal.name,
+        instanceId: inst.id,
+        packageId: pkg.id,
+        packageRevision: pkg.revision,
+        displayName: pkg.manifest.metadata.name,
+        passphrase,
+        harborVersion: this.ctx.version,
+        now: this.ctx.clock.now(),
+      });
+      try {
+        // Machine wrapping for silent unlock: needs AFU (a live machine key).
+        // BFU installs cannot happen (submit requires a session, sessions
+        // unlock) — but if the key is somehow absent, the install still
+        // succeeds; the app just unlocks via passphrase until first login.
+        const machineKey = this.ctx.machineKey.take();
+        let wrapped: MachineWrappedKey | null = null;
+        if (machineKey) {
+          try {
+            wrapped = wrapMasterKeyForMachine(masterKey, machineKey);
+          } finally {
+            zeroMachineKey(machineKey);
+          }
+        }
+        repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: descriptor.home, token: null, metadata: { home: true, driveId: descriptor.manifest.driveId, ...(wrapped ? { machineWrapped: wrapped } : {}) } });
+        this.event(op, 'preparing', `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with the passphrase until first login)'}`);
+        return descriptor.home;
+      } finally {
+        zeroKey(masterKey);
+      }
+    } finally {
+      // The passphrase is single-use: never linger in memory past apply.
+      (passphrase as unknown as { fill?: (v: number) => void }).fill?.(0);
+    }
   }
 
   // `compose up`, then record what exists under our labels. On failure, still record (best effort)

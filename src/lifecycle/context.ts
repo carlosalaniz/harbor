@@ -12,6 +12,8 @@ import type { NetProvider } from '../system/net.js';
 import type { PackageStore } from '../packages/store.js';
 import type { GitFetcher } from '../packages/git.js';
 import type { CaddyAdmin } from '../exposure/caddy.js';
+import type { MachineKeyHolder } from '../auth/machine-holder.js';
+import type { ApplicationService } from './service.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
 export type UrlVerifier = (url: string, opts?: { expectStatus?: number[]; timeoutMs?: number }) => Promise<{ ok: boolean; status: number | null; error: string | null }>;
@@ -43,6 +45,12 @@ export interface Ctx {
   selfUpdate: SelfUpdateService;
   notifier: Notifier;
   git: GitFetcher;
+  // Unsealed per-installation machine key (AFU only; null in BFU). Held in
+  // memory from the first login after boot; cleared on shutdown.
+  machineKey: MachineKeyHolder;
+  // Back-reference so the runner can consume single-use install secrets.
+  // Set in daemon.ts after the service is constructed.
+  service: ApplicationService;
   // Removable-device mounts (root oneshot via polkit). Set after construction
   // in daemon.ts — the observer's auto-mount uses it; null in tests/dev that
   // never wire it (auto-mount then skips quietly).

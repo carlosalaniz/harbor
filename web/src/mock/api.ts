@@ -87,6 +87,7 @@ const planFor = (kind: PlanDto['kind'], instanceId: string, packageId: string, n
   changes: [`Mock plan: ${kind} ${name || packageId} (nothing runs in design mode)`],
   endpoints: [],
   storage: [],
+  location: null,
   secrets: [],
   warnings: [],
 });
@@ -154,15 +155,29 @@ export const mockApi = {
   unexposeUi: async (): Promise<void> => {
     await beat();
   },
-  plan: async (req: { kind: PlanDto['kind']; packageId?: string; instanceId?: string; name?: string }): Promise<PlanDto> => {
+  plan: async (req: { kind: PlanDto['kind']; packageId?: string; instanceId?: string; name?: string; location?: { dir: string } }): Promise<PlanDto> => {
     await beat();
     const inst = req.instanceId ? (instances.find((i) => i.id === req.instanceId) ?? instances[0]!) : instances[0]!;
-    return planFor(req.kind, req.instanceId ?? inst.id, req.packageId ?? inst.packageId, req.name ?? inst.name);
+    const p = planFor(req.kind, req.instanceId ?? inst.id, req.packageId ?? inst.packageId, req.name ?? inst.name);
+    if (req.location) {
+      p.location = { dir: req.location.dir, encrypted: true };
+      p.changes = [...p.changes, `Whole app encrypted at ${req.location.dir}`];
+      p.warnings = [...p.warnings, 'Write down the app passphrase: losing it loses the data.'];
+    }
+    return p;
   },
   submit: async (planId: string) => {
     await beat();
     const op = opFor('install', instances[0]!.id, planId);
     return { operationId: op.id, created: true, operation: op };
+  },
+  foundApps: async () => [
+    { home: '/mnt/photos/harbor-apps/immich-2', name: 'immich-2', displayName: 'Immich (2)', packageId: 'immich', packageRevision: '1', instanceId: null, drive: 'Photos', adopted: false, error: null },
+  ],
+  adoptFoundApp: async (home: string) => {
+    await beat();
+    const inst = instances[0]!;
+    return { ...inst, name: 'immich-2', home: { path: home, encrypted: true, state: 'unlocked' as const } };
   },
   operation: async (id: string): Promise<OperationDto> => opFor('install', instances[0]!.id, id),
   changePassword: async () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DomainsDto } from '../../../src/contracts/api';
+import type { DomainsDto, HostStorageDto } from '../../../src/contracts/api';
 import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
 import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
@@ -31,6 +31,14 @@ export function PlanDialog({ c }: { c: Console }) {
                 <span>{plan.endpoints.map((e) => e.browserUrl).join(', ')} <span className="muted small">(this machine only, until you publish)</span></span>
               </li>
             )}
+            {plan.location && (
+              <li>
+                <span className="fact-k">Lives on</span>
+                <span>
+                  <code>{plan.location.dir}</code> <span className="muted small">(whole app, encrypted — the passphrase unlocks it on any Harbor machine)</span>
+                </span>
+              </li>
+            )}
             {plan.storage.length > 0 && (
               <li>
                 <span className="fact-k">Data</span>
@@ -42,6 +50,10 @@ export function PlanDialog({ c }: { c: Console }) {
                         <>
                           your folder <code>{s.hostPath}</code>
                           {s.readOnly ? ' (read-only)' : ''}
+                        </>
+                      ) : s.mode === 'home' ? (
+                        <>
+                          {s.purpose || s.id} on the drive <span className="muted small">(encrypted with the app)</span>
                         </>
                       ) : (
                         `${s.purpose || s.id} in a retained volume${s.state === 'existing' ? ' (kept from before)' : ''}`
@@ -122,10 +134,23 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
   const [gallery, setGallery] = useState(0);
   // storage claim id -> host folder ('' = managed volume)
   const [folders, setFolders] = useState<Record<string, string>>({});
-  const [picking, setPicking] = useState<string | null>(null); // claim id being chosen
+  const [picking, setPicking] = useState<string | null>(null); // claim id being chosen, or 'location'
+  const [candidates, setCandidates] = useState<HostStorageDto['installCandidates'] | null>(null);
+  const [locationDir, setLocationDir] = useState<string | null>(null); // null = system disk
+  const [passphrase, setPassphrase] = useState('');
+  const [showPass, setShowPass] = useState(false);
   const external = item.claims.filter((c) => c.external);
   const missingRequired = external.some((c) => c.external!.required && !(folders[c.id] ?? '').trim());
   const storage = Object.fromEntries(Object.entries(folders).filter(([, v]) => v.trim()).map(([k, v]) => [k, { hostPath: v.trim() }]));
+  useEffect(() => {
+    api.hostStorage().then((s) => setCandidates(s.installCandidates), () => setCandidates([]));
+  }, []);
+  const locationMissingPass = locationDir !== null && passphrase.length < 8;
+  const genPassphrase = () => {
+    const bytes = new Uint8Array(18);
+    crypto.getRandomValues(bytes);
+    setPassphrase(btoa(String.fromCharCode(...bytes)).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24) || 'harbor-recovery-key');
+  };
   return (
     <Dialog title={item.name} onClose={onClose} wide>
       <div className="app-head">
@@ -203,6 +228,40 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           ))}
         </fieldset>
       )}
+      <fieldset className="storage-choices">
+        <legend>Where should the app live?</legend>
+        <label className="check">
+          <input type="radio" name="loc" checked={locationDir === null} onChange={() => setLocationDir(null)} /> System disk (this machine only)
+        </label>
+        {(candidates ?? []).map((cd) => (
+          <label key={cd.dir} className="check" title={cd.eligible ? undefined : (cd.reason ?? 'not available')}>
+            <input type="radio" name="loc" checked={locationDir === cd.dir} disabled={!cd.eligible} onChange={() => setLocationDir(cd.dir)} /> {cd.label}
+            {!cd.eligible && <span className="muted small"> · {cd.reason}</span>}
+          </label>
+        ))}
+        {candidates === null && <p className="muted small">Checking drives…</p>}
+        {locationDir !== null && (
+          <div className="folder-choice">
+            <button className="btn" onClick={() => setPicking('location')} aria-label="Choose install folder">
+              Change folder…
+            </button>
+            <code className="path">{locationDir}</code>
+            <p className="muted small">The whole app (including its database) is installed encrypted here. Unplug the drive and the app stops; the passphrase unlocks it on any Harbor machine.</p>
+            <label className="small">
+              Encryption passphrase (8+ characters) — write it down; losing it loses the data
+              <span className="row">
+                <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
+                <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
+                  {showPass ? 'Hide' : 'Show'}
+                </button>
+                <button className="btn ghost" type="button" onClick={genPassphrase} aria-label="Generate a recovery key">
+                  Generate
+                </button>
+              </span>
+            </label>
+          </div>
+        )}
+      </fieldset>
       <label className="small">
         Instance name (optional)
         <input value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z][a-z0-9-]{0,62}" placeholder={item.id} aria-label={`Instance name for ${item.name}`} />
@@ -219,7 +278,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           )}
         </p>
       )}
-      {picking && (
+      {picking && picking !== 'location' && (
         <FolderPicker
           title={`Folder for ${external.find((c) => c.id === picking)?.purpose ?? 'this app'}`}
           hint={external.find((c) => c.id === picking)?.external?.hint}
@@ -231,11 +290,29 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           }}
         />
       )}
+      {picking === 'location' && (
+        <FolderPicker
+          title="Folder for this app"
+          hint="Pick the folder that will hold the encrypted app (a harbor-apps folder on the drive, or any folder on an eligible filesystem)."
+          initial={locationDir}
+          onClose={() => setPicking(null)}
+          onPick={(p) => {
+            setLocationDir(p);
+            setPicking(null);
+          }}
+        />
+      )}
       <div className="row end">
         <button className="btn" onClick={onClose}>
           Close
         </button>
-        <button className="btn primary" disabled={busy || item.availability !== 'available' || missingRequired} onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage })} aria-label={`Install ${item.name} now`}>
+        <button
+          className="btn primary"
+          disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass}
+          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir !== null ? { location: { dir: locationDir, passphrase } } : {}) })}
+          aria-label={`Install ${item.name} now`}
+          title={locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
+        >
           Install
         </button>
       </div>
@@ -377,9 +454,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
     };
   }, [inst.id]);
   const need = detail?.needsDrive ?? inst.needsDrive;
+  const home = detail?.home ?? inst.home;
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
   const retained = inst.installState === 'retained';
-  const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need;
+  const locked = home?.state === 'locked';
+  const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need && !locked;
   const canStop = (inst.installState === 'installed' || inst.installState === 'needs_action' || inst.installState === 'failed') && inst.runtime !== 'stopped';
   const canStart = inst.installState === 'installed' && inst.desired === 'stopped' && !need;
   return (
@@ -399,6 +478,16 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           )}
         </div>
       </div>
+      {locked && !retained && (
+        <div className="update-banner needs-drive" role="status">
+          <div>
+            <strong>Locked</strong>
+            <p className="muted small">
+              This app lives encrypted at <code className="path">{home!.path}</code>. This machine cannot read it yet — log in again to unlock with this machine&apos;s key, or adopt it with the app passphrase on a new machine.
+            </p>
+          </div>
+        </div>
+      )}
       {need && !retained && (
         <div className="update-banner needs-drive" role="alert">
           <div>
@@ -604,7 +693,9 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
 function humanSummary(plan: PlanDto, n: string): string {
   switch (plan.kind) {
     case 'install':
-      return `Harbor will install ${n} on this machine. It usually takes a minute or two (the first time includes downloading the app).`;
+      return plan.location
+        ? `Harbor will install ${n} encrypted at ${plan.location.dir}. It usually takes a minute or two (the first time includes downloading the app).`
+        : `Harbor will install ${n} on this machine. It usually takes a minute or two (the first time includes downloading the app).`;
     case 'start':
       return `Harbor will start ${n} again with the same data and address.`;
     case 'stop':

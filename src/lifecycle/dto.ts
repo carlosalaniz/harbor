@@ -8,7 +8,7 @@ export function eventDto(e: EventRow): EventDto {
   return { cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message };
 }
 
-export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive'] } = { icon: null, category: 'other' }): InstanceSummary {
+export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home'] } = { icon: null, category: 'other' }): InstanceSummary {
   return {
     id: i.id,
     name: i.name,
@@ -32,6 +32,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     usage: look.usage ?? null,
     autoUpdate: i.autoUpdate,
     needsDrive: look.needsDrive ?? null,
+    home: look.home ?? null,
   };
 }
 
@@ -47,7 +48,8 @@ export function planDto(p: PlanRow, storageStates: Record<string, 'new' | 'exist
     expectedGeneration: p.expectedGeneration,
     changes: p.proposal.changes,
     endpoints: p.proposal.endpoints.map((e) => ({ id: e.id, containerPort: e.containerPort, hostPort: e.hostPort, browserUrl: browserUrlFor(e.hostPort), urls: { loopback: browserUrlFor(e.hostPort) }, primary: 'loopback' as const })),
-    storage: p.proposal.storage.map((s) => ({ id: s.id, mode: s.hostPath ? ('external' as const) : ('managed' as const), volumeName: s.hostPath ? null : s.volumeName, hostPath: s.hostPath ?? null, readOnly: s.readOnly ?? false, purpose: s.purpose, state: storageStates[s.id] ?? 'new' })),
+    storage: p.proposal.storage.map((s) => ({ id: s.id, mode: s.homePath ? ('home' as const) : s.hostPath ? ('external' as const) : ('managed' as const), volumeName: s.homePath ?? (s.hostPath ? null : s.volumeName), hostPath: s.hostPath ?? null, readOnly: s.readOnly ?? false, purpose: s.purpose, state: storageStates[s.id] ?? 'new' })),
+    location: p.proposal.location ? { dir: p.proposal.location.dir, encrypted: true as const } : null,
     secrets: p.proposal.secrets.map((s) => ({ id: s.id, state: secretStates[s.id] ?? 'new' })),
     warnings: p.proposal.warnings,
     ...(p.proposal.update ? { update: p.proposal.update } : {}),

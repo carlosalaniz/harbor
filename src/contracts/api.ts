@@ -66,6 +66,9 @@ export interface InstanceSummary {
   // removed, unmounted, or swapped). The app is stopped; Start is refused
   // until the right folder is back or the operator adopts the new one.
   needsDrive: { path: string; purpose: string; detail: string } | null;
+  // install-location apps: the encrypted home on the drive (null = system disk).
+  // state locked means this machine cannot read it yet (BFU or foreign drive).
+  home: AppHomeDto | null;
 }
 
 // Volume disk usage grouped per app (GET /v1/system/storage/usage; docker system df, cached).
@@ -147,14 +150,24 @@ export interface InstanceDetail extends InstanceSummary {
 
 export interface StorageDto {
   id: string;
-  mode: 'managed' | 'external';
-  // managed: the retained Docker volume; external: null
+  mode: 'managed' | 'external' | 'home';
+  // managed/home: the retained Docker volume; external: null
   volumeName: string | null;
   // external: the host directory bound into the container
   hostPath: string | null;
   readOnly: boolean;
   purpose: string;
   state: 'new' | 'existing';
+}
+
+// Where the whole app lives (install-location): the app home on the drive plus
+// whether this machine currently holds it unlocked.
+export interface AppHomeDto {
+  path: string; // the app home folder, e.g. /mnt/photos/harbor-apps/immich
+  encrypted: true;
+  // locked: this machine cannot read the vault (BFU, or a foreign machine).
+  // unlocked: the machine key opened it silently. The passphrase is never exposed.
+  state: 'locked' | 'unlocked';
 }
 
 export interface StorageClaimDto {
@@ -175,6 +188,8 @@ export interface PlanDto {
   changes: string[];
   endpoints: EndpointDto[];
   storage: StorageDto[];
+  // install-location plans: where the whole app will live (null = system disk)
+  location: { dir: string; encrypted: true } | null;
   secrets: { id: string; state: 'new' | 'existing' }[];
   warnings: string[];
   // update plans: what changes between the installed release and the new one
@@ -271,8 +286,17 @@ export interface ApiErrorBody {
   error: { code: string; message: string; nextAction: string; operationId?: string; details?: string[] };
 }
 
+export interface InstallLocationRequest {
+  // Existing directory that will hold this app's home, e.g. /mnt/photos/harbor-apps.
+  // The app home (<dir>/<app-name>/{manifest.json, vault/}) is created inside it.
+  dir: string;
+  // Encrypt the whole app home (required for install locations: the drive is
+  // portable, so its contents must be sealed). Shown once at install; the
+  // passphrase (or recovery key) is the only way to adopt on another machine.
+  passphrase: string;
+}
 export type PlanRequest =
-  | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }> }
+  | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }>; location?: InstallLocationRequest }
   | { kind: 'start' | 'stop' | 'remove' | 'reinstall' | 'purge'; instanceId: string }
   | { kind: 'update'; instanceId: string; storage?: Record<string, { hostPath: string }> }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean }
@@ -290,6 +314,19 @@ export interface DomainsDto {
   items: DomainDto[];
 }
 
+export interface InstallCandidateDto {
+  dir: string; // existing directory that can hold app homes, e.g. /mnt/photos/harbor-apps
+  label: string; // plain-words name for the picker
+  fsType: string;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  writable: boolean;
+  // Only POSIX filesystems qualify for app homes (a database on exFAT/NTFS is
+  // corruption, not portability). Non-qualifying candidates carry the reason.
+  eligible: boolean;
+  reason: string | null;
+}
+
 export interface HostStorageDto {
   dataFolder: { path: string; exists: boolean; writable: boolean };
   mounts: { mountpoint: string; device: string; fsType: string; totalBytes: number | null; usedBytes: number | null; writable: boolean; label: string }[];
@@ -298,8 +335,25 @@ export interface HostStorageDto {
   // folders currently used by apps (bind resources), with the instance that uses each
   inUse: { path: string; instanceId: string; instanceName: string; purpose: string; readOnly: boolean }[];
   // removable-drive behaviour: auto-mount on insert, and auto-start apps whose
-  // drive came back (both on; the drive guard still stops apps on removal).
+  // drive came back (both on; the drive guard still stops apps on return).
   storagePolicy: { autoMount: boolean; autoStart: boolean };
+  // install locations: existing folders that can hold whole encrypted apps
+  installCandidates: InstallCandidateDto[];
+}
+
+// Portable app homes found on mounted drives but not adopted by this machine
+// (foreign or locked). The console shows them as locked tiles; adopting one
+// prompts for the encryption passphrase.
+export interface FoundAppDto {
+  home: string; // app home folder, e.g. /mnt/photos/harbor-apps/immich
+  name: string; // folder name (display fallback)
+  displayName: string;
+  packageId: string;
+  packageRevision: string;
+  instanceId: string;
+  drive: string; // mountpoint the home was found under
+  adopted: boolean; // this machine already has an instance for it
+  error: string | null; // manifest unreadable (corrupt home)
 }
 
 export interface FolderListingDto {

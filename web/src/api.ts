@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
 import { isMockUi, mockApi } from './mock/api';
 
 export class ApiError extends Error {
@@ -126,7 +126,10 @@ const realApi = {
   exposeUi: () => call<UiExposureDto>('PUT', '/v1/ui-exposure', { via: 'tailnet' }),
   unexposeUi: () => call<void>('DELETE', '/v1/ui-exposure'),
   plan: (req: PlanRequest) => call<PlanDto>('POST', '/v1/plans', req),
-  submit: (planId: string, idempotencyKey: string) => call<{ operationId: string; created: boolean; operation: OperationDto }>('POST', '/v1/operations', { planId }, { 'idempotency-key': idempotencyKey }),
+  submit: (planId: string, idempotencyKey: string, passphrase?: string) =>
+    call<{ operationId: string; created: boolean; operation: OperationDto }>('POST', '/v1/operations', passphrase ? { planId, passphrase } : { planId }, { 'idempotency-key': idempotencyKey }),
+  foundApps: () => call<{ items: FoundAppDto[] }>('GET', '/v1/found-apps').then((r) => r.items),
+  adoptFoundApp: (home: string, passphrase: string, name?: string) => call<InstanceSummary>('POST', '/v1/found-apps/adopt', name ? { home, passphrase, name } : { home, passphrase }),
   operation: (id: string) => call<OperationDto>('GET', `/v1/operations/${id}`),
   // settings
   changePassword: (currentPassword: string, newPassword: string) => call<{ revokedSessions: number }>('PUT', '/v1/account/password', { currentPassword, newPassword }),

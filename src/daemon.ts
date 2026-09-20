@@ -37,6 +37,7 @@ import { hostname } from 'node:os';
 import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/registry.js';
 import { FakeTransport, Notifier, realTransport, type NotifyTransport } from './notify/notifier.js';
 import { FakeGit, GitCli, type GitFetcher } from './packages/git.js';
+import { MachineKeyHolder } from './auth/machine-holder.js';
 
 export function productVersion(): string {
   try {
@@ -141,10 +142,14 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const notifyTransport = overrides.notifyTransport ?? (fakeMode ? new FakeTransport() : realTransport());
     const notifier = new Notifier(repo, ids, log, notifyTransport, () => repo.setting<string>('device.name') ?? hostname());
     const git = overrides.git ?? (fakeMode ? new FakeGit() : new GitCli());
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate, notifier, git };
+    const machineKey = new MachineKeyHolder(log);
+    // The service needs the ctx and the ctx needs the service (runner secret
+    // handoff): build the ctx first with a placeholder, then link both ways.
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, logBuffer, selfUpdate, notifier, git, machineKey, service: null as unknown as ApplicationService };
     const service = new ApplicationService(ctx);
+    ctx.service = service;
     const runner = new OperationRunner(ctx);
-    const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds);
+    const sessions = new SessionService(repo, clock, ids, config.sessionTtlSeconds, machineKey);
     // One-click tool installs: the harbor user may start harbor-tools-install@<id>.service
     // (polkit rule from bootstrap); in fake mode there is no systemd, so the endpoint refuses
     // with the exact root command instead.
@@ -227,6 +232,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const close = async () => {
       if (closed) return;
       closed = true;
+      machineKey.clear(); // AFU -> BFU: the unsealed key never outlives the process
       observer.stop();
       appearance.stop();
       selfUpdate.stop();

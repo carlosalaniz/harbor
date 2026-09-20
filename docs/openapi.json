@@ -1142,7 +1142,7 @@
     },
     "/v1/host/storage": {
       "get": {
-        "description": "Disks (mounts), removable devices, the Harbor data folder and folders in use by apps.",
+        "description": "Disks (mounts), removable devices, the Harbor data folder, folders in use by apps, and install locations for whole encrypted apps.",
         "responses": {
           "200": {
             "description": "Default Response"
@@ -1953,7 +1953,7 @@
     },
     "/v1/plans": {
       "post": {
-        "description": "Create an immutable plan. Install: {kind, packageId, name?}. Others: {kind, instanceId}.",
+        "description": "Create an immutable plan. Install: {kind, packageId, name?, storage?, location?}. Others: {kind, instanceId}.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1999,6 +1999,26 @@
                               "minLength": 1,
                               "maxLength": 4096
                             }
+                          }
+                        }
+                      },
+                      "location": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "dir",
+                          "passphrase"
+                        ],
+                        "properties": {
+                          "dir": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 4096
+                          },
+                          "passphrase": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
                           }
                         }
                       }
@@ -2190,7 +2210,7 @@
     },
     "/v1/operations": {
       "post": {
-        "description": "Submit an exact plan ID. Requires Idempotency-Key. Returns 202 with the (possibly existing) operation.",
+        "description": "Submit an exact plan ID. Requires Idempotency-Key. Install-location plans also need the encryption passphrase (never stored in the plan). Returns 202 with the (possibly existing) operation.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2205,6 +2225,11 @@
                   "planId": {
                     "type": "string",
                     "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                  },
+                  "passphrase": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
                   }
                 }
               }
@@ -2222,6 +2247,57 @@
             "required": true
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/found-apps": {
+      "get": {
+        "description": "App homes found on mounted drives that this machine has not adopted (locked tiles; adopting prompts for the passphrase).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/found-apps/adopt": {
+      "post": {
+        "description": "Adopt an app home from a drive with its encryption passphrase: unlock, wrap for silent unlock here, create the instance and start it. Ports allocate fresh on this machine.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "home",
+                  "passphrase"
+                ],
+                "properties": {
+                  "home": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                  },
+                  "passphrase": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Default Response"

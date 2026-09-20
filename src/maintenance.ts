@@ -1,6 +1,7 @@
 // Local maintenance commands that touch state directly (never over HTTP):
 // explicit initialization and administrator enrollment/reset.
 import { hashPassword, validatePasswordPolicy, validateUsername } from './auth/password.js';
+import { createSealedMachineKey, zeroMachineKey } from './auth/machine-key.js';
 import type { DaemonConfig } from './config.js';
 import { HarborError } from './errors.js';
 import { acquireLock } from './state/lock.js';
@@ -33,10 +34,33 @@ export async function enrollAdministrator(config: DaemonConfig, username: string
       }
       const hashed = await hashPassword(password);
       let revoked = 0;
-      repo.transaction(() => {
-        repo.setAdministrator({ username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
-        if (existing) revoked = repo.revokeAllSessions();
-      });
+      if (!existing) {
+        // Fresh enrollment seals a machine key under the new password (AFU on
+        // first login). A --reset without the old password cannot re-seal:
+        // the sealed blob is destroyed instead, and app homes stay recoverable
+        // through their own passphrases. The reset caller is told (created=false
+        // path returns revoked only); the log line below says it out loud.
+        const { sealed, machineKey } = await createSealedMachineKey(password);
+        try {
+          repo.transaction(() => {
+            repo.setAdministrator({ username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
+            repo.setSetting('security.machineKey', sealed);
+          });
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      } else {
+        const hadSealed = repo.setting('security.machineKey') !== null;
+        repo.transaction(() => {
+          repo.setAdministrator({ username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
+          revoked = repo.revokeAllSessions();
+          // Password reset without the old password: the sealed machine key
+          // can never be re-sealed, so destroy it. Encrypted apps stay locked
+          // until unlocked with their own passphrases.
+          repo.deleteSetting('security.machineKey');
+        });
+        if (hadSealed) console.error('[enroll] password reset: the sealed machine key was destroyed. Encrypted apps unlock with their own passphrases.');
+      }
       return { created: !existing, revokedSessions: revoked };
     } finally {
       db.close();

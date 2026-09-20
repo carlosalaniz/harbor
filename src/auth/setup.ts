@@ -4,6 +4,7 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import type { Repo } from '../state/repo.js';
 import { hashPassword, validatePasswordPolicy } from './password.js';
+import { createSealedMachineKey, zeroMachineKey } from './machine-key.js';
 import type { SessionService } from './sessions.js';
 
 // First-run setup from the browser. While no administrator exists the daemon is "unclaimed": one open
@@ -57,11 +58,20 @@ export class SetupService {
     const deviceName = req.deviceName?.trim().replace(/\s+/g, ' ') ?? '';
     if (deviceName.length > 40) throw new HarborError('INVALID_REQUEST', 'the name can be at most 40 characters');
     const hashed = await hashPassword(req.password);
-    this.repo.transaction(() => {
-      if (this.repo.administrator()) throw new HarborError('INVALID_STATE', 'this Harbor already has an administrator');
-      this.repo.setAdministrator({ username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
-      if (deviceName) this.repo.setSetting('device.name', deviceName);
-    });
+    // First claim seals a fresh machine key under the new password, so the
+    // login below lands straight in AFU. The live key is held by the session
+    // layer's unlock step, not here.
+    const { sealed, machineKey } = await createSealedMachineKey(req.password);
+    try {
+      this.repo.transaction(() => {
+        if (this.repo.administrator()) throw new HarborError('INVALID_STATE', 'this Harbor already has an administrator');
+        this.repo.setAdministrator({ username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
+        this.repo.setSetting('security.machineKey', sealed);
+        if (deviceName) this.repo.setSetting('device.name', deviceName);
+      });
+    } finally {
+      zeroMachineKey(machineKey);
+    }
     rmSync(path.join(this.stateDir, SETUP_CODE_FILE), { force: true });
     return this.sessions.login(username, req.password, client);
   }

@@ -105,13 +105,15 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const v = this.volumes.get(name);
     return v ? { ...v, labels: { ...v.labels } } : null;
   }
-  async createVolume(name: string, labels: Record<string, string>): Promise<VolumeInfo> {
+  async createVolume(name: string, labels: Record<string, string>, opts: { driverOpts?: Record<string, string> } = {}): Promise<VolumeInfo> {
     this.assertUp();
     const existing = this.volumes.get(name);
     if (existing) return existing; // Docker semantics: create is idempotent by name
     const v: VolumeInfo = { name, labels: { ...labels }, createdAt: rfc3339(this.clock.now()), driver: 'local' };
     this.volumes.set(name, v);
-    this.log.push(`volume create ${name}`);
+    // Record the backing path so tests can assert install-location rooting.
+    if (opts.driverOpts?.['device']) this.log.push(`volume create ${name} device=${opts.driverOpts['device']}`);
+    else this.log.push(`volume create ${name}`);
     return v;
   }
   async removeVolume(name: string): Promise<void> {

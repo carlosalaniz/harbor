@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
 import { hostname } from 'node:os';
@@ -14,8 +14,12 @@ import { HarborError } from '../errors.js';
 import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from '../planner/identity.js';
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
-import { checkHostDirectory, hostPathsOverlap } from '../storage/host-path.js';
+import { checkHostDirectory, hostPathsOverlap, normalizeHostPath } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
+import { installCandidates } from '../storage/install-location.js';
+import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { zeroMachineKey } from '../auth/machine-key.js';
+import { listMounts } from '../system/host-storage.js';
 import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
 import { validateGitSourceInput } from '../packages/git.js';
@@ -40,7 +44,7 @@ export class ApplicationService {
   // docker system df is expensive: cache the grouped result for 60 s.
   private storageUsageCache: { at: number; value: StorageUsageDto } | null = null;
 
-  constructor(private readonly ctx: Ctx) {}
+  constructor(readonly ctx: Ctx) {}
 
   onSubmit(wake: () => void): void {
     this.wake = wake;
@@ -237,6 +241,80 @@ export class ApplicationService {
   storagePolicy(): { autoMount: boolean; autoStart: boolean } {
     return { autoMount: this.ctx.repo.setting<boolean>('storage.autoMount') ?? true, autoStart: this.ctx.repo.setting<boolean>('storage.autoStart') ?? true };
   }
+  // Install locations: existing folders that may hold whole encrypted apps.
+  // Built from the live mount table every call (drives come and go). The
+  // Harbor data folder is always a candidate: it is created on first use
+  // (the folder picker already creates it), so installs must not wait for it.
+  installCandidates(): InstallCandidateDto[] {
+    const mounts = listMounts();
+    let dataWritable: boolean;
+    try {
+      if (!existsSync(this.ctx.config.userDataDir)) mkdirSync(this.ctx.config.userDataDir, { recursive: true, mode: 0o755 });
+      accessSync(this.ctx.config.userDataDir, constants.W_OK | constants.X_OK);
+      dataWritable = true;
+    } catch {
+      dataWritable = false;
+    }
+    return installCandidates(mounts, { path: this.ctx.config.userDataDir, exists: true, writable: dataWritable });
+  }
+  // Resolve an install-location request at plan time. Returns the normalized
+  // dir; throws when the dir is not an eligible candidate, does not exist, or
+  // overlaps another app's folders or homes. The data-folder candidate is the
+  // escape hatch for tests and dev (a tmp "drive" the live mount table does
+  // not cover): any dir on the same filesystem as the data folder resolves
+  // through it, so the engine path stays exercisable without real hardware.
+  private resolveInstallLocation(dir: string, instances: InstanceRow[]): string {
+    const candidates = this.installCandidates();
+    const norm = normalizeHostPath(dir);
+    let parent = candidates.find((c) => norm === c.dir || norm.startsWith(c.dir + '/'));
+    if (!parent) {
+      const dataCandidate = candidates.find((c) => c.label.startsWith('Harbor data folder'));
+      if (dataCandidate?.eligible) {
+        try {
+          const a = statfsSync(norm === '/' ? '/' : path.posix.dirname(norm)) as unknown as { type?: number; bsize?: number; blocks?: number };
+          const b = statfsSync(this.ctx.config.userDataDir) as unknown as { type?: number; bsize?: number; blocks?: number };
+          // Same filesystem as the data folder (same fs type + same size):
+          // a tmp "drive" in tests/dev that the live mount table misses, or
+          // any other folder on the system disk. Point the parent at the
+          // dirname (never at norm itself) so the on-demand mkdir below only
+          // ever fires for real candidate dirs, and missing nested dirs are
+          // refused with the mkdir hint instead of being created.
+          if (a.type === b.type && a.bsize === b.bsize && a.blocks === b.blocks) parent = { ...dataCandidate, dir: path.posix.dirname(norm) };
+        } catch {
+          // statfs unavailable (or dir missing): fall through to the refusal below
+        }
+      }
+    }
+    if (!parent) throw new HarborError('INVALID_REQUEST', `${norm} cannot hold apps`, { nextAction: 'Pick one of the install locations from Settings → Storage (or mount a drive first).' });
+    if (!parent.eligible) throw new HarborError('INVALID_REQUEST', `${norm} cannot hold apps: ${parent.reason ?? 'filesystem not supported'}`, { nextAction: 'Choose a location on ext4, btrfs, xfs, zfs or apfs.' });
+    // The location dir must already exist — except the bare candidate dir
+    // itself (<mount>/harbor-apps), which is Harbor-owned infrastructure
+    // created on demand so a freshly mounted drive just works. Anything
+    // deeper is never created implicitly (a typo would scatter homes across
+    // the disk): the console creates it through the folder picker, the CLI
+    // prints the mkdir command. The test/dev fallback above points the
+    // parent at the dirname, so a bare fallback dir is NOT a candidate dir
+    // and is never created here — only real candidate dirs are.
+    const realCandidateDirs = new Set(candidates.map((c) => c.dir));
+    try {
+      if (norm === parent.dir && realCandidateDirs.has(parent.dir) && !existsSync(parent.dir)) mkdirSync(parent.dir, { recursive: true, mode: 0o755 });
+    } catch {
+      // fall through to the existence check below, which reports it plainly
+    }
+    let checked: string;
+    try {
+      checked = checkHostDirectory(norm).path;
+    } catch (e) {
+      if (HarborError.is(e, 'INVALID_REQUEST') && /does not exist/.test(e.message) && norm !== parent.dir) {
+        throw new HarborError('INVALID_REQUEST', `app folder ${norm} does not exist`, { nextAction: `Create it first (for example: sudo mkdir -p ${norm}) and make sure Harbor may write to it, then plan again.` });
+      }
+      throw e;
+    }
+    const inUse = instances.flatMap((i) => this.ctx.repo.resources(i.id).filter((r) => r.kind === 'bind').map((r) => ({ path: r.name, instance: i.name })));
+    const clash = inUse.find((u) => hostPathsOverlap(u.path, checked));
+    if (clash) throw new HarborError('OWNERSHIP_CONFLICT', `${checked} overlaps ${clash.path}, already used by instance ${clash.instance}`, { nextAction: 'Choose a different folder; two apps must not share or nest their storage.' });
+    return checked;
+  }
   setStoragePolicy(p: { autoMount?: boolean; autoStart?: boolean }): { autoMount: boolean; autoStart: boolean } {
     if (p.autoMount !== undefined) this.ctx.repo.setSetting('storage.autoMount', p.autoMount);
     if (p.autoStart !== undefined) this.ctx.repo.setSetting('storage.autoStart', p.autoStart);
@@ -247,7 +325,7 @@ export class ApplicationService {
     this.ctx.repo.setAutoUpdate(row.id, enabled);
     const meta = this.packageMeta(row);
     const fresh = this.ctx.repo.instance(row.id)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
   // One update plan per eligible instance, submitted through the normal queue ("Update all").
   // Failures roll back per instance and never stop the rest (the queue is serial anyway).
@@ -464,8 +542,35 @@ export class ApplicationService {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id) });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id) });
     });
+  }
+  // Install-location read model: the encrypted home on the drive (null =
+  // system disk). Locked when this machine cannot read the vault (BFU, or a
+  // foreign drive); unlocked when the machine key opens it silently.
+  // Computed at read time from the 'home' resource — no migration.
+  private homeState(instanceId: string): InstanceSummary['home'] {
+    try {
+      const home = this.ctx.repo.resources(instanceId).find((r) => r.kind === 'volume' && r.role === '__home__');
+      if (!home) return null;
+      const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+      const machineKey = this.ctx.machineKey.take();
+      let state: 'locked' | 'unlocked' = 'locked';
+      if (wrapped && machineKey) {
+        try {
+          const master = unwrapMasterKeyForMachine(wrapped, machineKey);
+          master.fill(0);
+          state = 'unlocked';
+        } catch {
+          state = 'locked';
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      }
+      return { path: home.name, encrypted: true, state };
+    } catch {
+      return null;
+    }
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
     try {
@@ -544,7 +649,7 @@ export class ApplicationService {
     this.ctx.log.info('drive adopted', { instanceId, storageId, path: hostPath, actor });
     const meta = this.packageMeta(this.ctx.repo.instance(instanceId)!);
     const fresh = this.ctx.repo.instance(instanceId)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
 
   // ---- your own apps
@@ -574,13 +679,122 @@ export class ApplicationService {
     return row;
   }
 
+  // Portable app homes found on mounted drives but not adopted here.
+  // Scans every install candidate dir for manifest.json folders. Adopted
+  // homes (an instance already points at the path) are flagged, not hidden —
+  // the console needs them to tell "yours, locked" from "someone else's".
+  foundApps(): FoundAppDto[] {
+    const out: FoundAppDto[] = [];
+    const adoptedPaths = new Set(
+      this.ctx.repo.listInstances().flatMap((i) => this.ctx.repo.resources(i.id).filter((r) => r.kind === 'volume' && r.role === '__home__').map((r) => r.name)),
+    );
+    for (const c of this.installCandidates()) {
+      if (!c.eligible) continue;
+      let entries: FoundAppDto[];
+      try {
+        entries = scanAppHomes(c.dir).map((e) => {
+          if (!e.descriptor) return { home: `${c.dir}/${e.name}`, name: e.name, displayName: e.name, packageId: '', packageRevision: '', instanceId: '', drive: c.dir, adopted: false, error: e.error ?? 'unreadable app home' };
+          const m = e.descriptor.manifest;
+          return { home: e.descriptor.home, name: e.name, displayName: m.displayName, packageId: m.packageId, packageRevision: m.packageRevision, instanceId: m.instanceId, drive: c.dir, adopted: adoptedPaths.has(e.descriptor.home), error: null };
+        });
+      } catch {
+        continue; // candidate dir missing (drive yanked mid-scan): skip quietly
+      }
+      out.push(...entries);
+    }
+    return out.sort((a, b) => a.home.localeCompare(b.home));
+  }
+
+  // Adopt a found app home onto this machine with its encryption passphrase:
+  // unlock, wrap for this machine (silent future launches), create the
+  // instance record + volumes rooted at the existing home, pull, start.
+  // Ports re-allocate locally; identity (UUID) travels in the manifest.
+  async adoptApp(home: string, passphrase: string, opts: { name?: string } | undefined, actor: string): Promise<InstanceSummary> {
+    const { manifest } = describeAppHome(home);
+    const masterKey = await unlockAppHome(home, passphrase);
+    try {
+      if (this.ctx.repo.instance(manifest.instanceId)) throw new HarborError('NAME_CONFLICT', `this machine already has an instance for ${manifest.displayName}`, { nextAction: 'That app is already adopted here.' });
+      const pkg = this.ctx.packages.load(manifest.packageId);
+      const instances = this.ctx.repo.listInstances();
+      const taken = new Set(instances.map((i) => i.name));
+      const slug = manifest.displayName.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || pkg.id;
+      const proposed = proposeName(opts?.name ?? slug, taken, opts?.name);
+      if (proposed.error) throw new HarborError(proposed.error.includes('already used') ? 'NAME_CONFLICT' : 'INVALID_REQUEST', proposed.error);
+      // Display-name collision: suffix (2), (3) — display only, identity stays the UUID.
+      let displayName: string | null = null;
+      const baseLabel = manifest.displayName;
+      if (instances.some((i) => (i.displayName ?? i.name) === baseLabel)) {
+        let n = 2;
+        while (instances.some((i) => (i.displayName ?? i.name) === `${baseLabel} (${n})`)) n += 1;
+        displayName = `${baseLabel} (${n})`;
+      }
+      const instanceId = manifest.instanceId;
+      const identity = identityFor(this.ctx.installationId, instanceId);
+      const endpoints = await this.allocatePorts(pkg);
+      const storage = this.resolveStorage(pkg, identity, {}, instances);
+      const now = this.ctx.clock.now();
+      const expiresAt = rfc3339(addSeconds(now, this.ctx.config.planTtlSeconds));
+      const proposal: PlanProposal = {
+        packageId: pkg.id,
+        revision: pkg.revision,
+        name: proposed.name,
+        project: identity.project,
+        endpoints,
+        storage,
+        location: { dir: home.replace(/\/[^/]+$/, '') },
+        secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
+        changes: [
+          `Adopt ${manifest.displayName} (${pkg.id}) from ${home}`,
+          `Unlock with the encryption passphrase; wrap for silent unlock on this machine`,
+          `Create Compose project ${identity.project} with a private bridge network`,
+          ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
+          ...storage.map((s) => `Use the drive's data at ${home}/volumes/${s.composeVolume} (${s.purpose})`),
+        ],
+        warnings: ['Ports are allocated fresh on this machine; addresses differ from the previous one.'],
+        releaseHashes: pkg.hashes,
+      };
+      await this.validateProspective(pkg, identity, endpoints);
+      const plan: Omit<PlanRow, 'consumedOperationId'> = { id: this.ctx.ids.uuid(), actor, kind: 'install', instanceId, proposal, expectedGeneration: 0, createdAt: rfc3339(now), expiresAt };
+      this.ctx.repo.insertPlan(plan);
+      // Adopt reuses the install operation path: the runner sees the home
+      // resource marker below and roots volumes at the existing home instead
+      // of creating a fresh one. Stash the master key's machine wrapping now
+      // (adopt needs a session, and sessions unlock — so AFU holds).
+      const machineKey = this.ctx.machineKey.take();
+      let wrapped: MachineWrappedKey | null = null;
+      if (machineKey) {
+        try {
+          wrapped = wrapMasterKeyForMachine(masterKey, machineKey);
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      }
+      this.ctx.repo.upsertResource({ instanceId, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId, adopted: true, ...(wrapped ? { machineWrapped: wrapped } : {}) } });
+      // Adopt plans carry no passphrase (the operator already proved it by
+      // unlocking above); pre-seed the secret check so submit() passes.
+      this.submitInstallLocationSecret(plan.id, 'adopted');
+      const submit = this.submit(plan.id, this.ctx.ids.uuid(), actor);
+      if (displayName) this.ctx.repo.setInstanceAppearance(instanceId, { displayName });
+      void submit;
+      const fresh = this.ctx.repo.instance(instanceId)!;
+      const meta = this.packageMeta(fresh);
+      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), usage: null, needsDrive: null, home: { path: home, encrypted: true, state: wrapped ? 'unlocked' : 'locked' } });
+    } finally {
+      zeroKey(masterKey);
+    }
+  }
+
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id) });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id) });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
+      if (r.kind === 'volume' && r.role === '__home__') {
+        presence.push(existsSync(r.name));
+        continue;
+      }
       try {
         if (r.kind === 'container') presence.push((await this.ctx.docker.inspectContainer(r.dockerId ?? r.name)) !== null);
         else if (r.kind === 'volume') presence.push((await this.ctx.docker.inspectVolume(r.name)) !== null);
@@ -692,6 +906,18 @@ export class ApplicationService {
       const instanceId = ids.uuid();
       const identity = identityFor(this.ctx.installationId, instanceId);
       const endpoints = await this.allocatePorts(pkg);
+      // Install location (whole encrypted app on a drive): validated here so a
+      // bad dir or weak passphrase never reaches Docker. The passphrase itself
+      // is never stored in the plan — only the dir. The runner collects it at
+      // apply time from the submitter (see submitInstallLocationSecret).
+      let location: PlanProposal['location'] = null;
+      if (req.location) {
+        const dir = this.resolveInstallLocation(req.location.dir, instances);
+        const pass = req.location.passphrase;
+        if (typeof pass !== 'string' || pass.length < 8) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at least 8 characters', { nextAction: 'Choose a passphrase (or a generated recovery key) of 8+ characters.' });
+        if (pass.length > 256) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at most 256 characters');
+        location = { dir };
+      }
       const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
       const proposal: PlanProposal = {
         packageId: pkg.id,
@@ -700,11 +926,13 @@ export class ApplicationService {
         project: identity.project,
         endpoints,
         storage,
+        location,
         secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
         changes: [
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
+          ...(location ? [`Install the whole app encrypted at ${location.dir}/${proposed.name}/ (manifest.json + vault/); the passphrase unlocks it on any Harbor machine`] : []),
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
@@ -715,6 +943,7 @@ export class ApplicationService {
           ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
           ...(pkg.manifest.defaultCredentials ? [`This app ships with a default login (${pkg.manifest.defaultCredentials.username}); change it right after the first sign-in.`] : []),
+          ...(location ? ['The app (including its database) lives on the drive: unplug it and the app stops; lose the passphrase and the data is gone.'] : []),
         ],
         releaseHashes: pkg.hashes,
       };
@@ -773,8 +1002,10 @@ export class ApplicationService {
       endpoints: inst.endpoints,
       storage: resources
         .filter((r) => r.kind === 'volume' || r.kind === 'bind')
+        .filter((r) => r.role !== '__home__')
         .sort((a, b) => a.role.localeCompare(b.role))
-        .map((r) => (r.kind === 'bind' ? { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: null, purpose: '', hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) } : { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: r.name, purpose: '' })),
+        .map((r) => (r.kind === 'bind' ? { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: null, purpose: '', hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) } : { id: (r.metadata?.['storageId'] as string) ?? r.role, composeVolume: r.role, volumeName: r.name, purpose: '', ...(typeof r.metadata?.['homePath'] === 'string' ? { homePath: r.metadata['homePath'] as string } : {}) })),
+      location: null,
       secrets: inst.secrets.map((s) => ({ id: s.id })),
       changes,
       warnings:
@@ -827,6 +1058,7 @@ export class ApplicationService {
       project: inst.project,
       endpoints,
       storage: [...keptStorage, ...newStorage],
+      location: null,
       secrets: (next.manifest.secrets ?? []).map((s) => ({ id: s.id })),
       changes: [
         `Update ${pkgName} "${inst.name}" from revision ${inst.revision}${current.manifest.release.version ? ` (${current.manifest.release.version})` : ''} to revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`,
@@ -892,6 +1124,7 @@ export class ApplicationService {
       project: inst.project,
       endpoints: inst.endpoints,
       storage: [],
+      location: null,
       secrets: inst.secrets.map((s) => ({ id: s.id })),
       changes: [],
       warnings: [],
@@ -1011,6 +1244,21 @@ export class ApplicationService {
 
   // ---- submission (atomic claims + idempotency)
 
+  // The app-home passphrase for an install-location plan. It is never stored
+  // in the plan (plans are readable); the submitter hands it over with the
+  // submission and the runner consumes it at apply time. Held in memory only,
+  // keyed by plan id, single-use.
+  private locationSecrets = new Map<string, string>();
+  submitInstallLocationSecret(planId: string, passphrase: string): void {
+    if (typeof passphrase !== 'string' || !passphrase) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase is required to submit this plan');
+    this.locationSecrets.set(planId, passphrase);
+  }
+  takeInstallLocationSecret(planId: string): string | null {
+    const s = this.locationSecrets.get(planId) ?? null;
+    this.locationSecrets.delete(planId);
+    return s;
+  }
+
   submit(planId: string, idempotencyKey: string, actor: string): SubmitResult {
     const { repo, ids } = this.ctx;
     const result = repo.transaction((): SubmitResult => {
@@ -1031,6 +1279,12 @@ export class ApplicationService {
       if (plan.kind === 'install') {
         if (repo.instanceByName(plan.proposal.name)) throw new HarborError('NAME_CONFLICT', `instance name ${plan.proposal.name} is no longer free`);
         if (repo.instance(plan.instanceId)) throw new HarborError('STATE_CHANGED', 'plan instance already exists');
+        // Install-location plans need their passphrase at submit time (it is
+        // never in the plan itself). Refuse here — not at apply — so a missing
+        // secret fails fast with a clear error instead of a stuck operation.
+        if (plan.proposal.location && !this.locationSecrets.has(planId)) {
+          throw new HarborError('INVALID_REQUEST', 'this plan installs the app encrypted on a drive: submit the encryption passphrase with it', { nextAction: 'Submit again with the passphrase shown at install time.' });
+        }
         const claimed = new Set(repo.claimedPorts().map((c) => c.port));
         for (const e of plan.proposal.endpoints) {
           if (claimed.has(e.hostPort)) throw new HarborError('PORT_CONFLICT', `port ${e.hostPort} was claimed by another operation since planning`);

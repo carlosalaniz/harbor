@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
-import type { AppearanceDto, DomainsDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
+import type { AppearanceDto, DomainsDto, FoundAppDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
 import { Mark, PencilIcon } from '../icons';
@@ -1069,6 +1069,64 @@ function Notifications() {
   );
 }
 
+function FoundApps() {
+  const [apps, setApps] = useState<FoundAppDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [adopting, setAdopting] = useState<string | null>(null);
+  const [pass, setPass] = useState('');
+  const [name, setName] = useState('');
+  useEffect(() => {
+    api.foundApps().then(setApps, (e: Error) => setError(e.message));
+  }, []);
+  if (error) return <p className="error">{error}</p>;
+  if (apps === null) return <p className="muted small">Looking for apps on your drives…</p>;
+  const fresh = apps.filter((a) => !a.adopted);
+  if (fresh.length === 0) return <p className="muted small">No apps waiting. Plug in a drive that holds an encrypted app and it appears here.</p>;
+  return (
+    <ul className="plain">
+      {fresh.map((a) => (
+        <li key={a.home} className="row between wrap">
+          <span>
+            <strong>{a.displayName}</strong> <span className="muted small">· {a.drive} · {a.home}</span>
+            {a.error && <span className="error"> · {a.error}</span>}
+          </span>
+          {adopting === a.home ? (
+            <span className="row wrap">
+              <input value={pass} onChange={(e) => setPass(e.target.value)} type="password" autoComplete="off" placeholder="App passphrase" aria-label={`Passphrase for ${a.displayName}`} />
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" aria-label={`Name for adopted ${a.displayName}`} />
+              <button
+                className="btn small primary"
+                disabled={!pass}
+                onClick={() => {
+                  setError(null);
+                  void api
+                    .adoptFoundApp(a.home, pass, name.trim() || undefined)
+                    .then(() => api.foundApps().then(setApps, (e: Error) => setError(e.message)))
+                    .catch((e: Error) => setError(e.message))
+                    .finally(() => {
+                      setAdopting(null);
+                      setPass('');
+                      setName('');
+                    });
+                }}
+              >
+                Adopt
+              </button>
+              <button className="btn small ghost" onClick={() => setAdopting(null)}>
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button className="btn small" onClick={() => setAdopting(a.home)} aria-label={`Adopt ${a.displayName}`}>
+              Adopt…
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Storage() {
   const [s, setS] = useState<HostStorageDto | null>(null);
   const [usage, setUsage] = useState<StorageUsageDto | null>(null);
@@ -1255,6 +1313,10 @@ function Storage() {
             </li>
           ))}
         </ul>
+      </section>
+      <section className="card" aria-labelledby="found-h">
+        <h2 id="found-h">Found apps</h2>
+        <FoundApps />
       </section>
       <section className="card" aria-labelledby="df-h">
         <h2 id="df-h">Harbor data folder</h2>

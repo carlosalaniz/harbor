@@ -63,6 +63,7 @@ async function resolveInstance(api: ApiClient, ref: string): Promise<InstanceSum
 function planSummary(p: PlanDto): string {
   const lines = [`Plan ${p.id} (${p.kind}) for "${p.name}" [${p.packageId} rev ${p.revision}] — expires ${p.expiresAt}`];
   for (const c of p.changes) lines.push(`  - ${c}`);
+  if (p.location) lines.push(`  Lives on:  ${p.location.dir} (whole app, encrypted)`);
   if (p.endpoints.length) lines.push('  Endpoints: ' + p.endpoints.map((e) => `${e.id}=${e.browserUrl}`).join(', '));
   if (p.storage.length) lines.push('  Storage:   ' + p.storage.map((s) => `${s.volumeName} (${s.state})`).join(', '));
   if (p.secrets.length) lines.push('  Secrets:   ' + p.secrets.map((s) => `${s.id} (${s.state})`).join(', '));
@@ -98,7 +99,7 @@ async function waitOperation(api: ApiClient, id: string, follow: boolean): Promi
   }
 }
 
-async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string }): Promise<void> {
+async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string; passphrase?: string | undefined }): Promise<void> {
   if (!globals().json) process.stderr.write(planSummary(plan) + '\n');
   if (!opts.yes) {
     const ok = await confirm('Apply this plan?');
@@ -108,7 +109,7 @@ async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: bool
   let submitted: { operationId: string; created: boolean } | null = null;
   for (let attempt = 0; attempt < 3 && !submitted; attempt++) {
     try {
-      submitted = await api.post<{ operationId: string; created: boolean }>('/v1/operations', { planId: plan.id }, { 'idempotency-key': key });
+      submitted = await api.post<{ operationId: string; created: boolean }>('/v1/operations', opts.passphrase ? { planId: plan.id, passphrase: opts.passphrase } : { planId: plan.id }, { 'idempotency-key': key });
     } catch (e) {
       // Transport failures retry with the same key; API errors do not.
       if (HarborError.is(e, 'STATE_UNAVAILABLE') && attempt < 2) continue;
@@ -220,10 +221,18 @@ program
   .command('plan <kind> [target]')
   .description('create a plan without applying it: plan install <package> [--name n] | plan start|stop|remove|reinstall <instance>')
   .option('--name <slug>', 'instance name for install')
-  .action(async (kind: string, target: string | undefined, opts: { name?: string }) => {
+  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive)')
+  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location)', false)
+  .action(async (kind: string, target: string | undefined, opts: { name?: string; location?: string; passphraseStdin?: boolean }) => {
     const api = client();
-    const plan = await createPlan(api, kind, target, opts.name);
-    out(plan, () => planSummary(plan) + `\nApply with: ${PRODUCT.cliName} apply ${plan.id} --idempotency-key <key>`);
+    const extra: Record<string, unknown> = {};
+    if (opts.location) {
+      if (kind !== 'install') throw new HarborError('INVALID_REQUEST', '--location only applies to install');
+      const passphrase = opts.passphraseStdin ? await readStdinAll() : await promptHidden('App encryption passphrase (8+ characters): ');
+      extra['location'] = { dir: opts.location, passphrase: passphrase.trim() };
+    }
+    const plan = await createPlan(api, kind, target, opts.name, extra);
+    out(plan, () => planSummary(plan) + `\nApply with: ${PRODUCT.cliName} apply ${plan.id} --idempotency-key <key>${opts.location ? ' --passphrase-stdin < passphrase.txt' : ''}`);
   });
 
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
@@ -240,10 +249,12 @@ program
   .requiredOption('--idempotency-key <key>', 'client-chosen key (8-128 chars) reused on retries')
   .option('--no-wait', 'return after submission')
   .option('--yes', 'approve without prompting', false)
-  .action(async (planId: string, opts: { idempotencyKey: string; wait: boolean; yes: boolean }) => {
+  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (for plans with an install location)', false)
+  .action(async (planId: string, opts: { idempotencyKey: string; wait: boolean; yes: boolean; passphraseStdin?: boolean }) => {
     const api = client();
     const plan = await api.get<PlanDto>(`/v1/plans/${planId}`);
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, idempotencyKey: opts.idempotencyKey });
+    const passphrase = plan.location && opts.passphraseStdin ? (await readStdinAll()).trim() : plan.location ? await promptHidden('App encryption passphrase: ') : undefined;
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, idempotencyKey: opts.idempotencyKey, passphrase });
   });
 
 program
@@ -251,9 +262,11 @@ program
   .description('plan and install a package (shows the plan and asks for confirmation)')
   .option('--name <slug>', 'instance name')
   .option('--storage <claim=/host/path>', 'use your own folder for a storage claim the package marks as external (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive)')
+  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location)', false)
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return the operation ID instead of waiting')
-  .action(async (pkg: string, opts: { name?: string; storage: string[]; yes: boolean; wait: boolean }) => {
+  .action(async (pkg: string, opts: { name?: string; storage: string[]; location?: string; passphraseStdin?: boolean; yes: boolean; wait: boolean }) => {
     const api = client();
     const storage: Record<string, { hostPath: string }> = {};
     for (const s of opts.storage) {
@@ -261,8 +274,14 @@ program
       if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--storage expects <claim>=<path>, got ${s}`);
       storage[s.slice(0, eq)] = { hostPath: s.slice(eq + 1) };
     }
-    const plan = await createPlan(api, 'install', pkg, opts.name, Object.keys(storage).length ? { storage } : {});
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+    const extra: Record<string, unknown> = Object.keys(storage).length ? { storage } : {};
+    let passphrase: string | undefined;
+    if (opts.location) {
+      passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : await promptHidden('App encryption passphrase (8+ characters): ');
+      extra['location'] = { dir: opts.location, passphrase };
+    }
+    const plan = await createPlan(api, 'install', pkg, opts.name, extra);
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, passphrase });
   });
 
 program
@@ -416,6 +435,29 @@ domainsCmd
   .action(async (hostname: string) => {
     await client().delete(`/v1/domains/${hostname}`);
     out({ hostname, forgotten: true }, () => `${hostname} forgotten.`);
+  });
+
+program
+  .command('found-apps')
+  .description('list encrypted apps found on attached drives that are not installed here yet')
+  .action(async () => {
+    const { items } = await client().get<{ items: Array<{ home: string; displayName: string; packageId: string; drive: string; adopted: boolean; error: string | null }> }>('/v1/found-apps');
+    const fresh = items.filter((i) => !i.adopted);
+    out(items, () => (fresh.length ? table([['APP', 'PACKAGE', 'DRIVE', 'HOME'], ...fresh.map((i) => [i.displayName, i.packageId, i.drive, i.home])]) : 'No apps waiting on your drives.'));
+  });
+
+program
+  .command('adopt <home>')
+  .description('adopt an encrypted app from a drive with its passphrase (works on any Harbor machine)')
+  .option('--name <slug>', 'instance name')
+  .option('--passphrase-stdin', 'read the app passphrase from stdin', false)
+  .option('--no-wait', 'return the operation ID instead of waiting')
+  .action(async (home: string, opts: { name?: string; passphraseStdin?: boolean; wait: boolean }) => {
+    const api = client();
+    const passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : await promptHidden('App passphrase: ');
+    const inst = await api.post<InstanceSummary>('/v1/found-apps/adopt', opts.name ? { home, passphrase, name: opts.name } : { home, passphrase });
+    out(inst, () => `Adopted ${inst.displayName ?? inst.name} (${inst.packageId}) from ${home}.`);
+    if (opts.wait !== false && inst.operationId) await waitOperation(api, inst.operationId, true);
   });
 
 for (const kind of ['start', 'stop', 'remove', 'reinstall'] as const) {

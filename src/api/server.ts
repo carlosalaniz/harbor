@@ -470,7 +470,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       return false;
     }
   };
-  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), removable devices, the Harbor data folder and folders in use by apps.' } }, async () => {
+  app.get('/v1/host/storage', { preHandler: requireAuth, schema: { description: 'Disks (mounts), removable devices, the Harbor data folder, folders in use by apps, and install locations for whole encrypted apps.' } }, async () => {
     // A mounted removable drive lives in exactly one place: the Removable
     // section. The generic disk list skips its device node so it never shows twice.
     const devices = listDevices();
@@ -493,6 +493,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       devices,
       inUse: service.foldersInUse(),
       storagePolicy: service.storagePolicy(),
+      installCandidates: service.installCandidates(),
     };
   });
   app.get(
@@ -748,7 +749,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     {
       preHandler: requireAuth,
       schema: {
-        description: 'Create an immutable plan. Install: {kind, packageId, name?}. Others: {kind, instanceId}.',
+        description: 'Create an immutable plan. Install: {kind, packageId, name?, storage?, location?}. Others: {kind, instanceId}.',
         body: {
           oneOf: [
             {
@@ -761,6 +762,10 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 name: { type: 'string', pattern: ID_PATTERN },
                 // storage claim id -> host directory ("bring your own folder"); only claims the manifest marks `external`
                 storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
+                // whole encrypted app on a drive: {dir, passphrase}. The
+                // passphrase is validated at plan time but never stored in the
+                // plan — it travels with the submission (POST /v1/operations).
+                location: { type: 'object', additionalProperties: false, required: ['dir', 'passphrase'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
               },
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
@@ -806,16 +811,34 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     {
       preHandler: requireAuth,
       schema: {
-        description: 'Submit an exact plan ID. Requires Idempotency-Key. Returns 202 with the (possibly existing) operation.',
+        description: 'Submit an exact plan ID. Requires Idempotency-Key. Install-location plans also need the encryption passphrase (never stored in the plan). Returns 202 with the (possibly existing) operation.',
         headers: { type: 'object', properties: { 'idempotency-key': { type: 'string', pattern: IDEMPOTENCY_KEY_RE.source } }, required: ['idempotency-key'] },
-        body: { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN } } },
+        body: { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
       },
     },
     async (req, reply) => {
       const key = req.headers['idempotency-key'] as string;
-      const { planId } = req.body as { planId: string };
+      const { planId, passphrase } = req.body as { planId: string; passphrase?: string };
+      if (typeof passphrase === 'string' && passphrase) service.submitInstallLocationSecret(planId, passphrase);
       const result = service.submit(planId, key, req.actor!);
       return reply.status(202).send({ operationId: result.operation.id, created: result.created, operation: service.operation(result.operation.id) });
+    },
+  );
+  // Portable app homes on mounted drives: found but not adopted here.
+  app.get('/v1/found-apps', { preHandler: requireAuth, schema: { description: 'App homes found on mounted drives that this machine has not adopted (locked tiles; adopting prompts for the passphrase).' } }, async () => ({ items: service.foundApps() }));
+  app.post(
+    '/v1/found-apps/adopt',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Adopt an app home from a drive with its encryption passphrase: unlock, wrap for silent unlock here, create the instance and start it. Ports allocate fresh on this machine.',
+        body: { type: 'object', additionalProperties: false, required: ['home', 'passphrase'], properties: { home: { type: 'string', minLength: 1, maxLength: 4096 }, name: { type: 'string', pattern: ID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
+      },
+    },
+    async (req, reply) => {
+      const b = req.body as { home: string; name?: string; passphrase: string };
+      const summary = await service.adoptApp(b.home, b.passphrase, b.name ? { name: b.name } : undefined, req.actor!);
+      return reply.status(201).send(summary);
     },
   );
 

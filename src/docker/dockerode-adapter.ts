@@ -115,8 +115,11 @@ export class DockerodeAdapter implements DockerAdapter {
     }
   }
 
-  async createVolume(name: string, labels: Record<string, string>): Promise<VolumeInfo> {
-    const v = await this.docker.createVolume({ Name: name, Driver: 'local', Labels: labels });
+  async createVolume(name: string, labels: Record<string, string>, opts: { driverOpts?: Record<string, string> } = {}): Promise<VolumeInfo> {
+    // driverOpts root a named volume at an arbitrary path (local driver bind):
+    // { type: 'none', o: 'bind', device: '/mnt/drive/harbor-apps/<app>/volumes/<claim>' }.
+    // Used for install-location apps whose whole home lives on a drive.
+    const v = await this.docker.createVolume({ Name: name, Driver: 'local', Labels: labels, ...(opts.driverOpts ? { DriverOpts: opts.driverOpts } : {}) });
     const info = v as unknown as { Name: string; Labels?: Record<string, string>; CreatedAt?: string; Driver: string };
     return { name: info.Name, labels: info.Labels ?? {}, createdAt: info.CreatedAt ?? null, driver: info.Driver };
   }

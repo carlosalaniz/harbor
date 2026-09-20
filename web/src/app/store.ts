@@ -15,7 +15,7 @@ export interface Data {
 }
 
 export type Action =
-  | { kind: 'install'; packageId: string; name: string; storage?: Record<string, { hostPath: string }> }
+  | { kind: 'install'; packageId: string; name: string; storage?: Record<string, { hostPath: string }>; location?: { dir: string; passphrase: string } }
   | { kind: 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update'; instance: InstanceSummary }
   | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean }
   | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' }
@@ -24,7 +24,10 @@ export type Action =
 export function planRequestFor(a: Action): PlanRequest {
   switch (a.kind) {
     case 'install':
-      return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}), ...(a.storage && Object.keys(a.storage).length ? { storage: a.storage } : {}) };
+      // The passphrase is validated at plan time but never stored in the plan:
+      // planRequestFor strips it for the plan call; the approve step sends it
+      // with the submission (see submitPassphraseFor).
+      return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}), ...(a.storage && Object.keys(a.storage).length ? { storage: a.storage } : {}), ...(a.location ? { location: a.location } : {}) };
     case 'expose':
       return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), makePrimary: a.makePrimary };
     case 'unexpose':
@@ -37,6 +40,11 @@ export function planRequestFor(a: Action): PlanRequest {
 }
 
 export const isFinal = (op: OperationDto) => op.state === 'succeeded' || op.state === 'failed' || op.state === 'needs_action';
+
+// The install-location passphrase travels with the submission, never in the plan.
+export function submitPassphraseFor(a: Action | null): string | undefined {
+  return a?.kind === 'install' && a.location ? a.location.passphrase : undefined;
+}
 
 // One store for the console: polling, the plan → approve → operation flow with a stable idempotency
 // key per plan, and the operation tray. Everything comes from the daemon; nothing is cached across reloads.
@@ -96,7 +104,11 @@ export function useConsole(onAuthLost: (msg?: string) => void) {
     setPlan(null);
     setPlanError(null);
     try {
-      setPlan(await api.plan(planRequestFor(action)));
+      // Strip the passphrase for the plan call: the daemon validates it but
+      // never stores it in the plan. It travels with approve() instead.
+      const req = planRequestFor(action);
+      if (req.kind === 'install' && req.location) req.location = { dir: req.location.dir, passphrase: req.location.passphrase };
+      setPlan(await api.plan(req));
       key.current = newIdempotencyKey();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return onAuthLost();
@@ -109,7 +121,7 @@ export function useConsole(onAuthLost: (msg?: string) => void) {
     submitting.current = true;
     try {
       const k = key.current ?? (key.current = newIdempotencyKey());
-      const r = await api.submit(plan.id, k);
+      const r = await api.submit(plan.id, k, submitPassphraseFor(pending));
       setWatching(r.operation);
       setPending(null);
       setPlan(null);

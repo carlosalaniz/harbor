@@ -63,7 +63,7 @@ export interface DockerAdapter {
   removeContainer(id: string): Promise<void>;
   listVolumes(labels?: Record<string, string>): Promise<VolumeInfo[]>;
   inspectVolume(name: string): Promise<VolumeInfo | null>;
-  createVolume(name: string, labels: Record<string, string>): Promise<VolumeInfo>;
+  createVolume(name: string, labels: Record<string, string>, opts?: { driverOpts?: Record<string, string> }): Promise<VolumeInfo>;
   // Only ever called for a volume whose ownership labels were verified moments before (full uninstall).
   removeVolume(name: string): Promise<void>;
   listNetworks(labels?: Record<string, string>): Promise<NetworkInfo[]>;

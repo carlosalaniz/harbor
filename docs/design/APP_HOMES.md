@@ -1,8 +1,8 @@
 # Design addendum: portable app homes (Mac-app-like bundles)
 
-**Status:** foundation built (2026-09-20, decision 91): `src/storage/app-home.ts` +
-`tests/unit/app-home.test.ts`. Adopt/install-location flows are follow-ups; this
-document pins the on-disk format and the key model so later stages need no rework.
+**Status:** stages 1–3 built (2026-09-20, decisions 91–92): the full
+install-to-drive → adopt-on-any-machine flow works end to end (engine, console,
+CLI, tests). Stage 4 (fscrypt) stays future work.
 
 ## 1. Problem
 
@@ -101,11 +101,24 @@ and memory lifetime.
    format v1, scrypt+AES-256-GCM envelope, machine wrapping, payload seal/open
    helpers, `scanAppHomes` for drive walks. Pure module: no Docker, no DB.
    Plus `src/auth/machine-key.ts` — the sealed machine keystore (BFU/AFU).
-2. **Install-location:** per-instance location choice at install time writing
-   the full home structure from day one (so no migration later).
-3. **Adopt-from-drive:** observer scan → locked/unlocked tiles → adopt plan
-   (validate package snapshot like a zip import, allocate ports, repoint
-   volumes, pull by digest, start, verify readiness).
+2. **Install-location (built, decision 92):** the install wizard asks where
+   the app should live (system disk, or any eligible drive folder); a drive
+   choice asks for an encryption passphrase (8+, shown once). The plan names
+   the encrypted home and warns about the drive and the passphrase; the
+   passphrase travels with the submission only (single-use in-memory secret,
+   never in the plan). The runner creates `<dir>/<name>/{manifest.json,
+   vault/}` then roots every managed volume inside it as a local-driver bind
+   (`type: none, o: bind, device: <home>/volumes/<claim>`), so the whole app —
+   including its database — lives on the drive. The bare `<mount>/harbor-apps`
+   candidate dir is Harbor-owned infrastructure (created on demand); anything
+   deeper must already exist (folder picker or `mkdir -p`).
+3. **Adopt-from-drive (built, decision 92):** Settings → Storage lists found
+   apps (plaintext manifest read while locked); adopt prompts for the
+   passphrase, unlocks, wraps for this machine (silent future launches),
+   reuses the manifest UUID as the instance id, allocates ports fresh, roots
+   volumes at the existing home, and starts. Display-name collisions get
+   ` (2)`/` (3)` suffixes (display only). `harbor found-apps` / `harbor adopt`
+   mirror the console.
 4. **Kernel sealing (fscrypt):** replace or complement the AES payload layer
    with ext4 native directory encryption once the format flow (FUTURE.md) can
    guarantee `-O encrypt`. The manifest + key model above does not change.

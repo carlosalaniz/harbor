@@ -29,6 +29,7 @@ export function fmtUptime(seconds: number): string {
 export function plainStatus(i: InstanceSummary): { label: string; tone: 'ok' | 'warn' | 'bad' | 'muted' | 'busy' } {
   if (i.installState === 'installing') return { label: 'Installing…', tone: 'busy' };
   if (i.installState === 'retained') return { label: 'Removed · data kept', tone: 'muted' };
+  if (i.home?.state === 'locked') return { label: 'Locked', tone: 'muted' };
   if (i.needsDrive) return { label: 'Needs its drive', tone: 'bad' };
   if (i.installState === 'failed') return { label: 'Failed', tone: 'bad' };
   if (i.installState === 'needs_action') return { label: 'Needs attention', tone: 'bad' };
