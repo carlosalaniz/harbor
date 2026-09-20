@@ -144,4 +144,44 @@ describe('external storage', () => {
     expect(h.fake.log.filter((l) => l.startsWith('up ')).length).toBe(upsBefore);
     renameSync(path.join(root, 'music-moved'), path.join(root, 'music'));
   });
+
+  it('drive guard: a swapped folder stops the app, refuses start, and adopt-drive accepts the replacement', async () => {
+    // reinstall so the app is running with its stamped folders
+    const running = (await h.api.instances()).find((i) => i.id === inst.id)!;
+    if (running.installState === 'retained') {
+      const r = await h.api.run({ kind: 'reinstall', instanceId: inst.id });
+      expect(r.op.state, JSON.stringify(r.op.error)).toBe('succeeded');
+    }
+    // swap the library folder for an empty replacement (same path, no marker)
+    renameSync(path.join(root, 'photos'), path.join(root, 'photos-orig'));
+    mkdirSync(path.join(root, 'photos'));
+    // the observer stops the app and the summary reports the missing drive
+    const deadline = Date.now() + 15_000;
+    let summary: InstanceSummary | undefined;
+    for (;;) {
+      summary = (await h.api.instances()).find((i) => i.id === inst.id);
+      if (summary?.needsDrive && summary.desired === 'stopped') break;
+      if (Date.now() > deadline) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    expect(summary?.needsDrive?.path).toBe(path.join(root, 'photos'));
+    expect(summary?.desired).toBe('stopped');
+    // start is refused while the wrong folder is in place
+    const refused = await h.api.expectError(409, 'DATA_MISSING', 'POST', '/v1/plans', { kind: 'start', instanceId: inst.id });
+    expect(refused.error.message).toMatch(/needs its drive/);
+    // adopting the replacement stamps a new identity; start works again
+    const adopted = await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/adopt-drive`, { storageId: 'library' });
+    expect(adopted.needsDrive).toBeNull();
+    const plan = await h.api.plan({ kind: 'start', instanceId: inst.id });
+    const op = await h.api.waitOperation((await h.api.submit(plan.id)).operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    // restore the original folder for later tests (adopt it back)
+    await h.api.run({ kind: 'stop', instanceId: inst.id });
+    renameSync(path.join(root, 'photos'), path.join(root, 'photos-repl'));
+    renameSync(path.join(root, 'photos-orig'), path.join(root, 'photos'));
+    await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/adopt-drive`, { storageId: 'library' });
+    renameSync(path.join(root, 'photos-repl'), path.join(root, 'photos-tmp'));
+    const { rmSync } = await import('node:fs');
+    rmSync(path.join(root, 'photos-tmp'), { recursive: true, force: true });
+  });
 });

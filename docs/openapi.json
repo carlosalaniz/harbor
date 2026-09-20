@@ -649,6 +649,48 @@
         }
       }
     },
+    "/v1/instances/{id}/adopt-drive": {
+      "post": {
+        "description": "Accept the folder at the recorded path as the new home for one storage claim (replacement drive or restored backup): stamps a fresh app-generated identity. The app must be stopped first.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "storageId"
+                ],
+                "properties": {
+                  "storageId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/package-sources": {
       "get": {
         "description": "Git repositories Harbor watches as app sources.",

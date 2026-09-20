@@ -15,6 +15,7 @@ import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory, hostPathsOverlap } from '../storage/host-path.js';
+import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
 import { validateGitSourceInput } from '../packages/git.js';
@@ -235,7 +236,7 @@ export class ApplicationService {
     this.ctx.repo.setAutoUpdate(row.id, enabled);
     const meta = this.packageMeta(row);
     const fresh = this.ctx.repo.instance(row.id)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id) });
   }
   // One update plan per eligible instance, submitted through the normal queue ("Update all").
   // Failures roll back per instance and never stop the rest (the queue is serial anyway).
@@ -452,7 +453,7 @@ export class ApplicationService {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), usage: this.usageCache.get(i.id) ?? null });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id) });
     });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
@@ -468,6 +469,54 @@ export class ApplicationService {
     const cur = current.get(i.packageId);
     if (!cur || compareRevisions(cur.revision, i.revision) <= 0) return null;
     return { revision: cur.revision, version: cur.version, releaseNotes: cur.releaseNotes };
+  }
+
+  // Drive guard read model: the first external folder whose identity check
+  // fails (missing, foreign, or swapped). Null means the app's folders are
+  // the ones it was installed with. Computed at read time so the drawer,
+  // tiles and Start refusal all see the same state without a migration.
+  // Adopting a replacement drive re-stamps the folder with a new identity
+  // (the old data is gone; the operator accepts the folder as the new home).
+  private needsDrive(instanceId: string): InstanceSummary['needsDrive'] {
+    try {
+      const inst = this.ctx.repo.instance(instanceId);
+      if (!inst || inst.installState !== 'installed') return null;
+      for (const r of this.ctx.repo.resources(instanceId).filter((x) => x.kind === 'bind')) {
+        try {
+          checkHostDirectory(r.name);
+          const storageId = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
+          const driveId = (r.metadata?.['driveId'] as string | undefined) ?? null;
+          verifyBindMarker(r.name, inst.id, storageId, driveId);
+        } catch (e) {
+          const purpose = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
+          return { path: r.name, purpose, detail: e instanceof Error ? e.message : String(e) };
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Accept the folder currently at the recorded path as the new home for this
+  // claim (replacement drive, or a restore that lost its marker): stamp a
+  // fresh app-generated identity into the folder and record it on the
+  // resource. Refused while the app is running — stop it first so nothing
+  // writes into the new folder mid-adoption.
+  adoptDrive(instanceId: string, storageId: string, actor: string): InstanceSummary {
+    const inst = this.instanceRow(instanceId);
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `cannot adopt a drive for an app in state ${inst.installState}`);
+    if (inst.activeOperationId) throw new HarborError('BUSY', `instance ${inst.name} has an active operation`, { operationId: inst.activeOperationId });
+    if (inst.desired === 'running') throw new HarborError('INVALID_STATE', `${inst.name} is still running`, { nextAction: 'Stop the app first, then adopt the folder.' });
+    const bind = this.ctx.repo.resources(instanceId).find((x) => x.kind === 'bind' && ((x.metadata?.['storageId'] as string | undefined) ?? x.role) === storageId);
+    if (!bind) throw new HarborError('NOT_FOUND', `no external folder for storage claim ${storageId} on ${inst.name}`);
+    const { path: hostPath } = checkHostDirectory(bind.name);
+    const driveId = writeBindMarker(hostPath, inst.id, storageId);
+    this.ctx.repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: bind.role, dockerId: bind.dockerId, name: hostPath, token: bind.token, metadata: { ...(bind.metadata ?? {}), storageId, driveId } });
+    this.ctx.log.info('drive adopted', { instanceId, storageId, path: hostPath, actor });
+    const meta = this.packageMeta(this.ctx.repo.instance(instanceId)!);
+    const fresh = this.ctx.repo.instance(instanceId)!;
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id) });
   }
 
   // ---- your own apps
@@ -500,7 +549,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(row.id) ?? null });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id) });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
@@ -654,11 +703,16 @@ export class ApplicationService {
     if (req.kind === 'update') return this.updatePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
     switch (req.kind) {
-      case 'start':
+      case 'start': {
         if (inst.installState !== 'installed' && inst.installState !== 'needs_action') throw new HarborError('INVALID_STATE', `cannot start an instance in state ${inst.installState}`);
         if (inst.runtime === 'running' && inst.desired === 'running') throw new HarborError('INVALID_STATE', `instance ${inst.name} is already running`);
+        // Refuse at plan time (not only at apply): starting against a missing
+        // or swapped drive must never reach Docker.
+        const need = this.needsDrive(inst.id);
+        if (need) throw new HarborError('DATA_MISSING', `${inst.name} needs its drive: ${need.path} (${need.purpose}) is not the folder it was using (${need.detail})`, { nextAction: 'Re-insert the drive (or restore the folder with its marker) at the same path, or adopt the new folder from the app drawer.' });
         changes.push(`Verify release, retained volumes and secrets of "${inst.name}"`, `Start existing containers of project ${inst.project}`, 'Check readiness');
         break;
+      }
       case 'stop':
         if (inst.installState !== 'installed' && inst.installState !== 'needs_action' && inst.installState !== 'failed') throw new HarborError('INVALID_STATE', `cannot stop an instance in state ${inst.installState}`);
         changes.push(`Stop the recorded containers of "${inst.name}" (project ${inst.project})`, 'Keep volumes, secrets and port allocations');

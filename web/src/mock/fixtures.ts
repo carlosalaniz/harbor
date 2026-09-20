@@ -156,6 +156,7 @@ export function mockInstances(): InstanceSummary[] {
     customIcon: null,
     usage: null,
     autoUpdate: false,
+    needsDrive: null,
   };
   return [
     {

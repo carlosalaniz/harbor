@@ -180,8 +180,12 @@ export class OperationRunner {
       if (choice?.hostPath) {
         // Operator-chosen folder: re-checked now (the plan may be minutes old); recorded as a 'bind' resource. Never created or chowned.
         const { path: hostPath } = checkHostDirectory(choice.hostPath);
-        repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: claim.composeVolume, dockerId: null, name: hostPath, token: null, metadata: { storageId: claim.id, readOnly: choice.readOnly ?? false } });
-        writeBindMarker(hostPath, inst.id, claim.id);
+        // App-generated drive identity: a fresh folder (or a replacement drive) gets a new
+        // random id stamped into its marker; a restored folder keeps the id it carries, so a
+        // dead drive recovered from backup keeps working. The id is stored on the resource
+        // so later checks can tell "right drive, temporarily gone" from "wrong drive".
+        const driveId = writeBindMarker(hostPath, inst.id, claim.id);
+        repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: claim.composeVolume, dockerId: null, name: hostPath, token: null, metadata: { storageId: claim.id, readOnly: choice.readOnly ?? false, driveId } });
         this.event(op, 'preparing', `using your folder ${hostPath} for ${claim.purpose}${choice.readOnly ? ' (read-only)' : ''}`);
         continue;
       }
@@ -208,7 +212,7 @@ export class OperationRunner {
       if (bind) {
         try {
           checkHostDirectory(bind.name);
-          verifyBindMarker(bind.name, inst.id, claim.id);
+          verifyBindMarker(bind.name, inst.id, claim.id, (bind.metadata?.['driveId'] as string | undefined) ?? null);
         } catch (e) {
           throw new HarborError('DATA_MISSING', `your folder ${bind.name} (${claim.purpose}) is not available: ${e instanceof Error ? e.message : String(e)}`, { nextAction: 'Mount or restore the folder at the same path, then retry. Harbor will not start the app against a missing folder.' });
         }

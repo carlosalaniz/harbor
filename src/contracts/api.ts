@@ -62,6 +62,10 @@ export interface InstanceSummary {
   usage: { cpuPercent: number; memoryBytes: number; sampledAt: string } | null;
   // opt-in automatic updates (decision 78)
   autoUpdate: boolean;
+  // drive guard: set when an external folder's identity check fails (drive
+  // removed, unmounted, or swapped). The app is stopped; Start is refused
+  // until the right folder is back or the operator adopts the new one.
+  needsDrive: { path: string; purpose: string; detail: string } | null;
 }
 
 // Volume disk usage grouped per app (GET /v1/system/storage/usage; docker system df, cached).

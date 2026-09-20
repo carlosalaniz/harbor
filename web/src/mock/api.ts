@@ -216,6 +216,13 @@ export const mockApi = {
     instances = instances.map((i) => (i.id === instanceId ? next : i));
     return next;
   },
+  adoptDrive: async (instanceId: string): Promise<InstanceSummary> => {
+    await beat(150);
+    const inst = instances.find((i) => i.id === instanceId)!;
+    const next = { ...inst, needsDrive: null };
+    instances = instances.map((i) => (i.id === instanceId ? next : i));
+    return next;
+  },
   applyAllUpdates: async () => ({ started: [{ instanceId: 'inst-immich', name: 'immich', operationId: 'op-mock-update' }], skipped: [] }),
   packageSources: async () => [],
   addPackageSource: async () => {

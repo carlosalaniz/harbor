@@ -363,10 +363,12 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
   const [confirmPurge, setConfirmPurge] = useState('');
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(inst.autoUpdate);
+  const [adopting, setAdopting] = useState(false);
+  const [adoptMsg, setAdoptMsg] = useState<string | null>(null);
   useEffect(() => setAutoUpdate(inst.autoUpdate), [inst.id, inst.autoUpdate]);
   useEffect(() => {
     let live = true;
-    const load = () => api.instance(inst.id).then((d) => live && setDetail(d), (e: Error) => live && setError(e.message));
+    const load = () => api.instance(inst.id).then((d) => live && (setDetail(d), setAdoptMsg(null)), (e: Error) => live && setError(e.message));
     void load();
     const t = setInterval(() => void load(), 5000);
     return () => {
@@ -374,11 +376,12 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
       clearInterval(t);
     };
   }, [inst.id]);
+  const need = detail?.needsDrive ?? inst.needsDrive;
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
   const retained = inst.installState === 'retained';
-  const canOpen = inst.installState === 'installed' && inst.runtime === 'running';
+  const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need;
   const canStop = (inst.installState === 'installed' || inst.installState === 'needs_action' || inst.installState === 'failed') && inst.runtime !== 'stopped';
-  const canStart = inst.installState === 'installed' && inst.desired === 'stopped';
+  const canStart = inst.installState === 'installed' && inst.desired === 'stopped' && !need;
   return (
     <Dialog title={appLabel(inst)} onClose={onClose} wide>
       <div className="app-head">
@@ -396,6 +399,40 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           )}
         </div>
       </div>
+      {need && !retained && (
+        <div className="update-banner needs-drive" role="alert">
+          <div>
+            <strong>Needs its drive</strong>
+            <p className="muted small">
+              <code className="path">{need.path}</code> ({need.purpose}) is not the folder this app was using: {need.detail} Re-insert the drive or restore the folder with its marker at the same path, then start the app.
+            </p>
+          </div>
+          <div className="row wrap">
+            <button
+              className="btn"
+              disabled={busy || adopting || inst.desired === 'running'}
+              onClick={() => {
+                setAdopting(true);
+                setAdoptMsg(null);
+                void api
+                  .adoptDrive(inst.id, need.purpose)
+                  .then(() => setAdoptMsg('Folder accepted as the new home. You can start the app now.'))
+                  .catch((e: Error) => setAdoptMsg(e.message))
+                  .finally(() => setAdopting(false));
+              }}
+              aria-label={`Accept the current folder as the new home for ${inst.name}`}
+              title={inst.desired === 'running' ? 'Stop the app first' : 'Stamp the current folder with a new identity and use it from now on'}
+            >
+              {adopting ? 'Accepting…' : 'Use this folder instead'}
+            </button>
+          </div>
+          {adoptMsg && (
+            <p className="small" role="status">
+              {adoptMsg}
+            </p>
+          )}
+        </div>
+      )}
       {upd && !retained && (
         <div className="update-banner" role="status">
           <div>

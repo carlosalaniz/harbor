@@ -37,7 +37,7 @@ function useGreeting(): string {
 export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenApp: (i: InstanceSummary) => void; onGoStore: () => void; onPick: (item: CatalogItemDto) => void }) {
   const { data, loaded } = c;
   const running = data.instances.filter((i) => i.installState === 'installed' && i.runtime === 'running').length;
-  const attention = data.instances.filter((i) => ['failed', 'needs_action'].includes(i.installState) || i.readiness === 'unhealthy' || i.runtime === 'unavailable');
+  const attention = data.instances.filter((i) => ['failed', 'needs_action'].includes(i.installState) || i.readiness === 'unhealthy' || i.runtime === 'unavailable' || Boolean(i.needsDrive));
   const degraded = data.exposures.filter((e) => e.state === 'degraded');
   const picks = PICKS.map((id) => data.catalog.find((i) => i.id === id)).filter((i): i is CatalogItemDto => Boolean(i && i.availability === 'available'));
   const active = data.instances.filter((i) => i.installState !== 'retained');

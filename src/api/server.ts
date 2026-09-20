@@ -291,6 +291,11 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     async (req) => service.setInstanceAutoUpdate((req.params as { id: string }).id, (req.body as { enabled: boolean }).enabled),
   );
   app.post('/v1/updates/apply-all', { preHandler: requireAuth, schema: { description: 'Submit one update per app with a newer package revision (serial queue; per-app rollback).' } }, async (req) => service.applyAllUpdates(req.actor!));
+  app.post(
+    '/v1/instances/:id/adopt-drive',
+    { preHandler: requireAuth, schema: { description: 'Accept the folder at the recorded path as the new home for one storage claim (replacement drive or restored backup): stamps a fresh app-generated identity. The app must be stopped first.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] }, body: { type: 'object', additionalProperties: false, required: ['storageId'], properties: { storageId: { type: 'string', minLength: 1, maxLength: 64 } } } } },
+    async (req) => service.adoptDrive((req.params as { id: string }).id, (req.body as { storageId: string }).storageId, req.actor!),
+  );
 
   // --- git package sources (decision 80)
   app.get('/v1/package-sources', { preHandler: requireAuth, schema: { description: 'Git repositories Harbor watches as app sources.' } }, async () => ({ items: service.packageSources() }));

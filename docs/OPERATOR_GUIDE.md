@@ -193,9 +193,11 @@ Rules and behaviour:
 - Harbor does not change permissions. The packaged apps run as root inside their containers or take
   ownership on first start (Nextcloud); keep the folder for one app only.
 - Read-only claims (Navidrome's music) are mounted read-only.
-- When you claim a folder, Harbor writes a small `.harbor-bind.json` marker inside it (which app
-  and claim). If a different drive ends up mounted at the same path, start and reinstall refuse
-  with `DATA_MISSING` instead of writing into the wrong disk — mount the right drive back.
+- When you claim a folder, Harbor writes a small `.harbor-bind.json` marker inside it: which app
+  and claim, plus a random drive id the app generated. A backup restored onto a new drive keeps
+  working (copy the folder with its marker); a different or empty drive at the same path makes
+  start and reinstall refuse with `DATA_MISSING` — mount the right drive back, restore the
+  folder, or accept the new folder from the app drawer (*Use this folder instead*).
 
 ## 4a1. Removable drives (USB sticks, external disks)
 
@@ -206,9 +208,11 @@ name); unmounting is the *Eject* button. Harbor only ever mounts removable media
 are never touched.
 
 - Insert and removal also raise a bell notification (one row per drive, resolved when it leaves).
-- If a drive holding an app folder is removed, the app keeps running and the bell warns which
-  app lost its folder. Restarting that app is refused (`DATA_MISSING`) until the drive is back
-  at the same path; nothing is ever started against a missing folder.
+- If a drive holding an app folder is removed, Harbor stops the app to protect its data and the
+  bell says which app lost its drive. Home shows *Needs its drive*; starting is refused
+  (`DATA_MISSING`) until the drive (or a restored folder with its marker) is back at the same
+  path. A replacement drive can be accepted from the app drawer (*Use this folder instead*);
+  nothing is ever started against the wrong folder.
 
 ## 4b. Settings in the console (for people who do not use a terminal)
 

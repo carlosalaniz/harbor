@@ -12,6 +12,7 @@ import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
 import { listDevices } from '../system/host-storage.js';
 import { checkHostDirectory } from '../storage/host-path.js';
+import { verifyBindMarker } from '../storage/bind-marker.js';
 
 // Periodic observation of what actually exists. Never mutates Docker.
 export class Observer {
@@ -46,6 +47,9 @@ export class Observer {
       const ping = await this.ctx.docker.ping();
       this.service.recordDockerObservation({ available: ping.available, version: ping.version, error: ping.error });
       const now = this.ctx.repo.now();
+      // Containers still running per instance (by inspection this tick): the
+      // drive guard below uses it to decide whether a stop is needed.
+      const runningByInstance = new Map<string, boolean>();
       for (const inst of this.ctx.repo.listInstances()) {
         if (inst.activeOperationId) continue;
         if (!ping.available) {
@@ -101,10 +105,11 @@ export class Observer {
           this.ctx.notifier.notify({ kind: 'app-degraded', severity: 'warning', title: `${inst.displayName ?? inst.name} is not answering`, body: runtime === 'stopped' ? 'Its containers are not running. Open the app drawer to start it or check its logs.' : 'Its containers run but the app does not answer its health check. Check its logs under Troubleshoot.', instanceId: inst.id, dedupeKey: `app-degraded:${inst.id}` });
         } else this.ctx.notifier.resolve(`app-degraded:${inst.id}`);
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
+        runningByInstance.set(inst.id, running > 0);
       }
       this.notifyUpdatesAndDisk();
       this.notifyDevices();
-      this.notifyMissingFolders();
+      this.notifyMissingFolders(runningByInstance);
       if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
         this.lastSourceCheck = Date.now();
         await this.service.checkAllSources();
@@ -177,29 +182,63 @@ export class Observer {
     this.lastDevices = snapshot;
   }
 
-  // An app folder that vanished (drive removed or unmounted): warn per app,
-  // keep the app running, resolve when the folder is back. The runner already
-  // refuses restarts against a missing folder; this is the bell half.
-  private notifyMissingFolders(): void {
+  // An app folder that vanished or was swapped (drive removed, unmounted, or a
+  // stranger's drive at the same path): stop the app through the normal queue
+  // (plan → operation, actor drive-guard), error-notify per app, resolve when
+  // the folder is back. The runner already refuses restarts against a missing
+  // or foreign folder; this is the stop + bell half. One attempt per folder
+  // state: a failed stop must not loop, and a stopped app is not re-stopped.
+  private notifyMissingFolders(runningByInstance: Map<string, boolean>): void {
     try {
       for (const r of this.ctx.repo.resourcesByKind('bind')) {
         const key = `storage-missing:${r.instanceId}:${r.role}`;
-        let missing = false;
+        let reason: string | null = null;
         try {
           checkHostDirectory(r.name);
-        } catch {
-          missing = true;
+          const inst = this.ctx.repo.instance(r.instanceId);
+          const storageId = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
+          const driveId = (r.metadata?.['driveId'] as string | undefined) ?? null;
+          if (inst) verifyBindMarker(r.name, inst.id, storageId, driveId);
+        } catch (e) {
+          reason = e instanceof Error ? e.message : String(e);
         }
-        if (missing) {
+        if (reason) {
           const inst = this.ctx.repo.instance(r.instanceId);
           const purpose = (r.metadata?.['storageId'] as string | undefined) ?? r.role;
-          this.ctx.notifier.notify({ kind: 'storage-missing', severity: 'warning', title: `${inst?.displayName ?? inst?.name ?? 'An app'} lost its folder`, body: `${r.name} (${purpose}) is not available — the drive may have been removed. The app keeps running with what it has in memory; re-insert or re-mount the drive at the same path. Harbor will not restart it until the folder is back.`, instanceId: r.instanceId, dedupeKey: key });
+          this.ctx.notifier.notify({ kind: 'storage-missing', severity: 'error', title: `${inst?.displayName ?? inst?.name ?? 'An app'} lost its drive`, body: `${r.name} (${purpose}) is not the folder this app was using: ${reason} The app was stopped to protect its data. Re-insert the drive (or restore the folder with its marker) at the same path and start it again.`, instanceId: r.instanceId, dedupeKey: key });
+          this.stopForMissingDrive(r.instanceId, r.name, reason, runningByInstance.get(r.instanceId) ?? false);
         } else {
           this.ctx.notifier.resolve(key);
         }
       }
     } catch {
       /* repo trouble is reported elsewhere */
+    }
+  }
+
+  // Stop an app whose drive vanished: one queued stop plan per (instance,
+  // folder-state), submitted like any other operation. Skips when the app is
+  // already stopped, busy, or a stop was already attempted for this state.
+  // Liveness comes from the same container inspection the tick already did:
+  // callers pass whether any owned container is still running.
+  private readonly driveStopAttempts = new Set<string>();
+  private stopForMissingDrive(instanceId: string, folder: string, reason: string, anyRunning: boolean): void {
+    try {
+      const inst = this.ctx.repo.instance(instanceId);
+      if (!inst || inst.installState !== 'installed' || inst.activeOperationId) return;
+      if (inst.desired !== 'running' || !anyRunning) return;
+      const attempt = `${instanceId}:${folder}:${reason}`;
+      if (this.driveStopAttempts.has(attempt)) return;
+      this.driveStopAttempts.add(attempt);
+      void this.service
+        .createPlan({ kind: 'stop', instanceId }, 'drive-guard')
+        .then((plan) => {
+          this.service.submit(plan.id, this.ctx.ids.uuid(), 'drive-guard');
+          this.ctx.log.warn(`drive-guard stopped ${inst.name}: ${reason}`, { instanceId });
+        })
+        .catch((e) => this.ctx.log.warn(`drive-guard could not stop ${inst.name}: ${(e as Error).message}`, { instanceId }));
+    } catch (e) {
+      this.ctx.log.warn(`drive-guard check failed: ${(e as Error).message}`);
     }
   }
 
