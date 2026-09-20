@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–90 so far) | `docs/DECISIONS.md` — **next number is 91**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–92 so far) | `docs/DECISIONS.md` — **next number is 93**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
 | What was verified live and how | `docs/VERIFICATION.md` (sections per version) + `docs/evidence/<dir>/` (screenshots/logs; VM IPs redacted as `<ip>`) |
@@ -36,20 +36,20 @@ src/
   daemon.ts            wiring: adapters, providers, services, listeners (also demo fakes for fake mode)
   config.ts            DaemonConfig (stateDir, catalogDir, userDataDir=/srv/harbor, localPackagesDir, lan{enabled,port}, updates{repo}, listen 127.0.0.1:18000)
   api/server.ts        Fastify routes; Host/Origin guards (loopback, tailnet UI exposure, LAN rules); WebSocket /v1/terminal
-  auth/                scrypt passwords, bearer sessions (sessions.ts incl. TOTP), setup.ts (first-run claim with setup code), totp.ts
-  lifecycle/           service.ts (plans, catalog, instances, logs, self-update passthrough, adopt-drive, storage policy, needsDrive read model), runner.ts (serial operations incl. update+rollback, purge, expose; Caddy route builder; drive-guard stops keep desired running), observer.ts (readiness, exposure re-checks, tailnet serve reconcile, Caddy reconcile, drive-guard stop, auto-mount on insert, auto-start on return), dto.ts, instance-dir.ts
+  auth/                scrypt passwords, bearer sessions (sessions.ts incl. TOTP), setup.ts (first-run claim with setup code), totp.ts, machine-key.ts (sealed machine keystore BFU/AFU), machine-holder.ts (in-memory holder)
+  lifecycle/           service.ts (plans, catalog, instances, logs, self-update passthrough, adopt-drive, storage policy, needsDrive read model, installCandidates/foundApps/adoptApp + location secrets), runner.ts (serial operations incl. update+rollback, purge, expose; Caddy route builder; drive-guard stops keep desired running; app-home creation + volume rooting), observer.ts (readiness, exposure re-checks, tailnet serve reconcile, Caddy reconcile, drive-guard stop, auto-mount on insert, auto-start on return), dto.ts, instance-dir.ts
   packages/            restricted YAML, manifest/compose validators, catalog loader, store.ts (bundled + uploaded packages, zip import, digest pinning via registry.ts), zip.ts (dependency-free reader/writer)
   planner/             identity, port allocation, Compose rendering (bindHost 127.0.0.1 or 0.0.0.0)
-  state/               SQLite schema v7 (db.ts migrations v1→v7), repo.ts (settings table = small JSON docs: appearance, home order, device.name, security.totp, storage.autoMount, storage.autoStart; resolved notifications delete regardless of read state)
+  state/               SQLite schema v7 (db.ts migrations v1→v7), repo.ts (settings table = small JSON docs: appearance, home order, device.name, security.totp, security.machineKey, storage.autoMount, storage.autoStart; resolved notifications delete regardless of read state)
   exposure/            tailscale.ts (CLI provider, operator self-heal, URL streaming), caddy.ts (admin API client + renderer incl. LAN console server), urls.ts
   appearance/          wallpaper rotation (fetcher.ts, sources.ts Reddit/Bing/Wikimedia, service.ts)
   system/              metrics, host-storage (lsblk devices, mounts, folders), device-mount.ts (mount/unmount service), net (public IP/DNS), power (systemctl via polkit), terminal (python pty bridge), logs (journal + ring buffer), lan.ts, selfupdate.ts (GitHub feed, unit starter)
-  storage/             bind-marker.ts (app-generated driveId identity in `.harbor-bind.json`), host-path.ts (bring-your-own-folder validation)
+  storage/             bind-marker.ts (app-generated driveId identity in `.harbor-bind.json`), host-path.ts (bring-your-own-folder validation), app-home.ts (portable encrypted bundles: manifest.json + vault/, scrypt+AES-256-GCM), install-location.ts (eligible drive folders)
   bootstrap/           root-only installer/upgrader: bootstrap.ts, tools.ts (Cockpit/Portainer/Tailscale/Caddy), systemd.ts (units + polkit rule), selfupdate-apply.ts (root half of self-update)
-  cli/main.ts          commander CLI (all console actions + bootstrap/self-update/setup-code/totp reset)
-web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx, app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
+  cli/main.ts          commander CLI (all console actions incl. install --location, found-apps, adopt + bootstrap/self-update/setup-code/totp reset)
+web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx (InstallWizard location picker + passphrase, PlanDialog Lives-on row, locked drawer banner), app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 catalog/               17 bundled packages (manifest.yaml, compose.yaml, README.md, release.json, icon)
-tests/unit (96) tests/integration (112 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 23, two dev daemons on 18500/18700: normal + setup mode)
+tests/unit (116) tests/integration (122 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 24, two dev daemons on 18500/18700: normal + setup mode)
 scripts/               package.mjs (release archive), catalog-pin/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
 install.sh             curl one-liner (published as a release asset too)
 ```
@@ -58,8 +58,8 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 
 ## 4. Versions, tags, releases
 
-Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5.
-`package.json` version is **0.12.5**. GitHub Releases exist for v0.7.0 → v0.12.5 (assets:
+Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0.
+`package.json` version is **0.13.0**. GitHub Releases exist for v0.7.0 → v0.13.0 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
 push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
@@ -73,37 +73,47 @@ troubleshoot logs, TOTP 2FA, device name, Tailscale operator self-heal; 0.8 inst
 LAN mode + mDNS, Harbor self-update, defaultCredentials; 0.9 round-9 (notifications, usage,
 git sources, auto-updates, widgets); 0.10 password-only persistent login (30-day remember) +
 Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logout in Settings);
-0.11 `harbor uninstall`, apt-lock retry, keep-existing-admin, removable-media phase 1 (lsblk devices in Places); 0.12 removable media (mount/unmount at `/mnt/<label>`, drive guard with app-generated identity, auto-mount/auto-start, adopt-drive).
+0.11 `harbor uninstall`, apt-lock retry, keep-existing-admin, removable-media phase 1 (lsblk devices in Places); 0.12 removable media (mount/unmount at `/mnt/<label>`, drive guard with app-generated identity, auto-mount/auto-start, adopt-drive); 0.13 install-location + adopt (whole encrypted apps on drives: location picker + passphrase, volumes rooted in `<dir>/<name>/{manifest.json, vault/}`, found-apps + adopt on any machine, portable via passphrase).
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (90, executed 2026-09-20):** auto-mount on insert + auto-start on return,
-guard stops keep `desired` running, adopt works on guard-stopped apps, resolved notifications
-delete fully, and the unit grants `/mnt /media` writes so markers backfill. Shipped as **v0.12.5**
-and verified live on carlos-desktop (Immich running/healthy, `needsDrive` null, stale bell row gone).
+**Latest decision (92, executed 2026-09-20):** install-location + adopt close the
+app-homes loop — the install wizard asks where the app lives, a drive choice takes an
+8+ char passphrase (submission-only secret, never in the plan), volumes root inside
+`<dir>/<name>/{manifest.json, vault/}` as local-driver binds, found-apps + adopt
+(portable via passphrase, UUID reuse, fresh ports) in console + CLI. Shipped as
+**v0.13.0** and deployed to carlos-desktop (daemon healthy, CLI + UI bundle +
+app-home crypto proven live; only drive on the box is vfat so no live drive
+install — e2e covers the picker → encrypted review → install on the data-folder
+candidate).
 
 **Last three actions, most recent first:**
-1. **Shipped and verified v0.12.3 → v0.12.5 on carlos-desktop** (2026-09-20): drive guard
+1. **Shipped v0.13.0 install-location + adopt, deployed to carlos-desktop** (2026-09-20):
+   wizard location picker + passphrase, Lives-on plan row, Locked tiles/drawer banner,
+   Found-apps in Settings → Storage, CLI `install --location / found-apps / adopt`,
+   unit 116 + integration 122 + e2e 24 green, decision 92, docs (APP_HOMES stages 2–3,
+   operator guide §4a2, openapi 70 paths). Deployed via local `pnpm package` + `scp` +
+   `harbor self-update apply --archive`. Pushed to `main` (CI publishes the release).
+2. **Shipped and verified v0.12.3 → v0.12.5 on carlos-desktop** (2026-09-20): drive guard
    (app-generated `driveId` in `.harbor-bind.json`, observer stop through the queue, Start refusal,
    adopt-drive, needs-drive UI) → auto-mount/auto-start with `storage.autoMount`/`storage.autoStart`
-   policies → sandbox fix (`ReadWritePaths` + `/mnt /media`) + notification-delete fix. Deployed via
-   local `pnpm package` + `scp` + `harbor self-update apply --archive` (the `--archive` path needs
-   `SHA256SUMS` next to the tarball). Live: Immich `running/running`, `needsDrive` null, bell clean.
-2. **Shipped v0.12.0 → v0.12.2** (2026-09-19/20): removable-media mount/unmount at `/mnt/<label>`
+   policies → sandbox fix (`ReadWritePaths` + `/mnt /media`) + notification-delete fix.
+   Live: Immich `running/running`, `needsDrive` null, bell clean.
+3. **Shipped v0.12.0 → v0.12.2** (2026-09-19/20): removable-media mount/unmount at `/mnt/<label>`
    via `harbor-device-mount@`, single Removable row, stale-yank hide, picker subfolder/SVI fixes,
    copy trim pass. Decisions 88–89.
-3. **Shipped v0.11.0** (2026-09-19): `harbor uninstall`, apt-lock retry, keep-existing-admin
-   (decisions 86–87).
 
 ## 5a. Live hosts right now
 
 - **carlos-desktop** (physical Ubuntu 24.04.3 x86_64, `<lan-user>@<lan-ip>`): the live
-  box. Harbor **0.12.5** on `:18000` (prod) + dev on `:18100`. PNY USB stick, vfat label
+  box. Harbor **0.13.0** on `:18000` (prod) + dev on `:18100`. PNY USB stick, vfat label
   `USB20FD`, mounted at `/mnt/usb20fd`; Immich's `library` claim lives at
   `/mnt/usb20fd/immich` with a stamped marker. Local ship path: `pnpm package` → `scp`
   tarball + `SHA256SUMS` to `/tmp/` → `sudo /opt/harbor/bin/harbor self-update apply --to
   <ver> --archive /tmp/harbor-<ver>-linux-x64.tar.gz`. Gotcha: stacked ghost mounts can
   hide a yank (`/proc` outlives the pull; the next insert lands on `sde1` etc.).
+  Note: the only removable drive on the box is vfat, so install-location (ext4+ only)
+  has no live drive target there — the data-folder candidate + e2e cover it.
 - DigitalOcean droplets (`harbor-test*`, each ~$0.07/h; token only in git-ignored
   `.env.vm.local`): see §6. The repo is public since decision 75 (history rewritten with
   `git filter-repo`; old SHAs refer to pre-rewrite history).
@@ -122,7 +132,7 @@ and verified live on carlos-desktop (Immich running/healthy, `needsDrive` null, 
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 96), `pnpm test:integration` (112 + 3 live-Docker skipped), `pnpm test:e2e` (23, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 116), `pnpm test:integration` (122 + 3 live-Docker skipped), `pnpm test:e2e` (24, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
 - Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.
@@ -145,8 +155,8 @@ and verified live on carlos-desktop (Immich running/healthy, `needsDrive` null, 
 
 ## 9. Scope decisions that override TDD exclusions (all at Carlos's request)
 
-Purge (49), app updates and uploaded packages (60–62), MFA/TOTP (67), Harbor self-update and GitHub release publication (69–70), LAN exposure (71), notifications/usage/git-sources/auto-updates/widgets (76–82), persistent login + craft pass (83–84), removable media + drive guard + auto-mount/start (88–90). Still not built on purpose: files app, factory reset, external disk partitioning/formatting/LUKS/SMART, multi-user/SSO, backups (see `docs/FUTURE.md`).
+Purge (49), app updates and uploaded packages (60–62), MFA/TOTP (67), Harbor self-update and GitHub release publication (69–70), LAN exposure (71), notifications/usage/git-sources/auto-updates/widgets (76–82), persistent login + craft pass (83–84), removable media + drive guard + auto-mount/start (88–90), install-location + adopt (91–92). Still not built on purpose: files app, factory reset, external disk partitioning/formatting/LUKS/SMART, multi-user/SSO, backups (see `docs/FUTURE.md`).
 
 ## 10. Feature map of the console (for UI work)
 
-Home (launcher: icons, status dots, drag-to-arrange, updates card, needs-drive attention, wallpaper credit) · App Store (catalog + *Your apps* filter + upload dialog + git sources) · Publishing (tailnet/public addresses) · Platform (Docker, Cockpit, Portainer, Tailscale, proxy) · Settings: Overview (device card, rename, power, machine facts, Harbor update card, wallpaper picker), Account (password, 2FA, sessions, log-out-others, log out), Remote access (Tailscale), Public addresses (domains wizard), Storage (disks, removable drives with mount/eject + auto-mount/auto-start toggles, folders, picker), Appearance (theme, wallpapers, rotation, opacity), Notifications (channels), Advanced access (terminal, SSH lines, CLI), Troubleshoot (journal + app logs), About · ⌘K palette · first-run Setup wizard · app drawer (open/publish/customize/start/stop/remove/update/uninstall completely, needs-drive banner + adopt) · notifications bell · Umbrel-style login hero.
+Home (launcher: icons, status dots, drag-to-arrange, updates card, needs-drive attention, locked tiles, wallpaper credit) · App Store (catalog + *Your apps* filter + upload dialog + git sources, install wizard with location picker + passphrase) · Publishing (tailnet/public addresses) · Platform (Docker, Cockpit, Portainer, Tailscale, proxy) · Settings: Overview (device card, rename, power, machine facts, Harbor update card, wallpaper picker), Account (password, 2FA, sessions, log-out-others, log out), Remote access (Tailscale), Public addresses (domains wizard), Storage (disks, removable drives with mount/eject + auto-mount/auto-start toggles, folders, picker, found-apps + adopt), Appearance (theme, wallpapers, rotation, opacity), Notifications (channels), Advanced access (terminal, SSH lines, CLI), Troubleshoot (journal + app logs), About · ⌘K palette · first-run Setup wizard · app drawer (open/publish/customize/start/stop/remove/update/uninstall completely, needs-drive banner + adopt, locked banner) · notifications bell · Umbrel-style login hero.
