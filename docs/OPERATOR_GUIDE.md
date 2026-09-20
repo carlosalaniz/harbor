@@ -208,11 +208,16 @@ name); unmounting is the *Eject* button. Harbor only ever mounts removable media
 are never touched.
 
 - Insert and removal also raise a bell notification (one row per drive, resolved when it leaves).
+  A freshly inserted drive is mounted automatically (Settings → Storage has an
+  *Automatically mount inserted drives* toggle, on by default).
 - If a drive holding an app folder is removed, Harbor stops the app to protect its data and the
   bell says which app lost its drive. Home shows *Needs its drive*; starting is refused
   (`DATA_MISSING`) until the drive (or a restored folder with its marker) is back at the same
-  path. A replacement drive can be accepted from the app drawer (*Use this folder instead*);
-  nothing is ever started against the wrong folder.
+  path. A replacement drive can be accepted from the app drawer (*Use this folder instead* —
+  available once the app is stopped); nothing is ever started against the wrong folder.
+  When the right folder is back, Harbor starts the app again by itself
+  (*Automatically start apps when their drive returns*, on by default) and the
+  bell row disappears.
 
 ## 4b. Settings in the console (for people who do not use a terminal)
 

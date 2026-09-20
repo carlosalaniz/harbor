@@ -28,7 +28,12 @@ UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=${PRODUCT.paths.var} ${PRODUCT.paths.data}
+# /mnt + /media: removable drives land here, and the drive guard stamps its
+# app-generated identity marker (.harbor-bind.json) into claimed folders.
+# Without these paths the daemon reads markers fine but silently fails to
+# write them (ProtectSystem=strict makes /mnt read-only), so legacy markers
+# never backfill and replacements stay indistinguishable.
+ReadWritePaths=${PRODUCT.paths.var} ${PRODUCT.paths.data} /mnt /media
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes

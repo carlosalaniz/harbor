@@ -9,7 +9,7 @@ describe('systemd unit text', () => {
     expect(unit).toContain('KillMode=control-group');
     expect(unit).toContain('Wants=network-online.target docker.service');
     expect(unit).not.toMatch(/^Requires=.*docker/m); // live A10 found Harbor being stopped along with Docker
-    expect(unit).toContain('ReadWritePaths=/var/lib/harbor /srv/harbor'); // the data folder must be writable for the folder picker
+    expect(unit).toContain('ReadWritePaths=/var/lib/harbor /srv/harbor /mnt /media'); // the data folder must be writable for the folder picker; /mnt + /media for drive-guard markers
     expect(unit).toContain('# managed-by: harbor-bootstrap');
   });
   it('restricts the Cockpit socket to loopback', () => {

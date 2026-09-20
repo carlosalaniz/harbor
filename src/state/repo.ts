@@ -515,9 +515,12 @@ export class Repo {
   markNotificationDelivered(id: string): void {
     this.db.prepare('UPDATE notifications SET delivered_at = ? WHERE id = ?').run(this.now(), id);
   }
-  // Resolved conditions disappear from the bell when unread (e.g. an update was applied); read rows stay as history.
+  // Resolved conditions disappear from the bell entirely: a cleared drive
+  // guard must not leave a stale "lost its drive" row next to a healthy app.
+  // (Read rows used to stay as history; that left resolved errors visible
+  // after the drive came back, which reads as a live problem.)
   deleteNotificationByKey(dedupeKey: string): void {
-    this.db.prepare('DELETE FROM notifications WHERE dedupe_key = ? AND read_at IS NULL').run(dedupeKey);
+    this.db.prepare('DELETE FROM notifications WHERE dedupe_key = ?').run(dedupeKey);
   }
   pruneNotifications(keep: number): void {
     this.db.prepare('DELETE FROM notifications WHERE id NOT IN (SELECT id FROM notifications ORDER BY created_at DESC, id DESC LIMIT ?)').run(keep);
