@@ -78,10 +78,12 @@ Umbrel's settings are the reference: one list of sections with plain names and a
 Harbor's sections and what they call: Account (`PUT /v1/account/password`), Remote access
 (`POST /v1/platform-tools/tailscale/login` with an auth key or none → login URL; `…/logout`;
 `PUT/DELETE /v1/ui-exposure`), Public addresses (tool state), Storage (`GET /v1/host/storage`,
-`GET/POST /v1/host/folders`), Appearance (theme + wallpaper, per browser), Advanced access (SSH line, CLI),
+`GET/POST /v1/host/folders`, device mount/unmount + status, `PUT /v1/host/storage/policy` for the
+auto-mount/auto-start toggles), Appearance (theme + wallpaper, per browser), Advanced access (SSH line, CLI),
 About. Home is a launcher: icon grid with labels and a status dot, "⋯" for the drawer, retained apps folded.
-The install page uses a folder picker (places = disks + Harbor data folder; navigate; create folder) with a
-"type a path" fallback.
+The install page uses a folder picker (places = disks + removable drives + Harbor data folder; navigate; create folder) with a
+"type a path" fallback. An app whose drive left shows "Needs its drive" on Home and a banner with
+"Use this folder instead" (adopt) in its drawer.
 
 ## 7. Personal launcher, rotating wallpapers, the machine (added 2026-09-15, v0.5.0)
 
