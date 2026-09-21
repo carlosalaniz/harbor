@@ -47,6 +47,23 @@ function validDeviceName(name: string): boolean {
   return /^[a-z]+[0-9]+$/.test(name) && name.length <= 16;
 }
 
+// Transient kernel lock contention (the PNY-stick class of failure): a
+// just-finished format, an auto-mount racing a manual one, or a ghost mount
+// layer still holding /dev/<name>. mount(8)/ntfs-3g report it as exit 18 +
+// "Failed to write lock … Resource temporarily unavailable", or "Device or
+// resource busy". A human just waits a beat and clicks again — so the root
+// step retries itself instead of surfacing a raw exit code.
+export function isDriveBusyError(msg: string): boolean {
+  return /resource temporarily unavailable|failed to write lock|device or resource busy|target is busy|resource busy/i.test(msg);
+}
+
+export function friendlyBusyMessage(action: 'mount' | 'unmount', raw: string): string {
+  if (action === 'unmount') return `The drive is in use right now (a file or app still holds it). Close anything using it, wait a few seconds, then try Eject again. (${raw})`;
+  return `The drive was busy just now, so the mount did not go through. Wait a few seconds and try Mount again. (${raw})`;
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 export async function applyDeviceMount(device: string, action: 'mount' | 'unmount', log: (m: string) => void): Promise<void> {
   if (!validDeviceName(device)) throw new HarborError('INVALID_REQUEST', `not a device name: ${device}`);
   if (typeof process.getuid === 'function' && process.getuid() !== 0) throw new HarborError('INVALID_REQUEST', 'device-mount must run as root (it is started by harbor-device-mount@.service)');
@@ -70,15 +87,36 @@ export async function applyDeviceMount(device: string, action: 'mount' | 'unmoun
       const fat = found.fsType === 'vfat' || found.fsType === 'exfat' || found.fsType === 'ntfs' || found.fsType === 'ntfs3' || found.fsType === 'fuseblk';
       const uid = Number((await exec('/usr/bin/id', ['-u', PRODUCT.serviceUser])).stdout.trim());
       const gid = Number((await exec('/usr/bin/id', ['-g', PRODUCT.serviceUser])).stdout.trim());
-      if (fat) await execOk('/usr/bin/mount', ['-o', `uid=${uid},gid=${gid},utf8`, found.device, mp], { timeoutMs: 60_000 });
-      else {
-        await execOk('/usr/bin/mount', [found.device, mp], { timeoutMs: 60_000 });
+      const mountArgs = fat ? ['-o', `uid=${uid},gid=${gid},utf8`, found.device, mp] : [found.device, mp];
+      // One self-retry on transient lock contention (see isDriveBusyError):
+      // the first attempt often races a just-finished format or a ghost
+      // mount layer; the second, a few seconds later, lands.
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await execOk('/usr/bin/mount', mountArgs, { timeoutMs: 60_000 });
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          const msg = e instanceof Error ? e.message : String(e);
+          if (attempt === 0 && isDriveBusyError(msg)) {
+            log(`drive busy on first mount attempt, waiting 5s and retrying once`);
+            await sleep(5000);
+            continue;
+          }
+          throw e;
+        }
+      }
+      if (lastErr) throw lastErr;
+      if (!fat) {
         await execOk('/usr/bin/chown', [`${uid}:${gid}`, mp], { timeoutMs: 30_000 });
       }
       writeStatus(stateDir, device, 'mounted', `mounted at ${mp}`, mp);
       log(`mounted at ${mp}`);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const raw = e instanceof Error ? e.message : String(e);
+      const msg = isDriveBusyError(raw) ? friendlyBusyMessage('mount', raw) : raw;
       writeStatus(stateDir, device, 'failed', msg, null);
       throw e;
     }
@@ -94,7 +132,8 @@ export async function applyDeviceMount(device: string, action: 'mount' | 'unmoun
       writeStatus(stateDir, device, 'unmounted', 'unmounted', null);
       log('unmounted');
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const raw = e instanceof Error ? e.message : String(e);
+      const msg = isDriveBusyError(raw) ? friendlyBusyMessage('unmount', raw) : raw;
       writeStatus(stateDir, device, 'failed', msg, found.mountpoint);
       throw e;
     }

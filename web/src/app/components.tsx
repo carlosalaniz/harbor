@@ -155,6 +155,8 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
   const [newName, setNewName] = useState('');
   const [typed, setTyped] = useState(initial ?? '');
   const [busyDevice, setBusyDevice] = useState<string | null>(null);
+  const [formatTarget, setFormatTarget] = useState<HostStorageDto['devices'][number] | null>(null);
+  const [formatTyped, setFormatTyped] = useState('');
   const open = (p: string) => {
     setError(null);
     api.folders(p).then(setListing, (e: Error) => setError(e.message));
@@ -184,6 +186,27 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
       );
     }, 1500);
   };
+  const watchFormat = (name: string) => {
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      api.formatStatus(name).then(
+        (st) => {
+          if (st.state === 'formatted' || st.state === 'failed' || tries >= 120) {
+            clearInterval(t);
+            setBusyDevice(null);
+            if (st.state === 'failed') setError(st.message);
+            api.hostStorage().then(setStorage, (e: Error) => setError(e.message));
+          }
+        },
+        (e: Error) => {
+          clearInterval(t);
+          setBusyDevice(null);
+          setError(e.message);
+        },
+      );
+    }, 2000);
+  };
   const mount = (name: string) => {
     setError(null);
     if (busyDevice) return;
@@ -195,6 +218,39 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
         setError(e.message);
       },
     );
+  };
+  const unmount = (name: string) => {
+    setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
+    api.unmountDevice(name).then(
+      () => watchDevice(name),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
+    );
+  };
+  const format = (name: string) => {
+    setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
+    setFormatTarget(null);
+    setFormatTyped('');
+    api.formatDevice(name).then(
+      () => watchFormat(name),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
+    );
+  };
+  // Filesystems Harbor trusts for whole encrypted apps. Anything else (vfat,
+  // exfat, ntfs, …) can still hold plain folders, but needs a format before
+  // it can hold an app — so the picker offers Format right where it matters.
+  const needsFormatForApps = (fsType: string | null): boolean => {
+    if (!fsType) return false;
+    return !['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs', 'apfs', 'hfs'].includes(fsType.toLowerCase());
   };
   useEffect(() => {
     api.hostStorage().then(
@@ -275,12 +331,43 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
             {storage?.devices.map((d) => (
               <li key={d.device}>
                 {d.mounted && d.mountpoint ? (
-                  <button className="btn ghost place" onClick={() => open(d.mountpoint!)}>
-                    <span aria-hidden="true">▢</span> {d.label ?? d.name}
-                    <span className="muted small">
-                      {d.mountpoint} · {d.size}
+                  <span className="place-row">
+                    <button className="btn ghost place" onClick={() => open(d.mountpoint!)}>
+                      <span aria-hidden="true">▢</span> {d.label ?? d.name}
+                      <span className="muted small">
+                        {d.mountpoint} · {d.size}
+                        {d.fsType ? ` · ${d.fsType}` : ''}
+                        {needsFormatForApps(d.fsType) && ' · needs formatting for apps'}
+                      </span>
+                    </button>
+                    <span className="row">
+                      <button
+                        className="btn small ghost"
+                        disabled={busyDevice !== null}
+                        onClick={() => unmount(d.name)}
+                        aria-label={busyDevice === d.name ? `Ejecting ${d.label ?? d.name}` : `Eject ${d.label ?? d.name}`}
+                        aria-busy={busyDevice === d.name}
+                      >
+                        {busyDevice === d.name ? (
+                          <>
+                            <span className="spin" aria-hidden="true" /> Ejecting…
+                          </>
+                        ) : (
+                          'Eject'
+                        )}
+                      </button>
+                      {needsFormatForApps(d.fsType) && (
+                        <button
+                          className="btn small danger"
+                          disabled={busyDevice !== null}
+                          onClick={() => (setFormatTyped(''), setFormatTarget(d))}
+                          aria-label={`Format ${d.label ?? d.name} as ext4`}
+                        >
+                          Format…
+                        </button>
+                      )}
                     </span>
-                  </button>
+                  </span>
                 ) : (
                   <span className="place-row">
                     <span className="btn ghost place" aria-disabled="true" title="Inserted but not mounted">
@@ -371,6 +458,33 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
           Use {listing ? listing.path : 'this folder'}
         </button>
       </div>
+      {formatTarget && (
+        <Dialog title={`Format ${formatTarget.label ?? formatTarget.name} as ext4?`} onClose={() => setFormatTarget(null)}>
+          <p>
+            This <strong>erases everything</strong> on {formatTarget.device} ({formatTarget.size}
+            {formatTarget.fsType ? `, currently ${formatTarget.fsType}` : ''}) and formats it as ext4 so Harbor can install encrypted apps on it. The drive is remounted at its usual place afterwards.
+          </p>
+          <p className="muted small">Harbor only formats removable drives — never the system disk. Formatting is refused while an app uses the drive.</p>
+          <label className="small">
+            <span>
+              Type <code>{formatTarget.name}</code> to confirm
+            </span>
+            <input value={formatTyped} onChange={(e) => setFormatTyped(e.target.value)} aria-label={`Type ${formatTarget.name} to confirm`} autoComplete="off" />
+          </label>
+          <div className="row end">
+            <button className="btn" onClick={() => setFormatTarget(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn danger"
+              disabled={formatTyped.trim() !== formatTarget.name}
+              onClick={() => format(formatTarget.name)}
+            >
+              Format (erase everything)
+            </button>
+          </div>
+        </Dialog>
+      )}
     </Dialog>
   );
 }

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { DeviceMountService } from '../../src/system/device-mount.js';
+import { friendlyBusyMessage, isDriveBusyError } from '../../src/bootstrap/device-mount-apply.js';
 import type { HarborError } from '../../src/errors.js';
 import { systemClock } from '../../src/util.js';
 import type * as HostStorage from '../../src/system/host-storage.js';
@@ -86,5 +87,14 @@ describe('device mount service', () => {
     } catch (e) {
       expect((e as HarborError).nextAction).toContain('sudo /opt/harbor/bin/harbor device-format sdb1');
     }
+  });
+  it('recognises transient kernel lock contention as retryable', () => {
+    expect(isDriveBusyError(`/usr/bin/mount -o uid=995,gid=984,utf8 /dev/sdb1 /mnt/usb20fd failed (exit 18): Failed to write lock '/dev/sdb1': Resource temporarily unavailable | Failed to mount '/dev/sdb1': Resource temporarily unavailable`)).toBe(true);
+    expect(isDriveBusyError(`/usr/bin/umount /mnt/usb20fd failed (exit 32): target is busy`)).toBe(true);
+    expect(isDriveBusyError(`/usr/bin/mount /dev/sdb1 /mnt/usb20fd failed (exit 32): wrong fs type, bad option`)).toBe(false);
+  });
+  it('translates lock contention into a plain-words retry message', () => {
+    expect(friendlyBusyMessage('mount', 'exit 18 raw')).toMatch(/Wait a few seconds and try Mount again/);
+    expect(friendlyBusyMessage('unmount', 'exit 32 raw')).toMatch(/try Eject again/);
   });
 });

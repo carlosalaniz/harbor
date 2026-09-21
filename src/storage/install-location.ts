@@ -43,8 +43,13 @@ export function installCandidates(mounts: CandidateMount[], dataFolder: { path: 
     });
   };
   for (const m of mounts) {
-    // The system disk is always a candidate (its apps folder is created at install).
-    push(path.posix.join(m.mountpoint, APP_HOME_DIR_NAME), m.mountpoint === '/' ? `System disk (${m.mountpoint}${APP_HOME_DIR_NAME})` : `${m.label} (${m.mountpoint}/${APP_HOME_DIR_NAME})`, m.fsType, m.totalBytes, m.usedBytes, m.writable);
+    // The system disk (mountpoint /) is never an encrypted-home candidate:
+    // system-disk apps live either as managed volumes (the wizard's default
+    // "System disk" choice, no passphrase) or encrypted in the Harbor data
+    // folder (<dataDir>/harbor-apps below). Emitting /harbor-apps as well
+    // only confuses — it is unwritable for the harbor user and pollutes /.
+    if (m.mountpoint === '/') continue;
+    push(path.posix.join(m.mountpoint, APP_HOME_DIR_NAME), `${m.label} (${m.mountpoint}/${APP_HOME_DIR_NAME})`, m.fsType, m.totalBytes, m.usedBytes, m.writable);
   }
   if (dataFolder.exists && dataFolder.writable) {
     // The Harbor data folder lives on the system disk Harbor itself runs on:

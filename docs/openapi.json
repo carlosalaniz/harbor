@@ -2050,8 +2050,7 @@
                         "type": "object",
                         "additionalProperties": false,
                         "required": [
-                          "dir",
-                          "passphrase"
+                          "dir"
                         ],
                         "properties": {
                           "dir": {

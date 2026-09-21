@@ -772,10 +772,12 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 name: { type: 'string', pattern: ID_PATTERN },
                 // storage claim id -> host directory ("bring your own folder"); only claims the manifest marks `external`
                 storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
-                // whole encrypted app on a drive: {dir, passphrase}. The
+                // whole encrypted app on a drive: {dir, passphrase?}. The
                 // passphrase is validated at plan time but never stored in the
                 // plan — it travels with the submission (POST /v1/operations).
-                location: { type: 'object', additionalProperties: false, required: ['dir', 'passphrase'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
+                // Omitted for the Harbor data folder (default-encrypt: Harbor's
+                // own key, silent unlock); required for removable drives.
+                location: { type: 'object', additionalProperties: false, required: ['dir'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
               },
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },

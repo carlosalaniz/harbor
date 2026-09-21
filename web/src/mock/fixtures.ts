@@ -435,7 +435,7 @@ export function mockStorage(): HostStorageDto {
     inUse: [{ path: '/mnt/photos', instanceId: 'inst-immich', instanceName: 'Immich', purpose: 'Photo library', readOnly: false }],
     storagePolicy: { autoMount: true, autoStart: true },
     installCandidates: [
-      { dir: '/harbor-apps', label: 'System disk (/harbor-apps)', fsType: 'ext4', totalBytes: 100 * GiB, usedBytes: 40 * GiB, writable: true, eligible: true, reason: null },
+      { dir: '/srv/harbor/harbor-apps', label: 'Harbor data folder (/srv/harbor/harbor-apps)', fsType: 'unknown', totalBytes: null, usedBytes: null, writable: true, eligible: true, reason: null },
       { dir: '/mnt/photos/harbor-apps', label: 'Photos (/mnt/photos/harbor-apps)', fsType: 'ext4', totalBytes: 500 * GiB, usedBytes: 410 * GiB, writable: true, eligible: true, reason: null },
     ],
   };

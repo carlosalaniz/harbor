@@ -136,16 +136,118 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
   const [folders, setFolders] = useState<Record<string, string>>({});
   const [picking, setPicking] = useState<string | null>(null); // claim id being chosen, or 'location'
   const [candidates, setCandidates] = useState<HostStorageDto['installCandidates'] | null>(null);
+  const [devices, setDevices] = useState<HostStorageDto['devices']>([]);
   const [locationDir, setLocationDir] = useState<string | null>(null); // null = system disk
   const [passphrase, setPassphrase] = useState('');
   const [showPass, setShowPass] = useState(false);
+  const [busyDevice, setBusyDevice] = useState<string | null>(null);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
+  const [formatTarget, setFormatTarget] = useState<HostStorageDto['devices'][number] | null>(null);
+  const [formatTyped, setFormatTyped] = useState('');
   const external = item.claims.filter((c) => c.external);
   const missingRequired = external.some((c) => c.external!.required && !(folders[c.id] ?? '').trim());
   const storage = Object.fromEntries(Object.entries(folders).filter(([, v]) => v.trim()).map(([k, v]) => [k, { hostPath: v.trim() }]));
+  const reloadStorage = () => {
+    api.hostStorage().then(
+      (s) => {
+        setCandidates(s.installCandidates);
+        setDevices(s.devices);
+      },
+      () => setCandidates([]),
+    );
+  };
   useEffect(() => {
-    api.hostStorage().then((s) => setCandidates(s.installCandidates), () => setCandidates([]));
+    reloadStorage();
   }, []);
-  const locationMissingPass = locationDir !== null && passphrase.length < 8;
+  // A mount/format is a root oneshot that takes seconds: poll the per-device
+  // status until it settles, then reload the candidate list so the row flips
+  // by itself (an unmounted drive becomes eligible; a formatted one too).
+  const watchDevice = (name: string) => {
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      api.deviceStatus(name).then(
+        (st) => {
+          if (st.state === 'mounted' || st.state === 'unmounted' || st.state === 'failed' || tries >= 20) {
+            clearInterval(t);
+            setBusyDevice(null);
+            if (st.state === 'failed') setDeviceError(st.message);
+            reloadStorage();
+          }
+        },
+        (e: Error) => {
+          clearInterval(t);
+          setBusyDevice(null);
+          setDeviceError(e.message);
+        },
+      );
+    }, 1500);
+  };
+  const watchFormat = (name: string) => {
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      api.formatStatus(name).then(
+        (st) => {
+          if (st.state === 'formatted' || st.state === 'failed' || tries >= 120) {
+            clearInterval(t);
+            setBusyDevice(null);
+            if (st.state === 'failed') setDeviceError(st.message);
+            reloadStorage();
+          }
+        },
+        (e: Error) => {
+          clearInterval(t);
+          setBusyDevice(null);
+          setDeviceError(e.message);
+        },
+      );
+    }, 2000);
+  };
+  const mount = (name: string) => {
+    setDeviceError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
+    api.mountDevice(name).then(
+      () => watchDevice(name),
+      (e: Error) => {
+        setBusyDevice(null);
+        setDeviceError(e.message);
+      },
+    );
+  };
+  const format = (name: string) => {
+    setDeviceError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
+    setFormatTarget(null);
+    setFormatTyped('');
+    api.formatDevice(name).then(
+      () => watchFormat(name),
+      (e: Error) => {
+        setBusyDevice(null);
+        setDeviceError(e.message);
+      },
+    );
+  };
+  // An inserted-but-unmounted drive has no candidate row yet (candidates come
+  // from mounts): surface it here so the wizard never dead-ends with "no
+  // eligible drive". A mounted-but-wrong-filesystem drive already has a
+  // disabled row with a Format hint — the button below makes it one click.
+  const unmounted = devices.filter((d) => !d.mounted || !d.mountpoint);
+  // Default-encrypt (decision 94): the Harbor data folder seals with Harbor's
+  // own key — no passphrase to type, nothing to remember. A custom passphrase
+  // is opt-in (portability on another machine needs it); removable drives
+  // always need one (they are portable by nature).
+  const selectedCandidate = (candidates ?? []).find((cd) => cd.dir === locationDir) ?? null;
+  const isDefaultKeyLocation = selectedCandidate?.label.startsWith('Harbor data folder') ?? false;
+  const [customPass, setCustomPass] = useState(false);
+  // Reset the opt-in when the location changes (a removable drive always
+  // needs a passphrase; the data folder defaults to Harbor's own key).
+  useEffect(() => {
+    setCustomPass(false);
+  }, [locationDir]);
+  const locationMissingPass = locationDir !== null && (!isDefaultKeyLocation || customPass) && passphrase.length < 8;
   const genPassphrase = () => {
     const bytes = new Uint8Array(18);
     crypto.getRandomValues(bytes);
@@ -233,37 +335,127 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         <label className="check">
           <input type="radio" name="loc" checked={locationDir === null} onChange={() => setLocationDir(null)} /> System disk (this machine only)
         </label>
-        {(candidates ?? []).map((cd) => (
-          <label key={cd.dir} className="check" title={cd.eligible ? undefined : (cd.reason ?? 'not available')}>
-            <input type="radio" name="loc" checked={locationDir === cd.dir} disabled={!cd.eligible} onChange={() => setLocationDir(cd.dir)} /> {cd.label}
-            {!cd.eligible && (
-              <span className="muted small">
-                {' '}
-                · {cd.reason} <span className="muted small">(format the drive as ext4 in Settings → Storage to use it)</span>
-              </span>
-            )}
-          </label>
-        ))}
+        {(candidates ?? []).map((cd) => {
+          // A mounted-but-wrong-filesystem drive carries a disabled row with a
+          // reason: offer Format inline (one click, typed confirm) instead of
+          // sending the operator to Settings and back.
+          const drive = devices.find((d) => d.mountpoint && (cd.dir === `${d.mountpoint}/harbor-apps` || cd.dir.startsWith(`${d.mountpoint}/`)));
+          const formattable = !cd.eligible && cd.writable && drive;
+          return (
+            <label key={cd.dir} className="check" title={cd.eligible ? undefined : (cd.reason ?? 'not available')}>
+              <input type="radio" name="loc" checked={locationDir === cd.dir} disabled={!cd.eligible} onChange={() => setLocationDir(cd.dir)} /> {cd.label}
+              {!cd.eligible && (
+                <span className="muted small">
+                  {' '}
+                  · {cd.reason}{' '}
+                  {formattable ? (
+                    <button
+                      type="button"
+                      className="btn small danger"
+                      disabled={busyDevice !== null}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setFormatTyped('');
+                        setFormatTarget(drive!);
+                      }}
+                      aria-label={busyDevice === drive!.name ? `Formatting ${drive!.label ?? drive!.name}` : `Format ${drive!.label ?? drive!.name} as ext4`}
+                      aria-busy={busyDevice === drive!.name}
+                    >
+                      {busyDevice === drive!.name ? (
+                        <>
+                          <span className="spin" aria-hidden="true" /> Formatting…
+                        </>
+                      ) : (
+                        'Format as ext4…'
+                      )}
+                    </button>
+                  ) : (
+                    cd.writable && <span className="muted small">(format the drive as ext4 in Settings → Storage to use it)</span>
+                  )}
+                </span>
+              )}
+            </label>
+          );
+        })}
         {candidates === null && <p className="muted small">Checking drives…</p>}
+        {unmounted.length > 0 && (
+          <div className="unmounted-hint">
+            {unmounted.map((d) => (
+              <p key={d.device} className="muted small">
+                {d.label ?? d.name} ({d.size}
+                {d.fsType ? `, ${d.fsType}` : ''}) is plugged in but not mounted.{' '}
+                <button
+                  type="button"
+                  className="btn small"
+                  disabled={busyDevice !== null}
+                  onClick={() => mount(d.name)}
+                  aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
+                  aria-busy={busyDevice === d.name}
+                >
+                  {busyDevice === d.name ? (
+                    <>
+                      <span className="spin" aria-hidden="true" /> Mounting…
+                    </>
+                  ) : (
+                    'Mount it'
+                  )}
+                </button>
+              </p>
+            ))}
+          </div>
+        )}
+        {deviceError && (
+          <p className="error small" role="alert">
+            {deviceError}
+          </p>
+        )}
         {locationDir !== null && (
           <div className="folder-choice">
             <button className="btn" onClick={() => setPicking('location')} aria-label="Choose install folder">
               Change folder…
             </button>
             <code className="path">{locationDir}</code>
-            <p className="muted small">The whole app (including its database) is installed encrypted here. Unplug the drive and the app stops; the passphrase unlocks it on any Harbor machine.</p>
-            <label className="small">
-              Encryption passphrase (8+ characters) — write it down; losing it loses the data
-              <span className="row">
-                <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
-                <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
-                  {showPass ? 'Hide' : 'Show'}
-                </button>
-                <button className="btn ghost" type="button" onClick={genPassphrase} aria-label="Generate a recovery key">
-                  Generate
-                </button>
-              </span>
-            </label>
+            {isDefaultKeyLocation ? (
+              <>
+                <p className="muted small">The whole app (including its database) is installed encrypted here. Harbor unlocks it silently when you log in — nothing to remember, nothing to type.</p>
+                {!customPass ? (
+                  <p className="muted small">
+                    <button className="btn ghost" type="button" onClick={() => setCustomPass(true)}>
+                      Use my own passphrase instead…
+                    </button>
+                  </p>
+                ) : (
+                  <label className="small">
+                    Encryption passphrase (8+ characters) — write it down; losing it loses the data. Needed only to open this app on another Harbor machine.
+                    <span className="row">
+                      <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
+                      <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
+                        {showPass ? 'Hide' : 'Show'}
+                      </button>
+                      <button className="btn ghost" type="button" onClick={genPassphrase} aria-label="Generate a recovery key">
+                        Generate
+                      </button>
+                    </span>
+                  </label>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="muted small">The whole app (including its database) is installed encrypted here. Unplug the drive and the app stops; the passphrase unlocks it on any Harbor machine.</p>
+                <label className="small">
+                  Encryption passphrase (8+ characters) — write it down; losing it loses the data
+                  <span className="row">
+                    <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
+                    <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
+                      {showPass ? 'Hide' : 'Show'}
+                    </button>
+                    <button className="btn ghost" type="button" onClick={genPassphrase} aria-label="Generate a recovery key">
+                      Generate
+                    </button>
+                  </span>
+                </label>
+              </>
+            )}
           </div>
         )}
       </fieldset>
@@ -314,13 +506,40 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         <button
           className="btn primary"
           disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass}
-          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir !== null ? { location: { dir: locationDir, passphrase } } : {}) })}
+          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir !== null ? (isDefaultKeyLocation && !customPass ? { location: { dir: locationDir } } : { location: { dir: locationDir, passphrase } }) : {}) })}
           aria-label={`Install ${item.name} now`}
           title={locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
         >
           Install
         </button>
       </div>
+      {formatTarget && (
+        <Dialog title={`Format ${formatTarget.label ?? formatTarget.name} as ext4?`} onClose={() => setFormatTarget(null)}>
+          <p>
+            This <strong>erases everything</strong> on {formatTarget.device} ({formatTarget.size}
+            {formatTarget.fsType ? `, currently ${formatTarget.fsType}` : ''}) and formats it as ext4 so Harbor can install encrypted apps on it. The drive is remounted at its usual place afterwards.
+          </p>
+          <p className="muted small">Harbor only formats removable drives — never the system disk. Formatting is refused while an app uses the drive.</p>
+          <label className="small">
+            <span>
+              Type <code>{formatTarget.name}</code> to confirm
+            </span>
+            <input value={formatTyped} onChange={(e) => setFormatTyped(e.target.value)} aria-label={`Type ${formatTarget.name} to confirm`} autoComplete="off" />
+          </label>
+          <div className="row end">
+            <button className="btn" onClick={() => setFormatTarget(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn danger"
+              disabled={formatTyped.trim() !== formatTarget.name}
+              onClick={() => format(formatTarget.name)}
+            >
+              Format (erase everything)
+            </button>
+          </div>
+        </Dialog>
+      )}
     </Dialog>
   );
 }
@@ -488,7 +707,12 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           <div>
             <strong>Locked</strong>
             <p className="muted small">
-              This app lives encrypted at <code className="path">{home!.path}</code>. This machine cannot read it yet — log in again to unlock with this machine&apos;s key, or adopt it with the app passphrase on a new machine.
+              This app lives encrypted at <code className="path">{home!.path}</code>.{' '}
+              {home!.defaultKey ? (
+                <>This machine cannot read it yet — log in again to unlock it silently.</>
+              ) : (
+                <>This machine cannot read it yet — log in again to unlock with this machine&apos;s key, or adopt it with the app passphrase on a new machine.</>
+              )}
             </p>
           </div>
         </div>

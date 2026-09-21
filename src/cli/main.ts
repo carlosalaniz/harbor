@@ -221,15 +221,19 @@ program
   .command('plan <kind> [target]')
   .description('create a plan without applying it: plan install <package> [--name n] | plan start|stop|remove|reinstall <instance>')
   .option('--name <slug>', 'instance name for install')
-  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive)')
-  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location)', false)
+  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive; omit the passphrase for the Harbor data folder)')
+  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
   .action(async (kind: string, target: string | undefined, opts: { name?: string; location?: string; passphraseStdin?: boolean }) => {
     const api = client();
     const extra: Record<string, unknown> = {};
     if (opts.location) {
       if (kind !== 'install') throw new HarborError('INVALID_REQUEST', '--location only applies to install');
-      const passphrase = opts.passphraseStdin ? await readStdinAll() : await promptHidden('App encryption passphrase (8+ characters): ');
-      extra['location'] = { dir: opts.location, passphrase: passphrase.trim() };
+      // The Harbor data folder seals with Harbor's own key (no passphrase);
+      // removable drives need one. --passphrase-stdin with empty input means
+      // "default key"; an interactive prompt is skipped only when stdin pipes
+      // a passphrase, otherwise the daemon decides by location.
+      const passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : '';
+      extra['location'] = passphrase ? { dir: opts.location, passphrase } : { dir: opts.location };
     }
     const plan = await createPlan(api, kind, target, opts.name, extra);
     out(plan, () => planSummary(plan) + `\nApply with: ${PRODUCT.cliName} apply ${plan.id} --idempotency-key <key>${opts.location ? ' --passphrase-stdin < passphrase.txt' : ''}`);
@@ -249,11 +253,11 @@ program
   .requiredOption('--idempotency-key <key>', 'client-chosen key (8-128 chars) reused on retries')
   .option('--no-wait', 'return after submission')
   .option('--yes', 'approve without prompting', false)
-  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (for plans with an install location)', false)
+  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (for plans with an install location; not needed for default-key plans)', false)
   .action(async (planId: string, opts: { idempotencyKey: string; wait: boolean; yes: boolean; passphraseStdin?: boolean }) => {
     const api = client();
     const plan = await api.get<PlanDto>(`/v1/plans/${planId}`);
-    const passphrase = plan.location && opts.passphraseStdin ? (await readStdinAll()).trim() : plan.location ? await promptHidden('App encryption passphrase: ') : undefined;
+    const passphrase = plan.location && opts.passphraseStdin ? (await readStdinAll()).trim() || undefined : undefined;
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, idempotencyKey: opts.idempotencyKey, passphrase });
   });
 
@@ -262,8 +266,8 @@ program
   .description('plan and install a package (shows the plan and asks for confirmation)')
   .option('--name <slug>', 'instance name')
   .option('--storage <claim=/host/path>', 'use your own folder for a storage claim the package marks as external (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
-  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive)')
-  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location)', false)
+  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive; omit the passphrase for the Harbor data folder)')
+  .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return the operation ID instead of waiting')
   .action(async (pkg: string, opts: { name?: string; storage: string[]; location?: string; passphraseStdin?: boolean; yes: boolean; wait: boolean }) => {
@@ -277,8 +281,8 @@ program
     const extra: Record<string, unknown> = Object.keys(storage).length ? { storage } : {};
     let passphrase: string | undefined;
     if (opts.location) {
-      passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : await promptHidden('App encryption passphrase (8+ characters): ');
-      extra['location'] = { dir: opts.location, passphrase };
+      passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() || undefined : undefined;
+      extra['location'] = passphrase ? { dir: opts.location, passphrase } : { dir: opts.location };
     }
     const plan = await createPlan(api, 'install', pkg, opts.name, extra);
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, passphrase });

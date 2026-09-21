@@ -229,21 +229,28 @@ are never touched.
 Some apps keep everything in a database that cannot live in one of your own
 folders — and on a machine with tiny onboard storage even the database needs to
 move. At install time the wizard asks **where the app should live**: the system
-disk (this machine only), or any eligible drive folder (for example
-`/mnt/photos/harbor-apps`). A drive choice asks for an **encryption passphrase**
-(8+ characters, or a generated recovery key) — write it down; losing it loses
-the data. The review step names the encrypted home and warns about the drive
-and the passphrase.
+disk (this machine only), the Harbor data folder (encrypted with Harbor's own
+key — Harbor unlocks it silently when you log in, nothing to remember), or any
+eligible drive folder (for example `/mnt/photos/harbor-apps`). A removable-drive
+choice asks for an **encryption passphrase** (8+ characters, or a generated
+recovery key) — write it down; losing it loses the data. The data-folder choice
+needs no passphrase; *Use my own passphrase instead…* opts into one (needed only
+to open the app on another Harbor machine). The review step names the encrypted
+home and warns about the drive and the passphrase.
 
 The whole app — database included — then lives encrypted in one folder on the
 drive (`<folder>/<app>/{manifest.json, vault/}`). Unplug the drive and the app
 stops; plug it into another Harbor machine and it appears under **Settings →
 Storage → Found apps**, where *Adopt* (with the passphrase) installs it there
 with fresh ports. Only ext4/btrfs/xfs/zfs/apfs drives qualify (a database on
-exFAT/NTFS is corruption, not portability — those are greyed out with a reason).
+exFAT/NTFS is corruption, not portability — those are greyed out with a reason,
+and a plugged-in but unmounted drive offers *Mount it* right in the wizard).
+A locked app (this machine cannot read it yet — after a reboot, before the first
+login) shows a quiet *Locked* tile; data-folder apps unlock at the next login,
+drive apps with a custom passphrase need the passphrase (or adopt) on a new machine.
 
-CLI: `harbor install <package> --location /mnt/photos/harbor-apps` (prompts for
-the passphrase; `--passphrase-stdin` reads it from a pipe), `harbor found-apps`,
+CLI: `harbor install <package> --location /mnt/photos/harbor-apps --passphrase-stdin < passphrase.txt`
+(omit the passphrase for the Harbor data folder), `harbor found-apps`,
 `harbor adopt <home-folder>`.
 ## 4b. Settings in the console (for people who do not use a terminal)
 

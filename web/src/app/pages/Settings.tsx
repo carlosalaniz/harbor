@@ -1071,19 +1071,85 @@ function Notifications() {
 
 function FoundApps() {
   const [apps, setApps] = useState<FoundAppDto[] | null>(null);
+  const [storage, setStorage] = useState<HostStorageDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adopting, setAdopting] = useState<string | null>(null);
   const [pass, setPass] = useState('');
   const [name, setName] = useState('');
+  const [busyDevice, setBusyDevice] = useState<string | null>(null);
   useEffect(() => {
     api.foundApps().then(setApps, (e: Error) => setError(e.message));
+    api.hostStorage().then(setStorage, () => undefined);
+    // An unmounted drive hides its apps (the scan only sees mounts): poll
+    // gently so a freshly mounted drive's apps appear without a reload.
+    const t = setInterval(() => {
+      api.foundApps().then(setApps, () => undefined);
+      api.hostStorage().then(setStorage, () => undefined);
+    }, 5000);
+    return () => clearInterval(t);
   }, []);
+  const mount = (dev: string) => {
+    setError(null);
+    if (busyDevice) return;
+    setBusyDevice(dev);
+    api.mountDevice(dev).then(
+      () => {
+        let tries = 0;
+        const t = setInterval(() => {
+          tries += 1;
+          api.deviceStatus(dev).then(
+            (st) => {
+              if (st.state === 'mounted' || st.state === 'failed' || tries >= 20) {
+                clearInterval(t);
+                setBusyDevice(null);
+                if (st.state === 'failed') setError(st.message);
+                api.foundApps().then(setApps, (e: Error) => setError(e.message));
+                api.hostStorage().then(setStorage, () => undefined);
+              }
+            },
+            (e: Error) => {
+              clearInterval(t);
+              setBusyDevice(null);
+              setError(e.message);
+            },
+          );
+        }, 1500);
+      },
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
+    );
+  };
   if (error) return <p className="error">{error}</p>;
   if (apps === null) return <p className="muted small">Looking for apps on your drives…</p>;
   const fresh = apps.filter((a) => !a.adopted);
-  if (fresh.length === 0) return <p className="muted small">No apps waiting. Plug in a drive that holds an encrypted app and it appears here.</p>;
+  const unmounted = (storage?.devices ?? []).filter((d) => !d.mounted || !d.mountpoint);
+  if (fresh.length === 0 && unmounted.length === 0) return <p className="muted small">No apps waiting. Plug in a drive that holds an encrypted app and it appears here.</p>;
   return (
     <ul className="plain">
+      {unmounted.map((d) => (
+        <li key={`unmounted-${d.device}`} className="row between wrap">
+          <span>
+            <strong>{d.label ?? d.name}</strong> <span className="muted small">· {d.size}{d.fsType ? ` · ${d.fsType}` : ''} · plugged in but not mounted — its apps (if any) are hidden until it is mounted</span>
+          </span>
+          <button
+            className="btn small"
+            disabled={busyDevice !== null}
+            onClick={() => mount(d.name)}
+            aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name} to see its apps`}
+            aria-busy={busyDevice === d.name}
+          >
+            {busyDevice === d.name ? (
+              <>
+                <span className="spin" aria-hidden="true" /> Mounting…
+              </>
+            ) : (
+              'Mount to see its apps'
+            )}
+          </button>
+        </li>
+      ))}
       {fresh.map((a) => (
         <li key={a.home} className="row between wrap">
           <span>

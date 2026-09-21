@@ -208,7 +208,10 @@ export interface CreateAppHomeInput {
   packageId: string;
   packageRevision: string;
   displayName: string;
-  passphrase: string;
+  // Custom passphrase for portable (drive) homes. Omitted for default-key
+  // homes (data folder): the envelope wraps a Harbor-generated secret the
+  // operator never sees — silent unlock, nothing to remember, not portable.
+  passphrase?: string;
   harborVersion: string;
   now?: Date;
 }
@@ -231,7 +234,11 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<{ descri
   const home = path.join(parent, name);
   if (existsSync(home)) throw new HarborError('NAME_CONFLICT', `app home ${home} already exists`, { nextAction: 'Choose a different app folder name.' });
   const masterKey = randomBytes(MASTER_KEY_BYTES);
-  const envelope = await wrapMasterKey(masterKey, input.passphrase);
+  // Default-key homes (no passphrase): wrap a Harbor-generated secret the
+  // operator never sees. Same envelope shape, so unlock/adopt code paths are
+  // unchanged — only the operator cannot reproduce the secret elsewhere.
+  const effectivePassphrase = input.passphrase ?? `harbor-default-key ${randomBytes(32).toString('hex')}`;
+  const envelope = await wrapMasterKey(masterKey, effectivePassphrase);
   const now = input.now ?? new Date();
   const manifest: AppHomeManifest = {
     format: APP_HOME_FORMAT,

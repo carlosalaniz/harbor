@@ -66,10 +66,31 @@ function mockMountpointFor(name: string): string {
 }
 function mockMountDevice(name: string): void {
   const mp = mockMountpointFor(name);
+  const dev = storage.devices.find((d) => d.name === name);
+  const fsType = dev?.fsType ?? 'vfat';
+  const eligible = ['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs', 'apfs', 'hfs'].includes(fsType.toLowerCase());
+  const label = dev?.label ?? name;
   storage = {
     ...storage,
-    mounts: storage.mounts.some((m) => m.mountpoint === mp) ? storage.mounts : [...storage.mounts, { mountpoint: mp, device: `/dev/${name}`, fsType: 'vfat', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 4 * 1024 * 1024 * 1024, writable: true, label: `Drive "${name}"` }],
+    mounts: storage.mounts.some((m) => m.mountpoint === mp) ? storage.mounts : [...storage.mounts, { mountpoint: mp, device: `/dev/${name}`, fsType, totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 4 * 1024 * 1024 * 1024, writable: true, label: `Drive "${name}"` }],
     devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: true, mountpoint: mp } : d)),
+    // A mount makes the drive's apps folder a candidate — eligible when the
+    // filesystem qualifies, disabled with a reason (like the daemon) when not.
+    installCandidates: storage.installCandidates.some((c) => c.dir === `${mp}/harbor-apps`)
+      ? storage.installCandidates
+      : [
+          ...storage.installCandidates,
+          {
+            dir: `${mp}/harbor-apps`,
+            label: `Drive "${label}" (${mp}/harbor-apps)`,
+            fsType,
+            totalBytes: 16 * 1024 * 1024 * 1024,
+            usedBytes: 4 * 1024 * 1024 * 1024,
+            writable: true,
+            eligible,
+            reason: eligible ? null : `the ${fsType} filesystem cannot hold apps (needs ext4, btrfs, xfs, zfs or apfs)`,
+          },
+        ],
   };
 }
 function mockUnmountDevice(name: string): void {
@@ -78,16 +99,20 @@ function mockUnmountDevice(name: string): void {
     ...storage,
     mounts: storage.mounts.filter((m) => m.mountpoint !== mp),
     devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: false, mountpoint: null } : d)),
+    // An unmounted drive offers no candidate (like the daemon: candidates come from mounts).
+    installCandidates: storage.installCandidates.filter((c) => c.dir !== `${mp}/harbor-apps`),
   };
 }
 // Format in design mode: the drive becomes ext4 + mounted at its label-derived
-// mountpoint, and gains an eligible install candidate — like the real daemon.
+// mountpoint, and its candidate flips to eligible — like the real daemon.
 function mockFormatDevice(name: string, mp: string, label: string): void {
   storage = {
     ...storage,
     mounts: storage.mounts.some((m) => m.mountpoint === mp) ? storage.mounts.map((m) => (m.mountpoint === mp ? { ...m, fsType: 'ext4', usedBytes: 0 } : m)) : [...storage.mounts, { mountpoint: mp, device: `/dev/${name}`, fsType: 'ext4', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 0, writable: true, label: `Drive "${label}"` }],
     devices: storage.devices.map((d) => (d.name === name ? { ...d, fsType: 'ext4', mounted: true, mountpoint: mp } : d)),
-    installCandidates: [...storage.installCandidates, { dir: `${mp}/harbor-apps`, label: `Drive "${label}" (${mp}/harbor-apps)`, fsType: 'ext4', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 0, writable: true, eligible: true, reason: null }],
+    installCandidates: storage.installCandidates.some((c) => c.dir === `${mp}/harbor-apps`)
+      ? storage.installCandidates.map((c) => (c.dir === `${mp}/harbor-apps` ? { ...c, fsType: 'ext4', eligible: true, reason: null } : c))
+      : [...storage.installCandidates, { dir: `${mp}/harbor-apps`, label: `Drive "${label}" (${mp}/harbor-apps)`, fsType: 'ext4', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 0, writable: true, eligible: true, reason: null }],
   };
 }
 

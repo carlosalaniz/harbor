@@ -168,6 +168,10 @@ export interface AppHomeDto {
   // locked: this machine cannot read the vault (BFU, or a foreign machine).
   // unlocked: the machine key opened it silently. The passphrase is never exposed.
   state: 'locked' | 'unlocked';
+  // defaultKey: sealed with Harbor's own key (data folder, no custom
+  // passphrase). A locked default-key home unlocks at the next login — the
+  // drawer says "log in again", never "type the passphrase".
+  defaultKey?: true;
 }
 
 export interface StorageClaimDto {
@@ -290,10 +294,13 @@ export interface InstallLocationRequest {
   // Existing directory that will hold this app's home, e.g. /mnt/photos/harbor-apps.
   // The app home (<dir>/<app-name>/{manifest.json, vault/}) is created inside it.
   dir: string;
-  // Encrypt the whole app home (required for install locations: the drive is
-  // portable, so its contents must be sealed). Shown once at install; the
-  // passphrase (or recovery key) is the only way to adopt on another machine.
-  passphrase: string;
+  // Encrypt the whole app home. Required for removable drives (the drive is
+  // portable, so its contents must be sealed); optional for the Harbor data
+  // folder (the system disk is not portable, so the default is Harbor's own
+  // key — silent unlock, no passphrase to remember). Shown once at install;
+  // a custom passphrase (or recovery key) is the only way to adopt on
+  // another machine.
+  passphrase?: string;
 }
 export type PlanRequest =
   | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }>; location?: InstallLocationRequest }

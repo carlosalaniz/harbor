@@ -257,6 +257,16 @@ export class ApplicationService {
     }
     return installCandidates(mounts, { path: this.ctx.config.userDataDir, exists: true, writable: dataWritable });
   }
+  // The Harbor data folder (system disk, not portable) is the default-encrypt
+  // location (decision 94): apps there seal with Harbor's own key, need no
+  // passphrase, and unlock silently. Everything else (removable drives) needs
+  // a custom passphrase for portability. The data-folder candidate is also
+  // the test/dev escape hatch (statfs fallback), so match it by label.
+  private isDataFolderLocation(dir: string): boolean {
+    const candidates = this.installCandidates();
+    const parent = candidates.find((c) => dir === c.dir || dir.startsWith(c.dir + '/'));
+    return parent?.label.startsWith('Harbor data folder') ?? false;
+  }
   // Resolve an install-location request at plan time. Returns the normalized
   // dir; throws when the dir is not an eligible candidate, does not exist, or
   // overlaps another app's folders or homes. The data-folder candidate is the
@@ -549,11 +559,16 @@ export class ApplicationService {
   // system disk). Locked when this machine cannot read the vault (BFU, or a
   // foreign drive); unlocked when the machine key opens it silently.
   // Computed at read time from the 'home' resource — no migration.
+  // Default-key homes (data folder) are never "locked" in the UX sense: the
+  // operator chose no passphrase, so there is nothing to type. They still
+  // report locked while BFU (the machine key is not in memory yet) — the
+  // drawer then says "log in again", never "type the passphrase".
   private homeState(instanceId: string): InstanceSummary['home'] {
     try {
       const home = this.ctx.repo.resources(instanceId).find((r) => r.kind === 'volume' && r.role === '__home__');
       if (!home) return null;
       const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+      const defaultKey = home.metadata?.['defaultKey'] === true;
       const machineKey = this.ctx.machineKey.take();
       let state: 'locked' | 'unlocked' = 'locked';
       if (wrapped && machineKey) {
@@ -567,7 +582,7 @@ export class ApplicationService {
           zeroMachineKey(machineKey);
         }
       }
-      return { path: home.name, encrypted: true, state };
+      return { path: home.name, encrypted: true, state, ...(defaultKey ? { defaultKey: true as const } : {}) };
     } catch {
       return null;
     }
@@ -910,13 +925,23 @@ export class ApplicationService {
       // bad dir or weak passphrase never reaches Docker. The passphrase itself
       // is never stored in the plan — only the dir. The runner collects it at
       // apply time from the submitter (see submitInstallLocationSecret).
+      // Default-encrypt (decision 94): the Harbor data folder (system disk,
+      // not portable) encrypts with Harbor's own key — no passphrase needed,
+      // silent unlock, nothing to remember. Removable drives are portable, so
+      // they still require an 8+ char passphrase (shown once) that unlocks
+      // the app on any Harbor machine.
       let location: PlanProposal['location'] = null;
       if (req.location) {
         const dir = this.resolveInstallLocation(req.location.dir, instances);
         const pass = req.location.passphrase;
-        if (typeof pass !== 'string' || pass.length < 8) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at least 8 characters', { nextAction: 'Choose a passphrase (or a generated recovery key) of 8+ characters.' });
-        if (pass.length > 256) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at most 256 characters');
-        location = { dir };
+        const isDataFolder = this.isDataFolderLocation(dir);
+        if (isDataFolder && (pass === undefined || pass === '')) {
+          location = { dir, defaultKey: true };
+        } else {
+          if (typeof pass !== 'string' || pass.length < 8) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at least 8 characters', { nextAction: 'Choose a passphrase (or a generated recovery key) of 8+ characters.' });
+          if (pass.length > 256) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at most 256 characters');
+          location = { dir };
+        }
       }
       const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
       const proposal: PlanProposal = {
@@ -932,7 +957,7 @@ export class ApplicationService {
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
-          ...(location ? [`Install the whole app encrypted at ${location.dir}/${proposed.name}/ (manifest.json + vault/); the passphrase unlocks it on any Harbor machine`] : []),
+          ...(location ? [location.defaultKey ? `Install the whole app encrypted at ${location.dir}/${proposed.name}/ (manifest.json + vault/); Harbor unlocks it silently on this machine` : `Install the whole app encrypted at ${location.dir}/${proposed.name}/ (manifest.json + vault/); the passphrase unlocks it on any Harbor machine`] : []),
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
@@ -943,7 +968,7 @@ export class ApplicationService {
           ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
           ...(pkg.manifest.defaultCredentials ? [`This app ships with a default login (${pkg.manifest.defaultCredentials.username}); change it right after the first sign-in.`] : []),
-          ...(location ? ['The app (including its database) lives on the drive: unplug it and the app stops; lose the passphrase and the data is gone.'] : []),
+          ...(location ? [location.defaultKey ? 'The app (including its database) lives encrypted on this machine and unlocks silently when you log in.' : 'The app (including its database) lives on the drive: unplug it and the app stops; lose the passphrase and the data is gone.'] : []),
         ],
         releaseHashes: pkg.hashes,
       };
@@ -1282,8 +1307,11 @@ export class ApplicationService {
         // Install-location plans need their passphrase at submit time (it is
         // never in the plan itself). Refuse here — not at apply — so a missing
         // secret fails fast with a clear error instead of a stuck operation.
+        // Default-key plans (data folder) carry no passphrase: pre-seed the
+        // marker so the single-use check passes without operator input.
         if (plan.proposal.location && !this.locationSecrets.has(planId)) {
-          throw new HarborError('INVALID_REQUEST', 'this plan installs the app encrypted on a drive: submit the encryption passphrase with it', { nextAction: 'Submit again with the passphrase shown at install time.' });
+          if (plan.proposal.location.defaultKey === true) this.locationSecrets.set(planId, 'default-key');
+          else throw new HarborError('INVALID_REQUEST', 'this plan installs the app encrypted on a drive: submit the encryption passphrase with it', { nextAction: 'Submit again with the passphrase shown at install time.' });
         }
         const claimed = new Set(repo.claimedPorts().map((c) => c.port));
         for (const e of plan.proposal.endpoints) {

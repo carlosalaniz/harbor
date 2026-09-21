@@ -50,6 +50,8 @@ function validDeviceName(name: string): boolean {
   return /^[a-z]+[0-9]+$/.test(name) && name.length <= 16;
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
 // Format one removable partition as ext4 (the only filesystem Harbor trusts
 // for app homes) and mount it at /mnt/<label>. Wipes the partition signature
 // first so a stale vfat superblock can never shadow the new filesystem.
@@ -66,16 +68,40 @@ export async function applyDeviceFormat(device: string, log: (m: string) => void
   writeStatus(stateDir, device, 'formatting', `formatting ${found.device} as ext4 (all data on it is being erased)`, null, found.mountpoint ?? null);
   log(`formatting ${found.device} as ext4`);
   try {
-    // Unmount first when mounted (a mounted vfat cannot be formatted).
+    // Unmount first when mounted (a mounted vfat cannot be formatted). The
+    // kernel can hold the partition lock for a beat after an unmount (the
+    // exit-18 "Resource temporarily unavailable" class of failure): wait and
+    // retry the wipe once instead of surfacing a raw exit code.
     if (found.mounted && found.mountpoint) {
       await execOk('/usr/bin/umount', [found.mountpoint], { timeoutMs: 60_000 });
+      await sleep(3000);
     }
     // The partition table nests a "dos" signature inside the partition itself
     // (a leftover of the factory vfat/NTFS layout): plain `wipefs -a` refuses
     // to touch it ("ignoring nested dos partition table, use --force") and
     // mkfs would then inherit a stale shadow. Force the wipe — the drive is
     // being erased anyway, and only removable media ever reaches this step.
-    await execOk('/usr/sbin/wipefs', ['--force', '-a', found.device], { timeoutMs: 60_000 });
+    // One self-retry on transient lock contention (see device-mount-apply's
+    // isDriveBusyError): the first wipe can race the unmount above.
+    let wiped = false;
+    let lastWipeErr: unknown = null;
+    for (let attempt = 0; attempt < 2 && !wiped; attempt++) {
+      try {
+        await execOk('/usr/sbin/wipefs', ['--force', '-a', found.device], { timeoutMs: 60_000 });
+        wiped = true;
+      } catch (e) {
+        lastWipeErr = e;
+        const msg = e instanceof Error ? e.message : String(e);
+        const { isDriveBusyError } = await import('./device-mount-apply.js');
+        if (attempt === 0 && isDriveBusyError(msg)) {
+          log(`drive busy on first wipe attempt, waiting 5s and retrying once`);
+          await sleep(5000);
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (!wiped) throw lastWipeErr;
     await execOk('/usr/sbin/mkfs.ext4', ['-F', '-L', (found.label ?? device).slice(0, 16), found.device], { timeoutMs: 300_000 });
     // Re-read the device so the mountpoint suggestion uses the fresh label.
     const fresh = listDevices().find((d) => d.name === device);

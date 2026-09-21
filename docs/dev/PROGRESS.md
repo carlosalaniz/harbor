@@ -168,6 +168,14 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `device-mount.test.ts` (+4: oneshot start, in-use refusal, system-disk refusal, no-systemd hint) + `openapi.test.ts` route pin (+2 routes, 72 paths); e2e typed-confirm → spinner → ext4 + Eject
 - [x] Docs: decision 93, operator guide §4a1 format paragraph, FUTURE format half marked built, openapi regenerated (72 paths)
 
+## Phase 21 — default-encrypt + folder-management UX (2026-09-21, v0.15.0) ✅
+- [x] Folder management (decision 94): the redundant system-disk `/harbor-apps` candidate is gone (unwritable, polluted `/`); system-disk apps are managed volumes (wizard default, no passphrase) or encrypted in the Harbor data folder. Ineligible install-location rows only suggest Format when the drive is writable; unwritable rows show the reason alone
+- [x] Default-encrypt (decision 94): the Harbor data folder seals with Harbor's own key (machine key, already sealed by the login password — no new secrets) — no passphrase to type, silent unlock at login, nothing to remember. Custom passphrase opt-in there (`Use my own passphrase instead…`, portability needs it), required on removable drives. Engine: optional `location.passphrase`, `PlanProposal.location.defaultKey`, `AppHomeDto.defaultKey`, `createAppHome` wraps a Harbor-generated secret when omitted (same envelope, unlock/adopt unchanged), submit pre-seeds `default-key`, runner records it on the home resource, locked default-key drawer says "log in again" (never "type the passphrase"). CLI: passphrase omitted for the data folder
+- [x] Inline mount/format where pertinent: install wizard shows unmounted drives (*Mount it*, polled to eligible) + one-click *Format as ext4…* on wrong-filesystem rows (typed confirm); folder picker gains Eject + Format on mounted rows; Found-apps lists unmounted drives with *Mount to see its apps*
+- [x] Lock contention (decision 94): exit-18 "Resource temporarily unavailable" / "Device or resource busy" self-retries once in the root step (mount + wipe-after-unmount) and otherwise surfaces a plain-words "wait a few seconds and try again" message instead of a raw exit code
+- [x] Tests: unit `install-location.test.ts` (data-folder candidate, no `/harbor-apps`) + `device-mount.test.ts` (+2: busy recognition, friendly message) + `openapi.test.ts` (passphrase optional, 72 paths); integration `app-homes.test.ts` (+1: no-passphrase submit → `defaultKey` unlocked home); e2e silent data-folder install + opt-in passphrase + exact Mount/Eject selectors (25 passed)
+- [x] Docs: decision 94, operator guide §4a2 rewritten (default-encrypt, inline mount/format, locked tiles), openapi regenerated (72 paths)
+
 ## Test results (latest local run)
 
 | Command | Result |

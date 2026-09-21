@@ -272,15 +272,21 @@ test('phone width: bottom tabs navigate, tiles render in two columns, dialogs op
   expect(await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')).toBe(true);
 });
 
-test('install page: choose where the app lives; a drive install asks for a passphrase and reviews encrypted', async ({ page }) => {
+test('install page: choose where the app lives; the data folder encrypts silently, a custom passphrase is opt-in', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'App Store' }).click();
   await page.getByRole('button', { name: 'About BentoPDF' }).click();
   const where = page.getByRole('dialog');
   await expect(where).toContainText('Where should the app live?');
   await expect(where.getByRole('radio', { name: /System disk/ })).toBeChecked();
-  // the data-folder candidate is offered (created on demand); picking it asks for a passphrase
+  // the data-folder candidate is offered (created on demand); it encrypts
+  // with Harbor's own key — no passphrase field until the operator opts in
   await where.getByRole('radio', { name: /Harbor data folder/ }).check();
+  await expect(where).toContainText(/unlocks it silently/);
+  await expect(where.getByLabel('Encryption passphrase for this app')).toHaveCount(0);
+  await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeEnabled();
+  // opting into a custom passphrase brings the field back with the 8+ rule
+  await where.getByRole('button', { name: 'Use my own passphrase instead…' }).click();
   await expect(where.getByLabel('Encryption passphrase for this app')).toBeVisible();
   await where.getByLabel('Encryption passphrase for this app').fill('short');
   await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeDisabled();
@@ -392,7 +398,7 @@ test('storage: removable device mount locks with a spinner, then flips to mounte
   await login(page);
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Storage Disks/ }).click();
-  const mount = page.getByRole('button', { name: 'Mount' });
+  const mount = page.getByRole('button', { name: 'Mount USB20FD', exact: true });
   await expect(mount).toBeVisible();
   await mount.click();
   // the button locks instantly with a spinner: no double-submit while the POST is in flight
@@ -401,10 +407,10 @@ test('storage: removable device mount locks with a spinner, then flips to mounte
   await expect(mounting).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Eject' })).toBeVisible({ timeout: 15_000 });
   // and back again
-  const eject = page.getByRole('button', { name: 'Eject' });
+  const eject = page.getByRole('button', { name: 'Eject USB20FD', exact: true });
   await eject.click();
   await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Mount' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Mount USB20FD', exact: true })).toBeVisible({ timeout: 15_000 });
 });
 
 test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', async ({ page }) => {
@@ -426,7 +432,7 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
   await go.click();
   // the row locks with a Formatting… spinner, then the drive is ext4 + mounted
   await expect(page.getByRole('button', { name: /Formatting/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Eject' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Eject USB20FD', exact: true })).toBeVisible({ timeout: 15_000 });
   // the formatted drive row no longer warns; the 2s storage poll reloads the list
   await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/cannot hold apps as-is/)).toHaveCount(0, { timeout: 15_000 });
 });

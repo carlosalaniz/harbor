@@ -9,11 +9,19 @@ describe('install candidates', () => {
   const mounts = (list: { mountpoint: string; fsType: string; writable?: boolean; label?: string }[]) =>
     list.map((m, i) => ({ mountpoint: m.mountpoint, device: `/dev/sd${String.fromCharCode(97 + i)}1`, fsType: m.fsType, totalBytes: 100, usedBytes: 10, writable: m.writable ?? true, label: m.label ?? m.mountpoint }));
 
-  it('offers the system disk and every mounted drive', () => {
+  it('offers every mounted drive (the system disk itself is never an app-home candidate)', () => {
     const out = installCandidates(mounts([{ mountpoint: '/', fsType: 'ext4' }, { mountpoint: '/mnt/photos', fsType: 'ext4', label: 'Photos' }]), { path: path.join(tmpdir(), 'harbor-no-data'), exists: false, writable: false });
-    expect(out.map((c) => c.dir)).toEqual(['/harbor-apps', '/mnt/photos/harbor-apps']);
+    expect(out.map((c) => c.dir)).toEqual(['/mnt/photos/harbor-apps']);
     expect(out.every((c) => c.eligible)).toBe(true);
-    expect(out[0]!.label).toMatch(/System disk/);
+  });
+
+  it('offers the Harbor data folder as the encrypted system-disk option', () => {
+    const data = path.join(tmpdir(), 'harbor-data-candidate');
+    mkdirSync(data, { recursive: true });
+    const out = installCandidates(mounts([{ mountpoint: '/', fsType: 'ext4' }]), { path: data, exists: true, writable: true });
+    expect(out.map((c) => c.dir)).toEqual([path.posix.join(data, 'harbor-apps')]);
+    expect(out[0]!.eligible).toBe(true);
+    expect(out[0]!.label).toMatch(/Harbor data folder/);
   });
 
   it('refuses non-POSIX filesystems with a plain-words reason', () => {

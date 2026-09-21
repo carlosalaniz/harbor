@@ -573,6 +573,10 @@ export class OperationRunner {
   private async createAppHomeForInstall(op: OperationRow, plan: PlanRow, inst: InstanceRow, pkg: LoadedPackage): Promise<string> {
     const { repo } = this.ctx;
     const loc = plan.proposal.location!;
+    // Default-key homes (data folder) carry no passphrase: the secret check
+    // is pre-seeded at submit time, so takeInstallLocationSecret returns the
+    // 'default-key' marker. Custom-passphrase homes consume the single-use
+    // secret like before.
     const passphrase = this.ctx.service.takeInstallLocationSecret(plan.id);
     if (!passphrase) throw new HarborError('STATE_CHANGED', 'the encryption passphrase for this install is gone', { nextAction: 'Create a new plan and submit it with the passphrase.' });
     if (passphrase === 'adopted') {
@@ -580,6 +584,7 @@ export class OperationRunner {
       if (!home) throw new HarborError('STATE_CHANGED', 'adopted app home is not recorded', { nextAction: 'Adopt the app again from Storage.' });
       return home.name;
     }
+    const defaultKey = loc.defaultKey === true || passphrase === 'default-key';
     try {
       const { descriptor, masterKey } = await createAppHome({
         parentDir: loc.dir,
@@ -588,7 +593,7 @@ export class OperationRunner {
         packageId: pkg.id,
         packageRevision: pkg.revision,
         displayName: pkg.manifest.metadata.name,
-        passphrase,
+        ...(defaultKey ? {} : { passphrase }),
         harborVersion: this.ctx.version,
         now: this.ctx.clock.now(),
       });
@@ -606,7 +611,7 @@ export class OperationRunner {
             zeroMachineKey(machineKey);
           }
         }
-        repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: descriptor.home, token: null, metadata: { home: true, driveId: descriptor.manifest.driveId, ...(wrapped ? { machineWrapped: wrapped } : {}) } });
+        repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: descriptor.home, token: null, metadata: { home: true, driveId: descriptor.manifest.driveId, ...(defaultKey ? { defaultKey: true } : {}), ...(wrapped ? { machineWrapped: wrapped } : {}) } });
         this.event(op, 'preparing', `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with the passphrase until first login)'}`);
         return descriptor.home;
       } finally {

@@ -131,8 +131,10 @@ export interface PlanProposal {
   endpoints: EndpointAllocation[];
   // external claims: hostPath set, volumeName null (nothing is created in Docker)
   storage: { id: string; composeVolume: string; volumeName: string | null; purpose: string; hostPath?: string; readOnly?: boolean; homePath?: string }[];
-  // install-location: the whole app lives in an encrypted home under this dir
-  location: { dir: string } | null;
+  // install-location: the whole app lives in an encrypted home under this dir.
+  // defaultKey: sealed with Harbor's own key (data folder, silent unlock) —
+  // no custom passphrase, not portable. Absent = custom passphrase (portable).
+  location: { dir: string; defaultKey?: boolean } | null;
   secrets: { id: string }[];
   changes: string[];
   warnings: string[];
