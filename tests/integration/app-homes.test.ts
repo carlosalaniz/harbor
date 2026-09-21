@@ -32,29 +32,29 @@ describe('install to an encrypted app home', () => {
   let driveInstanceId = '';
   const driveHome = async (): Promise<string> => (await h.api.instances()).find((i) => i.id === driveInstanceId)!.home!.path;
 
-  it('plans refuse a missing nested dir, a weak passphrase, and a system path', async () => {
-    const missing = await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps', 'nope'), passphrase: PASS } });
-    expect(missing.error.nextAction).toMatch(/mkdir -p/);
-    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps'), passphrase: 'short' } });
+  it('plans refuse a wrong-shaped dir, a weak passphrase, and a system path', async () => {
+    const wrong = await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps', 'nope'), passphrase: PASS } });
+    expect(wrong.error.message).toMatch(/must be/);
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw'), passphrase: 'short' } });
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', location: { dir: '/etc', passphrase: PASS } });
     expect(await h.api.instances()).toHaveLength(0);
   });
 
   it('the bare apps folder is created on demand (Harbor-owned infrastructure)', async () => {
     // The data-folder candidate is real (not the test fallback), so its bare
-    // dir is created on demand: point at <data>/harbor-apps, which does not
-    // exist yet in this fresh harness. No passphrase: the data folder seals
-    // with Harbor's own key (default-encrypt, decision 94).
+    // dir is created on demand: point at <data>/harbor-apps/<pkg>,
+    // which does not exist yet in this fresh harness. No passphrase: the data
+    // folder seals with Harbor's own key (default-encrypt, decision 94).
     const appsDir = path.join(h.userDataDir, 'harbor-apps');
     expect(existsSync(appsDir)).toBe(false);
-    const plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'freshdrive', location: { dir: appsDir } });
-    expect(plan.location?.dir).toBe(appsDir);
+    const plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'freshdrive', location: { dir: path.join(appsDir, 'excalidraw') } });
+    expect(plan.location?.dir).toBe(path.join(appsDir, 'excalidraw'));
     expect(existsSync(appsDir)).toBe(true);
   });
 
   it('the data-folder plan needs no passphrase at submit; the home unlocks silently', async () => {
     const appsDir = path.join(h.userDataDir, 'harbor-apps');
-    const p = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'defaultkey', location: { dir: appsDir } });
+    const p = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'defaultkey', location: { dir: path.join(appsDir, 'excalidraw') } });
     expect(p.changes.join('\n')).toMatch(/unlocks it silently/);
     const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: p.id }, { 'idempotency-key': 'home-default-key-1' });
     const op = await h.api.waitOperation(sub.operationId);
@@ -64,8 +64,8 @@ describe('install to an encrypted app home', () => {
   });
 
   it('the plan names the encrypted home and warns about the drive and the passphrase', async () => {
-    plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps'), passphrase: PASS } });
-    expect(plan.location).toEqual({ dir: path.join(drive, 'harbor-apps'), encrypted: true });
+    plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw'), passphrase: PASS } });
+    expect(plan.location).toEqual({ dir: path.join(drive, 'harbor-apps', 'excalidraw'), encrypted: true });
     expect(plan.changes.join('\n')).toMatch(/encrypted at .*harbor-apps\/excalidraw\//);
     expect(plan.warnings.join('\n')).toMatch(/lose the passphrase/);
     // The passphrase is never stored in the plan.
@@ -79,7 +79,7 @@ describe('install to an encrypted app home', () => {
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     // Two installs exist now (the default-key one above + this drive one):
     // pick this block's instance by its home path, not by index.
-    const inst = (await h.api.instances()).find((i) => i.home?.path === path.join(drive, 'harbor-apps', 'excalidraw'))!;
+    const inst = (await h.api.instances()).find((i) => i.home?.path === path.join(drive, 'harbor-apps', 'excalidraw', 'excalidraw'))!;
     driveInstanceId = inst.id;
     expect(inst.installState).toBe('installed');
     expect(inst.home).toMatchObject({ encrypted: true, state: 'unlocked' });
@@ -87,7 +87,7 @@ describe('install to an encrypted app home', () => {
 
   it('the home holds a plaintext manifest plus an encrypted vault, and volumes are rooted inside it', async () => {
     const home = await driveHome();
-    expect(home).toBe(path.join(drive, 'harbor-apps', 'excalidraw'));
+    expect(home).toBe(path.join(drive, 'harbor-apps', 'excalidraw', 'excalidraw'));
     const manifest = JSON.parse(readFileSync(path.join(home, 'manifest.json'), 'utf8'));
     expect(manifest.packageId).toBe('excalidraw');
     expect(manifest.instanceId).toBe(driveInstanceId);
@@ -117,14 +117,14 @@ describe('found apps and adopt', () => {
   });
 
   it('adopt refuses an unknown home and a wrong passphrase', async () => {
-    await h.api.expectError(409, 'DATA_MISSING', 'POST', '/v1/found-apps/adopt', { home: path.join(drive, 'harbor-apps', 'ghost'), passphrase: PASS });
+    await h.api.expectError(409, 'DATA_MISSING', 'POST', '/v1/found-apps/adopt', { home: path.join(drive, 'harbor-apps', 'excalidraw', 'ghost'), passphrase: PASS });
   });
 
   it('adopting the installed home again conflicts (it is already adopted here)', async () => {
     // The instance record already points at this home: adopt refuses as a
     // duplicate. Re-read the home from the instance list (this block now
     // installs two apps: the default-key one and the drive one).
-    const home = (await h.api.instances()).find((i) => i.home?.path === path.join(drive, 'harbor-apps', 'excalidraw'))!.home!.path;
+    const home = (await h.api.instances()).find((i) => i.home?.path === path.join(drive, 'harbor-apps', 'excalidraw', 'excalidraw'))!.home!.path;
     await h.api.expectError(409, 'NAME_CONFLICT', 'POST', '/v1/found-apps/adopt', { home, passphrase: PASS });
   });
 });
@@ -136,7 +136,7 @@ describe('volumes rooted in the home', () => {
     const storage = ['storage:', '  - id: data', '    composeVolume: data', '    purpose: Data', '    retention: retain', ''].join('\n');
     const compose = ['services:', '  web:', `    image: example/demo@${DIGEST_B}`, '    volumes:', '      - {type: volume, source: data, target: /data}', 'volumes:', '  data: {}', ''].join('\n');
     writePackage(h.catalogDir, 'homevol', { manifest: MINIMAL_MANIFEST.replace('id: demo', 'id: homevol') + storage, compose, images: { web: `example/demo@${DIGEST_B}` } });
-    const plan = await h.api.plan({ kind: 'install', packageId: 'homevol', location: { dir: path.join(drive, 'harbor-apps'), passphrase: PASS } });
+    const plan = await h.api.plan({ kind: 'install', packageId: 'homevol', location: { dir: path.join(drive, 'harbor-apps', 'homevol'), passphrase: PASS } });
     const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: plan.id, passphrase: PASS }, { 'idempotency-key': 'home-vol-1' });
     const op = await h.api.waitOperation(sub.operationId);
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');

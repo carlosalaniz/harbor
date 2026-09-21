@@ -213,7 +213,7 @@ export const mockApi = {
     return { operationId: op.id, created: true, operation: op };
   },
   foundApps: async () => [
-    { home: '/mnt/photos/harbor-apps/immich-2', name: 'immich-2', displayName: 'Immich (2)', packageId: 'immich', packageRevision: '1', instanceId: null, drive: 'Photos', adopted: false, error: null },
+    { home: '/mnt/photos/harbor-apps/immich/immich-2', name: 'immich-2', displayName: 'Immich (2)', packageId: 'immich', packageRevision: '1', instanceId: null, drive: 'Photos', adopted: false, error: null },
   ],
   adoptFoundApp: async (home: string) => {
     await beat();

@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { installCandidates } from '../../src/storage/install-location.js';
+import { checkInstallLocation, installCandidates } from '../../src/storage/install-location.js';
 
 // Pure candidate logic: which folders may hold whole encrypted apps.
 describe('install candidates', () => {
@@ -44,5 +44,13 @@ describe('install candidates', () => {
     const dirs = out.map((c) => c.dir);
     expect(new Set(dirs).size).toBe(dirs.length);
     expect(dirs).toEqual([...dirs].sort());
+  });
+
+  it('nested layout: only <candidate>/<package> validates', () => {
+    const out = installCandidates(mounts([{ mountpoint: '/mnt/photos', fsType: 'ext4', label: 'Photos' }]), { path: path.join(tmpdir(), 'harbor-no-data'), exists: false, writable: false });
+    expect(checkInstallLocation('/mnt/photos/harbor-apps/immich', out, 'immich', 'immich')).toBe('/mnt/photos/harbor-apps/immich');
+    expect(() => checkInstallLocation('/mnt/photos/harbor-apps/immich/immich', out, 'immich', 'immich')).toThrowError(/must be/);
+    expect(() => checkInstallLocation('/mnt/photos/harbor-apps/other', out, 'immich', 'immich')).toThrowError(/must be/);
+    expect(() => checkInstallLocation('/mnt/photos/harbor-apps', out, 'immich', 'immich')).toThrowError(/must be/);
   });
 });

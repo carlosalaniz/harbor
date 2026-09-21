@@ -585,10 +585,15 @@ export class OperationRunner {
       return home.name;
     }
     const defaultKey = loc.defaultKey === true || passphrase === 'default-key';
+    // Nested layout (decision 97): loc.dir is the package dir
+    // (<candidate>/<packageId>); the home itself is <dir>/<instanceName>.
+    // createAppHome takes the parent + the home name separately.
+    const parentDir = loc.dir;
+    const homeName = plan.proposal.name;
     try {
       const { descriptor, masterKey } = await createAppHome({
-        parentDir: loc.dir,
-        name: plan.proposal.name,
+        parentDir,
+        name: homeName,
         instanceId: inst.id,
         packageId: pkg.id,
         packageRevision: pkg.revision,
@@ -737,6 +742,27 @@ export class OperationRunner {
     this.phase(op, 'applying', 'purging', 'deleting retained data of this app (verified as Harbor-created first)');
     const resources = repo.resources(inst.id);
     for (const r of resources.filter((x) => x.kind === 'volume')) {
+      // The encrypted app home is a folder on disk, not a Docker volume:
+      // delete it from the filesystem (ownership is proven by the manifest's
+      // instanceId inside, which matches this instance). Docker volumes
+      // rooted inside it are removed below via their own records.
+      if (r.role === '__home__') {
+        try {
+          const { describeAppHome } = await import('../storage/app-home.js');
+          const { manifest } = describeAppHome(r.name);
+          if (manifest.instanceId !== inst.id) {
+            this.event(op, 'purging', `app home ${r.name} belongs to another instance; left untouched`);
+            continue;
+          }
+        } catch {
+          // Unreadable home: still remove the folder (it is recorded as ours
+          // and purge means delete); a missing folder is already gone.
+        }
+        rmSync(r.name, { recursive: true, force: true });
+        repo.deleteResource(inst.id, 'volume', r.role);
+        this.event(op, 'purging', `deleted encrypted app home ${r.name}`);
+        continue;
+      }
       const vol = await docker.inspectVolume(r.name);
       if (!vol) {
         this.event(op, 'purging', `volume ${r.name} already absent`);

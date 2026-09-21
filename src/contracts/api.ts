@@ -291,8 +291,11 @@ export interface ApiErrorBody {
 }
 
 export interface InstallLocationRequest {
-  // Existing directory that will hold this app's home, e.g. /mnt/photos/harbor-apps.
-  // The app home (<dir>/<app-name>/{manifest.json, vault/}) is created inside it.
+  // Package directory that will hold this app's home, e.g.
+  // /mnt/photos/harbor-apps/immich. The app home (<dir>/<instance-name>/
+  // {manifest.json, vault/}) is created inside it at apply time (decision 97:
+  // enforced <candidate>/<packageId> nesting; the instance name is not part
+  // of the dir because the unique -2 suffix is only known at plan time).
   dir: string;
   // Encrypt the whole app home. Required for removable drives (the drive is
   // portable, so its contents must be sealed); optional for the Harbor data

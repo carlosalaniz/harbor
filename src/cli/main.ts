@@ -221,7 +221,7 @@ program
   .command('plan <kind> [target]')
   .description('create a plan without applying it: plan install <package> [--name n] | plan start|stop|remove|reinstall <instance>')
   .option('--name <slug>', 'instance name for install')
-  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive; omit the passphrase for the Harbor data folder)')
+  .option('--location <dir>', 'install the whole app encrypted at <candidate>/<package> (omit the passphrase for the Harbor data folder)')
   .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
   .action(async (kind: string, target: string | undefined, opts: { name?: string; location?: string; passphraseStdin?: boolean }) => {
     const api = client();
@@ -266,7 +266,7 @@ program
   .description('plan and install a package (shows the plan and asks for confirmation)')
   .option('--name <slug>', 'instance name')
   .option('--storage <claim=/host/path>', 'use your own folder for a storage claim the package marks as external (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
-  .option('--location <dir>', 'install the whole app encrypted in this folder (on a drive; omit the passphrase for the Harbor data folder)')
+  .option('--location <dir>', 'install the whole app encrypted at <candidate>/<package> (omit the passphrase for the Harbor data folder)')
   .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return the operation ID instead of waiting')

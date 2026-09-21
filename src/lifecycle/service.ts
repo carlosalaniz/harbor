@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, mkdirSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
@@ -261,11 +261,21 @@ export class ApplicationService {
   // location (decision 94): apps there seal with Harbor's own key, need no
   // passphrase, and unlock silently. Everything else (removable drives) needs
   // a custom passphrase for portability. The data-folder candidate is also
-  // the test/dev escape hatch (statfs fallback), so match it by label.
+  // the test/dev escape hatch (statfs fallback), so match it by label — plus
+  // the same-filesystem fallback below (tmp "drives" the mount table misses).
   private isDataFolderLocation(dir: string): boolean {
     const candidates = this.installCandidates();
     const parent = candidates.find((c) => dir === c.dir || dir.startsWith(c.dir + '/'));
-    return parent?.label.startsWith('Harbor data folder') ?? false;
+    if (parent?.label.startsWith('Harbor data folder')) return true;
+    // Tmp "drive" the mount table misses (tests/dev): same filesystem as the
+    // data folder means system disk means default-key.
+    try {
+      const a = statfsSync(dir === '/' ? '/' : path.posix.dirname(dir)) as unknown as { type?: number; bsize?: number; blocks?: number };
+      const b = statfsSync(this.ctx.config.userDataDir) as unknown as { type?: number; bsize?: number; blocks?: number };
+      return a.type === b.type && a.bsize === b.bsize && a.blocks === b.blocks;
+    } catch {
+      return false;
+    }
   }
   // Resolve an install-location request at plan time. Returns the normalized
   // dir; throws when the dir is not an eligible candidate, does not exist, or
@@ -273,10 +283,44 @@ export class ApplicationService {
   // escape hatch for tests and dev (a tmp "drive" the live mount table does
   // not cover): any dir on the same filesystem as the data folder resolves
   // through it, so the engine path stays exercisable without real hardware.
-  private resolveInstallLocation(dir: string, instances: InstanceRow[]): string {
+  private resolveInstallLocation(dir: string, instances: InstanceRow[], packageId?: string): string {
     const candidates = this.installCandidates();
     const norm = normalizeHostPath(dir);
-    let parent = candidates.find((c) => norm === c.dir || norm.startsWith(c.dir + '/'));
+    // Nested layout (decision 97): the dir must be exactly
+    // <candidate>/<packageId> — the package dir that will hold this app's
+    // home. The home itself (<dir>/<instanceName>) is created at apply time,
+    // so the instance name is NOT part of the dir: the wizard cannot know the
+    // unique -2 suffix before planning (proposeName runs here, after the
+    // request). Match the parent candidate first (a plain startsWith would
+    // match the wrong parent for deeper paths), then enforce the exact
+    // package-dir shape below.
+    let parent: InstallCandidateDto | undefined;
+    if (packageId !== undefined) {
+      const candidateDir = norm.replace(/\/[^/]+$/, '');
+      parent = candidates.find((c) => candidateDir === c.dir);
+      if (!parent) {
+        // The data-folder candidate itself: <data>/harbor-apps is the parent
+        // (the common case — Local installs). No statfs needed.
+        const dataCandidate = candidates.find((c) => c.label.startsWith('Harbor data folder'));
+        if (dataCandidate?.eligible && candidateDir === dataCandidate.dir) {
+          parent = dataCandidate;
+        } else if (dataCandidate?.eligible) {
+          // Tmp "drive" the mount table misses (tests/dev): the parent dir
+          // is on the same filesystem as the data folder. Point the parent
+          // at it so the nested-shape check below passes and the on-demand
+          // mkdir creates the package dir.
+          try {
+            const a = statfsSync(candidateDir) as unknown as { type?: number; bsize?: number; blocks?: number };
+            const b = statfsSync(this.ctx.config.userDataDir) as unknown as { type?: number; bsize?: number; blocks?: number };
+            if (a.type === b.type && a.bsize === b.bsize && a.blocks === b.blocks) parent = { ...dataCandidate, dir: candidateDir };
+          } catch {
+            // statfs unavailable (or dir missing): fall through to the refusal below
+          }
+        }
+      }
+    } else {
+      parent = candidates.find((c) => norm === c.dir || norm.startsWith(c.dir + '/'));
+    }
     if (!parent) {
       const dataCandidate = candidates.find((c) => c.label.startsWith('Harbor data folder'));
       if (dataCandidate?.eligible) {
@@ -297,6 +341,15 @@ export class ApplicationService {
     }
     if (!parent) throw new HarborError('INVALID_REQUEST', `${norm} cannot hold apps`, { nextAction: 'Pick one of the install locations from Settings → Storage (or mount a drive first).' });
     if (!parent.eligible) throw new HarborError('INVALID_REQUEST', `${norm} cannot hold apps: ${parent.reason ?? 'filesystem not supported'}`, { nextAction: 'Choose a location on ext4, btrfs, xfs, zfs or apfs.' });
+    // Nested layout (decision 97): the dir must be exactly
+    // <candidate>/<packageId> — the package dir that will hold this app's
+    // home. The home itself (<dir>/<instanceName>) is created at apply time
+    // from the planned name, so the instance name is not part of the dir.
+    // The parent above is the candidate dir, so compare directly against it.
+    if (packageId !== undefined) {
+      const expected = `${parent.dir}/${packageId}`;
+      if (norm !== expected) throw new HarborError('INVALID_REQUEST', `app folder must be ${expected}`, { nextAction: 'Pick the location in the install wizard instead of typing a path.' });
+    }
     // The location dir must already exist — except the bare candidate dir
     // itself (<mount>/harbor-apps), which is Harbor-owned infrastructure
     // created on demand so a freshly mounted drive just works. Anything
@@ -310,6 +363,16 @@ export class ApplicationService {
       if (norm === parent.dir && realCandidateDirs.has(parent.dir) && !existsSync(parent.dir)) mkdirSync(parent.dir, { recursive: true, mode: 0o755 });
     } catch {
       // fall through to the existence check below, which reports it plainly
+    }
+    // Nested layout: create the package dir on demand (Harbor-owned). The
+    // home dir itself is created by createAppHome at apply time — mkdirSync
+    // with recursive is idempotent, so this only ensures the parent.
+    if (packageId !== undefined && norm !== parent.dir) {
+      try {
+        mkdirSync(norm, { recursive: true, mode: 0o755 });
+      } catch {
+        // fall through to the existence check below, which reports it plainly
+      }
     }
     let checked: string;
     try {
@@ -695,9 +758,11 @@ export class ApplicationService {
   }
 
   // Portable app homes found on mounted drives but not adopted here.
-  // Scans every install candidate dir for manifest.json folders. Adopted
-  // homes (an instance already points at the path) are flagged, not hidden —
-  // the console needs them to tell "yours, locked" from "someone else's".
+  // Scans every install candidate dir for manifest.json folders, one package
+  // level down (decision 97: <candidate>/<packageId>/<instanceName>).
+  // Adopted homes (an instance already points at the path) are flagged, not
+  // hidden — the console needs them to tell "yours, locked" from "someone
+  // else's".
   foundApps(): FoundAppDto[] {
     const out: FoundAppDto[] = [];
     const adoptedPaths = new Set(
@@ -705,17 +770,35 @@ export class ApplicationService {
     );
     for (const c of this.installCandidates()) {
       if (!c.eligible) continue;
-      let entries: FoundAppDto[];
+      // One package level down: each immediate child of the candidate is a
+      // package dir; homes live inside those.
+      let packageDirs: string[];
       try {
-        entries = scanAppHomes(c.dir).map((e) => {
-          if (!e.descriptor) return { home: `${c.dir}/${e.name}`, name: e.name, displayName: e.name, packageId: '', packageRevision: '', instanceId: '', drive: c.dir, adopted: false, error: e.error ?? 'unreadable app home' };
-          const m = e.descriptor.manifest;
-          return { home: e.descriptor.home, name: e.name, displayName: m.displayName, packageId: m.packageId, packageRevision: m.packageRevision, instanceId: m.instanceId, drive: c.dir, adopted: adoptedPaths.has(e.descriptor.home), error: null };
+        packageDirs = readdirSync(c.dir).filter((n) => {
+          if (n.startsWith('.')) return false;
+          try {
+            return statSync(path.join(c.dir, n)).isDirectory();
+          } catch {
+            return false;
+          }
         });
       } catch {
         continue; // candidate dir missing (drive yanked mid-scan): skip quietly
       }
-      out.push(...entries);
+      for (const pkgDir of packageDirs) {
+        const pkgPath = path.join(c.dir, pkgDir);
+        let entries: FoundAppDto[];
+        try {
+          entries = scanAppHomes(pkgPath).map((e) => {
+            if (!e.descriptor) return { home: `${pkgPath}/${e.name}`, name: e.name, displayName: e.name, packageId: '', packageRevision: '', instanceId: '', drive: c.dir, adopted: false, error: e.error ?? 'unreadable app home' };
+            const m = e.descriptor.manifest;
+            return { home: e.descriptor.home, name: e.name, displayName: m.displayName, packageId: m.packageId, packageRevision: m.packageRevision, instanceId: m.instanceId, drive: c.dir, adopted: adoptedPaths.has(e.descriptor.home), error: null };
+          });
+        } catch {
+          continue; // package dir missing mid-scan: skip quietly
+        }
+        out.push(...entries);
+      }
     }
     return out.sort((a, b) => a.home.localeCompare(b.home));
   }
@@ -756,6 +839,8 @@ export class ApplicationService {
         project: identity.project,
         endpoints,
         storage,
+        // Nested layout: the home is <candidate>/<packageId>/<instanceName>;
+        // the location dir is the package dir (strip one segment).
         location: { dir: home.replace(/\/[^/]+$/, '') },
         secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
         changes: [
@@ -932,7 +1017,7 @@ export class ApplicationService {
       // the app on any Harbor machine.
       let location: PlanProposal['location'] = null;
       if (req.location) {
-        const dir = this.resolveInstallLocation(req.location.dir, instances);
+        const dir = this.resolveInstallLocation(req.location.dir, instances, pkg.id);
         const pass = req.location.passphrase;
         const isDataFolder = this.isDataFolderLocation(dir);
         if (isDataFolder && (pass === undefined || pass === '')) {
@@ -957,7 +1042,7 @@ export class ApplicationService {
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
-          ...(location ? [location.defaultKey ? `Install the whole app encrypted at ${location.dir}/${proposed.name}/ (manifest.json + vault/); Harbor unlocks it silently on this machine` : `Install the whole app encrypted at ${location.dir}/${proposed.name}/ (manifest.json + vault/); the passphrase unlocks it on any Harbor machine`] : []),
+          ...(location ? [location.defaultKey ? `Install the whole app encrypted at ${location.dir}/ (manifest.json + vault/); Harbor unlocks it silently on this machine` : `Install the whole app encrypted at ${location.dir}/ (manifest.json + vault/); the passphrase unlocks it on any Harbor machine`] : []),
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),

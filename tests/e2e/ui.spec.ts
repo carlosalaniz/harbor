@@ -28,6 +28,11 @@ async function installFromStore(page: Page, pkgName: string) {
   await page.getByRole('link', { name: 'App Store' }).click();
   await expect(page.getByRole('heading', { name: 'App Store' })).toBeVisible();
   await page.getByRole('button', { name: `Install ${pkgName}`, exact: true }).click();
+  // Every install goes through the wizard now (Local vs External drive):
+  // accept the Local default and continue to plan review.
+  const wiz = page.getByRole('dialog');
+  await expect(wiz).toContainText('Where should the app live?');
+  await wiz.getByRole('button', { name: `Install ${pkgName} now` }).click();
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -104,10 +109,13 @@ test('store app page, install with plan review, progress tray, Open link; duplic
   const about = page.getByRole('dialog');
   await expect(about).toContainText('Runs on 127.0.0.1 only until you publish it');
   await expect(about).toContainText('website');
+  // Local is the default: encrypted on this machine, silent unlock
+  await expect(about.getByRole('radio', { name: /Local/ })).toBeChecked();
+  await expect(about.locator('code.path')).toContainText('excalidraw/excalidraw');
   await about.getByRole('button', { name: 'Install Excalidraw now' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Review install');
-  await expect(dialog).toContainText('Harbor will install Excalidraw on this machine');
+  await expect(dialog).toContainText(/Harbor will install Excalidraw encrypted at .*excalidraw\/excalidraw/);
   await dialog.getByText(/Exactly what Harbor will do/).click();
   await expect(dialog).toContainText(/Publish endpoint web: 127\.0\.0\.1:\d+/);
   await expect(dialog).toContainText(/Pull image excalidraw\/excalidraw@sha256:/);
@@ -287,11 +295,14 @@ test('install page: a wrong-filesystem drive offers Format, not Mount or a passp
   await page.getByRole('button', { name: 'About BentoPDF' }).click();
   const where = page.getByRole('dialog');
   await expect(where).toContainText('Where should the app live?');
-  // the fixture stick is vfat and unmounted: the wizard offers Format, never Mount
+  // Local is the default: encrypted on this machine, silent unlock
+  await expect(where.getByRole('radio', { name: /Local/ })).toBeChecked();
+  // External shows the unmounted vfat stick with Format, never Mount
+  await where.getByRole('radio', { name: /External drive/ }).check();
   await expect(where.getByText(/needs formatting as ext4/)).toBeVisible();
   await expect(where.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible();
   await expect(where.getByRole('button', { name: 'Mount USB20FD', exact: true })).toHaveCount(0);
-  // formatting from the wizard remounts ext4 and selects the apps folder
+  // formatting from the wizard remounts ext4 and selects the drive
   await where.getByRole('button', { name: 'Format USB20FD as ext4', exact: true }).click();
   const dlg = page.getByRole('dialog', { name: /Format USB20FD as ext4/ });
   await expect(dlg).toContainText(/erases everything/);
@@ -303,6 +314,8 @@ test('install page: a wrong-filesystem drive offers Format, not Mount or a passp
   await expect(where.getByRole('button', { name: /Formatting/ })).toBeVisible();
   // the formatted drive lands selected with a passphrase prompt (removable = portable)
   await expect(where.getByLabel('Encryption passphrase for this app')).toBeVisible({ timeout: 30_000 });
+  // the enforced path nests package + instance under the drive
+  await expect(where.locator('code.path')).toContainText('bentopdf/bentopdf');
   await where.getByRole('button', { name: 'Close', exact: true }).click();
 });
 
@@ -337,7 +350,7 @@ test('install page: bring your own folder validates the path in the plan and mou
   await expect(picker2.locator('code.path')).toContainText('Media e2e');
   const chosen = (await picker2.locator('code.path').textContent())!.trim();
   await picker2.getByRole('button', { name: 'Use this folder' }).click();
-  await expect(again.locator('code.path')).toHaveText(chosen);
+  await expect(again.getByRole('group', { name: 'Where should the data live?' }).locator('code.path')).toHaveText(chosen);
   folder = chosen;
   await again.getByRole('button', { name: 'Install Jellyfin now' }).click();
   const plan = page.getByRole('dialog');
@@ -689,6 +702,9 @@ ${notes ? `  releaseNotes: ${JSON.stringify(notes)}\n` : ''}`;
   const card = page.locator('.tile.store').filter({ hasText: 'Hello E2E' });
   await expect(card).toContainText('Your app · 1.1');
   await card.getByRole('button', { name: 'Install Hello E2E', exact: true }).click();
+  const wiz = page.getByRole('dialog');
+  await expect(wiz).toContainText('Where should the app live?');
+  await wiz.getByRole('button', { name: 'Install Hello E2E now' }).click();
   const plan = page.getByRole('dialog');
   await expect(plan).toContainText('your own uploaded app');
   await plan.getByRole('button', { name: 'Install' }).click();

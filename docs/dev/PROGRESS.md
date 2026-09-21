@@ -188,16 +188,21 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 123, integration 123, e2e 25 green
 - [x] Docs: decision 96
 
+## Phase 24 — two-choice install location with enforced package nesting (2026-09-21, v0.16.0) ✅
+- [x] Two radios only (decision 97): Local (Harbor data folder, silent unlock) vs External drive (passphrase, portable); every store install goes through the wizard (no direct-install bypass). The request dir is the package dir (`<candidate>/<packageId>`); the home (`<dir>/<instanceName>/{manifest.json, vault/}`) is created at apply time from the planned name so the unique `-2` suffix never dead-ends planning. Engine enforces the exact package-dir shape, creates it on demand, scans one package level down in found-apps, deletes the home folder on purge (manifest instanceId proves ownership). macOS dev resolves `/var` → `/private/var` once so the wizard spelling matches the daemon
+- [x] Tests: unit 124, integration 123, e2e 25 green (Local default, External Format-first + passphrase-after-format, purge-reinstall, upload flow via wizard)
+- [x] Docs: decision 97, operator guide §4a2 rewritten (Local vs External, enforced path)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 123 passed |
+| `pnpm test` (unit) | 124 passed |
 | `pnpm test:integration` (fake adapter) | 123 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. wrong-filesystem Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall, domains + palette, customize, arrange, rotating wallpapers, upload + update, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

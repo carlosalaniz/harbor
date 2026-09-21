@@ -1,7 +1,7 @@
 // `pnpm dev`: run the daemon against a private local state directory with the fake Docker
 // adapter. Nothing on the host is touched. Set HARBOR_DEV_DOCKER_SOCKET=/path/to/docker.sock
 // to target a Docker engine explicitly (developer opt-in; never auto-discovered).
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { normalizeConfig } from './config.js';
@@ -16,6 +16,15 @@ const root = path.resolve(process.env['HARBOR_DEV_ROOT'] ?? '.harbor-dev');
 mkdirSync(root, { recursive: true, mode: 0o700 });
 const stateDir = path.join(root, 'state');
 mkdirSync(path.join(root, 'data'), { recursive: true });
+// macOS: /var is a symlink to /private/var, so resolve the root once —
+// otherwise the wizard's /var-spelled candidate dir never matches the
+// daemon's /private/var-spelled resolution (decision 97 nested layout).
+let resolvedRoot = root;
+try {
+  resolvedRoot = realpathSync(root);
+} catch {
+  // fall back to the unresolved spelling
+}
 // Fixture-hardware mode (HARBOR_DEVICES_JSON): listDevices overlays the
 // simulated mount state from this daemon's state dir (see host-storage.ts).
 if (process.env['HARBOR_DEVICES_JSON']) process.env['HARBOR_DEVICES_STATE_DIR'] = stateDir;
@@ -24,7 +33,7 @@ const port = Number(process.env['HARBOR_DEV_PORT'] ?? 18000);
 const config = normalizeConfig(
   {
     stateDir,
-    userDataDir: path.join(root, 'data'),
+    userDataDir: path.join(resolvedRoot, 'data'),
     catalogDir: path.resolve('catalog'),
     uiDir: existsSync(path.resolve('web/dist/index.html')) ? path.resolve('web/dist') : null,
     listen: { host: '127.0.0.1', port },
