@@ -248,7 +248,9 @@ with fresh ports. Only ext4/btrfs/xfs/zfs/apfs drives qualify (a database on
 exFAT/NTFS is corruption, not portability — those show a *needs formatting as
 ext4* warning with a Format button instead of Mount or a passphrase, and Install
 stays disabled until the drive is ext4; a plugged-in but unmounted drive on an
-eligible filesystem offers *Mount it* right in the wizard).
+eligible filesystem offers *Mount it* right in the wizard, and a folder picked
+on an unmounted drive blocks Install with a mount prompt until the drive is
+mounted).
 A locked app (this machine cannot read it yet — after a reboot, before the first
 login) shows a quiet *Locked* tile; data-folder apps unlock at the next login,
 drive apps with a custom passphrase need the passphrase (or adopt) on a new machine.
