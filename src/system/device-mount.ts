@@ -7,6 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readDeviceMountStatus, type DeviceMountStatus } from '../bootstrap/device-mount-apply.js';
 import { readDeviceFormatStatus, type DeviceFormatStatus } from '../bootstrap/device-format-apply.js';
+import { readDeviceCryptoStatus, type DeviceCryptoStatus } from '../bootstrap/device-crypto-apply.js';
 import { listDevices } from '../system/host-storage.js';
 import type { Repo } from '../state/repo.js';
 import type { Clock } from '../util.js';
@@ -40,6 +41,38 @@ export class DeviceMountService {
     } catch {
       return null;
     }
+  }
+
+  cryptoStatus(name: string): DeviceCryptoStatus | null {
+    if (!this.stateDir) return null;
+    try {
+      return readDeviceCryptoStatus(this.stateDir, name);
+    } catch {
+      return null;
+    }
+  }
+
+  // Ensure <mount>/.fscrypt metadata exists so app homes seal per-app.
+  // Idempotent; runs as the same root oneshot (device-dispatch crypto-setup).
+  async cryptoSetup(name: string, actor: string): Promise<DeviceCryptoStatus> {
+    const dev = listDevices().find((d) => d.name === name);
+    if (!dev) throw new HarborError('NOT_FOUND', `device ${name} not found`, { nextAction: 'Re-insert the drive and retry.' });
+    if (!dev.removable) throw new HarborError('INVALID_REQUEST', `device ${name} is not removable media`);
+    if (!dev.mounted || !dev.mountpoint) throw new HarborError('INVALID_STATE', `device ${name} is not mounted`, { nextAction: 'Mount the drive first, then try again.' });
+    if (this.simulateRoot) {
+      this.writeCryptoStatus(name, 'ready', `encryption ready on ${dev.mountpoint} (simulated)`, dev.mountpoint);
+      return { device: name, state: 'ready', message: 'encryption ready (simulated)', mountpoint: dev.mountpoint, at: rfc3339(this.clock.now()) };
+    }
+    if (!this.mountStarter) throw new HarborError('UNSUPPORTED_CAPABILITY', 'device encryption setup is not available on this machine', { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor device-crypto-setup ${name}` });
+    this.writeCryptoStatus(name, 'requested', `requested by ${actor}; setting up encryption`, dev.mountpoint);
+    try {
+      await this.mountStarter(`harbor-device-mount@${name}:crypto-setup.service`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.writeCryptoStatus(name, 'failed', `could not start encryption setup: ${msg}`, dev.mountpoint);
+      throw new HarborError('OPERATION_FAILED', `Harbor could not start encryption setup (${msg})`, { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor device-crypto-setup ${name}` });
+    }
+    return this.cryptoStatus(name) ?? { device: name, state: 'requested', message: 'encryption setup requested', mountpoint: dev.mountpoint, at: rfc3339(this.clock.now()) };
   }
 
   // Format a removable drive as ext4 so it can hold encrypted apps. Refused
@@ -181,6 +214,17 @@ export class DeviceMountService {
       const dir = path.join(this.stateDir, 'devices', name);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       writeFileSync(path.join(dir, 'format-status.json'), JSON.stringify({ device: name, state, message, fsType, mountpoint, at: rfc3339(this.clock.now()) }), { mode: 0o600 });
+    } catch {
+      /* status is best effort */
+    }
+  }
+
+  private writeCryptoStatus(name: string, state: DeviceCryptoStatus['state'], message: string, mountpoint: string | null): void {
+    if (!this.stateDir) return;
+    try {
+      const dir = path.join(this.stateDir, 'devices', name);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(path.join(dir, 'crypto-status.json'), JSON.stringify({ device: name, state, message, mountpoint, at: rfc3339(this.clock.now()) }), { mode: 0o600 });
     } catch {
       /* status is best effort */
     }

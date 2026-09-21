@@ -14,6 +14,7 @@ import type { GitFetcher } from '../packages/git.js';
 import type { CaddyAdmin } from '../exposure/caddy.js';
 import type { MachineKeyHolder } from '../auth/machine-holder.js';
 import type { ApplicationService } from './service.js';
+import type { CryptoProvider } from '../storage/crypto-provider.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
 export type UrlVerifier = (url: string, opts?: { expectStatus?: number[]; timeoutMs?: number }) => Promise<{ ok: boolean; status: number | null; error: string | null }>;
@@ -55,6 +56,9 @@ export interface Ctx {
   // in daemon.ts — the observer's auto-mount uses it; null in tests/dev that
   // never wire it (auto-mount then skips quietly).
   devices?: DeviceMountService | null;
+  // Per-app kernel sealing (fscrypt). Fake no-op in tests/dev; root helpers
+  // on a live host. Never null after daemon wiring (defaults to fake).
+  crypto?: CryptoProvider | null;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

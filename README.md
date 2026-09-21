@@ -58,7 +58,8 @@ actually use (password + two-factor, tailnet, domains, storage picker, appearanc
 
 ## Status
 
-Harbor is a **trusted local preview** (v0.12.5): one administrator, one daemon with Docker
-authority. It is not a hardened multi-user service. See
-[what's deliberately not built](docs/FUTURE.md) and the [evidence log](docs/VERIFICATION.md)
-for what was actually verified, where, and how.
+Harbor is a **beta preview** (v0.17.0-beta.1): one administrator, one daemon with Docker
+authority. It is not a hardened multi-user service. After a reboot, encrypted apps stay locked
+(and down) until the first console login — see the [operator guide](docs/OPERATOR_GUIDE.md)
+§4a2. See [what's deliberately not built](docs/FUTURE.md) and the
+[evidence log](docs/VERIFICATION.md) for what was actually verified, where, and how.

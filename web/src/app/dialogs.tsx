@@ -805,6 +805,39 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
   );
 }
 
+export function UnlockForm({ inst, busy, onUnlocked, onError }: { inst: InstanceSummary; busy: boolean; onUnlocked: () => void; onError: (m: string | null) => void }) {
+  const [pass, setPass] = useState('');
+  const [show, setShow] = useState(false);
+  const [working, setWorking] = useState(false);
+  return (
+    <form
+      className="row wrap"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!pass || working) return;
+        setWorking(true);
+        onError(null);
+        void api
+          .unlockApp(inst.id, pass)
+          .then(() => {
+            setPass('');
+            onUnlocked();
+          })
+          .catch((err: Error) => onError(err.message))
+          .finally(() => setWorking(false));
+      }}
+    >
+      <input value={pass} onChange={(e) => setPass(e.target.value)} type={show ? 'text' : 'password'} autoComplete="current-password" aria-label={`Encryption passphrase for ${inst.name}`} placeholder="App passphrase or 12-word recovery key" />
+      <button className="btn ghost" type="button" onClick={() => setShow(!show)} aria-label={show ? 'Hide passphrase' : 'Show passphrase'}>
+        {show ? 'Hide' : 'Show'}
+      </button>
+      <button className="btn primary" type="submit" disabled={busy || working || !pass} aria-label={`Unlock ${inst.name}`}>
+        {working ? 'Unlocking…' : 'Unlock'}
+      </button>
+    </form>
+  );
+}
+
 export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void }) {
   const upd = inst.updateAvailable;
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
@@ -859,10 +892,21 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
               {home!.defaultKey ? (
                 <>This machine cannot read it yet — log in again to unlock it silently.</>
               ) : (
-                <>This machine cannot read it yet — log in again to unlock with this machine&apos;s key, or adopt it with the app passphrase on a new machine.</>
+                <>Type the app passphrase (or the 12-word recovery key) to unlock it for this boot. A reboot locks it again.</>
               )}
             </p>
           </div>
+          {!home!.defaultKey && (
+            <UnlockForm
+              inst={inst}
+              busy={busy}
+              onUnlocked={() => {
+                setError(null);
+                void api.instance(inst.id).then(setDetail, (e: Error) => setError(e.message));
+              }}
+              onError={setError}
+            />
+          )}
         </div>
       )}
       {need && !retained && (
@@ -1067,8 +1111,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
   );
 }
 
-function humanSummary(plan: PlanDto, n: string): string {
-  switch (plan.kind) {
+function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
     case 'install':
       return plan.location
         ? `Harbor will install ${n} encrypted at ${plan.location.dir}. It usually takes a minute or two (the first time includes downloading the app).`

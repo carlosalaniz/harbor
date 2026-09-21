@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -75,8 +75,10 @@ function planSummary(p: PlanDto): string {
 function operationSummary(o: OperationDto): string {
   const lines = [`Operation ${o.id}: ${o.kind} ${o.state} (${o.phase})`];
   const creds = o.result?.['credentials'] as { username: string; password: string } | undefined;
+  const recoveryKey = typeof o.result?.['recoveryKey'] === 'string' ? (o.result['recoveryKey'] as string) : null;
   if (o.result?.['url']) lines.push(`  Address: ${String(o.result['url'])} (${String(o.result['exposureState'] ?? '')})`);
   if (creds) lines.push(`  Basic-auth credentials (shown once, retained as an instance secret): ${creds.username} / ${creds.password}`);
+  if (recoveryKey) lines.push(`  Recovery key (shown once — write down these 12 words): ${recoveryKey}`);
   if (o.error) lines.push(`  ${o.error.code}: ${o.error.message}`, `  Next: ${o.error.nextAction}`);
   for (const e of o.events.slice(-12)) lines.push(`  ${e.at} ${e.phase.padEnd(12)} ${e.message}`);
   return lines.join('\n');
@@ -476,12 +478,46 @@ for (const kind of ['start', 'stop', 'remove', 'reinstall'] as const) {
     )
     .option('--yes', 'approve without prompting', false)
     .option('--no-wait', 'return after submission')
-    .action(async (ref: string, opts: { yes: boolean; wait: boolean }) => {
+    .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (for starting a locked app)', false)
+    .action(async (ref: string, opts: { yes: boolean; wait: boolean; passphraseStdin?: boolean }) => {
       const api = client();
       const plan = await createPlan(api, kind, ref);
-      await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+      // A locked custom app refuses the start plan with INVALID_STATE; retry
+      // with the passphrase so `harbor start immich` just works after a prompt.
+      let passphrase: string | undefined;
+      try {
+        await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+        return;
+      } catch (e) {
+        if (kind !== 'start' || !HarborError.is(e, 'INVALID_STATE') || !/is locked/.test(e.message)) throw e;
+        passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : await promptHidden('App passphrase (or 12-word recovery key): ');
+      }
+      const retry = await createPlan(api, kind, ref);
+      await approveAndApply(api, retry, { yes: true, wait: opts.wait, passphrase });
     });
 }
+
+program
+  .command('unlock <instance>')
+  .description('unlock one encrypted app for this boot (a reboot locks it again)')
+  .option('--passphrase-stdin', 'read the app passphrase from stdin', false)
+  .action(async (ref: string, opts: { passphraseStdin?: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : await promptHidden('App passphrase (or 12-word recovery key): ');
+    const r = await api.post<InstanceSummary>(`/v1/instances/${inst.id}/unlock`, { passphrase });
+    out(r, () => `${r.displayName ?? r.name} unlocked for this boot.`);
+  });
+
+program
+  .command('lock <instance>')
+  .description('lock one encrypted app again (drop this boot\'s key)')
+  .action(async (ref: string) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const r = await api.post<InstanceSummary>(`/v1/instances/${inst.id}/lock`, {});
+    out(r, () => `${r.displayName ?? r.name} locked.`);
+  });
 
 program
   .command('operation <id>')
@@ -814,6 +850,29 @@ program
     if (!live) process.exitCode = 4;
   });
 
+program
+  .command('diagnostics')
+  .description('print a redacted diagnostics bundle for bug reports (versions, host facts, app states, disks, log tail; no secrets)')
+  .action(async () => {
+    const api = client();
+    const d = await api.get<DiagnosticsDto>('/v1/system/diagnostics');
+    const gib = (n: number | null) => (n === null ? '-' : `${(n / 1024 ** 3).toFixed(1)} GiB`);
+    out(d, () =>
+      [
+        `Harbor ${d.version} (${d.installationId}) on ${d.host.hostname} — ${d.host.os} ${d.host.arch}${d.host.cpuModel ? ` (${d.host.cpuModel})` : ''}`,
+        `Docker: ${d.docker.available ? `available (${d.docker.version})` : `unavailable (${d.docker.error ?? 'no observation yet'})`} observed ${d.docker.observedAt ?? '-'}`,
+        `Update: ${d.update.available ? `available (${d.update.latest})` : 'up to date'} checked ${d.update.checkedAt ?? 'never'}${d.update.error ? ` (error: ${d.update.error})` : ''}`,
+        `Counts: ${d.counts.instances} app(s), ${d.counts.exposures} exposure(s), ${d.counts.domains} domain(s), ${d.counts.packageSources} source(s), ${d.counts.notificationsUnread} unread notification(s)`,
+        ...d.instances.map((i) => `  app ${i.name} (${i.packageId}@${i.revision}): ${i.installState}/${i.desired}/${i.runtime}/${i.readiness}${i.needsDrive ? ` NEEDS DRIVE ${i.needsDrive}` : ''}${i.home ? ` home ${i.home}` : ''}${i.updateAvailable ? ` update -> ${i.updateAvailable}` : ''}`),
+        ...d.exposures.map((e) => `  exposure ${e.instanceName}/${e.endpointId} via ${e.via}: ${e.state}${e.isPrimary ? ' (primary)' : ''}`),
+        ...d.mounts.map((m) => `  disk ${m.mountpoint} ${m.fsType}: used ${gib(m.usedBytes)} of ${gib(m.totalBytes)}`),
+        ...d.devices.map((x) => `  device ${x.name} ${x.size}: ${x.mounted ? `mounted at ${x.mountpoint}` : 'not mounted'}${x.fsType ? ` (${x.fsType})` : ''}`),
+        `-- log tail (${d.logTail.source}, last ${d.logTail.lines.length} lines) --`,
+        ...d.logTail.lines.slice(-30),
+      ].join('\n'),
+    );
+  });
+
 // ---------------- bootstrap (root, Linux host)
 
 program
@@ -1013,10 +1072,10 @@ program
 
 program
   .command('device-dispatch <spec>')
-  .description('ROOT, run by harbor-device-mount@.service: dispatch "<name>:mount", "<name>:unmount" or "<name>:format" to the right root step')
+  .description('ROOT, run by harbor-device-mount@.service: dispatch "<name>:mount", "<name>:unmount", "<name>:format" or "<name>:crypto-setup" to the right root step')
   .action(async (spec: string) => {
-    const m = /^([a-z]+[0-9]+):(mount|unmount|format)$/.exec(spec);
-    if (!m) throw new HarborError('INVALID_REQUEST', `device-dispatch expects <name>:<mount|unmount|format>, got ${spec}`);
+    const m = /^([a-z]+[0-9]+):(mount|unmount|format|crypto-setup)$/.exec(spec);
+    if (!m) throw new HarborError('INVALID_REQUEST', `device-dispatch expects <name>:<mount|unmount|format|crypto-setup>, got ${spec}`);
     const name = m[1]!;
     const action = m[2]!;
     const log = (msg: string) => process.stderr.write(`[device-${action}] ${msg}\n`);
@@ -1025,8 +1084,138 @@ program
       await applyDeviceFormat(name, log);
       return;
     }
+    if (action === 'crypto-setup') {
+      const { applyDeviceCryptoSetup } = await import('../bootstrap/device-crypto-apply.js');
+      await applyDeviceCryptoSetup(name, log);
+      return;
+    }
     const { applyDeviceMount } = await import('../bootstrap/device-mount-apply.js');
     await applyDeviceMount(name, action as 'mount' | 'unmount', log);
+  });
+
+program
+  .command('device-crypto-setup <name>')
+  .description('ROOT, run by harbor-device-mount@<name>:crypto-setup.service: set up fscrypt metadata on a mounted drive')
+  .action(async (name: string) => {
+    if (!/^[a-z]+[0-9]+$/.test(name)) throw new HarborError('INVALID_REQUEST', `device-crypto-setup expects a device name like sdb1, got ${name}`);
+    const { applyDeviceCryptoSetup } = await import('../bootstrap/device-crypto-apply.js');
+    await applyDeviceCryptoSetup(name, (msg) => process.stderr.write(`[device-crypto-setup] ${msg}\n`));
+  });
+
+program
+  .command('app-seal <home> <protector>')
+  .description('ROOT: seal one app volumes dir with its master key from stdin (hex, 64 chars)')
+  .action(async (home: string, protector: string) => {
+    const hex = (await readStdinAll()).trim();
+    const { applyAppSeal } = await import('../bootstrap/device-crypto-apply.js');
+    await applyAppSeal(home, hex, protector, (msg) => process.stderr.write(`[app-seal] ${msg}\n`));
+  });
+
+program
+  .command('app-unlock <home>')
+  .description('ROOT: unlock one app volumes dir with its master key from stdin (hex, 64 chars)')
+  .action(async (home: string) => {
+    const hex = (await readStdinAll()).trim();
+    const { applyAppUnlock } = await import('../bootstrap/device-crypto-apply.js');
+    await applyAppUnlock(home, hex, (msg) => process.stderr.write(`[app-unlock] ${msg}\n`));
+  });
+
+program
+  .command('app-lock <home>')
+  .description('ROOT: lock one app volumes dir (ciphertext until next unlock)')
+  .action(async (home: string) => {
+    const { applyAppLock } = await import('../bootstrap/device-crypto-apply.js');
+    await applyAppLock(home, (msg) => process.stderr.write(`[app-lock] ${msg}\n`));
+  });
+
+// ---------------- recovery bundle (local maintenance, daemon stopped)
+//
+// The bundle is Harbor-owned state + recovery secrets only (the spec's
+// preserved backup boundary): the state DB with its WAL sidecars, per-instance
+// secrets + release snapshots, uploaded packages, and app-home manifests
+// (envelopes — the vault payload travels on the drive). Application data
+// volumes are never included; the operator guide says so out loud.
+const recoveryCmd = program.command('recovery').description('disaster recovery: export or import a passphrase-wrapped bundle of Harbor state (daemon stopped)');
+recoveryCmd
+  .command('export')
+  .description('write a passphrase-wrapped recovery file (state DB, secrets, releases, uploaded packages, app-home envelopes)')
+  .requiredOption('--config <file>', 'daemon config JSON (usually /etc/harbor/harbor.json)')
+  .requiredOption('--file <path>', 'where to write the .harbor-recovery file')
+  .option('--passphrase-stdin', 'read the recovery passphrase from stdin (protected pipe only)', false)
+  .action(async (opts: { config: string; file: string; passphraseStdin?: boolean }) => {
+    const cfg = loadConfig(opts.config);
+    let passphrase: string;
+    if (opts.passphraseStdin) passphrase = (await readStdinAll()).replace(/\r?\n$/, '');
+    else {
+      passphrase = await promptHidden('Recovery passphrase (min 8 chars, write it down): ');
+      const again = await promptHidden('Repeat recovery passphrase: ');
+      if (passphrase !== again) throw new HarborError('INVALID_REQUEST', 'the two recovery passphrases differ');
+    }
+    const { acquireLock } = await import('../state/lock.js');
+    const { addAppHomeManifests, collectRecoveryFiles, sealRecoveryBundle } = await import('../storage/recovery-bundle.js');
+    const lock = acquireLock(cfg.stateDir, 'recovery-export');
+    try {
+      const files = collectRecoveryFiles(cfg.stateDir);
+      // App-home manifests: every adopted home recorded in state contributes
+      // its envelope (the vault payload itself travels on the drive).
+      const { openState } = await import('../state/db.js');
+      const { Repo } = await import('../state/repo.js');
+      const { systemClock } = await import('../util.js');
+      const db = openState(cfg.stateDir, { readonly: true });
+      try {
+        const repo = new Repo(db, systemClock);
+        const { existsSync: exists, readFileSync: read } = await import('node:fs');
+        const homes: { home: string; manifest: Buffer }[] = [];
+        for (const inst of repo.listInstances()) {
+          const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+          if (!home) continue;
+          const manifestFile = `${home.name}/manifest.json`;
+          if (exists(manifestFile)) homes.push({ home: home.name, manifest: read(manifestFile) });
+        }
+        addAppHomeManifests(files, homes);
+      } finally {
+        db.close();
+      }
+      const bundle = await sealRecoveryBundle(files, passphrase);
+      passphrase = '';
+      const { mkdirSync: mkdir, writeFileSync: write } = await import('node:fs');
+      const { default: path } = await import('node:path');
+      mkdir(path.dirname(path.resolve(opts.file)), { recursive: true });
+      write(opts.file, bundle, { mode: 0o600 });
+      const instances = new Set([...files.keys()].filter((k) => k.startsWith('instances/')).map((k) => k.split('/')[1]));
+      const secrets = [...files.keys()].filter((k) => k.includes('/secrets/')).length;
+      const appHomes = [...files.keys()].filter((k) => k.startsWith('app-homes/')).length;
+      out({ file: opts.file, bytes: bundle.length, instances: instances.size, secrets, appHomes }, () => `Recovery bundle written to ${opts.file} (${(bundle.length / 1024).toFixed(1)} KiB, ${instances.size} app(s), ${secrets} secret(s), ${appHomes} app-home envelope(s)).\nStore it somewhere that is not this machine, with the passphrase. Without the passphrase it is unreadable.`);
+    } finally {
+      lock.release();
+    }
+  });
+recoveryCmd
+  .command('import')
+  .description('restore a recovery file over a FRESH state dir (refuses to overwrite existing state; daemon stopped)')
+  .requiredOption('--config <file>', 'daemon config JSON pointing at the fresh state dir')
+  .requiredOption('--file <path>', 'the .harbor-recovery file written by `harbor recovery export`')
+  .option('--passphrase-stdin', 'read the recovery passphrase from stdin (protected pipe only)', false)
+  .action(async (opts: { config: string; file: string; passphraseStdin?: boolean }) => {
+    const cfg = loadConfig(opts.config);
+    const passphrase = opts.passphraseStdin ? (await readStdinAll()).replace(/\r?\n$/, '') : await promptHidden('Recovery passphrase: ');
+    const { readFileSync: read } = await import('node:fs');
+    let bytes: Buffer;
+    try {
+      bytes = read(opts.file);
+    } catch {
+      throw new HarborError('DATA_MISSING', `cannot read recovery file ${opts.file}`);
+    }
+    const { acquireLock } = await import('../state/lock.js');
+    const { openRecoveryBundle, restoreRecoveryFiles } = await import('../storage/recovery-bundle.js');
+    const lock = acquireLock(cfg.stateDir, 'recovery-import');
+    try {
+      const files = await openRecoveryBundle(bytes, passphrase);
+      const r = restoreRecoveryFiles(cfg.stateDir, files);
+      out({ stateDir: cfg.stateDir, ...r }, () => `Restored state into ${cfg.stateDir} (${r.instances} app(s), ${r.secrets} secret(s), ${r.appHomes} app-home envelope(s)).\nNext: re-insert the drives that hold your apps (adopt each with its passphrase), then start the daemon and log in.`);
+    } finally {
+      lock.release();
+    }
   });
 
 function selfUpdateText(s: SelfUpdateStatusDto): string {
@@ -1054,8 +1243,14 @@ program
   .option('--username <name>')
   .option('--password-stdin', 'read the password from stdin (protected pipe only)')
   .option('--reset', 'replace existing credentials and revoke all sessions', false)
-  .action(async (opts: { config: string; username?: string; passwordStdin?: boolean; reset: boolean }) => {
+  .option('--i-understand-data-loss', 'required with --reset: data-folder apps lose silent unlock until their own passphrases are used', false)
+  .action(async (opts: { config: string; username?: string; passwordStdin?: boolean; reset: boolean; iUnderstandDataLoss?: boolean }) => {
     const cfg = loadConfig(opts.config);
+    if (opts.reset && !opts.iUnderstandDataLoss) {
+      throw new HarborError('INVALID_REQUEST', 'enroll --reset destroys the sealed machine key: data-folder apps lose silent unlock until each is unlocked with its own passphrase', {
+        nextAction: 'Export a recovery bundle first (`harbor recovery export --config <file> --file <out>`), then re-run with --i-understand-data-loss.',
+      });
+    }
     const username = opts.username ?? (await promptVisible('Administrator username: '));
     let password: string;
     if (opts.passwordStdin) password = await readStdinAll();
@@ -1065,7 +1260,10 @@ program
       if (password !== again) throw new HarborError('INVALID_REQUEST', 'passwords do not match');
     }
     const r = await enrollAdministrator(cfg, username, password, { reset: opts.reset });
-    out({ username, created: r.created, revokedSessions: r.revokedSessions }, () => `${r.created ? 'Enrolled' : 'Reset'} administrator ${username}${r.revokedSessions ? ` (revoked ${r.revokedSessions} session(s))` : ''}.`);
+    out({ username, created: r.created, revokedSessions: r.revokedSessions }, () => {
+      const base = `${r.created ? 'Enrolled' : 'Reset'} administrator ${username}${r.revokedSessions ? ` (revoked ${r.revokedSessions} session(s))` : ''}.`;
+      return r.sealedDestroyed ? `${base}\nWARNING: the sealed machine key was destroyed. Data-folder apps stay locked until each is unlocked with its own passphrase or recovery key.` : base;
+    });
   });
 
 program.addOption(new Option('--no-color').hideHelp());

@@ -549,6 +549,42 @@ const DONE: Record<string, string> = { install: 'is ready', start: 'is running a
 const PHASE: Record<string, string> = { rollback: 'putting the previous version back', purging: 'deleting its data', queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
 
 // Bottom-right operation tray: progress while running, one-shot result (with credentials) when done.
+function RecoveryCard({ words, note, onDismiss }: { words: string; note: string | null; onDismiss: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [acked, setAcked] = useState(false);
+  return (
+    <div className="recovery-card" role="alert">
+      <p>
+        <strong>Write down these 12 words.</strong> {note ?? 'They unlock this app if the passphrase is forgotten.'} Harbor never shows them again.
+      </p>
+      <p className="recovery-words">
+        <code>{words}</code>{' '}
+        <button
+          className="btn ghost small"
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(words).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            );
+          }}
+          aria-label="Copy recovery key"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </p>
+      <label className="row small">
+        <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} aria-label="I wrote down the recovery key" /> I wrote it down
+      </label>
+      <div className="row end">
+        <button className="btn primary small" type="button" disabled={!acked} onClick={onDismiss} aria-label="Dismiss recovery key" title={acked ? undefined : 'Confirm you wrote it down first'}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
   const op = c.watching ?? c.lastDone;
   const inst = op ? c.data.instances.find((i) => i.id === op.instanceId) : undefined;
@@ -564,6 +600,8 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
   if (!op) return null;
   const final = isFinal(op);
   const creds = op.result?.['credentials'] as { username: string; password: string } | undefined;
+  const recoveryKey = typeof op.result?.['recoveryKey'] === 'string' ? (op.result['recoveryKey'] as string) : null;
+  const recoveryNote = typeof op.result?.['recoveryNote'] === 'string' ? (op.result['recoveryNote'] as string) : null;
   const who = inst ? (inst.displayName ?? (inst.name === inst.packageId ? inst.packageName : `${inst.packageName} (${inst.name})`)) : 'the app';
   const title =
     op.state === 'succeeded'
@@ -621,6 +659,9 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
         <p className="warn">
           Basic-auth credentials, shown once (kept as an instance secret): <code>{creds.username}</code> / <code>{creds.password}</code>
         </p>
+      )}
+      {recoveryKey && (
+        <RecoveryCard words={recoveryKey} note={recoveryNote} onDismiss={c.dismiss} />
       )}
       {op.error && (
         <p className="error">

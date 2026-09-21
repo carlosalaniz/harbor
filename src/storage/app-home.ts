@@ -24,10 +24,12 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { UUID_RE } from '../contracts/patterns.js';
 import { normalizeHostPath } from './host-path.js';
+import { RECOVERY_WORDS } from './recovery-words.js';
 
-export const APP_HOME_FORMAT = 1;
+export const APP_HOME_FORMAT = 2;
 export const APP_HOME_MANIFEST = 'manifest.json';
 export const APP_HOME_VAULT = 'vault';
+export const RECOVERY_WORD_COUNT = 12;
 
 // Keep in step with src/auth/password.ts SCRYPT_PARAMS (duplicated, not
 // imported, so the on-disk envelope stays stable if login tuning changes).
@@ -60,7 +62,12 @@ export interface AppHomeManifest {
   // creation, travels with the folder on restore/replacement.
   driveId: string;
   vault: string; // encrypted payload directory name (relative, single segment)
-  encryption: { algorithm: 'aes-256-gcm'; passphrase: AppHomeScryptEnvelope };
+  // Format 2 (dual-key): the same master key wrapped twice — once under the
+  // changeable operator passphrase, once under an immutable 12-word recovery
+  // key shown once at install. Either unwraps. Format 1 homes carry only
+  // `passphrase` and read fine (unlock tries it); change only touches
+  // `passphrase`, never `recovery`.
+  encryption: { algorithm: 'aes-256-gcm'; passphrase: AppHomeScryptEnvelope; recovery?: AppHomeScryptEnvelope };
 }
 
 export interface AppHomeDescriptor {
@@ -119,7 +126,7 @@ function parseManifest(raw: Buffer): AppHomeManifest {
     });
   }
   const m = doc as Record<string, unknown>;
-  if (m['format'] !== APP_HOME_FORMAT) {
+  if (m['format'] !== APP_HOME_FORMAT && m['format'] !== 1) {
     throw new HarborError('INVALID_PACKAGE', `app home format ${String(m['format'])} is not supported (this Harbor reads format ${APP_HOME_FORMAT})`, {
       nextAction: 'Update Harbor to a version that understands this app home, then try again.',
     });
@@ -161,6 +168,27 @@ function parseManifest(raw: Buffer): AppHomeManifest {
   unhex(env['nonce'] as string, 'encryption.nonce');
   unhex(env['wrappedKey'] as string, 'encryption.wrappedKey');
   unhex(env['tag'] as string, 'encryption.tag');
+  // Format 2 recovery envelope (optional; absent on format 1 homes). When
+  // present it must be well-formed too.
+  if (enc['recovery'] !== undefined) {
+    if (typeof enc['recovery'] !== 'object' || enc['recovery'] === null) {
+      throw new HarborError('INVALID_PACKAGE', 'app home manifest.json has an unsupported encryption envelope', {
+        nextAction: 'Update Harbor to a version that understands this app home, then try again.',
+      });
+    }
+    const rec = enc['recovery'] as Record<string, unknown>;
+    for (const f of ['salt', 'nonce', 'wrappedKey', 'tag'] as const) {
+      if (typeof rec[f] !== 'string' || (rec[f] as string).length === 0) {
+        throw new HarborError('INVALID_PACKAGE', `app home manifest.json is missing encryption.recovery.${f}`, {
+          nextAction: 'This folder is not a Harbor app home Harbor can read. Adopt the drive it came from, or restore the folder from backup.',
+        });
+      }
+    }
+    unhex(rec['salt'] as string, 'encryption.recovery.salt');
+    unhex(rec['nonce'] as string, 'encryption.recovery.nonce');
+    unhex(rec['wrappedKey'] as string, 'encryption.recovery.wrappedKey');
+    unhex(rec['tag'] as string, 'encryption.recovery.tag');
+  }
   return manifest;
 }
 
@@ -216,10 +244,39 @@ export interface CreateAppHomeInput {
   now?: Date;
 }
 
+export interface CreatedAppHome {
+  descriptor: AppHomeDescriptor;
+  masterKey: Buffer;
+  // The 12-word recovery key (space-joined), returned once at creation.
+  // The server shows it once and never stores it; the operator writes it
+  // down. Either the passphrase or this key unwraps the master key.
+  recoveryKey: string;
+}
+
+// 12 words from the vendored BIP-39 list (132 bits of entropy: 12 × 11).
+// Generated with crypto randomness; validated against the list on unlock
+// implicitly (a wrong key simply fails authentication).
+export function generateRecoveryKey(): string {
+  const words: string[] = [];
+  for (let i = 0; i < RECOVERY_WORD_COUNT; i++) {
+    words.push(RECOVERY_WORDS[randomBytes(2).readUInt16BE(0) % RECOVERY_WORDS.length]!);
+  }
+  return words.join(' ');
+}
+
+function checkRecoveryKey(key: string): void {
+  if (typeof key !== 'string') throw new HarborError('INVALID_REQUEST', 'recovery key must be 12 words');
+  const words = key.trim().split(/\s+/);
+  if (words.length !== RECOVERY_WORD_COUNT || words.some((w) => !RECOVERY_WORDS.includes(w))) {
+    throw new HarborError('INVALID_REQUEST', 'recovery key must be the 12 words shown at install');
+  }
+}
+
 // Create a new app home: <parentDir>/<name>/{manifest.json, vault/}. Returns
 // the descriptor plus the master key (the caller stores the machine wrapping
-// in Harbor state; the key buffer is zeroed after the caller copies it).
-export async function createAppHome(input: CreateAppHomeInput): Promise<{ descriptor: AppHomeDescriptor; masterKey: Buffer }> {
+// in Harbor state; the key buffer is zeroed after the caller copies it) plus
+// the one-time recovery key (the caller shows it once, never stores it).
+export async function createAppHome(input: CreateAppHomeInput): Promise<CreatedAppHome> {
   const parent = normalizeHostPath(input.parentDir);
   const name = validateName(input.name, 'app folder name');
   if (!UUID_RE.test(input.instanceId)) throw new HarborError('INVALID_REQUEST', `invalid instance id ${input.instanceId}`);
@@ -237,8 +294,13 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<{ descri
   // Default-key homes (no passphrase): wrap a Harbor-generated secret the
   // operator never sees. Same envelope shape, so unlock/adopt code paths are
   // unchanged — only the operator cannot reproduce the secret elsewhere.
+  // Every home (default or custom) also gets an immutable recovery envelope
+  // so a forgotten passphrase or a destroyed machine key never means lost
+  // data — the 12 words shown once at install always unwrap.
   const effectivePassphrase = input.passphrase ?? `harbor-default-key ${randomBytes(32).toString('hex')}`;
   const envelope = await wrapMasterKey(masterKey, effectivePassphrase);
+  const recoveryKey = generateRecoveryKey();
+  const recoveryEnvelope = await wrapMasterKey(masterKey, recoveryKey);
   const now = input.now ?? new Date();
   const manifest: AppHomeManifest = {
     format: APP_HOME_FORMAT,
@@ -250,7 +312,7 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<{ descri
     harborVersion: input.harborVersion,
     driveId: randomBytes(16).toString('hex'),
     vault: APP_HOME_VAULT,
-    encryption: { algorithm: 'aes-256-gcm', passphrase: envelope },
+    encryption: { algorithm: 'aes-256-gcm', passphrase: envelope, recovery: recoveryEnvelope },
   };
   mkdirSync(home, { recursive: false, mode: 0o700 });
   try {
@@ -259,7 +321,7 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<{ descri
   } catch (e) {
     throw new HarborError('STATE_UNAVAILABLE', `cannot create app home ${home}: ${(e as Error).message}`);
   }
-  return { descriptor: { home, manifest }, masterKey };
+  return { descriptor: { home, manifest }, masterKey, recoveryKey };
 }
 
 // Read the plaintext descriptor of an app home. Works while locked: this is
@@ -301,22 +363,70 @@ export function describeAppHome(home: string): AppHomeDescriptor {
   return { home: norm, manifest };
 }
 
-// Unlock: derive the master key from the operator passphrase. Throws
-// INVALID_REQUEST on a wrong passphrase. The caller zeroes the key when done.
+// Unlock: derive the master key from the operator passphrase OR the
+// 12-word recovery key (either unwraps; wrong values throw INVALID_REQUEST).
+// The caller zeroes the key when done.
 export async function unlockAppHome(home: string, passphrase: string): Promise<Buffer> {
   const { manifest } = describeAppHome(home);
-  return unwrapMasterKey(manifest.encryption.passphrase, passphrase);
+  try {
+    return await unwrapMasterKey(manifest.encryption.passphrase, passphrase);
+  } catch (e) {
+    const recovery = manifest.encryption.recovery;
+    if (recovery && HarborError.is(e, 'INVALID_REQUEST')) {
+      try {
+        return await unwrapMasterKey(recovery, passphrase);
+      } catch {
+        // fall through to the passphrase error below (single error shape)
+      }
+    }
+    throw e;
+  }
 }
 
-// Change the passphrase (re-wrap the same master key). The old passphrase must
-// unlock first; the manifest is rewritten atomically in place.
-export async function changeAppHomePassphrase(home: string, oldPassphrase: string, newPassphrase: string): Promise<void> {
+// Change the passphrase (re-wrap the same master key). The old passphrase OR
+// the recovery key must unlock first; the manifest is rewritten atomically in
+// place. The recovery envelope is immutable: it is carried over untouched so
+// the 12 words shown at install keep working after every password change.
+// Returns the fresh recovery key when a format 1 home gains one (null
+// otherwise) so the caller can show it once.
+export async function changeAppHomePassphrase(home: string, oldPassphrase: string, newPassphrase: string): Promise<{ recoveryKey: string | null }> {
   const norm = normalizeHostPath(home);
   const { manifest } = describeAppHome(norm);
-  const masterKey = await unwrapMasterKey(manifest.encryption.passphrase, oldPassphrase);
+  const masterKey = await unlockAppHome(norm, oldPassphrase);
   try {
     manifest.encryption.passphrase = await wrapMasterKey(masterKey, newPassphrase);
+    // Format 1 homes gain the recovery envelope on first password change:
+    // without it a forgotten passphrase is unrecoverable.
+    let recoveryKey: string | null = null;
+    if (!manifest.encryption.recovery) {
+      recoveryKey = generateRecoveryKey();
+      manifest.encryption.recovery = await wrapMasterKey(masterKey, recoveryKey);
+    }
+    manifest.format = APP_HOME_FORMAT;
     writeManifest(norm, manifest);
+    return { recoveryKey };
+  } finally {
+    masterKey.fill(0);
+  }
+}
+
+// Rotate to a fresh recovery key (old recovery key required, e.g. after a
+// suspected leak). Returns the new 12 words, shown once. The passphrase
+// envelope is untouched.
+export async function rotateAppHomeRecoveryKey(home: string, recoveryKey: string): Promise<string> {
+  checkRecoveryKey(recoveryKey);
+  const norm = normalizeHostPath(home);
+  const { manifest } = describeAppHome(norm);
+  if (!manifest.encryption.recovery) throw new HarborError('INVALID_REQUEST', 'this app home has no recovery key yet', {
+    nextAction: 'Change the passphrase once to issue one, then rotate it.',
+  });
+  const masterKey = await unwrapMasterKey(manifest.encryption.recovery, recoveryKey);
+  try {
+    const next = generateRecoveryKey();
+    manifest.encryption.recovery = await wrapMasterKey(masterKey, next);
+    manifest.format = APP_HOME_FORMAT;
+    writeManifest(norm, manifest);
+    return next;
   } finally {
     masterKey.fill(0);
   }

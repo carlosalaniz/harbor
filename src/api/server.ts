@@ -296,6 +296,20 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     { preHandler: requireAuth, schema: { description: 'Accept the folder at the recorded path as the new home for one storage claim (replacement drive or restored backup): stamps a fresh app-generated identity. The app must be stopped first.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] }, body: { type: 'object', additionalProperties: false, required: ['storageId'], properties: { storageId: { type: 'string', minLength: 1, maxLength: 64 } } } } },
     async (req) => service.adoptDrive((req.params as { id: string }).id, (req.body as { storageId: string }).storageId, req.actor!),
   );
+  // --- per-app lock (custom-passphrase homes): unlock for this boot, lock again.
+  // The passphrase travels in the body, is verified once, and is never stored
+  // (the key lives in memory until lock/reboot). Default-key homes unlock
+  // silently at login and refuse here with a next action.
+  app.post(
+    '/v1/instances/:id/unlock',
+    { preHandler: requireAuth, schema: { description: 'Unlock one encrypted app for this boot with its encryption passphrase (or 12-word recovery key). A reboot returns it to locked.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] }, body: { type: 'object', additionalProperties: false, required: ['passphrase'], properties: { passphrase: { type: 'string', minLength: 1, maxLength: 1024 } } } } },
+    async (req) => service.unlockApp((req.params as { id: string }).id, (req.body as { passphrase: string }).passphrase),
+  );
+  app.post(
+    '/v1/instances/:id/lock',
+    { preHandler: requireAuth, schema: { description: 'Lock one encrypted app again (drop this boot\'s key; running containers keep running until stopped).', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] } } },
+    async (req) => service.lockAppApi((req.params as { id: string }).id),
+  );
 
   // --- git package sources (decision 80)
   app.get('/v1/package-sources', { preHandler: requireAuth, schema: { description: 'Git repositories Harbor watches as app sources.' } }, async () => ({ items: service.packageSources() }));
@@ -400,6 +414,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     { preHandler: requireAuth, schema: { description: "Harbor's own recent log lines (systemd journal on a real host).", querystring: { type: 'object', additionalProperties: false, properties: { lines: { type: 'string', pattern: '^([1-9][0-9]|[1-9][0-9]{2}|1[0-9]{3}|2000)$' } } } } },
     async (req) => service.harborLogs(Number((req.query as { lines?: string }).lines ?? 300)),
   );
+  app.get('/v1/system/diagnostics', { preHandler: requireAuth, schema: { description: 'Redacted diagnostics bundle for bug reports (versions, host facts, instance states, disks, log tail; no secrets).' } }, async () => service.diagnostics());
   app.get(
     '/v1/instances/:id/logs',
     { preHandler: requireAuth, schema: { description: 'Recent container logs of one app.', params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } }, querystring: { type: 'object', additionalProperties: false, properties: { lines: { type: 'string', pattern: '^([1-9][0-9]|[1-9][0-9]{2}|1[0-9]{3}|2000)$' } } } } },

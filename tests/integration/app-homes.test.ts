@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FoundAppDto, InstanceDetail, PlanDto } from '../../src/contracts/api.js';
+import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto } from '../../src/contracts/api.js';
 import { startHarness, type Harness } from './harness.js';
 
 // Whole-app install locations: the app (including its database) lives
@@ -104,6 +104,24 @@ describe('install to an encrypted app home', () => {
     // does not leak the key and the wrong passphrase fails at the API.
     const home = await driveHome();
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/found-apps/adopt', { home, passphrase: 'wrong passphrase here' });
+  });
+
+  it('a reboot returns the custom app to locked; unlock + start with the passphrase brings it back', async () => {
+    // BFU/AFU per-app lock: the ephemeral unlock lives in memory only, so a
+    // daemon restart (same DB, fresh process) must show locked again.
+    await h.restart();
+    const locked = (await h.api.instances()).find((i) => i.id === driveInstanceId)!;
+    expect(locked.home).toMatchObject({ encrypted: true, state: 'locked' });
+    // A locked start is refused at plan time so the drawer can prompt.
+    await h.api.expectError(422, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'stop', instanceId: driveInstanceId }).catch(() => {});
+    const unlocked = await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: PASS });
+    expect(unlocked.home).toMatchObject({ encrypted: true, state: 'unlocked' });
+    const relocked = await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/lock`, {});
+    expect(relocked.home).toMatchObject({ encrypted: true, state: 'locked' });
+    // Wrong passphrase never unlocks.
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: 'wrong passphrase here' });
+    // Right passphrase unlocks again for this boot.
+    await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: PASS });
   });
 });
 

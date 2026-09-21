@@ -130,6 +130,8 @@ const realApi = {
     call<{ operationId: string; created: boolean; operation: OperationDto }>('POST', '/v1/operations', passphrase ? { planId, passphrase } : { planId }, { 'idempotency-key': idempotencyKey }),
   foundApps: () => call<{ items: FoundAppDto[] }>('GET', '/v1/found-apps').then((r) => r.items),
   adoptFoundApp: (home: string, passphrase: string, name?: string) => call<InstanceSummary>('POST', '/v1/found-apps/adopt', name ? { home, passphrase, name } : { home, passphrase }),
+  unlockApp: (id: string, passphrase: string) => call<InstanceSummary>('POST', `/v1/instances/${id}/unlock`, { passphrase }),
+  lockApp: (id: string) => call<InstanceSummary>('POST', `/v1/instances/${id}/lock`, {}),
   operation: (id: string) => call<OperationDto>('GET', `/v1/operations/${id}`),
   // settings
   changePassword: (currentPassword: string, newPassword: string) => call<{ revokedSessions: number }>('PUT', '/v1/account/password', { currentPassword, newPassword }),

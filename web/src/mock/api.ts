@@ -210,6 +210,7 @@ export const mockApi = {
   submit: async (planId: string) => {
     await beat();
     const op = opFor('install', instances[0]!.id, planId);
+    op.result = { recoveryKey: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', recoveryNote: 'Mock recovery key: write down these 12 words in the real console.' };
     return { operationId: op.id, created: true, operation: op };
   },
   foundApps: async () => [
@@ -218,7 +219,17 @@ export const mockApi = {
   adoptFoundApp: async (home: string) => {
     await beat();
     const inst = instances[0]!;
-    return { ...inst, name: 'immich-2', home: { path: home, encrypted: true, state: 'unlocked' as const } };
+    return { ...inst, name: 'immich-2', home: { path: home, encrypted: true, state: 'locked' as const } };
+  },
+  unlockApp: async (id: string) => {
+    await beat();
+    const inst = instances.find((i) => i.id === id) ?? instances[0]!;
+    return { ...inst, home: inst.home ? { ...inst.home, state: 'unlocked' as const } : inst.home };
+  },
+  lockApp: async (id: string) => {
+    await beat();
+    const inst = instances.find((i) => i.id === id) ?? instances[0]!;
+    return { ...inst, home: inst.home ? { ...inst.home, state: 'locked' as const } : inst.home };
   },
   operation: async (id: string): Promise<OperationDto> => opFor('install', instances[0]!.id, id),
   changePassword: async () => {

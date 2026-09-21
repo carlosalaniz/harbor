@@ -102,7 +102,11 @@ export async function applyDeviceFormat(device: string, log: (m: string) => void
       }
     }
     if (!wiped) throw lastWipeErr;
-    await execOk('/usr/sbin/mkfs.ext4', ['-F', '-L', (found.label ?? device).slice(0, 16), found.device], { timeoutMs: 300_000 });
+    // -O encrypt: enable native directory encryption at format time so every
+    // app home's volumes dir can be sealed per-app with fscrypt (stage 4).
+    // Without the feature flag the filesystem can never hold encrypted dirs
+    // (tune2fs later is possible but riskier on a live mount).
+    await execOk('/usr/sbin/mkfs.ext4', ['-F', '-O', 'encrypt', '-L', (found.label ?? device).slice(0, 16), found.device], { timeoutMs: 300_000 });
     // Re-read the device so the mountpoint suggestion uses the fresh label.
     const fresh = listDevices().find((d) => d.name === device);
     const { suggestedMountpoint } = await import('../system/host-storage.js');
@@ -112,8 +116,17 @@ export async function applyDeviceFormat(device: string, log: (m: string) => void
     const uid = Number((await exec('/usr/bin/id', ['-u', PRODUCT.serviceUser])).stdout.trim());
     const gid = Number((await exec('/usr/bin/id', ['-g', PRODUCT.serviceUser])).stdout.trim());
     await execOk('/usr/bin/chown', [`${uid}:${gid}`, mp], { timeoutMs: 30_000 });
-    writeStatus(stateDir, device, 'formatted', `formatted as ext4 and mounted at ${mp}`, 'ext4', mp);
-    log(`formatted as ext4 and mounted at ${mp}`);
+    // fscrypt metadata dirs at the filesystem root (<mount>/.fscrypt): without
+    // them no directory on this drive can be sealed. Best-effort here (the
+    // install path re-runs setup anyway); a missing fscrypt binary never
+    // fails the format itself.
+    try {
+      await execOk('/usr/bin/fscrypt', ['setup', mp, '--quiet', '--all-users'], { timeoutMs: 60_000 });
+    } catch (e) {
+      log(`fscrypt setup on ${mp} did not run (${e instanceof Error ? e.message : String(e)}); installs will set it up`);
+    }
+    writeStatus(stateDir, device, 'formatted', `formatted as ext4 with encryption and mounted at ${mp}`, 'ext4', mp);
+    log(`formatted as ext4 with encryption and mounted at ${mp}`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     writeStatus(stateDir, device, 'failed', msg, null, found.mountpoint ?? null);

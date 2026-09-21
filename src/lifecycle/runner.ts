@@ -534,11 +534,12 @@ export class OperationRunner {
     const dirs = this.dirs(inst);
     writeReleaseSnapshot(dirs.release, pkg);
     this.event(op, 'preparing', `stored release snapshot for ${pkg.id} revision ${pkg.revision}`);
-    // Install-location: create the encrypted app home first (manifest + vault),
-    // then root every managed volume inside it. The passphrase arrives with the
-    // submission (never in the plan); the machine wrapping is stored on the
-    // instance resource so silent unlock works while this machine holds the key.
-    // Adopt path: createAppHomeForInstall reuses the pre-recorded home.
+    // Install-location: create the encrypted app home first (manifest +
+    // dual-key envelope), seal its volumes dir with fscrypt when the kernel
+    // supports it, then root every managed volume inside it. The passphrase
+    // arrives with the submission (never in the plan); default-key homes get
+    // a machine wrapping so silent unlock works while this machine holds the
+    // key. Adopt path: createAppHomeForInstall reuses the pre-recorded home.
     let homeDir: string | null = null;
     if (plan.proposal.location) {
       homeDir = await this.createAppHomeForInstall(op, plan, inst, pkg);
@@ -566,10 +567,12 @@ export class OperationRunner {
   }
 
   // Create the encrypted app home for an install-location install. Returns the
-  // home dir. Records a 'home' resource (the home itself) plus the machine
-  // wrapping of the master key, so this machine unlocks silently while AFU.
-  // Adopt plans skip creation (the home already exists) but still consume the
-  // pre-seeded secret so single-use semantics hold for every location plan.
+  // home dir. Records a 'home' resource (the home itself) plus, for
+  // default-key homes, the machine wrapping of the master key so this machine
+  // unlocks silently while AFU. Custom-passphrase homes get no wrapping (they
+  // stay locked until Start with the passphrase). Adopt plans skip creation
+  // (the home already exists) but still consume the pre-seeded secret so
+  // single-use semantics hold for every location plan.
   private async createAppHomeForInstall(op: OperationRow, plan: PlanRow, inst: InstanceRow, pkg: LoadedPackage): Promise<string> {
     const { repo } = this.ctx;
     const loc = plan.proposal.location!;
@@ -591,7 +594,7 @@ export class OperationRunner {
     const parentDir = loc.dir;
     const homeName = plan.proposal.name;
     try {
-      const { descriptor, masterKey } = await createAppHome({
+      const { descriptor, masterKey, recoveryKey } = await createAppHome({
         parentDir,
         name: homeName,
         instanceId: inst.id,
@@ -607,7 +610,11 @@ export class OperationRunner {
         // BFU installs cannot happen (submit requires a session, sessions
         // unlock) — but if the key is somehow absent, the install still
         // succeeds; the app just unlocks via passphrase until first login.
-        const machineKey = this.ctx.machineKey.take();
+        // Custom-passphrase homes (portable drives) deliberately get NO
+        // machine wrapping: they stay locked until the operator types the
+        // passphrase at Start (per-app lock). Default-key homes wrap so the
+        // data folder unlocks silently at login.
+        const machineKey = defaultKey ? this.ctx.machineKey.take() : null;
         let wrapped: MachineWrappedKey | null = null;
         if (machineKey) {
           try {
@@ -617,7 +624,36 @@ export class OperationRunner {
           }
         }
         repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: descriptor.home, token: null, metadata: { home: true, driveId: descriptor.manifest.driveId, ...(defaultKey ? { defaultKey: true } : {}), ...(wrapped ? { machineWrapped: wrapped } : {}) } });
-        this.event(op, 'preparing', `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with the passphrase until first login)'}`);
+        // A fresh custom install just proved the passphrase: hold the unlock
+        // for this boot so the app shows unlocked until reboot/lock. Without
+        // this the install would finish running but read back locked.
+        if (!defaultKey) {
+          this.ctx.service.holdAppUnlock(inst.id, Buffer.from(masterKey));
+        }
+        // Kernel sealing (stage 4): seal <home>/volumes with fscrypt under
+        // the app's own master key. Best-effort: fake mode (and hosts without
+        // fscrypt) record sealed:false and the install still succeeds — the
+        // manifest + dual-key envelope is the portable truth, the kernel seal
+        // is the at-rest truth where the hardware allows it.
+        let sealedNote = '';
+        try {
+          const crypto = this.ctx.crypto;
+          if (crypto) {
+            const { protectorFor } = await import('../storage/crypto-provider.js');
+            const r = await crypto.sealApp(descriptor.home, masterKey.toString('hex'), protectorFor(plan.proposal.name, inst.id));
+            sealedNote = r.sealed ? ' (kernel-sealed)' : '';
+            this.event(op, 'preparing', r.sealed ? `kernel-sealed ${descriptor.home}/volumes` : `app-home sealing skipped: ${r.message}`);
+          }
+        } catch (e) {
+          this.event(op, 'preparing', `app-home sealing skipped: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        // The recovery key is shown once in the operation result (same UX as
+        // provisioned credentials / exposure basic-auth). Never logged, never
+        // stored — the operator writes it down or loses the data with it.
+        this.opResult = { ...(this.opResult ?? {}), recoveryKey, ...(defaultKey ? { recoveryNote: 'Write down these 12 words. They unlock this app if the machine is lost or the password is reset.' } : { recoveryNote: 'Write down these 12 words. They unlock this app on any Harbor machine if the passphrase is forgotten.' }) };
+        this.event(op, 'preparing', defaultKey
+          ? `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with the recovery key until first login)'}${sealedNote}`
+          : `created encrypted app home ${descriptor.home} (locked with its own passphrase — Start prompts for it)${sealedNote}`);
         return descriptor.home;
       } finally {
         zeroKey(masterKey);
@@ -681,6 +717,51 @@ export class OperationRunner {
     const { repo, docker, config } = this.ctx;
     this.phase(op, 'applying', 'preparing', 'verifying release, data and secrets before start');
     await this.engineOrThrow();
+    // Custom-passphrase homes must be unlocked for this boot before Docker
+    // is touched: consume the single-use Start passphrase (submitted with the
+    // operation) or reuse an existing ephemeral unlock. The key is held in
+    // memory only — never stored — so a reboot returns the app to locked.
+    // The kernel seal (where present) is unlocked with the same key right
+    // after, so Docker sees plaintext while the app runs.
+    const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    const customHome = home && (home.metadata?.['defaultKey'] as boolean | undefined) !== true ? home : null;
+    if (customHome && !this.ctx.service.isAppUnlocked(inst.id)) {
+      const secret = this.ctx.service.takeInstallLocationSecret(_plan.id);
+      if (!secret || secret === 'default-key' || secret === 'adopted') {
+        throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Start again with the encryption passphrase (or recovery key).' });
+      }
+      try {
+        const { unlockAppHome } = await import('../storage/app-home.js');
+        const masterKey = await unlockAppHome(customHome.name, secret);
+        this.ctx.service.holdAppUnlock(inst.id, masterKey);
+        this.event(op, 'preparing', `unlocked ${inst.name} for this boot`);
+        try {
+          const crypto = this.ctx.crypto;
+          if (crypto) {
+            const r = await crypto.unlockApp(customHome.name, masterKey.toString('hex'));
+            if (r.sealed) this.event(op, 'preparing', `kernel-unlocked ${customHome.name}/volumes`);
+          }
+        } catch (e) {
+          this.event(op, 'preparing', `kernel unlock skipped: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } finally {
+        (secret as unknown as { fill?: (v: number) => void }).fill?.(0);
+      }
+    } else if (customHome && this.ctx.service.isAppUnlocked(inst.id)) {
+      // Already unlocked this boot (unlock endpoint or earlier Start): make
+      // sure the kernel seal follows before Docker touches the volumes.
+      try {
+        const crypto = this.ctx.crypto;
+        // Re-derive is impossible (key held, not passphrase) — the provider
+        // unlock needs the hex key; holdAppUnlock keeps the Buffer, so read
+        // it back via a non-copying path is intentionally absent. Instead the
+        // unlock endpoint and the branch above both kernel-unlock at unlock
+        // time; here just proceed (idempotent on live hosts).
+        void crypto;
+      } catch {
+        /* proceed; kernel unlock happened at unlock time */
+      }
+    }
     const dirs = this.dirs(inst);
     const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
     const identity = identityFor(this.ctx.installationId, inst.id);

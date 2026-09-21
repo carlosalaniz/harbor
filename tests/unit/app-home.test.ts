@@ -8,6 +8,7 @@ import {
   createAppHome,
   describeAppHome,
   openPayload,
+  rotateAppHomeRecoveryKey,
   scanAppHomes,
   sealPayload,
   unlockAppHome,
@@ -22,7 +23,7 @@ const INSTANCE = '11111111-1111-4111-8111-111111111111';
 
 async function makeHome(passphrase = 'correct horse passphrase') {
   const parent = tempDir('harbor-apphome-');
-  const { descriptor, masterKey } = await createAppHome({
+  const { descriptor, masterKey, recoveryKey } = await createAppHome({
     parentDir: parent,
     name: 'immich',
     instanceId: INSTANCE,
@@ -32,23 +33,27 @@ async function makeHome(passphrase = 'correct horse passphrase') {
     passphrase,
     harborVersion: '0.13.0',
   });
-  return { parent, descriptor, masterKey };
+  return { parent, descriptor, masterKey, recoveryKey };
 }
 
 describe('app homes', () => {
   it('creates a home with a plaintext manifest and an encrypted vault dir', async () => {
-    const { descriptor, masterKey } = await makeHome();
+    const { descriptor, masterKey, recoveryKey } = await makeHome();
     try {
       expect(descriptor.manifest.format).toBe(APP_HOME_FORMAT);
       expect(descriptor.manifest.instanceId).toBe(INSTANCE);
       expect(descriptor.manifest.packageId).toBe('immich');
       expect(descriptor.manifest.vault).toBe('vault');
       expect(descriptor.manifest.encryption.algorithm).toBe('aes-256-gcm');
+      expect(descriptor.manifest.encryption.recovery).toBeDefined();
+      expect(recoveryKey.split(' ')).toHaveLength(12);
       // The manifest is plaintext: name, package and revision read while locked.
       const raw = JSON.parse(readFileSync(path.join(descriptor.home, 'manifest.json'), 'utf8'));
       expect(raw.displayName).toBe('Immich');
       expect(raw.packageRevision).toBe('3');
       expect(JSON.stringify(raw)).not.toContain(masterKey.toString('hex'));
+      // …but the recovery key itself is never in the manifest (only its envelope).
+      expect(JSON.stringify(raw)).not.toContain(recoveryKey);
     } finally {
       zeroKey(masterKey);
     }
@@ -70,19 +75,70 @@ describe('app homes', () => {
     expect(await verifyPassphrase(descriptor.home, 'wrong passphrase here')).toBe(false);
   });
 
-  it('changing the passphrase re-wraps the same master key', async () => {
-    const { descriptor, masterKey } = await makeHome();
+  it('changing the passphrase re-wraps the same master key (recovery key keeps working)', async () => {
+    const { descriptor, masterKey, recoveryKey } = await makeHome();
     const before = Buffer.from(masterKey);
     zeroKey(masterKey);
+    expect(recoveryKey.split(' ')).toHaveLength(12);
+    // The recovery key unwraps from day one…
+    const viaRecovery = await unlockAppHome(descriptor.home, recoveryKey);
+    try {
+      expect(viaRecovery.equals(before)).toBe(true);
+    } finally {
+      zeroKey(viaRecovery);
+    }
     await changeAppHomePassphrase(descriptor.home, 'correct horse passphrase', 'a brand new passphrase');
     expect(await verifyPassphrase(descriptor.home, 'correct horse passphrase')).toBe(false);
     expect(await verifyPassphrase(descriptor.home, 'a brand new passphrase')).toBe(true);
+    // …and still unwraps after the passphrase changes (immutable envelope).
+    expect(await verifyPassphrase(descriptor.home, recoveryKey)).toBe(true);
     const after = await unlockAppHome(descriptor.home, 'a brand new passphrase');
     try {
       expect(after.equals(before)).toBe(true);
     } finally {
       zeroKey(after);
     }
+    const afterRecovery = await unlockAppHome(descriptor.home, recoveryKey);
+    try {
+      expect(afterRecovery.equals(before)).toBe(true);
+    } finally {
+      zeroKey(afterRecovery);
+    }
+  });
+
+  it('rotation needs the old key and retires it; the passphrase survives', async () => {
+    const { descriptor, masterKey, recoveryKey } = await makeHome();
+    zeroKey(masterKey);
+    // Two homes never share a key.
+    const other = await makeHome();
+    zeroKey(other.masterKey);
+    expect(other.recoveryKey).not.toBe(recoveryKey);
+    const next = await rotateAppHomeRecoveryKey(descriptor.home, recoveryKey);
+    expect(next.split(' ')).toHaveLength(12);
+    expect(next).not.toBe(recoveryKey);
+    expect(await verifyPassphrase(descriptor.home, next)).toBe(true);
+    expect(await verifyPassphrase(descriptor.home, recoveryKey)).toBe(false);
+    // The passphrase still unwraps after rotation.
+    expect(await verifyPassphrase(descriptor.home, 'correct horse passphrase')).toBe(true);
+  });
+
+  it('format 1 homes read fine and gain recovery on first password change', async () => {
+    const { descriptor, masterKey } = await makeHome();
+    zeroKey(masterKey);
+    // Downgrade the manifest to format 1 (no recovery envelope): old homes
+    // written by Harbor ≤0.16 keep working.
+    const manifestPath = path.join(descriptor.home, 'manifest.json');
+    const doc = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    doc.format = 1;
+    delete doc.encryption.recovery;
+    writeFileSync(manifestPath, JSON.stringify(doc));
+    const described = describeAppHome(descriptor.home);
+    expect(described.manifest.format).toBe(1);
+    expect(await verifyPassphrase(descriptor.home, 'correct horse passphrase')).toBe(true);
+    const { recoveryKey } = await changeAppHomePassphrase(descriptor.home, 'correct horse passphrase', 'a brand new passphrase');
+    expect(recoveryKey?.split(' ')).toHaveLength(12);
+    expect(await verifyPassphrase(descriptor.home, recoveryKey!)).toBe(true);
+    expect(describeAppHome(descriptor.home).manifest.format).toBe(APP_HOME_FORMAT);
   });
 
   it('seals and opens payload bytes; tampering fails authentication', async () => {

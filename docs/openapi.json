@@ -691,6 +691,69 @@
         }
       }
     },
+    "/v1/instances/{id}/unlock": {
+      "post": {
+        "description": "Unlock one encrypted app for this boot with its encryption passphrase (or 12-word recovery key). A reboot returns it to locked.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "passphrase"
+                ],
+                "properties": {
+                  "passphrase": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/instances/{id}/lock": {
+      "post": {
+        "description": "Lock one encrypted app again (drop this boot's key; running containers keep running until stopped).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/package-sources": {
       "get": {
         "description": "Git repositories Harbor watches as app sources.",
@@ -1103,6 +1166,16 @@
             "required": false
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/system/diagnostics": {
+      "get": {
+        "description": "Redacted diagnostics bundle for bug reports (versions, host facts, instance states, disks, log tail; no secrets).",
         "responses": {
           "200": {
             "description": "Default Response"

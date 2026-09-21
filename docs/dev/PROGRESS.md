@@ -204,6 +204,15 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 125, e2e 25 green
 - [x] Docs: decision 99
 
+## Phase 27 — beta Musts + Shoulds (2026-09-21, v0.17.0-beta.1) ✅
+- [x] Encryption truth (BETA_TODO Must): per-app fscrypt sealing (v2 policy, raw_key protector = vault master key via root oneshot `harbor app-seal|app-unlock|app-lock` + `device-dispatch crypto-setup`; format `-O encrypt` + `fscrypt setup` in bootstrap; `FakeCryptoProvider` no-op in tests/dev; unlock before `compose up`, lock on reboot/explicit lock). Dual-key homes (format v2: changeable passphrase + immutable 12-word recovery, shown once with write-it-down gate, server returns once). Custom apps stay locked BFU+AFU until explicit Start/unlock; adopt verifies once then leaves locked; unlock/lock routes + drawer form + CLI retry
+- [x] Self-update rollback (BETA_TODO Must): snapshot previous release, poll `/healthz` after restart, restore + re-bootstrap on failure, `rolled-back` state in status + guide §4e manual downgrade
+- [x] Recovery story (BETA_TODO Must): `harbor recovery export` (state DB + WAL, secrets, releases, uploaded packages, home envelopes; scrypt → AES-256-GCM, passphrase 8+) + `harbor recovery import` (refuses to overwrite); `enroll --reset` requires `--i-understand-data-loss` and destroys the sealed key loudly; guide §4f "If this machine dies" (managed volumes not backed up, data-folder apps need the bundle, drive apps portable via passphrase/adopt)
+- [x] Tester plumbing (BETA_TODO Should): `SECURITY.md` (trust boundary, private report path), `.github/ISSUE_TEMPLATE/bug.md` (diagnostics-first), `harbor diagnostics` + `GET /v1/system/diagnostics` (redacted by design: versions, host facts, app states, disks, log tail; no secrets), guide §7 "Report a problem" line
+- [x] Docs accuracy + hardware + headless (BETA_TODO Should): README status → beta + headless line, guide §1 RAM/disk floor + heavy-app notes (Immich, Open WebUI+Ollama, Nextcloud), §4a2/§5 headless-reboot plain words (locked until first login; keyfile/TPM = 1.0), §8 format line fixed, AI_CONTEXT versions/counts/next-103
+- [x] Tests: unit 139 (fscrypt builders, recovery round-trip, rollback, openapi 75 paths), integration 127 + 3 skipped (app-homes lock/reboot, recovery round-trip onto fresh DB, diagnostics redaction), e2e 25 green
+- [x] Docs: decision 101, BETA_TODO ticked, openapi regenerated (75 paths)
+
 ## Test results (latest local run)
 
 | Command | Result |

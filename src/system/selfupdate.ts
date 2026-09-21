@@ -124,7 +124,8 @@ export class SelfUpdateService {
     try {
       if (!existsSync(this.statusFile)) return null;
       const s = JSON.parse(readFileSync(this.statusFile, 'utf8')) as ApplyStatus;
-      // an update that finished with the version we now run is history, not news
+      // an update that finished with the version we now run is history, not news.
+      // a rollback is always news (the console is back on the old version by design).
       if (s.state === 'succeeded' && s.version === this.current) return { ...s, message: `Updated to ${s.version}` };
       return s;
     } catch {

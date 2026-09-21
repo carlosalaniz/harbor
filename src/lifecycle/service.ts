@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AddSourceResult, CatalogItemDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
 import { hostname } from 'node:os';
@@ -17,7 +17,7 @@ import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory, hostPathsOverlap, normalizeHostPath } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { installCandidates } from '../storage/install-location.js';
-import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import { listMounts } from '../system/host-storage.js';
 import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
@@ -553,6 +553,46 @@ export class ApplicationService {
     if (fromJournal) return { source: 'journal', lines: fromJournal };
     return { source: 'memory', lines: this.ctx.logBuffer.tail(lines) };
   }
+  // Diagnostics bundle for beta testers: versions, host facts, redacted
+  // instance summary, disk/mounts, log tail. No secrets, tokens, passphrases,
+  // credentials or provider responses — safe to paste into a bug report.
+  async diagnostics(): Promise<DiagnosticsDto> {
+    const sys = this.system();
+    const { hostFacts, sampleDisk } = await import('../system/metrics.js');
+    const { listDevices, listMounts } = await import('../system/host-storage.js');
+    const host = hostFacts();
+    const disk = sampleDisk('/');
+    const instances = this.ctx.repo.listInstances();
+    const exposures = this.exposuresList();
+    const logTail = await this.harborLogs(100);
+    return {
+      sampledAt: rfc3339(this.ctx.clock.now()),
+      version: sys.version,
+      installationId: sys.installationId,
+      host,
+      lan: sys.lan,
+      docker: sys.docker,
+      update: { current: sys.update.current, available: sys.update.available, latest: sys.update.latest?.version ?? null, checkedAt: sys.update.checkedAt, error: sys.update.error },
+      storagePolicy: this.storagePolicy(),
+      counts: { instances: instances.length, exposures: exposures.length, domains: this.ctx.repo.domains().length, packageSources: this.ctx.repo.packageSources().length, notificationsUnread: this.ctx.repo.unreadNotificationCount() },
+      instances: instances.map((i) => ({
+        name: i.name,
+        packageId: i.packageId,
+        revision: i.revision,
+        installState: i.installState,
+        desired: i.desired,
+        runtime: i.runtime,
+        readiness: i.readiness,
+        needsDrive: this.needsDrive(i.id)?.path ?? null,
+        home: this.ctx.repo.resources(i.id).find((r) => r.kind === 'volume' && r.role === '__home__')?.name ?? null,
+        updateAvailable: this.updateFor(i, this.currentRevisionsSafe())?.revision ?? null,
+      })),
+      exposures: exposures.map((e) => ({ instanceName: e.instanceName, endpointId: e.endpointId, via: e.via, state: e.state, isPrimary: e.isPrimary })),
+      mounts: [...listMounts().map((m) => ({ mountpoint: m.mountpoint, fsType: m.fsType, totalBytes: m.totalBytes, usedBytes: m.usedBytes })), ...(disk && !listMounts().some((m) => m.mountpoint === '/') ? [{ mountpoint: disk.path, fsType: 'unknown', totalBytes: disk.totalBytes, usedBytes: disk.usedBytes }] : [])],
+      devices: listDevices().map((d) => ({ name: d.name, mounted: d.mounted, mountpoint: d.mountpoint, fsType: d.fsType, size: d.size })),
+      logTail: { source: logTail.source, lines: logTail.lines.slice(-100) },
+    };
+  }
   async instanceLogs(id: string, lines: number): Promise<InstanceLogsDto> {
     const row = this.instanceRow(id);
     const out: InstanceLogsDto['containers'] = [];
@@ -619,19 +659,46 @@ export class ApplicationService {
     });
   }
   // Install-location read model: the encrypted home on the drive (null =
-  // system disk). Locked when this machine cannot read the vault (BFU, or a
-  // foreign drive); unlocked when the machine key opens it silently.
-  // Computed at read time from the 'home' resource — no migration.
-  // Default-key homes (data folder) are never "locked" in the UX sense: the
-  // operator chose no passphrase, so there is nothing to type. They still
-  // report locked while BFU (the machine key is not in memory yet) — the
-  // drawer then says "log in again", never "type the passphrase".
+  // system disk). Default-key homes (data folder) unlock silently via the
+  // machine wrapping while AFU; custom-passphrase homes stay locked until
+  // the operator unlocks them per-app at Start (ephemeral in-memory unlock,
+  // cleared on reboot). Computed at read time from the 'home' resource plus
+  // the ephemeral unlock cache — no migration.
+  // Default-key homes are never "locked" in the UX sense: the operator chose
+  // no passphrase, so there is nothing to type. They still report locked
+  // while BFU (the machine key is not in memory yet) — the drawer then says
+  // "log in again", never "type the passphrase".
+  // Ephemeral per-app unlocks (custom passphrase, verified at Start/unlock).
+  // In-memory only: a reboot returns every custom app to locked. Keyed by
+  // instance id, single master-key copy each, zeroed on lock/clear.
+  private unlockedApps = new Map<string, Buffer>();
+  /** Stash a verified master key for one app until lock/reboot. Caller hands over ownership. */
+  holdAppUnlock(instanceId: string, masterKey: Buffer): void {
+    this.lockApp(instanceId);
+    this.unlockedApps.set(instanceId, masterKey);
+  }
+  /** Drop one app's ephemeral unlock (explicit Lock). */
+  lockApp(instanceId: string): void {
+    const k = this.unlockedApps.get(instanceId);
+    if (k) {
+      zeroKey(k);
+      this.unlockedApps.delete(instanceId);
+    }
+  }
+  /** True while this boot holds the app's key (Start may proceed without a passphrase). */
+  isAppUnlocked(instanceId: string): boolean {
+    return this.unlockedApps.has(instanceId);
+  }
   private homeState(instanceId: string): InstanceSummary['home'] {
     try {
       const home = this.ctx.repo.resources(instanceId).find((r) => r.kind === 'volume' && r.role === '__home__');
       if (!home) return null;
       const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
       const defaultKey = home.metadata?.['defaultKey'] === true;
+      // Custom-passphrase apps: unlocked iff this boot holds their key.
+      if (!defaultKey) {
+        return { path: home.name, encrypted: true, state: this.unlockedApps.has(instanceId) ? 'unlocked' : 'locked' };
+      }
       const machineKey = this.ctx.machineKey.take();
       let state: 'locked' | 'unlocked' = 'locked';
       if (wrapped && machineKey) {
@@ -649,6 +716,45 @@ export class ApplicationService {
     } catch {
       return null;
     }
+  }
+  /** Unlock one custom-passphrase app for this boot (verifies, holds the key, never stores it). */
+  async unlockApp(instanceId: string, passphrase: string): Promise<InstanceSummary> {
+    const inst = this.instanceRow(instanceId);
+    const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    if (!home) throw new HarborError('INVALID_STATE', `${inst.name} has no encrypted home`, { nextAction: 'This app lives on the system disk; there is nothing to unlock.' });
+    if ((home.metadata?.['defaultKey'] as boolean | undefined) === true) throw new HarborError('INVALID_STATE', `${inst.name} unlocks silently at login`, { nextAction: 'Log in again if it shows locked.' });
+    const masterKey = await unlockAppHome(home.name, passphrase);
+    this.holdAppUnlock(inst.id, masterKey);
+    // Kernel seal follows the ephemeral unlock where present (best-effort;
+    // fake mode records a no-op). A wrong passphrase already failed above.
+    try {
+      const crypto = this.ctx.crypto;
+      if (crypto) await crypto.unlockApp(home.name, masterKey.toString('hex'));
+    } catch (e) {
+      this.ctx.log.warn(`kernel unlock skipped for ${inst.name}: ${e instanceof Error ? e.message : String(e)}`, { instanceId: inst.id });
+    }
+    this.ctx.log.info('app unlocked for this boot', { instanceId: inst.id });
+    const meta = this.packageMeta(this.ctx.repo.instance(inst.id)!);
+    const fresh = this.ctx.repo.instance(inst.id)!;
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+  }
+  /** Lock one custom-passphrase app (drop this boot's key + kernel-lock the seal; running containers keep running). */
+  async lockAppApi(instanceId: string): Promise<InstanceSummary> {
+    const inst = this.instanceRow(instanceId);
+    const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    this.lockApp(inst.id);
+    if (home) {
+      try {
+        const crypto = this.ctx.crypto;
+        if (crypto) await crypto.lockApp(home.name);
+      } catch (e) {
+        this.ctx.log.warn(`kernel lock skipped for ${inst.name}: ${e instanceof Error ? e.message : String(e)}`, { instanceId: inst.id });
+      }
+    }
+    this.ctx.log.info('app locked', { instanceId: inst.id });
+    const meta = this.packageMeta(this.ctx.repo.instance(inst.id)!);
+    const fresh = this.ctx.repo.instance(inst.id)!;
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
     try {
@@ -803,10 +909,11 @@ export class ApplicationService {
     return out.sort((a, b) => a.home.localeCompare(b.home));
   }
 
-  // Adopt a found app home onto this machine with its encryption passphrase:
-  // unlock, wrap for this machine (silent future launches), create the
-  // instance record + volumes rooted at the existing home, pull, start.
-  // Ports re-allocate locally; identity (UUID) travels in the manifest.
+  // Adopt a found app home onto this machine with its encryption passphrase
+  // (or recovery key): verify once, then LEAVE LOCKED. The adopted instance
+  // records the home with no machine wrapping, so it shows locked until the
+  // operator Starts it with the passphrase — one by one, like every custom
+  // app. Ports re-allocate locally; identity (UUID) travels in the manifest.
   async adoptApp(home: string, passphrase: string, opts: { name?: string } | undefined, actor: string): Promise<InstanceSummary> {
     const { manifest } = describeAppHome(home);
     const masterKey = await unlockAppHome(home, passphrase);
@@ -845,7 +952,7 @@ export class ApplicationService {
         secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
         changes: [
           `Adopt ${manifest.displayName} (${pkg.id}) from ${home}`,
-          `Unlock with the encryption passphrase; wrap for silent unlock on this machine`,
+          `Verify the encryption passphrase once; the app stays locked until you Start it with the passphrase`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
           ...storage.map((s) => `Use the drive's data at ${home}/volumes/${s.composeVolume} (${s.purpose})`),
@@ -858,18 +965,11 @@ export class ApplicationService {
       this.ctx.repo.insertPlan(plan);
       // Adopt reuses the install operation path: the runner sees the home
       // resource marker below and roots volumes at the existing home instead
-      // of creating a fresh one. Stash the master key's machine wrapping now
-      // (adopt needs a session, and sessions unlock — so AFU holds).
-      const machineKey = this.ctx.machineKey.take();
-      let wrapped: MachineWrappedKey | null = null;
-      if (machineKey) {
-        try {
-          wrapped = wrapMasterKeyForMachine(masterKey, machineKey);
-        } finally {
-          zeroMachineKey(machineKey);
-        }
-      }
-      this.ctx.repo.upsertResource({ instanceId, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId, adopted: true, ...(wrapped ? { machineWrapped: wrapped } : {}) } });
+      // of creating a fresh one. The passphrase was verified above (unlock
+      // succeeded) and is NOT stored: the home stays locked until Start.
+      // No machine wrapping — adopted apps unlock per-app with their own
+      // passphrase, never silently.
+      this.ctx.repo.upsertResource({ instanceId, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId, adopted: true } });
       // Adopt plans carry no passphrase (the operator already proved it by
       // unlocking above); pre-seed the secret check so submit() passes.
       this.submitInstallLocationSecret(plan.id, 'adopted');
@@ -878,7 +978,7 @@ export class ApplicationService {
       void submit;
       const fresh = this.ctx.repo.instance(instanceId)!;
       const meta = this.packageMeta(fresh);
-      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), usage: null, needsDrive: null, home: { path: home, encrypted: true, state: wrapped ? 'unlocked' : 'locked' } });
+      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), usage: null, needsDrive: null, home: { path: home, encrypted: true, state: 'locked' } });
     } finally {
       zeroKey(masterKey);
     }
@@ -1077,6 +1177,14 @@ export class ApplicationService {
         // or swapped drive must never reach Docker.
         const need = this.needsDrive(inst.id);
         if (need) throw new HarborError('DATA_MISSING', `${inst.name} needs its drive: ${need.path} (${need.purpose}) is not the folder it was using (${need.detail})`, { nextAction: 'Re-insert the drive (or restore the folder with its marker) at the same path, or adopt the new folder from the app drawer.' });
+        // Custom-passphrase apps stay locked until the operator unlocks them
+        // per-app (Start carries the passphrase, or unlock first). Refuse a
+        // locked start here so the drawer can prompt instead of failing deep
+        // in the runner.
+        const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+        if (home && (home.metadata?.['defaultKey'] as boolean | undefined) !== true && !this.unlockedApps.has(inst.id)) {
+          throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Unlock it with its encryption passphrase (or recovery key), then Start again.' });
+        }
         changes.push(`Verify release, retained volumes and secrets of "${inst.name}"`, `Start existing containers of project ${inst.project}`, 'Check readiness');
         break;
       }
@@ -1354,10 +1462,11 @@ export class ApplicationService {
 
   // ---- submission (atomic claims + idempotency)
 
-  // The app-home passphrase for an install-location plan. It is never stored
-  // in the plan (plans are readable); the submitter hands it over with the
-  // submission and the runner consumes it at apply time. Held in memory only,
-  // keyed by plan id, single-use.
+  // The app-home passphrase for an install-location plan AND for Start
+  // plans of locked custom-passphrase apps. It is never stored in the plan
+  // (plans are readable); the submitter hands it over with the submission
+  // and the runner consumes it at apply time. Held in memory only, keyed by
+  // plan id, single-use.
   private locationSecrets = new Map<string, string>();
   submitInstallLocationSecret(planId: string, passphrase: string): void {
     if (typeof passphrase !== 'string' || !passphrase) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase is required to submit this plan');

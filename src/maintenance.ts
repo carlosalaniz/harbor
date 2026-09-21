@@ -18,7 +18,7 @@ export function initState(config: DaemonConfig): { installationId: string } {
   return result;
 }
 
-export async function enrollAdministrator(config: DaemonConfig, username: string, password: string, opts: { reset: boolean }): Promise<{ created: boolean; revokedSessions: number }> {
+export async function enrollAdministrator(config: DaemonConfig, username: string, password: string, opts: { reset: boolean }): Promise<{ created: boolean; revokedSessions: number; sealedDestroyed: boolean }> {
   const u = validateUsername(username);
   if (u) throw new HarborError('INVALID_REQUEST', u);
   const p = validatePasswordPolicy(password);
@@ -34,6 +34,7 @@ export async function enrollAdministrator(config: DaemonConfig, username: string
       }
       const hashed = await hashPassword(password);
       let revoked = 0;
+      let sealedDestroyed = false;
       if (!existing) {
         // Fresh enrollment seals a machine key under the new password (AFU on
         // first login). A --reset without the old password cannot re-seal:
@@ -59,9 +60,10 @@ export async function enrollAdministrator(config: DaemonConfig, username: string
           // until unlocked with their own passphrases.
           repo.deleteSetting('security.machineKey');
         });
+        sealedDestroyed = hadSealed;
         if (hadSealed) console.error('[enroll] password reset: the sealed machine key was destroyed. Encrypted apps unlock with their own passphrases.');
       }
-      return { created: !existing, revokedSessions: revoked };
+      return { created: !existing, revokedSessions: revoked, sealedDestroyed };
     } finally {
       db.close();
     }

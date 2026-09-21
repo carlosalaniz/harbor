@@ -10,9 +10,17 @@ Docker (root-equivalent) authority. It is not a hardened multi-user management s
 | Item | Requirement |
 |---|---|
 | Host | Ubuntu 24.04 LTS, x86-64, systemd |
+| Memory | 4 GiB RAM minimum (8 GiB recommended — see the heavy apps below) |
+| Disk | 20 GiB free minimum (apps + images + one recovery bundle); 50+ GiB if you run Immich or Nextcloud |
 | Docker | Docker Engine + Compose plugin. Absent: bootstrap can install them from Docker's apt repository when you pass `--install-docker`. Present: validated, never modified. |
 | Access | Local browser on the machine, or SSH local port forwarding. Harbor never listens on anything but 127.0.0.1. |
 | Build tooling on the host | None. The archive bundles Node.js and all dependencies. |
+
+Heavy apps (give the machine headroom before installing these): **Immich** (photo library —
+needs several GiB for its database + machine-learning models, and a drive of its own for the
+library), **Open WebUI + Ollama** (local AI models are GiB each; CPU-only inference is slow —
+this is a patience question, not a failure), **Nextcloud** (files + office; grows with what you
+put in it). On a 4 GiB box, run one heavy app at a time.
 
 Qualified pair for this release (see `docs/VERIFICATION.md` for the run that produced it): Docker
 Engine and Compose versions installed by `--install-docker` on the date of qualification; Node
@@ -70,11 +78,15 @@ Re-running bootstrap is safe: it updates the release files and unit, and keeps s
 administrator and applications. A conflicting unrelated `/opt/harbor` or `harbor.service` is an
 error, never overwritten.
 
-**Reset the administrator** (daemon stopped; invalidates all sessions; touches nothing else):
+**Reset the administrator** (daemon stopped; invalidates all sessions; touches nothing else).
+Resetting destroys the sealed machine key, so data-folder apps lose silent unlock until each is
+unlocked with its own passphrase or recovery key. Export a recovery bundle first (section 4f),
+then:
 
 ```sh
 sudo systemctl stop harbor
-sudo /opt/harbor/bin/harbor enroll --config /etc/harbor/harbor.json --reset --username admin
+sudo /opt/harbor/bin/harbor recovery export --config /etc/harbor/harbor.json --file /root/harbor-recovery.harbor-recovery
+sudo /opt/harbor/bin/harbor enroll --config /etc/harbor/harbor.json --reset --username admin --i-understand-data-loss
 sudo systemctl start harbor
 ```
 
@@ -154,6 +166,47 @@ There is no undo.
   encrypted vault.
 - Back up (outside Harbor): `/var/lib/harbor` (state, secrets, release snapshots). Application data
   volumes are the application's responsibility.
+
+## 4f. If this machine dies (recovery bundle)
+
+Harbor keeps two different kinds of data, and only one of them is in the recovery bundle:
+
+- **Harbor-owned state** — the database (which apps exist, ports, addresses, settings), the
+  per-instance secrets, the stored release snapshots, your uploaded packages, and the app-home
+  envelopes (which app lives where, and how to unlock it). This is what
+  `harbor recovery export` writes into one passphrase-wrapped file.
+- **Application data** — the databases, photos, files and workflows inside the apps. Harbor never
+  backs these up. Managed Docker volumes live on the engine; drive apps live on their drive.
+
+Export regularly (daemon stopped; the passphrase is the only key — without it the file is
+unreadable, so store both somewhere that is not this machine):
+
+```sh
+sudo systemctl stop harbor
+sudo /opt/harbor/bin/harbor recovery export --config /etc/harbor/harbor.json --file /root/harbor-recovery.harbor-recovery
+sudo systemctl start harbor
+```
+
+Restore onto a **fresh** machine (a new Ubuntu install with Harbor bootstrapped but no apps yet;
+import refuses to overwrite existing state):
+
+```sh
+sudo systemctl stop harbor
+sudo /opt/harbor/bin/harbor recovery import --config /etc/harbor/harbor.json --file /root/harbor-recovery.harbor-recovery
+sudo systemctl start harbor
+```
+
+Then, per app:
+
+- **Drive apps** are portable: re-insert the drive, find the app under Settings → Storage →
+  Found apps, and *Adopt* it with its own passphrase or recovery key. Ports are allocated fresh;
+  addresses differ from the old machine.
+- **Data-folder apps** unlock silently after restore (the sealed machine key travels in the
+  bundle) as long as the administrator password is unchanged. After an `enroll --reset`, unlock
+  each one with its own passphrase or recovery key instead.
+- **Managed volumes** (apps without a drive home) are **not** in the bundle: their data lived on
+  the dead machine's Docker engine. Reinstall the app; its configuration is back, its data is
+  whatever the app's own backup holds.
 
 ### Failure states
 
@@ -256,6 +309,13 @@ A locked app (this machine cannot read it yet — after a reboot, before the fir
 login) shows a quiet *Locked* tile; data-folder apps unlock at the next login,
 drive apps with a custom passphrase need the passphrase (or adopt) on a new machine.
 
+**Headless reboot, in plain words:** after a power cut or reboot, every encrypted app stays
+locked — and therefore down — until the first console login unlocks it. On a headless box
+that means Immich is down until someone logs in (any login unlocks every data-folder app at
+once; drive apps with a custom passphrase each need theirs typed once). This is deliberate:
+the unlock key lives behind your login, not on the disk. Automatic unlock without a login
+(keyfile/TPM) is a 1.0 item, not a beta one — for now, log in once after a reboot.
+
 CLI: `harbor install <package> --location /mnt/photos/harbor-apps/immich --passphrase-stdin < passphrase.txt`
 (omit the passphrase for the Harbor data folder), `harbor found-apps`,
 `harbor adopt <home-folder>`.
@@ -309,6 +369,14 @@ running, the console is away for about a minute and reconnects by itself. The sa
 `harbor self-update`, `harbor self-update check`, `harbor self-update start`. Manual path, still supported:
 download the archive, extract, `sudo ./harbor-<version>-linux-x64/bin/harbor bootstrap --yes`.
 
+If the new release fails to start, Harbor puts the previous one back by itself: the running
+release is snapshotted before the update, the console is polled after the restart, and on
+failure the snapshot is restored and the console comes back on the previous version (your
+apps keep running throughout — they belong to Docker, not to the daemon). The Overview card
+then says the update was rolled back. Manual downgrade, if you ever need it:
+`sudo /opt/harbor/bin/harbor self-update apply --to <previous-version>` (state is kept;
+migrations only add tables/columns, so the older release opens the newer database).
+
 ## 5. Service operations
 
 ```sh
@@ -320,6 +388,8 @@ systemctl restart harbor         # apps keep running; UI recovers after login
 Restarting Harbor never stops application containers (they belong to Docker with
 `restart: unless-stopped`). After a host reboot, desired-running apps come back through Docker;
 intentionally stopped instances stay stopped. Harbor re-observes and reports actual readiness.
+Encrypted apps are the exception: they stay locked (and down) until the first login after the
+reboot — see §4a2 above.
 
 ## 6. Platform tools
 
@@ -409,14 +479,18 @@ Notes:
 | Tailnet address stays `degraded` | `tailscale status` must show the node online; enable HTTPS certificates in the admin console; `tailscale serve status` lists Harbor's entries. |
 | Portainer login page loads but no admin form, or the form refuses to submit | The 5-minute window expired (restart its container, above) or the setup token is missing (read it from the container log). |
 
+**Report a problem:** run `harbor diagnostics` on the machine and paste the whole block into
+your bug report (see `SECURITY.md` for what it contains — versions, host facts, app states,
+disks, log tail; never secrets). File it at
+`https://github.com/carlosalaniz/harbor/issues/new?template=bug.md`.
+
 ## 8. Trust boundary and limits (read this)
 
 - The `harbor` service user is in the `docker` group and is therefore root-equivalent. The API is
   not a sandbox against anyone with Docker or root access.
 - Loopback by default; LAN mode, tailnet and public HTTPS are opt-in providers (section 6a).
   The console itself is loopback + tailnet only, never public.
-- Not included: backups, multi-user roles/SSO, remote/community catalogs, external disk
-  formatting (blocked on hardware; see `docs/FUTURE.md`).
+- Not included: backups of application data, multi-user roles/SSO, remote/community catalogs.
 
 ## 9. Uninstall
 

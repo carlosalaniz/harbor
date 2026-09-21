@@ -38,6 +38,7 @@ import { FakeRegistry, RegistryResolver, type ImageResolver } from './packages/r
 import { FakeTransport, Notifier, realTransport, type NotifyTransport } from './notify/notifier.js';
 import { FakeGit, GitCli, type GitFetcher } from './packages/git.js';
 import { MachineKeyHolder } from './auth/machine-holder.js';
+import type { CryptoProvider } from './storage/crypto-provider.js';
 
 export function productVersion(): string {
   try {
@@ -70,6 +71,7 @@ export interface DaemonOverrides {
   unitStarter?: UnitStarter;
   notifyTransport?: NotifyTransport;
   git?: GitFetcher;
+  crypto?: CryptoProvider;
 }
 
 export interface Daemon {
@@ -185,6 +187,10 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     };
     const devices = new DeviceMountService(repo, clock, config.stateDir, fakeMode ? null : startUnit);
     ctx.devices = devices;
+    // Per-app kernel sealing (fscrypt): fake no-op in fake mode (tests/dev),
+    // root helpers on a live host (same unit starter as mount/format).
+    const { FakeCryptoProvider, RootCryptoProvider } = await import('./storage/crypto-provider.js');
+    ctx.crypto = overrides.crypto ?? (fakeMode ? new FakeCryptoProvider() : new RootCryptoProvider('/opt/harbor/bin/harbor', startUnit));
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode
     const terminals = new TerminalService(log, fakeMode ? { shell: [process.env['SHELL'] ?? '/bin/bash', '-il'], env: { HOME: process.env['HOME'] ?? config.stateDir, USER: process.env['USER'] ?? 'harbor' }, cwd: config.stateDir } : { shell: ['/bin/bash', '-il'], env: { HOME: config.stateDir, USER: 'harbor', LOGNAME: 'harbor' }, cwd: config.stateDir });

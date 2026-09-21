@@ -424,6 +424,27 @@ export interface SystemHostDto {
   power: { available: boolean; note: string | null };
 }
 
+// ---- diagnostics bundle for beta testers (`harbor diagnostics`): versions,
+// host facts, redacted instance summary, disk/mounts. Never carries secrets,
+// tokens, passphrases, credentials, or provider responses — safe to paste
+// into a bug report.
+export interface DiagnosticsDto {
+  sampledAt: string;
+  version: string;
+  installationId: string;
+  host: { hostname: string; os: string; arch: string; cpuModel: string | null };
+  lan: { enabled: boolean; url: string | null };
+  docker: { available: boolean; observedAt: string | null; version: string | null; error: string | null };
+  update: { current: string; available: boolean; latest: string | null; checkedAt: string | null; error: string | null };
+  storagePolicy: { autoMount: boolean; autoStart: boolean };
+  counts: { instances: number; exposures: number; domains: number; packageSources: number; notificationsUnread: number };
+  instances: { name: string; packageId: string; revision: string; installState: string; desired: string; runtime: string; readiness: string; needsDrive: string | null; home: string | null; updateAvailable: string | null }[];
+  exposures: { instanceName: string; endpointId: string; via: string; state: string; isPrimary: boolean }[];
+  mounts: { mountpoint: string; fsType: string; totalBytes: number | null; usedBytes: number | null }[];
+  devices: { name: string; mounted: boolean; mountpoint: string | null; fsType: string | null; size: string }[];
+  logTail: { source: string; lines: string[] };
+}
+
 // ---- your own apps: uploaded packages
 export interface PackageImportResultDto {
   item: CatalogItemDto;
@@ -442,8 +463,9 @@ export interface SelfUpdateStatusDto {
   available: boolean;
   checkedAt: string | null;
   error: string | null;
-  // set while (or after) an update runs; written by the root apply step, so it survives the daemon restart
-  applying: { version: string; state: 'requested' | 'downloading' | 'installing' | 'succeeded' | 'failed'; message: string; at: string } | null;
+  // set while (or after) an update runs; written by the root apply step, so it survives the daemon restart.
+  // 'rolled-back' means the new release failed and the previous one was restored (the console is back).
+  applying: { version: string; state: 'requested' | 'downloading' | 'installing' | 'succeeded' | 'failed' | 'rolled-back'; message: string; at: string } | null;
 }
 
 // ---- first-run setup (no administrator yet)

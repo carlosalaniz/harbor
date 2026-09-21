@@ -226,6 +226,20 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
       await aptGet(log, ['install', '-y', '-q', 'git'], { timeoutMs: 10 * 60_000 });
     }
   }
+  // fscrypt: kernel sealing for per-app encrypted homes (stage 4). Ubuntu
+  // ships it as `fscrypt` (universe). Missing binary never fails bootstrap —
+  // installs set up per-drive metadata anyway — but without it nothing seals.
+  {
+    const q = await exec('/usr/bin/dpkg-query', ['-W', '-f=${Status}', 'fscrypt'], { timeoutMs: 10_000 });
+    if (!q.stdout.includes('install ok installed')) {
+      log('installing fscrypt (per-app encryption on ext4 drives)');
+      try {
+        await aptGet(log, ['install', '-y', '-q', 'fscrypt'], { timeoutMs: 10 * 60_000 });
+      } catch (e) {
+        log(`fscrypt install failed (${e instanceof Error ? e.message : String(e)}); app homes will install unsealed until it is present`);
+      }
+    }
+  }
 
   // 8. State (explicit initialization, never on accidental absence)
   let installationId: string;

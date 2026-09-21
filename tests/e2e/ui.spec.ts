@@ -24,6 +24,18 @@ async function approve(page: Page, label: string | RegExp) {
 const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
 const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
+// Every install shows the 12-word recovery card once (with its "I wrote it
+// down" gate): dismiss it so it stops covering the launcher underneath.
+async function dismissRecovery(page: Page) {
+  const gate = page.getByRole('button', { name: 'Dismiss recovery key' });
+  if (await gate.count()) {
+    await page.getByLabel('I wrote down the recovery key').check();
+    await gate.click();
+  } else {
+    await page.getByRole('button', { name: 'Dismiss' }).click();
+  }
+}
+
 async function installFromStore(page: Page, pkgName: string) {
   await page.getByRole('link', { name: 'App Store' }).click();
   await expect(page.getByRole('heading', { name: 'App Store' })).toBeVisible();
@@ -123,6 +135,7 @@ test('store app page, install with plan review, progress tray, Open link; duplic
   await dialog.getByRole('button', { name: 'Install' }).dblclick();
   await expect(page.getByRole('heading', { name: /Installing Excalidraw|Excalidraw is ready/ })).toBeVisible();
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   const tiles = page.locator('.instance');
   await expect(tiles).toHaveCount(1);
@@ -205,6 +218,7 @@ test('second package installs on a distinct port; drawer shows owned resources',
   await installFromStore(page, 'BentoPDF');
   await approve(page, 'Install');
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   await expect(page.locator('.instance')).toHaveCount(2);
   const hrefs = await page.getByRole('link', { name: /^Open / }).evaluateAll((els) => els.map((e) => (e as { href: string }).href));
@@ -232,6 +246,7 @@ test('publish wizard: tailnet address on the tile; public exposure shows one-tim
   await installFromStore(page, 'Excalidraw'); // fresh instance for this test → excalidraw-2
   await approve(page, 'Install');
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Publishing' }).click();
   await page.getByRole('button', { name: 'Publish excalidraw-2' }).click();
   const dlg = page.getByRole('dialog');
@@ -359,6 +374,7 @@ test('install page: bring your own folder validates the path in the plan and mou
   await expect(plan).toContainText(`Use your folder ${folder}`);
   await plan.getByRole('button', { name: 'Install' }).click();
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of jellyfin' }).click();
   const d = page.getByRole('dialog');
@@ -485,6 +501,7 @@ test('full uninstall: typed confirmation, data deleted, name free again', async 
   await installFromStore(page, 'Memos');
   await approve(page, 'Install');
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of memos' }).click();
   const d = page.getByRole('dialog');
@@ -504,6 +521,7 @@ test('full uninstall: typed confirmation, data deleted, name free again', async 
   await installFromStore(page, 'Memos');
   await approve(page, 'Install');
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
 });
 
 test('public addresses wizard: public IP, add and check a domain, use it in the publish wizard; spotlight palette', async ({ page }) => {
@@ -709,6 +727,7 @@ ${notes ? `  releaseNotes: ${JSON.stringify(notes)}\n` : ''}`;
   await expect(plan).toContainText('your own uploaded app');
   await plan.getByRole('button', { name: 'Install' }).click();
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   const tile = page.locator('.icon-tile[data-instance="hello-e2e"]');
   await expect(tile).toBeVisible();
@@ -863,6 +882,7 @@ defaultCredentials:
   await expect(page.getByRole('dialog')).toContainText('ships with a default login (admin)');
   await page.getByRole('dialog').getByRole('button', { name: 'Install' }).click();
   await trayDone(page, 'Install');
+  await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of hello-creds' }).click();
   await expect(page.getByRole('dialog').getByRole('note')).toContainText('changeme', { timeout: 10_000 });
