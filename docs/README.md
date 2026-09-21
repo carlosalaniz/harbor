@@ -13,7 +13,7 @@ Everything about running Harbor, building for it, and working on it.
 | [FUTURE.md](FUTURE.md) | Everyone | Deliberately not built (and why) |
 | [design/](design/) | Contributors | Design addenda: UI, CATALOG, EXPOSURE, ROUND9 |
 | [spec/](spec/) | Contributors | Original spec (`TDD.md`) + historical build order (`plan.md`) — frozen |
-| [dev/](dev/) | Contributors | Build changelog (`PROGRESS.md`) |
+| [dev/](dev/) | Contributors | Build changelog (`PROGRESS.md`), beta checklist (`BETA_TODO.md`) |
 | [openapi.json](openapi.json) | Developers | Generated API description — never hand-edit (`pnpm openapi`) |
 | [evidence/](evidence/) | Contributors | Live-run screenshots, logs, reports (VM IPs redacted) |
 | [assets/screenshots/](assets/screenshots/) | Everyone | Current console screenshots for the README |

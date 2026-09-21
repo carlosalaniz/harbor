@@ -18,8 +18,9 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–93 so far) | `docs/DECISIONS.md` — **next number is 94**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–100 so far) | `docs/DECISIONS.md` — **next number is 101**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
+| What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
 | What was verified live and how | `docs/VERIFICATION.md` (sections per version) + `docs/evidence/<dir>/` (screenshots/logs; VM IPs redacted as `<ip>`) |
 | Operator-facing manual | `docs/OPERATOR_GUIDE.md` (sections 2a one-line install, 4a–4e settings/own apps/updates) |
