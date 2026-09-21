@@ -164,8 +164,12 @@ export function listDevices(run: (args: string[]) => string = defaultLsblk, fixt
     if (doc) {
       const devices = parseDevices(doc);
       return devices.map((d) => {
+        // A simulated format rewrites the filesystem itself (like a real
+        // mkfs would): report ext4 + mounted at the format's mountpoint.
+        const fmt = readSimulatedFormatState(d.name);
+        if (fmt) return { ...d, fsType: 'ext4', mounted: true, mountpoint: fmt };
         const st = readSimulatedMountState(d.name);
-        if (st === 'mounted') return { ...d, mounted: true, mountpoint: `/mnt/${d.name}` };
+        if (st?.state === 'mounted') return { ...d, mounted: true, mountpoint: st.mountpoint ?? `/mnt/${d.name}` };
         return d;
       });
     }
@@ -175,18 +179,35 @@ export function listDevices(run: (args: string[]) => string = defaultLsblk, fixt
   }
 }
 
-// Reads the simulated mount state written by DeviceMountService in fixture
-// mode (<stateDir>/devices/<name>/mount-status.json is per-daemon; the env
-// pointer below tells listDevices which state dir to consult).
-function readSimulatedMountState(name: string): 'mounted' | 'unmounted' | null {
+// Reads the simulated mount/format state written by DeviceMountService in
+// fixture mode (<stateDir>/devices/<name>/{mount,format}-status.json is
+// per-daemon; the env pointer below tells listDevices which state dir to
+// consult).
+function readSimulatedMountState(name: string): { state: string; mountpoint: string | null } | null {
   try {
     const stateDir = process.env['HARBOR_DEVICES_STATE_DIR'];
     if (!stateDir || !/^[a-z]+[0-9]+$/.test(name)) return null;
     const file = path.join(stateDir, 'devices', name, 'mount-status.json');
     if (!existsSync(file)) return null;
-    const st = JSON.parse(readFileSync(file, 'utf8')) as { state?: string };
-    if (st.state === 'mounted') return 'mounted';
-    if (st.state === 'unmounted') return 'unmounted';
+    const st = JSON.parse(readFileSync(file, 'utf8')) as { state?: string; mountpoint?: string | null };
+    if (st.state === 'mounted' || st.state === 'unmounted') return { state: st.state, mountpoint: st.mountpoint ?? null };
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// A simulated format rewrites the filesystem itself (like a real mkfs would):
+// once format-status.json says formatted, the device reports ext4 at the
+// format's mountpoint even though the lsblk fixture still says vfat.
+function readSimulatedFormatState(name: string): string | null {
+  try {
+    const stateDir = process.env['HARBOR_DEVICES_STATE_DIR'];
+    if (!stateDir || !/^[a-z]+[0-9]+$/.test(name)) return null;
+    const file = path.join(stateDir, 'devices', name, 'format-status.json');
+    if (!existsSync(file)) return null;
+    const st = JSON.parse(readFileSync(file, 'utf8')) as { state?: string; mountpoint?: string | null };
+    if (st.state === 'formatted' && typeof st.mountpoint === 'string' && st.mountpoint.length) return st.mountpoint;
     return null;
   } catch {
     return null;

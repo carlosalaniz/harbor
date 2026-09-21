@@ -149,19 +149,20 @@ TimeoutStartSec=1800
 
 export const DEVICE_MOUNT_UNIT = 'harbor-device-mount.service';
 
-// Oneshot unit for mounting/unmounting removable media from the console.
+// Oneshot unit for mounting/unmounting/formatting removable media from the console.
 // The daemon (harbor user, allowed by the polkit rule) starts it with the device
-// name and action; the root step runs `harbor device-mount <name> <mount|unmount>`,
-// which validates the removable-only allowlist itself. Progress goes to
-// <stateDir>/devices/<name>/mount-status.json.
+// name and action; the root step runs `harbor device-mount <name> <mount|unmount>`
+// or `harbor device-format <name>`, which validates the removable-only allowlist
+// itself. Progress goes to <stateDir>/devices/<name>/{mount,format}-status.json.
 export function deviceMountUnit(): string {
+  const opt = PRODUCT.paths.opt;
   return `${UNIT_MARKER}
 [Unit]
-Description=Harbor removable-device mount (%i: <name>:<mount|unmount>)
+Description=Harbor removable-device mount (%i: <name>:<mount|unmount|format>)
 
 [Service]
 Type=oneshot
-ExecStart=${PRODUCT.paths.opt}/bin/harbor device-mount %i
-TimeoutStartSec=300
+ExecStart=${opt}/bin/harbor device-dispatch %i
+TimeoutStartSec=600
 `;
 }

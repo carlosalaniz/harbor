@@ -54,4 +54,37 @@ describe('device mount service', () => {
       expect((e as HarborError).nextAction).toContain('sudo /opt/harbor/bin/harbor device-mount sdb1:mount');
     }
   });
+  it('starts the root oneshot to format a removable drive as ext4', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-dev-'));
+    const starter = vi.fn(async () => {});
+    const svc = new DeviceMountService(repoWithBinds([]), systemClock, dir, starter);
+    const st = await svc.format('sdb1', 'admin');
+    expect(st.state).toBe('requested');
+    expect(starter).toHaveBeenCalledWith('harbor-device-mount@sdb1:format.service');
+  });
+  it('refuses to format a drive an app uses, naming the app', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-dev-'));
+    const svc = new DeviceMountService(repoWithBinds(['/mnt/backup/photos']), systemClock, dir, async () => {});
+    await expect(svc.format('sdc1', 'admin')).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    try {
+      await svc.format('sdc1', 'admin');
+    } catch (e) {
+      expect((e as HarborError).message).toContain('/mnt/backup');
+    }
+  });
+  it('refuses to format the system disk', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-dev-'));
+    const svc = new DeviceMountService(repoWithBinds([]), systemClock, dir, async () => {});
+    await expect(svc.format('sda1', 'admin')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+  it('format refuses without systemd, printing the exact root command', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-dev-'));
+    const svc = new DeviceMountService(repoWithBinds([]), systemClock, dir, null);
+    await expect(svc.format('sdb1', 'admin')).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' });
+    try {
+      await svc.format('sdb1', 'admin');
+    } catch (e) {
+      expect((e as HarborError).nextAction).toContain('sudo /opt/harbor/bin/harbor device-format sdb1');
+    }
+  });
 });

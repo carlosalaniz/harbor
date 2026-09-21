@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–92 so far) | `docs/DECISIONS.md` — **next number is 93**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–93 so far) | `docs/DECISIONS.md` — **next number is 94**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
 | What was verified live and how | `docs/VERIFICATION.md` (sections per version) + `docs/evidence/<dir>/` (screenshots/logs; VM IPs redacted as `<ip>`) |
@@ -49,7 +49,7 @@ src/
   cli/main.ts          commander CLI (all console actions incl. install --location, found-apps, adopt + bootstrap/self-update/setup-code/totp reset)
 web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx (InstallWizard location picker + passphrase, PlanDialog Lives-on row, locked drawer banner), app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 catalog/               17 bundled packages (manifest.yaml, compose.yaml, README.md, release.json, icon)
-tests/unit (116) tests/integration (122 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 24, two dev daemons on 18500/18700: normal + setup mode)
+tests/unit (120) tests/integration (122 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
 scripts/               package.mjs (release archive), catalog-pin/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
 install.sh             curl one-liner (published as a release asset too)
 ```
@@ -58,8 +58,8 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 
 ## 4. Versions, tags, releases
 
-Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0.
-`package.json` version is **0.13.0**. GitHub Releases exist for v0.7.0 → v0.13.0 (assets:
+Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0, v0.14.0.
+`package.json` version is **0.14.0**. GitHub Releases exist for v0.7.0 → v0.14.0 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
 push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
@@ -73,22 +73,26 @@ troubleshoot logs, TOTP 2FA, device name, Tailscale operator self-heal; 0.8 inst
 LAN mode + mDNS, Harbor self-update, defaultCredentials; 0.9 round-9 (notifications, usage,
 git sources, auto-updates, widgets); 0.10 password-only persistent login (30-day remember) +
 Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logout in Settings);
-0.11 `harbor uninstall`, apt-lock retry, keep-existing-admin, removable-media phase 1 (lsblk devices in Places); 0.12 removable media (mount/unmount at `/mnt/<label>`, drive guard with app-generated identity, auto-mount/auto-start, adopt-drive); 0.13 install-location + adopt (whole encrypted apps on drives: location picker + passphrase, volumes rooted in `<dir>/<name>/{manifest.json, vault/}`, found-apps + adopt on any machine, portable via passphrase).
+0.11 `harbor uninstall`, apt-lock retry, keep-existing-admin, removable-media phase 1 (lsblk devices in Places); 0.12 removable media (mount/unmount at `/mnt/<label>`, drive guard with app-generated identity, auto-mount/auto-start, adopt-drive); 0.13 install-location + adopt (whole encrypted apps on drives: location picker + passphrase, volumes rooted in `<dir>/<name>/{manifest.json, vault/}`, found-apps + adopt on any machine, portable via passphrase); 0.14 format-as-ext4 in place (typed confirm, refused while an app uses the drive).
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (92, executed 2026-09-20):** install-location + adopt close the
-app-homes loop — the install wizard asks where the app lives, a drive choice takes an
-8+ char passphrase (submission-only secret, never in the plan), volumes root inside
-`<dir>/<name>/{manifest.json, vault/}` as local-driver binds, found-apps + adopt
-(portable via passphrase, UUID reuse, fresh ports) in console + CLI. Shipped as
-**v0.13.0** and deployed to carlos-desktop (daemon healthy, CLI + UI bundle +
-app-home crypto proven live; only drive on the box is vfat so no live drive
-install — e2e covers the picker → encrypted review → install on the data-folder
-candidate).
+**Latest decision (93, executed 2026-09-21):** format-as-ext4 in place — Settings → Storage
+offers *Format as ext4…* per removable drive (erase warning + typed device-name confirm,
+`Formatting…` spinner, `cannot hold apps as-is` row hint; ineligible install-location rows
+point at it). `POST /v1/host/devices/:name/format` + `GET …/format-status` reuse the mount
+oneshot shape (removable-only, refused while an app holds the drive, `BUSY` while one runs);
+the template unit now runs `harbor device-dispatch %i` (`TimeoutStartSec=600`); the root step
+does `umount → wipefs -a → mkfs.ext4 → mount at /mnt/<label> → chown harbor`. Shipped as
+**v0.14.0** (unit 120 + integration 122 + e2e 25 green, openapi 72 paths). Not yet deployed to
+carlos-desktop — the only stick there holds the live Immich library, so no live format.
 
 **Last three actions, most recent first:**
-1. **Shipped v0.13.0 install-location + adopt, deployed to carlos-desktop** (2026-09-20):
+1. **Shipped v0.14.0 format-as-ext4 (decision 93)** (2026-09-21): format routes + root step +
+   device-dispatch unit, Settings button/dialog/hints, fixture overlay so e2e proves vfat → ext4 →
+   mounted, docs (decision 93, guide §4a1, FUTURE, PROGRESS phase 20, VERIFICATION counts, openapi 72).
+   Not deployed to carlos-desktop (stick holds live Immich data).
+2. **Shipped v0.13.0 install-location + adopt, deployed to carlos-desktop** (2026-09-20):
    wizard location picker + passphrase, Lives-on plan row, Locked tiles/drawer banner,
    Found-apps in Settings → Storage, CLI `install --location / found-apps / adopt`,
    unit 116 + integration 122 + e2e 24 green, decision 92, docs (APP_HOMES stages 2–3,
@@ -132,7 +136,7 @@ candidate).
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 116), `pnpm test:integration` (122 + 3 live-Docker skipped), `pnpm test:e2e` (24, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 120), `pnpm test:integration` (122 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
 - Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.
@@ -155,7 +159,7 @@ candidate).
 
 ## 9. Scope decisions that override TDD exclusions (all at Carlos's request)
 
-Purge (49), app updates and uploaded packages (60–62), MFA/TOTP (67), Harbor self-update and GitHub release publication (69–70), LAN exposure (71), notifications/usage/git-sources/auto-updates/widgets (76–82), persistent login + craft pass (83–84), removable media + drive guard + auto-mount/start (88–90), install-location + adopt (91–92). Still not built on purpose: files app, factory reset, external disk partitioning/formatting/LUKS/SMART, multi-user/SSO, backups (see `docs/FUTURE.md`).
+Purge (49), app updates and uploaded packages (60–62), MFA/TOTP (67), Harbor self-update and GitHub release publication (69–70), LAN exposure (71), notifications/usage/git-sources/auto-updates/widgets (76–82), persistent login + craft pass (83–84), removable media + drive guard + auto-mount/start (88–90), install-location + adopt (91–92), format-as-ext4 (93). Still not built on purpose: files app, factory reset, external disk partitioning/LUKS/SMART, multi-user/SSO, backups (see `docs/FUTURE.md`).
 
 ## 10. Feature map of the console (for UI work)
 

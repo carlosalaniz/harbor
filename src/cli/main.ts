@@ -998,6 +998,33 @@ program
     await applyDeviceMount(m[1]!, m[2] as 'mount' | 'unmount', (msg) => process.stderr.write(`[device-mount] ${msg}\n`));
   });
 
+program
+  .command('device-format <name>')
+  .description('ROOT, run by harbor-device-mount@<name>:format.service: format a removable drive as ext4 (erases everything)')
+  .action(async (name: string) => {
+    if (!/^[a-z]+[0-9]+$/.test(name)) throw new HarborError('INVALID_REQUEST', `device-format expects a device name like sdb1, got ${name}`);
+    const { applyDeviceFormat } = await import('../bootstrap/device-format-apply.js');
+    await applyDeviceFormat(name, (msg) => process.stderr.write(`[device-format] ${msg}\n`));
+  });
+
+program
+  .command('device-dispatch <spec>')
+  .description('ROOT, run by harbor-device-mount@.service: dispatch "<name>:mount", "<name>:unmount" or "<name>:format" to the right root step')
+  .action(async (spec: string) => {
+    const m = /^([a-z]+[0-9]+):(mount|unmount|format)$/.exec(spec);
+    if (!m) throw new HarborError('INVALID_REQUEST', `device-dispatch expects <name>:<mount|unmount|format>, got ${spec}`);
+    const name = m[1]!;
+    const action = m[2]!;
+    const log = (msg: string) => process.stderr.write(`[device-${action}] ${msg}\n`);
+    if (action === 'format') {
+      const { applyDeviceFormat } = await import('../bootstrap/device-format-apply.js');
+      await applyDeviceFormat(name, log);
+      return;
+    }
+    const { applyDeviceMount } = await import('../bootstrap/device-mount-apply.js');
+    await applyDeviceMount(name, action as 'mount' | 'unmount', log);
+  });
+
 function selfUpdateText(s: SelfUpdateStatusDto): string {
   const lines = [`Installed: Harbor ${s.current}`];
   if (s.latest) lines.push(`Newest release: ${s.latest.version}${s.latest.publishedAt ? ` (${s.latest.publishedAt.slice(0, 10)})` : ''}${s.available ? ' — UPDATE AVAILABLE (harbor self-update start)' : ' — up to date'}`);

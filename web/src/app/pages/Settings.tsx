@@ -1127,6 +1127,59 @@ function FoundApps() {
   );
 }
 
+// Format a removable drive as ext4 so it can hold encrypted apps. Two-step:
+// "Format…" opens the confirm dialog (names the drive, states the wipe, asks
+// for the typed drive name); the dialog's Format button runs the root oneshot.
+function FormatDriveButton({ d, busy, formatting, onFormat }: { d: HostStorageDto['devices'][number]; busy: boolean; formatting: boolean; onFormat: () => void }) {
+  const [confirm, setConfirm] = useState(false);
+  const [typed, setTyped] = useState('');
+  const name = d.label ?? d.name;
+  const expected = d.name;
+  return (
+    <>
+      <button className="btn small danger" disabled={busy} onClick={() => (setTyped(''), setConfirm(true))} aria-label={formatting ? `Formatting ${name}` : `Format ${name} as ext4`} aria-busy={formatting}>
+        {formatting ? (
+          <>
+            <span className="spin" aria-hidden="true" /> Formatting…
+          </>
+        ) : (
+          'Format as ext4…'
+        )}
+      </button>
+      {confirm && (
+        <Dialog title={`Format ${name} as ext4?`} onClose={() => setConfirm(false)}>
+          <p>
+            This <strong>erases everything</strong> on {d.device} ({d.size}
+            {d.fsType ? `, currently ${d.fsType}` : ''}) and formats it as ext4 so Harbor can install encrypted apps on it. The drive is remounted at its usual place afterwards.
+          </p>
+          <p className="muted small">Harbor only formats removable drives — never the system disk. Formatting is refused while an app uses the drive.</p>
+          <label className="small">
+            <span>
+              Type <code>{expected}</code> to confirm
+            </span>
+            <input value={typed} onChange={(e) => setTyped(e.target.value)} aria-label={`Type ${expected} to confirm`} autoComplete="off" />
+          </label>
+          <div className="row end">
+            <button className="btn" onClick={() => setConfirm(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn danger"
+              disabled={typed.trim() !== expected}
+              onClick={() => {
+                setConfirm(false);
+                onFormat();
+              }}
+            >
+              Format (erase everything)
+            </button>
+          </div>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 function Storage() {
   const [s, setS] = useState<HostStorageDto | null>(null);
   const [usage, setUsage] = useState<StorageUsageDto | null>(null);
@@ -1144,10 +1197,11 @@ function Storage() {
     }, 2000);
     return () => clearInterval(t);
   }, []);
-  // A mount/unmount is a root oneshot that takes seconds: poll the per-device
-  // status until it settles, then reload the list so the row flips by itself.
-  // The busy flag is already set by mount()/unmount() so the button locks
-  // instantly on click (no double-submit while the POST is in flight).
+  // A mount/unmount/format is a root oneshot that takes seconds (format: up to
+  // minutes on a big drive): poll the per-device status until it settles, then
+  // reload the list so the row flips by itself. The busy flag is already set
+  // by mount()/unmount()/format() so the button locks instantly on click
+  // (no double-submit while the POST is in flight).
   const watchDevice = (name: string) => {
     let tries = 0;
     const t = setInterval(() => {
@@ -1169,6 +1223,27 @@ function Storage() {
       );
     }, 1500);
   };
+  const watchFormat = (name: string) => {
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      api.formatStatus(name).then(
+        (st) => {
+          if (st.state === 'formatted' || st.state === 'failed' || tries >= 120) {
+            clearInterval(t);
+            setBusyDevice(null);
+            if (st.state === 'failed') setError(st.message);
+            void load();
+          }
+        },
+        (e: Error) => {
+          clearInterval(t);
+          setBusyDevice(null);
+          setError(e.message);
+        },
+      );
+    }, 2000);
+  };
   const mount = (name: string) => {
     setError(null);
     if (busyDevice) return;
@@ -1187,6 +1262,18 @@ function Storage() {
     setBusyDevice(name);
     api.unmountDevice(name).then(
       () => watchDevice(name),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
+    );
+  };
+  const format = (name: string) => {
+    setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
+    api.formatDevice(name).then(
+      () => watchFormat(name),
       (e: Error) => {
         setBusyDevice(null);
         setError(e.message);
@@ -1272,6 +1359,9 @@ function Storage() {
                   {d.mounted && d.mountpoint ? `${d.mountpoint} · ` : 'Not mounted · '}
                   {d.size}
                   {d.fsType ? ` · ${d.fsType}` : ''}
+                  {d.fsType && !['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs'].includes(d.fsType.toLowerCase()) && (
+                    <> · cannot hold apps as-is</>
+                  )}
                 </span>
               </div>
               <div className="row wrap">
@@ -1308,6 +1398,7 @@ function Storage() {
                     )}
                   </button>
                 )}
+                <FormatDriveButton d={d} busy={busyDevice !== null} formatting={busyDevice === d.name} onFormat={() => format(d.name)} />
                 {busyDevice === d.name && <span className="muted small" role="status">Working…</span>}
               </div>
             </li>

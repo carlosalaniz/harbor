@@ -218,6 +218,12 @@ are never touched.
   When the right folder is back, Harbor starts the app again by itself
   (*Automatically start apps when their drive returns*, on by default) and the
   bell row disappears.
+- A drive on the wrong filesystem (exFAT, NTFS, vfat — shown as *cannot hold
+  apps as-is*) can be converted in place: **Format as ext4…** next to the drive
+  erases everything on it and formats it as ext4, then remounts it at the usual
+  place so it qualifies for whole-app installs. Formatting is refused while an
+  app uses the drive, and asks for the device name (e.g. `sdb1`) as typed
+  confirmation. System disks are never offered.
 ## 4a2. Install a whole app on a drive (encrypted, portable)
 
 Some apps keep everything in a database that cannot live in one of your own

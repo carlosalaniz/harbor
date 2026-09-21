@@ -525,6 +525,16 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     { preHandler: requireAuth, schema: { description: 'Mount/unmount progress for one removable device.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
     async (req) => devices.status((req.params as { name: string }).name) ?? { device: (req.params as { name: string }).name, state: 'unmounted', message: 'no mount operation recorded', mountpoint: null, at: null },
   );
+  app.post(
+    '/v1/host/devices/:name/format',
+    { preHandler: requireAuth, schema: { description: 'Format a removable device as ext4 so it can hold encrypted apps (erases everything; refused while an app uses the drive). Poll GET /v1/host/devices/:name/format-status for the result.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req, reply) => reply.status(202).send(await devices.format((req.params as { name: string }).name, req.actor!)),
+  );
+  app.get(
+    '/v1/host/devices/:name/format-status',
+    { preHandler: requireAuth, schema: { description: 'Format progress for one removable device.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req) => devices.formatStatus((req.params as { name: string }).name) ?? { device: (req.params as { name: string }).name, state: 'unmounted', message: 'no format operation recorded', fsType: null, mountpoint: null, at: null },
+  );
   app.put(
     '/v1/host/storage/policy',
     { preHandler: requireAuth, schema: { description: 'Removable-drive behaviour: auto-mount on insert, auto-start apps whose drive came back (both on by default).', body: { type: 'object', additionalProperties: false, properties: { autoMount: { type: 'boolean' }, autoStart: { type: 'boolean' } } } } },

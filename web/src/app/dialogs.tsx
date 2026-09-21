@@ -236,7 +236,12 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         {(candidates ?? []).map((cd) => (
           <label key={cd.dir} className="check" title={cd.eligible ? undefined : (cd.reason ?? 'not available')}>
             <input type="radio" name="loc" checked={locationDir === cd.dir} disabled={!cd.eligible} onChange={() => setLocationDir(cd.dir)} /> {cd.label}
-            {!cd.eligible && <span className="muted small"> · {cd.reason}</span>}
+            {!cd.eligible && (
+              <span className="muted small">
+                {' '}
+                · {cd.reason} <span className="muted small">(format the drive as ext4 in Settings → Storage to use it)</span>
+              </span>
+            )}
           </label>
         ))}
         {candidates === null && <p className="muted small">Checking drives…</p>}

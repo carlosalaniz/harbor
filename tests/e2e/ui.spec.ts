@@ -407,6 +407,30 @@ test('storage: removable device mount locks with a spinner, then flips to mounte
   await expect(page.getByRole('button', { name: 'Mount' })).toBeVisible({ timeout: 15_000 });
 });
 
+test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Storage Disks/ }).click();
+  // the fixture stick is vfat: the row says it cannot hold apps as-is
+  await expect(page.getByText(/cannot hold apps as-is/)).toBeVisible();
+  const format = page.getByRole('button', { name: /Format .* as ext4/ });
+  await expect(format).toBeVisible();
+  await format.click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg).toContainText(/erases everything/);
+  // the destructive button stays disabled until the device name is typed
+  const go = dlg.getByRole('button', { name: 'Format (erase everything)' });
+  await expect(go).toBeDisabled();
+  await dlg.getByLabel(/Type .* to confirm/).fill('sdb1');
+  await expect(go).toBeEnabled();
+  await go.click();
+  // the row locks with a Formatting… spinner, then the drive is ext4 + mounted
+  await expect(page.getByRole('button', { name: /Formatting/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Eject' })).toBeVisible({ timeout: 15_000 });
+  // the formatted drive row no longer warns; the 2s storage poll reloads the list
+  await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/cannot hold apps as-is/)).toHaveCount(0, { timeout: 15_000 });
+});
+
 test('full uninstall: typed confirmation, data deleted, name free again', async ({ page }) => {
   await login(page);
   await installFromStore(page, 'Memos');

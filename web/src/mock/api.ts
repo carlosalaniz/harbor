@@ -60,18 +60,34 @@ let order: string[] = [];
 
 // Design-mode device state: mount/unmount flip the fixture so the row, the
 // spinner and the 2s poll can be exercised with clicks, like the real daemon.
+function mockMountpointFor(name: string): string {
+  const label = storage.devices.find((d) => d.name === name)?.label ?? name;
+  return `/mnt/${label.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || name}`;
+}
 function mockMountDevice(name: string): void {
+  const mp = mockMountpointFor(name);
   storage = {
     ...storage,
-    mounts: storage.mounts.some((m) => m.mountpoint === `/mnt/${name}`) ? storage.mounts : [...storage.mounts, { mountpoint: `/mnt/${name}`, device: `/dev/${name}`, fsType: 'vfat', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 4 * 1024 * 1024 * 1024, writable: true, label: `Drive "${name}"` }],
-    devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: true, mountpoint: `/mnt/${name}` } : d)),
+    mounts: storage.mounts.some((m) => m.mountpoint === mp) ? storage.mounts : [...storage.mounts, { mountpoint: mp, device: `/dev/${name}`, fsType: 'vfat', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 4 * 1024 * 1024 * 1024, writable: true, label: `Drive "${name}"` }],
+    devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: true, mountpoint: mp } : d)),
   };
 }
 function mockUnmountDevice(name: string): void {
+  const mp = mockMountpointFor(name);
   storage = {
     ...storage,
-    mounts: storage.mounts.filter((m) => m.mountpoint !== `/mnt/${name}`),
+    mounts: storage.mounts.filter((m) => m.mountpoint !== mp),
     devices: storage.devices.map((d) => (d.name === name ? { ...d, mounted: false, mountpoint: null } : d)),
+  };
+}
+// Format in design mode: the drive becomes ext4 + mounted at its label-derived
+// mountpoint, and gains an eligible install candidate — like the real daemon.
+function mockFormatDevice(name: string, mp: string, label: string): void {
+  storage = {
+    ...storage,
+    mounts: storage.mounts.some((m) => m.mountpoint === mp) ? storage.mounts.map((m) => (m.mountpoint === mp ? { ...m, fsType: 'ext4', usedBytes: 0 } : m)) : [...storage.mounts, { mountpoint: mp, device: `/dev/${name}`, fsType: 'ext4', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 0, writable: true, label: `Drive "${label}"` }],
+    devices: storage.devices.map((d) => (d.name === name ? { ...d, fsType: 'ext4', mounted: true, mountpoint: mp } : d)),
+    installCandidates: [...storage.installCandidates, { dir: `${mp}/harbor-apps`, label: `Drive "${label}" (${mp}/harbor-apps)`, fsType: 'ext4', totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 0, writable: true, eligible: true, reason: null }],
   };
 }
 
@@ -206,6 +222,19 @@ export const mockApi = {
     return dev?.mounted
       ? { device: name, state: 'mounted', message: `mounted at ${dev.mountpoint} (mock)`, mountpoint: dev.mountpoint }
       : { device: name, state: 'unmounted', message: 'unmounted (mock)', mountpoint: null };
+  },
+  formatDevice: async (name: string) => {
+    await beat(1200); // slow enough that the Formatting… spinner + disabled lock is visible
+    const mp = mockMountpointFor(name);
+    const label = storage.devices.find((d) => d.name === name)?.label ?? name;
+    mockFormatDevice(name, mp, label);
+    return { device: name, state: 'formatted', message: `formatted as ext4 and mounted at ${mp} (mock)`, fsType: 'ext4', mountpoint: mp };
+  },
+  formatStatus: async (name: string) => {
+    const dev = storage.devices.find((d) => d.name === name);
+    return dev?.fsType === 'ext4' && dev.mounted
+      ? { device: name, state: 'formatted', message: `formatted as ext4 and mounted at ${dev.mountpoint} (mock)`, fsType: 'ext4', mountpoint: dev.mountpoint }
+      : { device: name, state: 'unmounted', message: 'no format operation recorded (mock)', fsType: null, mountpoint: null };
   },
   storageUsage: async (): Promise<StorageUsageDto> => mockStorageUsage(),
   notifications: async (): Promise<NotificationsDto> => notifications,

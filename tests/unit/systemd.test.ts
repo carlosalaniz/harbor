@@ -16,8 +16,9 @@ describe('systemd unit text', () => {
     expect(cockpitSocketDropIn(9090)).toContain('ListenStream=\nListenStream=127.0.0.1:9090');
   });
   it('mounts removable media through a root oneshot the harbor user may start', () => {
-    expect(deviceMountUnit()).toContain('ExecStart=/opt/harbor/bin/harbor device-mount %i');
-    expect(deviceMountUnit()).toContain('TimeoutStartSec=300');
+    expect(deviceMountUnit()).toContain('harbor device-dispatch %i');
+    expect(deviceMountUnit()).toContain('<name>:<mount|unmount|format>');
+    expect(deviceMountUnit()).toContain('TimeoutStartSec=600');
     expect(polkitPowerRule()).toContain('harbor-device-mount@');
   });
 });
