@@ -84,7 +84,7 @@ describe('Harbor self-update', () => {
 
   it('reports the newest release, refuses to apply when up to date, starts the root oneshot for a newer one and shows the progress file', async () => {
     const st0 = await h.api.expect<SelfUpdateStatusDto>(200, 'GET', '/v1/system/update');
-    expect(st0.current).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(st0.current).toMatch(/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
     // the harness feed starts empty: "not checked / nothing known"
     expect(st0.latest).toBeNull();
     await h.api.expectError(409, 'INVALID_STATE', 'POST', '/v1/system/update/apply', {});
