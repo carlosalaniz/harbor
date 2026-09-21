@@ -183,6 +183,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 123, integration 123, e2e 25 (wizard Format-first + Settings Format-first + typed-confirm flows)
 - [x] Docs: decision 95, operator guide §4a1/§4a2 format-first wording
 
+## Phase 23 — wizard blocks Install on an unmounted-drive folder pick (2026-09-21, v0.15.2) ✅
+- [x] Unmounted-drive guard (decision 96): drive matching falls back to the expected `/mnt/<label>` mountpoint when unmounted (a stale empty dir like `/mnt/usb20fd` is still the NTFS drive, not a usable folder). A folder on an unmounted drive shows "plugged in but not mounted — mount it before installing" with *Mount it* and Install disabled until mounted; the wrong-filesystem Format warning takes precedence when both apply
+- [x] Tests: unit 123, integration 123, e2e 25 green
+- [x] Docs: decision 96
+
 ## Test results (latest local run)
 
 | Command | Result |

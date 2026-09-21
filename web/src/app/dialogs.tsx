@@ -263,12 +263,23 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
   };
   // The chosen folder may sit on a drive Harbor can't use for apps: then no
   // passphrase prompt — offer Format instead, and block Install until the
-  // drive qualifies.
+  // drive qualifies. Match by the drive's live mountpoint, or by its expected
+  // /mnt/<label> mountpoint when unmounted: a stale empty dir like
+  // /mnt/usb20fd is still the NTFS drive, not a usable folder.
+  const driveMountpoint = (d: { mountpoint: string | null; label: string | null; name: string }): string | null => {
+    if (d.mountpoint) return d.mountpoint;
+    const slug = (d.label ?? d.name).toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32) || d.name;
+    return `/mnt/${slug}`;
+  };
   const locationCandidate = locationDir !== null ? ((candidates ?? []).find((cd) => locationDir === cd.dir || locationDir.startsWith(cd.dir + '/')) ?? null) : null;
-  const locationDrive = locationDir !== null ? (devices.find((d) => d.mountpoint && (locationDir === d.mountpoint || locationDir.startsWith(d.mountpoint + '/'))) ?? null) : null;
+  const locationDrive = locationDir !== null ? (devices.find((d) => {
+    const mp = driveMountpoint(d);
+    return mp !== null && (locationDir === mp || locationDir.startsWith(mp + '/'));
+  }) ?? null) : null;
   const locationNeedsFormat = Boolean(locationDir !== null && ((locationCandidate && !locationCandidate.eligible && locationCandidate.writable) || (locationDrive && needsFormatForApps(locationDrive.fsType))));
+  const locationNeedsMount = Boolean(locationDir !== null && !locationNeedsFormat && locationDrive && (!locationDrive.mounted || !locationDrive.mountpoint));
   const locationFormatDrive = locationDrive ?? (locationCandidate ? (devices.find((d) => d.mountpoint && (locationCandidate.dir === `${d.mountpoint}/harbor-apps` || locationCandidate.dir.startsWith(d.mountpoint + '/'))) ?? null) : null);
-  const locationBlocked = locationNeedsFormat;
+  const locationBlocked = locationNeedsFormat || locationNeedsMount;
   const genPassphrase = () => {
     const bytes = new Uint8Array(18);
     crypto.getRandomValues(bytes);
@@ -492,7 +503,34 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
             )}
           </div>
         )}
-        {locationDir !== null && !locationNeedsFormat && (
+        {locationDir !== null && !locationNeedsFormat && locationNeedsMount && locationDrive && (
+          <div className="folder-choice">
+            <button className="btn" onClick={() => setPicking('location')} aria-label="Choose install folder">
+              Change folder…
+            </button>
+            <code className="path">{locationDir}</code>
+            <p className="warn small" role="alert">
+              {locationDrive.label ?? locationDrive.name} is plugged in but not mounted — mount it before installing, or pick another folder.
+            </p>
+            <button
+              type="button"
+              className="btn small"
+              disabled={busyDevice !== null}
+              onClick={() => mount(locationDrive.name)}
+              aria-label={busyDevice === locationDrive.name ? `Mounting ${locationDrive.label ?? locationDrive.name}` : `Mount ${locationDrive.label ?? locationDrive.name}`}
+              aria-busy={busyDevice === locationDrive.name}
+            >
+              {busyDevice === locationDrive.name ? (
+                <>
+                  <span className="spin" aria-hidden="true" /> Mounting…
+                </>
+              ) : (
+                'Mount it'
+              )}
+            </button>
+          </div>
+        )}
+        {locationDir !== null && !locationNeedsFormat && !locationNeedsMount && (
           <div className="folder-choice">
             <button className="btn" onClick={() => setPicking('location')} aria-label="Choose install folder">
               Change folder…
@@ -591,7 +629,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass || locationBlocked}
           onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir !== null ? (isDefaultKeyLocation && !customPass ? { location: { dir: locationDir } } : { location: { dir: locationDir, passphrase } }) : {}) })}
           aria-label={`Install ${item.name} now`}
-          title={locationBlocked ? 'This drive needs formatting as ext4 first' : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
+          title={locationBlocked ? (locationNeedsFormat ? 'This drive needs formatting as ext4 first' : 'Mount the drive before installing') : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
         >
           Install
         </button>
