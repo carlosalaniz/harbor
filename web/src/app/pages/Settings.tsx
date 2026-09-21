@@ -1124,6 +1124,7 @@ function FoundApps() {
   if (error) return <p className="error">{error}</p>;
   if (apps === null) return <p className="muted small">Looking for apps on your drives…</p>;
   const fresh = apps.filter((a) => !a.adopted);
+  const needsFormat = (fsType: string | null): boolean => !!fsType && !['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs', 'apfs', 'hfs'].includes(fsType.toLowerCase());
   const unmounted = (storage?.devices ?? []).filter((d) => !d.mounted || !d.mountpoint);
   if (fresh.length === 0 && unmounted.length === 0) return <p className="muted small">No apps waiting. Plug in a drive that holds an encrypted app and it appears here.</p>;
   return (
@@ -1131,8 +1132,9 @@ function FoundApps() {
       {unmounted.map((d) => (
         <li key={`unmounted-${d.device}`} className="row between wrap">
           <span>
-            <strong>{d.label ?? d.name}</strong> <span className="muted small">· {d.size}{d.fsType ? ` · ${d.fsType}` : ''} · plugged in but not mounted — its apps (if any) are hidden until it is mounted</span>
+            <strong>{d.label ?? d.name}</strong> <span className="muted small">· {d.size}{d.fsType ? ` · ${d.fsType}` : ''} · {needsFormat(d.fsType) ? 'needs formatting as ext4 before it can hold apps — see Disks above' : 'plugged in but not mounted — its apps (if any) are hidden until it is mounted'}</span>
           </span>
+          {!needsFormat(d.fsType) && (
           <button
             className="btn small"
             disabled={busyDevice !== null}
@@ -1148,6 +1150,7 @@ function FoundApps() {
               'Mount to see its apps'
             )}
           </button>
+          )}
         </li>
       ))}
       {fresh.map((a) => (
