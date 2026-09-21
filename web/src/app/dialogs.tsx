@@ -301,8 +301,15 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
   // mountpoint, but listMounts cannot see the fake mount so no candidate row
   // exists. Treat it as the selected drive so the passphrase prompt appears
   // (the test proves the wizard continues; a real mount always has a row).
-  const formattedDrive = place === 'external' && driveDir !== null && !driveCandidate ? (devices.find((d) => d.mounted && d.mountpoint && !needsFormatForApps(d.fsType) && driveDir === `${d.mountpoint}/harbor-apps`) ?? null) : null;
-  const locationNeedsFormat = Boolean(place === 'external' && ((locationCandidate && !locationCandidate.eligible && locationCandidate.writable) || (unmountedDrive && needsFormatForApps(unmountedDrive.fsType))));
+  // Require a known-good filesystem: an unknown (null) fsType must never
+  // count as formatted — it would let an NTFS drive through with no row.
+  const formattedDrive = place === 'external' && driveDir !== null && !driveCandidate ? (devices.find((d) => d.mounted && d.mountpoint && d.fsType && !needsFormatForApps(d.fsType) && driveDir === `${d.mountpoint}/harbor-apps`) ?? null) : null;
+  // Any ineligible candidate blocks Install — wrong filesystem AND
+  // not-writable alike. The old check only treated "wrong FS but writable"
+  // as needing format, so a non-writable NTFS mount slipped through to the
+  // passphrase prompt with Install enabled. A database on NTFS is corruption,
+  // not portability, regardless of writability.
+  const locationNeedsFormat = Boolean(place === 'external' && ((locationCandidate && !locationCandidate.eligible) || (unmountedDrive && needsFormatForApps(unmountedDrive.fsType))));
   const locationNeedsMount = Boolean(place === 'external' && !locationNeedsFormat && (unmountedDrive || (locationDrive && (!locationDrive.mounted || !locationDrive.mountpoint))));
   const locationFormatDrive = locationDrive ?? unmountedDrive;
   const locationBlocked = place === 'external' && (locationNeedsFormat || locationNeedsMount || (!driveCandidate && !formattedDrive));
@@ -399,11 +406,14 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         {place === 'external' && (
           <>
             {(candidates ?? []).filter((cd) => !cd.label.startsWith('Harbor data folder')).map((cd) => {
-              // A mounted-but-wrong-filesystem drive carries a disabled row with a
-              // reason: offer Format inline (one click, typed confirm) instead of
-              // sending the operator to Settings and back.
+              // A mounted-but-wrong-filesystem drive carries a disabled
+              // (grayed-out) row with a reason: offer Format inline (one
+              // click, typed confirm) instead of sending the operator to
+              // Settings and back. Formatting is a root oneshot, so it is
+              // offered whenever the drive is known — writability of the
+              // current (wrong) filesystem is irrelevant.
               const drive = devices.find((d) => d.mountpoint && (cd.dir === `${d.mountpoint}/harbor-apps` || cd.dir.startsWith(`${d.mountpoint}/`)));
-              const formattable = !cd.eligible && cd.writable && drive;
+              const formattable = !cd.eligible && drive;
               return (
                 <label key={cd.dir} className="check" title={cd.eligible ? undefined : (cd.reason ?? 'not available')}>
                   <input type="radio" name="drive" checked={driveDir === cd.dir} disabled={!cd.eligible} onChange={() => setDriveDir(cd.dir)} /> {cd.label}
@@ -433,7 +443,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
                           )}
                         </button>
                       ) : (
-                        cd.writable && <span className="muted small">(format the drive as ext4 in Settings → Storage to use it)</span>
+                        <span className="muted small">(format the drive as ext4 in Settings → Storage to use it)</span>
                       )}
                     </span>
                   )}

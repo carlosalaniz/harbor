@@ -193,13 +193,19 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 124, integration 123, e2e 25 green (Local default, External Format-first + passphrase-after-format, purge-reinstall, upload flow via wizard)
 - [x] Docs: decision 97, operator guide §4a2 rewritten (Local vs External, enforced path)
 
+## Phase 25 — gray-out NTFS drives; backfill blank lsblk fstype (2026-09-21, v0.16.1) ✅
+- [x] Wizard gray-out (decision 98): wrong-filesystem drive rows are disabled/unselectable with an inline Format-as-ext4 button (offered whenever the drive is known — writability of the wrong FS is irrelevant); the passphrase + enabled Install only appear for the eligible drive. Any ineligible candidate blocks Install, not just "wrong FS but writable"
+- [x] lsblk backfill (decision 98): `parseDevices` fills a blank lsblk FSTYPE from /proc/self/mounts by device node — live, the in-place ext4 format left the partition typed W95 FAT32 so lsblk reports null while the kernel says ext4
+- [x] Tests: unit 125 (+1 backfill test), e2e 25 green
+- [x] Docs: decision 98
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 124 passed |
+| `pnpm test` (unit) | 125 passed |
 | `pnpm test:integration` (fake adapter) | 123 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |

@@ -47,6 +47,28 @@ describe('host storage', () => {
     expect(parseDevices('not json')).toEqual([]);
   });
 
+  it('backfills a blank lsblk fstype from the live mount table (stale partition type after format)', () => {
+    // Live on carlos-desktop: Harbor formatted /dev/sdb1 as ext4 in place,
+    // but the partition still types W95 FAT32, so lsblk reports fstype null
+    // while /proc/self/mounts says ext4. The device must report ext4.
+    const json = JSON.stringify({
+      blockdevices: [
+        { name: 'sdb', size: '14.4G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdb1', size: '14.4G', type: 'part', mountpoint: '/mnt/usb20fd', fstype: null, label: null, uuid: null, rm: true, hotplug: true }] },
+      ],
+    });
+    const mounts = '/dev/sdb1 /mnt/usb20fd ext4 rw,relatime 0 0';
+    expect(parseDevices(json, mounts)).toEqual([
+      { name: 'sdb1', device: '/dev/sdb1', size: '14.4G', fsType: 'ext4', label: null, uuid: null, removable: true, mounted: true, mountpoint: '/mnt/usb20fd' },
+    ]);
+    // A real lsblk fstype always wins over the mount table.
+    const vfat = JSON.stringify({
+      blockdevices: [
+        { name: 'sdb', size: '14.4G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdb1', size: '14.4G', type: 'part', mountpoint: '/mnt/usb20fd', fstype: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', rm: true, hotplug: true }] },
+      ],
+    });
+    expect(parseDevices(vfat, mounts)[0]!.fsType).toBe('vfat');
+  });
+
   it('hides a mounted removable device from the generic disk list (it lives in Removable only)', () => {
     const text = ['/dev/vda1 / ext4 rw 0 0', '/dev/sdb1 /mnt/usb20fd vfat rw 0 0'].join('\n');
     expect(listMounts(text).map((m) => m.mountpoint)).toEqual(['/', '/mnt/usb20fd']);

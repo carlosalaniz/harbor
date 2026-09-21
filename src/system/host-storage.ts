@@ -114,12 +114,29 @@ interface LsblkDevice {
 // Removable block devices (USB sticks, external drives), mounted or not. Partitions
 // only: the whole-disk node is skipped when it has children. Internal disks are
 // excluded unless hotpluggable. Never throws: an empty list means "no devices seen".
-export function parseDevices(lsblkJson: string): DeviceInfo[] {
+export function parseDevices(lsblkJson: string, procMountsText?: string): DeviceInfo[] {
   let root: { blockdevices?: LsblkDevice[] };
   try {
     root = JSON.parse(lsblkJson) as { blockdevices?: LsblkDevice[] };
   } catch {
     return [];
+  }
+  // lsblk's FSTYPE column is blank for filesystems it cannot identify from
+  // the (possibly stale) partition table — e.g. an ext4 volume on a
+  // partition still typed W95 FAT32 after an in-place format. The kernel
+  // mount table never lies about the live filesystem, so backfill blanks
+  // from /proc/self/mounts by device node.
+  const liveFsByDevice = new Map<string, string>();
+  try {
+    const text = procMountsText ?? safeRead('/proc/self/mounts');
+    for (const line of text.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 3) continue;
+      const [device, , fsType] = parts as [string, string, string];
+      if (device.startsWith('/dev/') && fsType && !liveFsByDevice.has(device)) liveFsByDevice.set(device, fsType);
+    }
+  } catch {
+    // fall back to lsblk alone
   }
   const out: DeviceInfo[] = [];
   const walk = (devs: LsblkDevice[] | undefined) => {
@@ -133,11 +150,12 @@ export function parseDevices(lsblkJson: string): DeviceInfo[] {
         // partitions (e.g. a freshly inserted stick) are included when removable.
         if (removable || (b.type === 'disk' && kids.length === 0)) {
           const mp = typeof b.mountpoint === 'string' && b.mountpoint.length ? b.mountpoint : null;
+          const dev = `/dev/${b.name ?? '?'}`;
           out.push({
             name: b.name ?? '?',
-            device: `/dev/${b.name ?? '?'}`,
+            device: dev,
             size: b.size ?? '?',
-            fsType: b.fstype ?? null,
+            fsType: b.fstype ?? liveFsByDevice.get(dev) ?? null,
             label: b.label ?? null,
             uuid: b.uuid ?? null,
             removable,
@@ -153,7 +171,7 @@ export function parseDevices(lsblkJson: string): DeviceInfo[] {
   return out.sort((a, b) => a.device.localeCompare(b.device));
 }
 
-export function listDevices(run: (args: string[]) => string = defaultLsblk, fixtureJson?: string): DeviceInfo[] {
+export function listDevices(run: (args: string[]) => string = defaultLsblk, fixtureJson?: string, procMountsText?: string): DeviceInfo[] {
   try {
     // E2E/dev fixture: HARBOR_DEVICES_JSON injects a fake lsblk document so the
     // removable UI (Mount spinner, Eject, insert/remove poll) can be clicked
@@ -175,7 +193,7 @@ export function listDevices(run: (args: string[]) => string = defaultLsblk, fixt
         return d;
       });
     }
-    return parseDevices(run(['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG']));
+    return parseDevices(run(['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG']), procMountsText);
   } catch {
     return [];
   }
