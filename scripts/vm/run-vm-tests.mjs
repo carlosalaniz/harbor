@@ -88,7 +88,9 @@ async function newPage(opts = {}) {
 async function uiLogin(page, route = 'home') {
   await page.goto(`${UI}/#/${route}`, { waitUntil: 'networkidle' });
   await page.getByLabel('Username').fill(ADMIN.username);
-  await page.getByLabel('Password').fill(ADMIN.password);
+  // The eye-toggle button ("Show password") shares the accessible name, so
+  // match the input exactly (same fix as the e2e suite).
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
   await page.getByRole('button', { name: 'Log in' }).click();
   const heading = { home: 'Your apps', store: 'App Store', platform: 'Platform tools', publishing: 'Published addresses' }[route];
   await page.getByRole('heading', { name: heading }).waitFor({ timeout: 30_000 });
