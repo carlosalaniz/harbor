@@ -1429,7 +1429,7 @@ function Storage() {
                   {d.size}
                   {d.fsType ? ` · ${d.fsType}` : ''}
                   {d.fsType && !['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs'].includes(d.fsType.toLowerCase()) && (
-                    <> · cannot hold apps as-is — format it first</>
+                    <> · needs formatting as ext4 before it can hold apps</>
                   )}
                 </span>
               </div>
@@ -1453,7 +1453,7 @@ function Storage() {
                 ) : d.fsType && !['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs'].includes(d.fsType.toLowerCase()) ? (
                   // A wrong-filesystem drive can never hold an app even once
                   // mounted: Mount would only dead-end, so offer Format first.
-                  <span className="muted small">Mounting won&apos;t help — this filesystem can&apos;t hold apps.</span>
+                  <span className="muted small">This drive is {d.fsType}, which can&apos;t hold apps — format it as ext4 first.</span>
                 ) : (
                   <button
                     className="btn small"

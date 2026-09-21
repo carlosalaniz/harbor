@@ -299,7 +299,7 @@ test('install page: a wrong-filesystem drive offers Format, not Mount or a passp
   await expect(where.getByRole('radio', { name: /Local/ })).toBeChecked();
   // External shows the unmounted vfat stick with Format, never Mount
   await where.getByRole('radio', { name: /External drive/ }).check();
-  await expect(where.getByText(/needs formatting as ext4/)).toBeVisible();
+  await expect(where.getByText(/Format it as ext4 to use it for apps/)).toBeVisible();
   await expect(where.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible();
   await expect(where.getByRole('button', { name: 'Mount USB20FD', exact: true })).toHaveCount(0);
   // formatting from the wizard remounts ext4 and selects the drive
@@ -420,9 +420,9 @@ test('storage: a wrong-filesystem drive offers Format first, then Eject once ext
     await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
     await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
   }
-  // the fixture stick is vfat: the row says it cannot hold apps as-is and
+  // the fixture stick is vfat: the Disks row says it needs formatting and
   // leads with Format (Mount would only dead-end on the wrong filesystem)
-  await expect(page.getByText(/cannot hold apps as-is/)).toBeVisible();
+  await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/needs formatting as ext4 before it can hold apps/)).toBeVisible();
   const format = page.getByRole('button', { name: /Format .* as ext4/ });
   await expect(format).toBeVisible();
   await format.click();
@@ -456,8 +456,8 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
     await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
     await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
   }
-  // the fixture stick is vfat: the row says it cannot hold apps as-is
-  await expect(page.getByText(/cannot hold apps as-is/)).toBeVisible();
+  // the fixture stick is vfat: the Disks row says it needs formatting
+  await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/needs formatting as ext4 before it can hold apps/)).toBeVisible();
   const format = page.getByRole('button', { name: /Format .* as ext4/ });
   await expect(format).toBeVisible();
   await format.click();
@@ -473,7 +473,7 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
   await expect(page.getByRole('button', { name: /Formatting/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Eject USB20FD', exact: true })).toBeVisible({ timeout: 15_000 });
   // the formatted drive row no longer warns; the 2s storage poll reloads the list
-  await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/cannot hold apps as-is/)).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/needs formatting as ext4 before it can hold apps/)).toHaveCount(0, { timeout: 15_000 });
   // Eject returns it to unmounted; the row still leads with Format (still vfat-shaped in the fixture)
   await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
   await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();

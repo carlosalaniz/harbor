@@ -466,7 +466,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
                 <p key={d.device} className="muted small">
                   {d.label ?? d.name} ({d.size}
                   {d.fsType ? `, ${d.fsType}` : ''}) is plugged in but not mounted.
-                  {wrongFs ? ' It needs formatting as ext4 before it can hold apps.' : ''}{' '}
+                  {wrongFs ? ' Format it as ext4 to use it for apps.' : ''}{' '}
                   {wrongFs ? (
                     <button
                       type="button"
@@ -547,7 +547,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           <div className="folder-choice">
             <code className="path">{locationHome ?? '…'}</code>
             <p className="warn small" role="alert">
-              This drive{(locationFormatDrive as { fsType?: string | null } | null)?.fsType ? ` is ${(locationFormatDrive as { fsType?: string | null }).fsType}` : ''} can&apos;t hold apps — Harbor needs ext4 (or btrfs, xfs, zfs, apfs). Formatting erases everything on it.
+              This drive{(locationFormatDrive as { fsType?: string | null } | null)?.fsType ? ` is ${(locationFormatDrive as { fsType?: string | null }).fsType}` : ''} — apps need ext4 (or btrfs, xfs, zfs, apfs). Formatting erases everything on it.
             </p>
             {locationFormatDrive ? (
               <button

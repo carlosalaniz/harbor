@@ -199,6 +199,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 125 (+1 backfill test), e2e 25 green
 - [x] Docs: decision 98
 
+## Phase 26 — plain-words drive state, no "Mounting won't help" (2026-09-21, v0.16.2) ✅
+- [x] Wording (decision 99): Disks row `Not mounted · 14.4G · ntfs · needs formatting as ext4 before it can hold apps` + action `This drive is ntfs, which can't hold apps — format it as ext4 first.`; wizard hints `Format it as ext4 to use it for apps.` / `This drive is ntfs — apps need ext4 (…)`. Mount state always stated first, never ambiguous
+- [x] Tests: unit 125, e2e 25 green
+- [x] Docs: decision 99
+
 ## Test results (latest local run)
 
 | Command | Result |
