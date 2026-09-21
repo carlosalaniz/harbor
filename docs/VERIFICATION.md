@@ -51,6 +51,17 @@ Same box and stick as §3a, now with Immich installed and its `library` claim at
 | 0.12.5 steady state | Immich `desired`/`runtime` running, `readiness` healthy, `needsDrive` null; `storage-missing` row deleted on resolve (read rows no longer linger); `storagePolicy {autoMount: true, autoStart: true}` |
 | Auto paths | covered by integration tests (swap→stop+refuse+adopt, restore→auto-start, policy toggles persist); live reinsert exercises the same observer code (auto-mount one attempt per device, auto-start one attempt per folder) |
 
+## 3c. Format-first + FUSE-safe mount unit on physical hardware (2026-09-21, Harbor 0.15.0 → 0.15.1 via local archive self-update)
+
+Same box as §3a (`carlos-desktop`, Ubuntu 24.04.3 x86_64), USB stick `sdb1` 14.4 GB **ntfs** label `USB20FD`, unmounted, no apps installed. Deployed with `pnpm package` → `scp` tarball + `SHA256SUMS` to `/tmp/` → `sudo /opt/harbor/bin/harbor self-update apply --to 0.15.1` (checksum verified, bootstrap re-run, daemon back `ok`).
+
+| Step | Result |
+|---|---|
+| FUSE root cause (0.15.0) | UI Mount wrote `mounted at /mnt/usb20fd` but `mount \| grep usb20fd` empty; journal showed ntfs-3g `Mounted /dev/sdb1` then `Unmounting /dev/sdb1` ~1 s later with `mnt-usb20fd.mount Deactivated`. Manual `mount -t ntfs3` and direct `harbor device-dispatch sdb1:mount` both persisted — the template unit's default `KillMode=control-group` SIGTERMed the forked FUSE daemon when the oneshot exited |
+| Fix (0.15.1) | template unit gains `KillMode=none` (kernel mounts unaffected); live unit file confirms `KillMode=none` after self-update |
+| Format-first UI (0.15.1, live browser) | Settings → Storage row: `Not mounted · 14.4G · ntfs · cannot hold apps as-is — format it first` + `Mounting won't help — this filesystem can't hold apps.` + `Format as ext4…` (no Mount button). Found-apps row: `needs formatting as ext4 before it can hold apps — see Disks above` (no Mount prompt). Immich install wizard: `USB20FD (14.4G, ntfs) is plugged in but not mounted. It needs formatting as ext4 before it can hold apps.` + `Format as ext4…`, no Mount, no passphrase |
+| Suites | unit 123, integration 123 (+3 live-Docker skipped), e2e 25, `catalog:verify` 17 ok, `openapi --check` current |
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed
