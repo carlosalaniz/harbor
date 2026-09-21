@@ -35,8 +35,15 @@ export function exec(file: string, args: string[], opts: { timeoutMs?: number; e
       clearTimeout(timer);
       reject(new HarborError('OPERATION_FAILED', `cannot run ${file}: ${e.message}`));
     });
-    child.on('close', (code) => {
+    // A kill by our own timeout surfaces as code null (SIGTERM/SIGKILL): report
+    // it as a timeout with the command name, not a bare "(exit null)" — the
+    // device-format status row is the only UI for a wedged USB stick.
+    child.on('close', (code, signal) => {
       clearTimeout(timer);
+      if (code === null) {
+        reject(new HarborError('OPERATION_FAILED', `${file} ${args.join(' ')} timed out${signal ? ` (${signal})` : ''} after ${opts.timeoutMs ?? 120_000}ms`));
+        return;
+      }
       resolve({ code, stdout, stderr });
     });
     if (opts.input !== undefined) {

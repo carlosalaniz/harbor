@@ -70,7 +70,12 @@ export async function applyDeviceFormat(device: string, log: (m: string) => void
     if (found.mounted && found.mountpoint) {
       await execOk('/usr/bin/umount', [found.mountpoint], { timeoutMs: 60_000 });
     }
-    await execOk('/usr/sbin/wipefs', ['-a', found.device], { timeoutMs: 60_000 });
+    // The partition table nests a "dos" signature inside the partition itself
+    // (a leftover of the factory vfat/NTFS layout): plain `wipefs -a` refuses
+    // to touch it ("ignoring nested dos partition table, use --force") and
+    // mkfs would then inherit a stale shadow. Force the wipe — the drive is
+    // being erased anyway, and only removable media ever reaches this step.
+    await execOk('/usr/sbin/wipefs', ['--force', '-a', found.device], { timeoutMs: 60_000 });
     await execOk('/usr/sbin/mkfs.ext4', ['-F', '-L', (found.label ?? device).slice(0, 16), found.device], { timeoutMs: 300_000 });
     // Re-read the device so the mountpoint suggestion uses the fresh label.
     const fresh = listDevices().find((d) => d.name === device);
