@@ -19,6 +19,9 @@ describe('systemd unit text', () => {
     expect(deviceMountUnit()).toContain('harbor device-dispatch %i');
     expect(deviceMountUnit()).toContain('<name>:<mount|unmount|format>');
     expect(deviceMountUnit()).toContain('TimeoutStartSec=600');
+    // FUSE mounts (ntfs-3g) fork a userspace daemon: control-group killing
+    // would unmount the drive the moment the oneshot exits (live finding).
+    expect(deviceMountUnit()).toContain('KillMode=none');
     expect(polkitPowerRule()).toContain('harbor-device-mount@');
   });
 });

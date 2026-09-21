@@ -3,7 +3,7 @@
 // under the mountpoint, starts the root oneshot (polkit-allowed), and reports
 // the root step's progress from <stateDir>/devices/<name>/{mount,format}-status.json.
 // In fake mode there is no systemd: refuse with the exact root command.
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readDeviceMountStatus, type DeviceMountStatus } from '../bootstrap/device-mount-apply.js';
 import { readDeviceFormatStatus, type DeviceFormatStatus } from '../bootstrap/device-format-apply.js';
@@ -141,6 +141,14 @@ export class DeviceMountService {
     if (st && (st.state === 'requested' || st.state === 'mounting' || st.state === 'unmounting')) throw new HarborError('BUSY', `a mount operation for ${name} is already running (${st.message})`);
     if (this.simulateRoot) {
       this.writeStatus(name, 'requested', `requested by ${actor}; starting the unmount`, dev.mountpoint);
+      // Fixture mode mirrors a stale blkid cache: after an unmount the drive
+      // reports its fixture filesystem again (vfat), so the next test sees
+      // the Format-first row. Clear the format overlay for a real unmount.
+      try {
+        rmSync(path.join(this.stateDir, 'devices', name, 'format-status.json'), { force: true });
+      } catch {
+        /* status is best effort */
+      }
       setTimeout(() => this.writeStatus(name, 'unmounted', 'unmounted', null), 1200).unref?.();
       return { device: name, state: 'requested', message: 'unmount requested', mountpoint: dev.mountpoint, at: rfc3339(this.clock.now()) };
     }

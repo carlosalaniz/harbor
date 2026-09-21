@@ -164,5 +164,11 @@ Description=Harbor removable-device mount (%i: <name>:<mount|unmount|format>)
 Type=oneshot
 ExecStart=${opt}/bin/harbor device-dispatch %i
 TimeoutStartSec=600
+# FUSE filesystems (ntfs-3g, exfat) run as a userspace daemon forked from the
+# mount call: the default KillMode=control-group would SIGTERM it the moment
+# this oneshot exits, unmounting the drive a second later (live on
+# carlos-desktop: "mounted at /mnt/usb20fd" followed by "Unmounting /dev/sdb1").
+# KillMode=none lets the mount daemon survive; kernel mounts (ext4) are unaffected.
+KillMode=none
 `;
 }

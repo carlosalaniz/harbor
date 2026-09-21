@@ -272,38 +272,38 @@ test('phone width: bottom tabs navigate, tiles render in two columns, dialogs op
   expect(await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')).toBe(true);
 });
 
-test('install page: choose where the app lives; the data folder encrypts silently, a custom passphrase is opt-in', async ({ page }) => {
+test('install page: a wrong-filesystem drive offers Format, not Mount or a passphrase', async ({ page }) => {
   await login(page);
+  // order-independent: a prior run may have left the fixture formatted —
+  // reset it to the vfat shape first (unmount clears the format overlay).
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Storage Disks/ }).click();
+  await expect(page.locator('.disk', { hasText: 'USB20FD' })).toBeVisible();
+  if (await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).count()) {
+    await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+  }
   await page.getByRole('link', { name: 'App Store' }).click();
   await page.getByRole('button', { name: 'About BentoPDF' }).click();
   const where = page.getByRole('dialog');
   await expect(where).toContainText('Where should the app live?');
-  await expect(where.getByRole('radio', { name: /System disk/ })).toBeChecked();
-  // the data-folder candidate is offered (created on demand); it encrypts
-  // with Harbor's own key — no passphrase field until the operator opts in
-  await where.getByRole('radio', { name: /Harbor data folder/ }).check();
-  await expect(where).toContainText(/unlocks it silently/);
-  await expect(where.getByLabel('Encryption passphrase for this app')).toHaveCount(0);
-  await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeEnabled();
-  // opting into a custom passphrase brings the field back with the 8+ rule
-  await where.getByRole('button', { name: 'Use my own passphrase instead…' }).click();
-  await expect(where.getByLabel('Encryption passphrase for this app')).toBeVisible();
-  await where.getByLabel('Encryption passphrase for this app').fill('short');
-  await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeDisabled();
-  await where.getByLabel('Encryption passphrase for this app').fill('correct horse battery staple');
-  await expect(where.getByRole('button', { name: 'Install BentoPDF now' })).toBeEnabled();
-  await where.getByRole('button', { name: 'Install BentoPDF now' }).click();
-  const review = page.getByRole('dialog');
-  await expect(review).toContainText('Review install');
-  await expect(review).toContainText(/encrypted at .*harbor-apps/);
-  await review.getByText(/Exactly what Harbor will do/).click();
-  await expect(review).toContainText(/Install the whole app encrypted at/);
-  await review.getByRole('button', { name: 'Install' }).click();
-  await trayDone(page, 'Install');
-  await page.getByRole('link', { name: 'Home' }).click();
-  // BentoPDF was already installed on the system disk earlier in the suite;
-  // this one is the drive install (bentopdf-2).
-  await expect(page.locator('.instance').filter({ hasText: 'bentopdf-2' }).first()).toBeVisible();
+  // the fixture stick is vfat and unmounted: the wizard offers Format, never Mount
+  await expect(where.getByText(/needs formatting as ext4/)).toBeVisible();
+  await expect(where.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible();
+  await expect(where.getByRole('button', { name: 'Mount USB20FD', exact: true })).toHaveCount(0);
+  // formatting from the wizard remounts ext4 and selects the apps folder
+  await where.getByRole('button', { name: 'Format USB20FD as ext4', exact: true }).click();
+  const dlg = page.getByRole('dialog', { name: /Format USB20FD as ext4/ });
+  await expect(dlg).toContainText(/erases everything/);
+  const go = dlg.getByRole('button', { name: 'Format (erase everything)' });
+  await expect(go).toBeDisabled();
+  await dlg.getByLabel(/Type .* to confirm/).fill('sdb1');
+  await expect(go).toBeEnabled();
+  await go.click();
+  await expect(where.getByRole('button', { name: /Formatting/ })).toBeVisible();
+  // the formatted drive lands selected with a passphrase prompt (removable = portable)
+  await expect(where.getByLabel('Encryption passphrase for this app')).toBeVisible({ timeout: 30_000 });
+  await where.getByRole('button', { name: 'Close', exact: true }).click();
 });
 
 test('install page: bring your own folder validates the path in the plan and mounts it', async ({ page }) => {
@@ -394,29 +394,55 @@ test('settings: change password and back, remote access login flow, storage over
   await expect(page.getByText('Media e2e')).toBeVisible(); // from the Jellyfin install above
 });
 
-test('storage: removable device mount locks with a spinner, then flips to mounted', async ({ page }) => {
+test('storage: a wrong-filesystem drive offers Format first, then Eject once ext4', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Storage Disks/ }).click();
-  const mount = page.getByRole('button', { name: 'Mount USB20FD', exact: true });
-  await expect(mount).toBeVisible();
-  await mount.click();
-  // the button locks instantly with a spinner: no double-submit while the POST is in flight
-  const mounting = page.getByRole('button', { name: /Mounting/ });
-  await expect(mounting).toBeVisible();
-  await expect(mounting).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Eject' })).toBeVisible({ timeout: 15_000 });
+  // order-independent: a prior test may have left the fixture formatted —
+  // ejecting restores the vfat shape (unmount clears the format overlay).
+  // Wait for the drive row first: count() does not retry, so an immediate
+  // check would miss the Eject button while the list is still loading.
+  await expect(page.locator('.disk', { hasText: 'USB20FD' })).toBeVisible();
+  if (await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).count()) {
+    await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+  }
+  // the fixture stick is vfat: the row says it cannot hold apps as-is and
+  // leads with Format (Mount would only dead-end on the wrong filesystem)
+  await expect(page.getByText(/cannot hold apps as-is/)).toBeVisible();
+  const format = page.getByRole('button', { name: /Format .* as ext4/ });
+  await expect(format).toBeVisible();
+  await format.click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg).toContainText(/erases everything/);
+  const go = dlg.getByRole('button', { name: 'Format (erase everything)' });
+  await expect(go).toBeDisabled();
+  await dlg.getByLabel(/Type .* to confirm/).fill('sdb1');
+  await expect(go).toBeEnabled();
+  await go.click();
+  // the row locks with a Formatting… spinner, then the drive is ext4 + mounted
+  await expect(page.getByRole('button', { name: /Formatting/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Eject USB20FD', exact: true })).toBeVisible({ timeout: 15_000 });
   // and back again
   const eject = page.getByRole('button', { name: 'Eject USB20FD', exact: true });
   await eject.click();
   await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Mount USB20FD', exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
 });
 
 test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', async ({ page }) => {
   await login(page);
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /Storage Disks/ }).click();
+  // order-independent: a prior test may have left the fixture formatted —
+  // ejecting restores the vfat shape (unmount clears the format overlay).
+  // Wait for the drive row first: count() does not retry, so an immediate
+  // check would miss the Eject button while the list is still loading.
+  await expect(page.locator('.disk', { hasText: 'USB20FD' })).toBeVisible();
+  if (await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).count()) {
+    await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+  }
   // the fixture stick is vfat: the row says it cannot hold apps as-is
   await expect(page.getByText(/cannot hold apps as-is/)).toBeVisible();
   const format = page.getByRole('button', { name: /Format .* as ext4/ });
@@ -435,6 +461,10 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
   await expect(page.getByRole('button', { name: 'Eject USB20FD', exact: true })).toBeVisible({ timeout: 15_000 });
   // the formatted drive row no longer warns; the 2s storage poll reloads the list
   await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/cannot hold apps as-is/)).toHaveCount(0, { timeout: 15_000 });
+  // Eject returns it to unmounted; the row still leads with Format (still vfat-shaped in the fixture)
+  await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
 });
 
 test('full uninstall: typed confirmation, data deleted, name free again', async ({ page }) => {

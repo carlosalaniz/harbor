@@ -176,16 +176,23 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `install-location.test.ts` (data-folder candidate, no `/harbor-apps`) + `device-mount.test.ts` (+2: busy recognition, friendly message) + `openapi.test.ts` (passphrase optional, 72 paths); integration `app-homes.test.ts` (+1: no-passphrase submit → `defaultKey` unlocked home); e2e silent data-folder install + opt-in passphrase + exact Mount/Eject selectors (25 passed)
 - [x] Docs: decision 94, operator guide §4a2 rewritten (default-encrypt, inline mount/format, locked tiles), openapi regenerated (72 paths)
 
+## Phase 22 — format-first on wrong filesystems + FUSE-safe mount unit (2026-09-21, v0.15.1) ✅
+- [x] Format-first (decision 95): wrong-filesystem drives (ntfs/vfat/exfat, anything outside the app-capable list) never offer Mount or a passphrase — Settings shows "Mounting won't help" + Format as ext4…, the folder picker shows Format… instead of Mount, the install wizard shows a "needs formatting as ext4" warning with Format + Install disabled until ext4. Mount/format completions auto-select `<mount>/harbor-apps` so the wizard continues straight to the passphrase
+- [x] FUSE-safe unit (decision 95): device-mount template unit gains `KillMode=none` — ntfs-3g forks a userspace daemon that the default control-group kill SIGTERMed when the oneshot exited (live on carlos-desktop: "mounted at /mnt/usb20fd" → "Unmounting /dev/sdb1"); kernel mounts (ext4) unaffected. Unit text pinned in `systemd.test.ts`
+- [x] Fixture order-independence: simulated unmount clears the format overlay so serial e2e tests always start from the vfat shape; storage/install tests reset via Eject first
+- [x] Tests: unit 123, integration 123, e2e 25 (wizard Format-first + Settings Format-first + typed-confirm flows)
+- [x] Docs: decision 95, operator guide §4a1/§4a2 format-first wording
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 120 passed |
-| `pnpm test:integration` (fake adapter) | 122 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 123 passed |
+| `pnpm test:integration` (fake adapter) | 123 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard, drawer lifecycle, publish wizard, phone width, install-location picker + passphrase + encrypted review, own folder, settings incl. storage mount spinner + format-as-ext4, uninstall, domains + palette, customize, arrange, rotating wallpapers, upload + update, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. wrong-filesystem Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall, domains + palette, customize, arrange, rotating wallpapers, upload + update, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

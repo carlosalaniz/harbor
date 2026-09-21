@@ -375,23 +375,42 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
                       <span className="muted small">
                         {d.size}
                         {d.fsType ? ` · ${d.fsType}` : ''} · not mounted
+                        {needsFormatForApps(d.fsType) && ' · needs formatting for apps'}
                       </span>
                     </span>
-                    <button
-                      className="btn small"
-                      disabled={busyDevice !== null}
-                      onClick={() => mount(d.name)}
-                      aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
-                      aria-busy={busyDevice === d.name}
-                    >
-                      {busyDevice === d.name ? (
-                        <>
-                          <span className="spin" aria-hidden="true" /> Mounting…
-                        </>
-                      ) : (
-                        'Mount'
-                      )}
-                    </button>
+                    {needsFormatForApps(d.fsType) ? (
+                      <button
+                        className="btn small danger"
+                        disabled={busyDevice !== null}
+                        onClick={() => (setFormatTyped(''), setFormatTarget(d))}
+                        aria-label={busyDevice === d.name ? `Formatting ${d.label ?? d.name}` : `Format ${d.label ?? d.name} as ext4`}
+                        aria-busy={busyDevice === d.name}
+                      >
+                        {busyDevice === d.name ? (
+                          <>
+                            <span className="spin" aria-hidden="true" /> Formatting…
+                          </>
+                        ) : (
+                          'Format…'
+                        )}
+                      </button>
+                    ) : (
+                      <button
+                        className="btn small"
+                        disabled={busyDevice !== null}
+                        onClick={() => mount(d.name)}
+                        aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
+                        aria-busy={busyDevice === d.name}
+                      >
+                        {busyDevice === d.name ? (
+                          <>
+                            <span className="spin" aria-hidden="true" /> Mounting…
+                          </>
+                        ) : (
+                          'Mount'
+                        )}
+                      </button>
+                    )}
                   </span>
                 )}
               </li>

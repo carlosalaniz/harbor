@@ -221,7 +221,9 @@ are never touched.
 - A drive on the wrong filesystem (exFAT, NTFS, vfat — shown as *cannot hold
   apps as-is*) can be converted in place: **Format as ext4…** next to the drive
   erases everything on it and formats it as ext4, then remounts it at the usual
-  place so it qualifies for whole-app installs. Formatting is refused while an
+  place so it qualifies for whole-app installs. Mounting such a drive would only
+  dead-end (an app database on exFAT/NTFS is corruption, not portability), so
+  Harbor does not offer Mount there — only Format. Formatting is refused while an
   app uses the drive, and asks for the device name (e.g. `sdb1`) as typed
   confirmation. System disks are never offered.
 ## 4a2. Install a whole app on a drive (encrypted, portable)
@@ -243,8 +245,10 @@ drive (`<folder>/<app>/{manifest.json, vault/}`). Unplug the drive and the app
 stops; plug it into another Harbor machine and it appears under **Settings →
 Storage → Found apps**, where *Adopt* (with the passphrase) installs it there
 with fresh ports. Only ext4/btrfs/xfs/zfs/apfs drives qualify (a database on
-exFAT/NTFS is corruption, not portability — those are greyed out with a reason,
-and a plugged-in but unmounted drive offers *Mount it* right in the wizard).
+exFAT/NTFS is corruption, not portability — those show a *needs formatting as
+ext4* warning with a Format button instead of Mount or a passphrase, and Install
+stays disabled until the drive is ext4; a plugged-in but unmounted drive on an
+eligible filesystem offers *Mount it* right in the wizard).
 A locked app (this machine cannot read it yet — after a reboot, before the first
 login) shows a quiet *Locked* tile; data-folder apps unlock at the next login,
 drive apps with a custom passphrase need the passphrase (or adopt) on a new machine.

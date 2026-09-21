@@ -166,6 +166,8 @@ export function listDevices(run: (args: string[]) => string = defaultLsblk, fixt
       return devices.map((d) => {
         // A simulated format rewrites the filesystem itself (like a real
         // mkfs would): report ext4 + mounted at the format's mountpoint.
+        // An unmount clears the format overlay (see DeviceMountService), so
+        // the drive reports its fixture filesystem again until next format.
         const fmt = readSimulatedFormatState(d.name);
         if (fmt) return { ...d, fsType: 'ext4', mounted: true, mountpoint: fmt };
         const st = readSimulatedMountState(d.name);
@@ -199,7 +201,9 @@ function readSimulatedMountState(name: string): { state: string; mountpoint: str
 
 // A simulated format rewrites the filesystem itself (like a real mkfs would):
 // once format-status.json says formatted, the device reports ext4 at the
-// format's mountpoint even though the lsblk fixture still says vfat.
+// format's mountpoint even though the lsblk fixture still says vfat. An
+// unmount clears the overlay (see DeviceMountService), so the row leads with
+// Format again until the next format.
 function readSimulatedFormatState(name: string): string | null {
   try {
     const stateDir = process.env['HARBOR_DEVICES_STATE_DIR'];

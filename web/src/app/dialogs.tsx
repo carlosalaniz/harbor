@@ -172,6 +172,9 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
             clearInterval(t);
             setBusyDevice(null);
             if (st.state === 'failed') setDeviceError(st.message);
+            // A fresh mount makes the drive's apps folder selectable: pick it
+            // so the wizard continues straight to the passphrase.
+            if (st.state === 'mounted' && st.mountpoint) setLocationDir(`${st.mountpoint}/harbor-apps`);
             reloadStorage();
           }
         },
@@ -193,6 +196,9 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
             clearInterval(t);
             setBusyDevice(null);
             if (st.state === 'failed') setDeviceError(st.message);
+            // Formatting remounts at the usual place: select the now-eligible
+            // apps folder (also repairs a bare mountpoint pick like /mnt/usb20fd).
+            if (st.state === 'formatted' && st.mountpoint) setLocationDir(`${st.mountpoint}/harbor-apps`);
             reloadStorage();
           }
         },
@@ -248,6 +254,21 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
     setCustomPass(false);
   }, [locationDir]);
   const locationMissingPass = locationDir !== null && (!isDefaultKeyLocation || customPass) && passphrase.length < 8;
+  // Filesystems Harbor trusts for whole encrypted apps. Anything else (ntfs,
+  // vfat, exfat, …) can never hold an app — mounting it still leaves the
+  // wizard dead-ended, so offer Format instead of Mount/passphrase there.
+  const needsFormatForApps = (fsType: string | null): boolean => {
+    if (!fsType) return false;
+    return !['ext4', 'ext3', 'ext2', 'xfs', 'btrfs', 'zfs', 'f2fs', 'apfs', 'hfs'].includes(fsType.toLowerCase());
+  };
+  // The chosen folder may sit on a drive Harbor can't use for apps: then no
+  // passphrase prompt — offer Format instead, and block Install until the
+  // drive qualifies.
+  const locationCandidate = locationDir !== null ? ((candidates ?? []).find((cd) => locationDir === cd.dir || locationDir.startsWith(cd.dir + '/')) ?? null) : null;
+  const locationDrive = locationDir !== null ? (devices.find((d) => d.mountpoint && (locationDir === d.mountpoint || locationDir.startsWith(d.mountpoint + '/'))) ?? null) : null;
+  const locationNeedsFormat = Boolean(locationDir !== null && ((locationCandidate && !locationCandidate.eligible && locationCandidate.writable) || (locationDrive && needsFormatForApps(locationDrive.fsType))));
+  const locationFormatDrive = locationDrive ?? (locationCandidate ? (devices.find((d) => d.mountpoint && (locationCandidate.dir === `${d.mountpoint}/harbor-apps` || locationCandidate.dir.startsWith(d.mountpoint + '/'))) ?? null) : null);
+  const locationBlocked = locationNeedsFormat;
   const genPassphrase = () => {
     const bytes = new Uint8Array(18);
     crypto.getRandomValues(bytes);
@@ -380,28 +401,56 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         {candidates === null && <p className="muted small">Checking drives…</p>}
         {unmounted.length > 0 && (
           <div className="unmounted-hint">
-            {unmounted.map((d) => (
-              <p key={d.device} className="muted small">
-                {d.label ?? d.name} ({d.size}
-                {d.fsType ? `, ${d.fsType}` : ''}) is plugged in but not mounted.{' '}
-                <button
-                  type="button"
-                  className="btn small"
-                  disabled={busyDevice !== null}
-                  onClick={() => mount(d.name)}
-                  aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
-                  aria-busy={busyDevice === d.name}
-                >
-                  {busyDevice === d.name ? (
-                    <>
-                      <span className="spin" aria-hidden="true" /> Mounting…
-                    </>
+            {unmounted.map((d) => {
+              // A drive on the wrong filesystem can never hold an app even
+              // once mounted: offer Format, not Mount, right here.
+              const wrongFs = needsFormatForApps(d.fsType);
+              return (
+                <p key={d.device} className="muted small">
+                  {d.label ?? d.name} ({d.size}
+                  {d.fsType ? `, ${d.fsType}` : ''}) is plugged in but not mounted.
+                  {wrongFs ? ' It needs formatting as ext4 before it can hold apps.' : ''}{' '}
+                  {wrongFs ? (
+                    <button
+                      type="button"
+                      className="btn small danger"
+                      disabled={busyDevice !== null}
+                      onClick={() => {
+                        setFormatTyped('');
+                        setFormatTarget(d);
+                      }}
+                      aria-label={busyDevice === d.name ? `Formatting ${d.label ?? d.name}` : `Format ${d.label ?? d.name} as ext4`}
+                      aria-busy={busyDevice === d.name}
+                    >
+                      {busyDevice === d.name ? (
+                        <>
+                          <span className="spin" aria-hidden="true" /> Formatting…
+                        </>
+                      ) : (
+                        'Format as ext4…'
+                      )}
+                    </button>
                   ) : (
-                    'Mount it'
+                    <button
+                      type="button"
+                      className="btn small"
+                      disabled={busyDevice !== null}
+                      onClick={() => mount(d.name)}
+                      aria-label={busyDevice === d.name ? `Mounting ${d.label ?? d.name}` : `Mount ${d.label ?? d.name}`}
+                      aria-busy={busyDevice === d.name}
+                    >
+                      {busyDevice === d.name ? (
+                        <>
+                          <span className="spin" aria-hidden="true" /> Mounting…
+                        </>
+                      ) : (
+                        'Mount it'
+                      )}
+                    </button>
                   )}
-                </button>
-              </p>
-            ))}
+                </p>
+              );
+            })}
           </div>
         )}
         {deviceError && (
@@ -409,7 +458,41 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
             {deviceError}
           </p>
         )}
-        {locationDir !== null && (
+        {locationDir !== null && locationNeedsFormat && (
+          <div className="folder-choice">
+            <button className="btn" onClick={() => setPicking('location')} aria-label="Choose install folder">
+              Change folder…
+            </button>
+            <code className="path">{locationDir}</code>
+            <p className="warn small" role="alert">
+              This drive{locationDrive?.fsType ? ` is ${locationDrive.fsType}` : ''} can&apos;t hold apps — Harbor needs ext4 (or btrfs, xfs, zfs, apfs). Formatting erases everything on it.
+            </p>
+            {locationFormatDrive ? (
+              <button
+                type="button"
+                className="btn small danger"
+                disabled={busyDevice !== null}
+                onClick={() => {
+                  setFormatTyped('');
+                  setFormatTarget(locationFormatDrive);
+                }}
+                aria-label={busyDevice === locationFormatDrive.name ? `Formatting ${locationFormatDrive.label ?? locationFormatDrive.name}` : `Format ${locationFormatDrive.label ?? locationFormatDrive.name} as ext4`}
+                aria-busy={busyDevice === locationFormatDrive.name}
+              >
+                {busyDevice === locationFormatDrive.name ? (
+                  <>
+                    <span className="spin" aria-hidden="true" /> Formatting…
+                  </>
+                ) : (
+                  'Format as ext4…'
+                )}
+              </button>
+            ) : (
+              <span className="muted small">Format the drive as ext4 in Settings → Storage to use it.</span>
+            )}
+          </div>
+        )}
+        {locationDir !== null && !locationNeedsFormat && (
           <div className="folder-choice">
             <button className="btn" onClick={() => setPicking('location')} aria-label="Choose install folder">
               Change folder…
@@ -505,10 +588,10 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         </button>
         <button
           className="btn primary"
-          disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass}
+          disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass || locationBlocked}
           onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir !== null ? (isDefaultKeyLocation && !customPass ? { location: { dir: locationDir } } : { location: { dir: locationDir, passphrase } }) : {}) })}
           aria-label={`Install ${item.name} now`}
-          title={locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
+          title={locationBlocked ? 'This drive needs formatting as ext4 first' : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
         >
           Install
         </button>
