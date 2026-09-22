@@ -124,6 +124,9 @@ Key separations (do not blur them):
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant
      `docs/design/*.md`.
    - New version behavior → `docs/VERIFICATION.md` section + `docs/dev/PROGRESS.md` phase row + counts.
+     Live-run folders (`docs/evidence/vm-<ts>/`) are git-ignored by default (most are iteration
+     scratch): commit ONLY the run VERIFICATION cites, with `git add -f docs/evidence/vm-<ts>`
+     and a README.md inside saying what it proves.
    - New routes → `docs/openapi.json` via `pnpm openapi` (never hand-edit).
 6. **Commit + ship**: commit on `main`, push — CI publishes the release. Bump `package.json`
    `version` when the change deserves a release (CI tags `v<version>` from it). Never run

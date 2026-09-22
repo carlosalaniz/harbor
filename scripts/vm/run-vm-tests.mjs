@@ -43,7 +43,7 @@ if (!existsSync(ARCHIVE)) fail(`release archive not found: ${ARCHIVE} (run pnpm 
 const target = resolveTarget();
 const runId = `vm-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
 const ev = new Evidence(path.join(ROOT, 'docs', 'evidence', runId));
-console.log(`target: ${target.name}\nevidence: ${path.relative(ROOT, ev.dir)}\narchive: ${ARCHIVE}\nfresh: ${FRESH} skipReboot: ${SKIP_REBOOT}`);
+console.log(`target: ${target.name}\nevidence: ${path.relative(ROOT, ev.dir)} (git-ignored; \`git add -f\` it once docs/VERIFICATION.md cites it)\narchive: ${ARCHIVE}\nfresh: ${FRESH} skipReboot: ${SKIP_REBOOT}`);
 
 const should = (id) => !ONLY || ONLY.includes(id);
 const ssh = (cmd, o) => target.sshOk(cmd, o);

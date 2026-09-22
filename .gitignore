@@ -26,3 +26,7 @@
 .vscode/
 .vm*.local.json
 .vm*-known_hosts
+
+# Live VM runs land here on every `pnpm test:vm`; most are iteration scratch. Only runs cited in
+# docs/VERIFICATION.md are kept: add those with `git add -f docs/evidence/vm-<ts>` (tracked runs stay tracked).
+/docs/evidence/vm-*/
