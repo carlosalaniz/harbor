@@ -936,8 +936,14 @@ const B07 = step('B07', 'Provider down: exposures degrade, apps stay fine on loo
 const B09 = step('B09', 'Reconfigure primary back to loopback; n8n works locally again; unexpose withdraws routes', async () => {
   const n = byName('n8n');
   ensureN8nFixture(n);
-  const op = cliOk(target, ['primary', n.id, 'loopback', '--yes'], { timeoutMs: 600_000 });
-  if (op.state !== 'succeeded') throw new Error(`primary loopback ${op.state}: ${JSON.stringify(op.error)}`);
+  // Reruns (--only) may start with n8n already on loopback (a previous B09
+  // withdrew it); only switch primary when it is actually public.
+  const alreadyLoopback = ssh(`grep -E 'N8N_EDITOR_BASE_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim().includes('localhost:');
+  let op = null;
+  if (!alreadyLoopback) {
+    op = cliOk(target, ['primary', n.id, 'loopback', '--yes'], { timeoutMs: 600_000 });
+    if (op.state !== 'succeeded') throw new Error(`primary loopback ${op.state}: ${JSON.stringify(op.error)}`);
+  }
   const env = ssh(`grep -E 'N8N_EDITOR_BASE_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim();
   const { ctx, page } = await newPage();
   await page.goto(`${n.endpoints[0].browserUrl}signin`, { waitUntil: 'networkidle', timeout: 120_000 });
