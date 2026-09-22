@@ -85,14 +85,17 @@ async function newPage(opts = {}) {
   return { ctx, page: await ctx.newPage() };
 }
 
-async function uiLogin(page, route = 'home') {
+async function uiLogin(page, route = 'home', { ephemeral = false } = {}) {
   await page.goto(`${UI}/#/${route}`, { waitUntil: 'networkidle' });
-  await page.getByLabel('Username').fill(ADMIN.username);
+  await page.getByLabel('Username', { exact: true }).fill(ADMIN.username);
   // The eye-toggle button ("Show password") shares the accessible name, so
   // match the input exactly (same fix as the e2e suite).
   await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  // Checked by default the session survives a reload; steps that assert
+  // "reload asks for the password again" need the ephemeral session instead.
+  if (ephemeral) await page.getByLabel(/Stay logged in/).uncheck();
   await page.getByRole('button', { name: 'Log in' }).click();
-  const heading = { home: 'Your apps', store: 'App Store', platform: 'Platform tools', publishing: 'Published addresses' }[route];
+  const heading = { home: 'Your apps', store: 'App Store', platform: 'Platform tools', publishing: 'Published addresses', settings: 'Settings' }[route];
   await page.getByRole('heading', { name: heading }).waitFor({ timeout: 30_000 });
 }
 
@@ -322,6 +325,10 @@ const A05 = step('A05', 'Occupied port/name or conflicting foreign resource fail
 
 // ---------------------------------------------------------------- A06 duplicate submission / refresh / disconnect
 const A06 = step('A06', 'Refresh, logout, CLI disconnect and duplicate submission do not cancel/duplicate an accepted operation', async () => {
+  // Reruns (--only) may leave pdf-b behind; start from a clean slate so the
+  // plan below proves a single accepted operation (A08 re-covers retention).
+  const existing = listInstances().find((i) => i.name === 'pdf-b');
+  if (existing) cliOk(target, ['purge', existing.id, '--yes'], { timeoutMs: 600_000 });
   const plan = cliOk(target, ['plan', 'install', 'bentopdf', '--name', 'pdf-b']);
   const key = `vm-suite-${Date.now()}`;
   const s1 = cliOk(target, ['apply', plan.id, '--idempotency-key', key, '--yes', '--no-wait']);
@@ -330,11 +337,13 @@ const A06 = step('A06', 'Refresh, logout, CLI disconnect and duplicate submissio
   const other = cli(target, ['apply', plan.id, '--idempotency-key', `${key}-other`, '--yes', '--no-wait']);
   if (other.code === 0 || other.json?.error?.code !== 'IDEMPOTENCY_CONFLICT') throw new Error(`expected IDEMPOTENCY_CONFLICT, got ${JSON.stringify(other.json)}`);
   // UI: reload mid-operation -> login required -> the accepted operation/instance is found, not recreated
+  // (ephemeral session: the "Stay logged in" box is unticked so a reload asks
+  // for the password again, like the e2e suite).
   const { ctx, page } = await newPage();
-  await uiLogin(page);
+  await uiLogin(page, 'home', { ephemeral: true });
   await page.reload();
   await page.getByRole('heading', { name: 'Log in' }).waitFor();
-  await uiLogin(page);
+  await uiLogin(page, 'home', { ephemeral: true });
   const op = await waitFor(() => {
     const o = cliOk(target, ['operation', s1.operationId]);
     return ['succeeded', 'failed', 'needs_action'].includes(o.state) ? o : null;
@@ -343,7 +352,7 @@ const A06 = step('A06', 'Refresh, logout, CLI disconnect and duplicate submissio
   const count = listInstances().filter((i) => i.name === 'pdf-b').length;
   if (count !== 1) throw new Error(`expected 1 pdf-b instance, found ${count}`);
   await page.reload();
-  await uiLogin(page);
+  await uiLogin(page, 'home', { ephemeral: true });
   await page.locator('.instance').filter({ hasText: 'pdf-b' }).waitFor();
   await page.screenshot({ path: path.join(ev.dir, 'A06-ui-after-relogin.png') });
   await ctx.close();
@@ -370,8 +379,25 @@ const A07 = step('A07', 'Expired/stale plan and reused key with different reques
 // ---------------------------------------------------------------- A08 scoped stop/start/remove
 const A08 = step('A08', 'Stop/start/remove acts on one instance only; retains persistence; tools and sentinel unchanged', async () => {
   const a = byName('excalidraw');
-  const pdfB = byName('pdf-b');
+  // Reruns (--only) may leave pdf-b retained/removed; reinstall it so the
+  // scoped stop/start/remove below has a live target.
+  let pdfB = listInstances().find((i) => i.name === 'pdf-b');
+  if (!pdfB || pdfB.installState !== 'installed') {
+    if (pdfB) cliOk(target, ['purge', pdfB.id, '--yes'], { timeoutMs: 600_000 });
+    const op = cliOk(target, ['install', 'bentopdf', '--name', 'pdf-b', '--yes'], { timeoutMs: 1800_000 });
+    if (op.state !== 'succeeded') throw new Error(`pdf-b reinstall ${op.state}`);
+    pdfB = byName('pdf-b');
+  }
   const portainerBefore = ssh('docker inspect -f "{{.Id}} {{.State.Status}}" hb_platform_portainer-portainer-1').trim();
+  // The sentinel is an A05 fixture; cleanupFixtures() removes it, so recreate
+  // it here when a partial rerun starts at A08.
+  if (sshTry('docker inspect -f {{.Id}} harbor-test-sentinel').code !== 0) {
+    const image = ssh("jq -r '.images.web.reference' /opt/harbor/catalog/excalidraw/release.json").trim();
+    const used = new Set(listInstances().flatMap((i) => i.endpoints.map((e) => e.hostPort)));
+    let port = 18080;
+    while (used.has(port)) port += 1;
+    ssh(`docker volume create harbor-test-sentinel-data >/dev/null; docker run -d --name harbor-test-sentinel -p 127.0.0.1:${port}:80 --label harbor.test.fixture=sentinel ${image} >/dev/null`);
+  }
   const sentinelBefore = ssh('docker inspect -f "{{.Id}} {{.State.Status}}" harbor-test-sentinel').trim();
   const aBefore = containersOf(a.id);
   const stop = cliOk(target, ['stop', pdfB.id, '--yes']);
@@ -390,6 +416,12 @@ const A08 = step('A08', 'Stop/start/remove acts on one instance only; retains pe
 // ---------------------------------------------------------------- A11 n8n
 let n8nGateway;
 const A11 = step('A11', 'n8n/PostgreSQL installs; owner setup and credentialed workflow execution; two copies have separate volumes/keys', async () => {
+  // Reruns (--only) may leave n8n/n8n-2 behind from a partial run; start clean
+  // so install + owner setup + volume separation are all proven again.
+  for (const nm of ['n8n-2', 'n8n']) {
+    const ex = listInstances().find((i) => i.name === nm);
+    if (ex) cliOk(target, ['purge', ex.id, '--yes'], { timeoutMs: 600_000 });
+  }
   const op = cliOk(target, ['install', 'n8n', '--yes'], { timeoutMs: 1800_000 });
   if (op.state !== 'succeeded') throw new Error(`n8n install ${op.state}: ${JSON.stringify(op.error)}`);
   const n = byName('n8n');
@@ -498,6 +530,9 @@ async function n8nWorkflowDemo(page, gateway, create) {
 // ---------------------------------------------------------------- A12 remove/reinstall retention
 const A12 = step('A12', 'Remove/reinstall the exact n8n instance preserves workflow and credential; missing volume blocks without replacement', async () => {
   const n = byName('n8n');
+  // Reruns (--only) start from an n8n whose owner was already created by an
+  // earlier A11; the fixture endpoint + gateway just need to be up again.
+  ensureN8nFixture(n);
   const volsBefore = ssh(`docker volume inspect hb_${n.id.replace(/-/g, '')}_database --format '{{.CreatedAt}} {{index .Labels "io.harbor.preview/token"}}'`).trim();
   const keyHash = ssh(`sha256sum /var/lib/harbor/instances/${n.id}/secrets/encryption-key | cut -c1-16`).trim();
   const rm = cliOk(target, ['remove', n.id, '--yes']);
@@ -518,7 +553,15 @@ const A12 = step('A12', 'Remove/reinstall the exact n8n instance preserves workf
   await ctx.close();
   if (result.executionStatus !== 'success' || !result.fixtureSawCredentialedCall) throw new Error(`post-reinstall execution ${result.executionStatus}`);
   // Missing volume must block reinstall of the SECOND instance without creating a replacement (test-owned data).
-  const n2 = byName('n8n-2');
+  // Reruns (--only A12) may have purged n8n-2 already; reinstall it so the
+  // missing-volume case has a live target.
+  let n2 = listInstances().find((i) => i.name === 'n8n-2');
+  if (!n2 || n2.installState !== 'installed') {
+    if (n2) cliOk(target, ['purge', n2.id, '--yes'], { timeoutMs: 600_000 });
+    const opN2 = cliOk(target, ['install', 'n8n', '--name', 'n8n-2', '--yes'], { timeoutMs: 1800_000 });
+    if (opN2.state !== 'succeeded') throw new Error(`n8n-2 reinstall ${opN2.state}`);
+    n2 = byName('n8n-2');
+  }
   const rm2 = cliOk(target, ['remove', n2.id, '--yes']);
   if (rm2.state !== 'succeeded') throw new Error('remove n8n-2 failed');
   const vol2 = `hb_${n2.id.replace(/-/g, '')}_database`;
@@ -611,12 +654,15 @@ const A13 = step('A13', 'UI login/logout, bearer auth, Host/Origin/content type 
   const logs = ssh('journalctl -u harbor --no-pager -o cat | tail -n 2000');
   for (const s of secretsOnHost) if (logs.includes(s)) throw new Error('secret value in daemon log');
   if (logs.includes(token)) throw new Error('bearer token in daemon log');
-  // browser: no persistent storage, logout works
+  // browser: no persistent storage, logout works (ephemeral session so the
+  // remembered token does not linger in localStorage; logout lives in
+  // Settings → Account, like the e2e suite).
   const { ctx, page } = await newPage();
-  await uiLogin(page);
+  await uiLogin(page, 'home', { ephemeral: true });
   const storage = await page.evaluate(() => JSON.stringify({ ls: { ...localStorage }, ss: { ...sessionStorage } }));
   const cookies = await ctx.cookies();
-  await page.getByRole('button', { name: 'Log out' }).click();
+  await page.goto(`${UI}/#/settings/account`, { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Log out', exact: true }).click();
   await page.getByRole('heading', { name: 'Log in' }).waitFor();
   await ctx.close();
   await fetch(`${UI}/v1/sessions/current`, { method: 'DELETE', headers: h });
@@ -635,8 +681,10 @@ const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboa
   // OS test user for Cockpit login
   ssh(`id ${OS_TEST_USER.name} >/dev/null 2>&1 || useradd -m -s /bin/bash ${OS_TEST_USER.name}; echo '${OS_TEST_USER.name}:${OS_TEST_USER.password}' | chpasswd`);
   const { ctx, page } = await newPage({ ignoreHTTPSErrors: true });
-  // Open links from the Harbor UI (Platform page)
+  // Open links from the Harbor UI (Platform page; Cockpit/Portainer live under
+  // "Advanced tools" behind a per-browser ack gate).
   await uiLogin(page, 'platform');
+  await page.getByRole('button', { name: 'Show advanced tools' }).click().catch(() => undefined);
   const cockpitHref = await page.getByRole('link', { name: 'Open Cockpit' }).getAttribute('href');
   const portainerHref = await page.getByRole('link', { name: 'Open Portainer' }).getAttribute('href');
   await page.screenshot({ path: path.join(ev.dir, 'A14-harbor-tools-cards.png') });
