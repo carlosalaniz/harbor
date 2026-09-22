@@ -17,7 +17,8 @@ import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory, hostPathsOverlap, normalizeHostPath } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { installCandidates } from '../storage/install-location.js';
-import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { verifyPassword } from '../auth/password.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import { protectorFor, type AppHomeRef } from '../storage/crypto-provider.js';
 import type { ResourceRow } from '../state/repo.js';
@@ -739,9 +740,40 @@ export class ApplicationService {
           }
         }
       }
-      return { path: home.name, encrypted: true, state, sealed, ...(defaultKey ? { defaultKey: true as const } : {}) };
+      const silentUnlock = home.metadata?.['machineWrapped'] !== undefined;
+      return { path: home.name, encrypted: true, state, sealed, silentUnlock, ...(defaultKey ? { defaultKey: true as const } : {}) };
     } catch {
       return null;
+    }
+  }
+  /** True when the given app passphrase is the administrator's login password. */
+  async matchesAdminPassword(passphrase: string): Promise<boolean> {
+    const admin = this.ctx.repo.administrator();
+    if (!admin) return false;
+    try {
+      return await verifyPassword(passphrase, { hash: admin.passwordHash, salt: admin.salt, params: admin.params });
+    } catch {
+      return false;
+    }
+  }
+  // "Same password, no retyping": a custom-passphrase home whose passphrase
+  // is the Harbor password gains a machine wrapping of its key (like a
+  // default-key home), so this machine unlocks it at login. The passphrase
+  // envelope on the drive is untouched — it still travels. Nothing is stored
+  // that the login password alone would not already open.
+  async backfillLoginKey(instanceId: string, masterKey: Buffer, passphrase: string): Promise<boolean> {
+    const home = this.homeRow(instanceId);
+    if (!home || home.metadata?.['machineWrapped'] !== undefined) return false;
+    if (!(await this.matchesAdminPassword(passphrase))) return false;
+    const machineKey = this.ctx.machineKey.take();
+    if (!machineKey) return false;
+    try {
+      const wrapped = wrapMasterKeyForMachine(masterKey, machineKey);
+      this.ctx.repo.upsertResource({ instanceId: home.instanceId, kind: home.kind, role: home.role, dockerId: home.dockerId, name: home.name, token: home.token, metadata: { ...(home.metadata ?? {}), machineWrapped: wrapped, loginKey: true } });
+      this.ctx.log.info('app home now unlocks with the Harbor login on this machine (passphrase matches)', { instanceId });
+      return true;
+    } finally {
+      zeroMachineKey(machineKey);
     }
   }
   /** Unlock one custom-passphrase app for this boot: verify, hold the key, add it to the kernel. Hard: a kernel failure drops the hold and surfaces. */
@@ -764,6 +796,7 @@ export class ApplicationService {
         throw e;
       }
     }
+    await this.backfillLoginKey(inst.id, masterKey, passphrase);
     this.ctx.log.info(sealed ? 'app unlocked for this boot (kernel key added)' : 'app unlocked for this boot (not sealed yet; Start seals it)', { instanceId: inst.id });
     return this.summaryOf(inst.id);
   }
@@ -782,11 +815,14 @@ export class ApplicationService {
     this.ctx.log.info('app locked', { instanceId: inst.id, sealed });
     return this.summaryOf(inst.id);
   }
-  // BFU → AFU (first login after boot): add the machine-wrapped key of every
-  // sealed default-key home to the kernel so data-folder apps come back
-  // without anyone typing. Failures are logged and notified; the tile stays
-  // Locked and Start reports the same error with its next action.
-  async kernelUnlockDefaultHomes(): Promise<void> {
+  // Every login: (1) add the machine-wrapped key of every sealed home that
+  // has one (data-folder apps, and drive apps sealed with the Harbor
+  // password) to the kernel; (2) try the login password itself on locked
+  // custom homes without a wrapping — when it opens the envelope, hold the
+  // key, unlock the kernel and record the wrapping for next time. The
+  // password is used for this call only and never stored. Failures are
+  // logged and notified; the tile stays Locked and Start says why.
+  async onLogin(password: string): Promise<void> {
     const crypto = this.ctx.crypto;
     if (!crypto) return;
     let instances: InstanceRow[];
@@ -799,24 +835,49 @@ export class ApplicationService {
     }
     for (const inst of instances) {
       const home = this.homeRow(inst.id);
-      if (!home || home.metadata?.['defaultKey'] !== true || home.metadata?.['kernelSealed'] !== true) continue;
+      if (!home) continue;
+      const sealed = home.metadata?.['kernelSealed'] === true;
       const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
-      if (!wrapped || crypto.kernelState(home.name) !== 'locked') continue;
-      const machineKey = this.ctx.machineKey.take();
-      if (!machineKey) return;
-      let master: Buffer | null = null;
+      const defaultKey = home.metadata?.['defaultKey'] === true;
+      if (wrapped) {
+        if (!sealed || crypto.kernelState(home.name) !== 'locked') continue;
+        const machineKey = this.ctx.machineKey.take();
+        if (!machineKey) return;
+        let master: Buffer | null = null;
+        try {
+          master = unwrapMasterKeyForMachine(wrapped, machineKey);
+          await crypto.unlockApp({ instanceId: inst.id, home: home.name }, master.toString('hex'));
+          this.ctx.log.info('kernel-unlocked app home at login (machine key)', { instanceId: inst.id });
+          this.ctx.notifier.resolve(`home-locked:${inst.id}`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.ctx.log.warn(`could not unlock ${inst.name} at login: ${msg}`, { instanceId: inst.id });
+          this.ctx.notifier.notify({ kind: 'home-locked', severity: 'warning', title: `${inst.displayName ?? inst.name} is still locked`, body: `${msg}${e instanceof HarborError ? ` ${e.nextAction}` : ''}`, instanceId: inst.id, dedupeKey: `home-locked:${inst.id}` });
+        } finally {
+          zeroMachineKey(machineKey);
+          if (master) zeroKey(master);
+        }
+        continue;
+      }
+      if (defaultKey || this.unlockedApps.has(inst.id)) continue;
+      // Custom home with no wrapping: does the login password open it?
+      let master: Buffer;
       try {
-        master = unwrapMasterKeyForMachine(wrapped, machineKey);
-        await crypto.unlockApp({ instanceId: inst.id, home: home.name }, master.toString('hex'));
-        this.ctx.log.info('kernel-unlocked default-key app home at login', { instanceId: inst.id });
+        master = await unlockAppHome(home.name, password);
+      } catch {
+        continue; // a different passphrase: stays locked until the operator types it
+      }
+      try {
+        if (sealed && crypto.kernelState(home.name) === 'locked') await crypto.unlockApp({ instanceId: inst.id, home: home.name }, master.toString('hex'));
+        this.holdAppUnlock(inst.id, Buffer.from(master));
+        await this.backfillLoginKey(inst.id, master, password);
+        this.ctx.log.info('app home unlocked at login (passphrase is the Harbor password)', { instanceId: inst.id });
         this.ctx.notifier.resolve(`home-locked:${inst.id}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         this.ctx.log.warn(`could not unlock ${inst.name} at login: ${msg}`, { instanceId: inst.id });
-        this.ctx.notifier.notify({ kind: 'home-locked', severity: 'warning', title: `${inst.displayName ?? inst.name} is still locked`, body: `${msg}${e instanceof HarborError ? ` ${e.nextAction}` : ''}`, instanceId: inst.id, dedupeKey: `home-locked:${inst.id}` });
       } finally {
-        zeroMachineKey(machineKey);
-        if (master) zeroKey(master);
+        zeroKey(master);
       }
     }
   }
@@ -1050,6 +1111,7 @@ export class ApplicationService {
       // with their own passphrase, never silently.
       this.ctx.repo.upsertResource({ instanceId, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId, adopted: true } });
       this.holdAppUnlock(instanceId, Buffer.from(masterKey));
+      await this.backfillLoginKey(instanceId, masterKey, passphrase);
       // Adopt plans carry no passphrase (the operator already proved it by
       // unlocking above); pre-seed the secret check so submit() passes.
       this.submitInstallLocationSecret(plan.id, 'adopted');
@@ -1264,12 +1326,13 @@ export class ApplicationService {
         const hs = this.homeState(inst.id);
         if (hs?.state === 'locked') {
           // Kernel-locked (or never unlocked this boot): the runner needs a key
-          // it can reach — this boot's held key for custom homes, the machine
-          // key (AFU) for default-key homes. Otherwise refuse now.
-          if (hs.defaultKey) {
-            if (!this.ctx.machineKey.unlocked) throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Log in again to unlock apps on this machine, then Start again.' });
-          } else if (!this.unlockedApps.has(inst.id)) {
-            throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Unlock it with its encryption passphrase (or recovery key), then Start again.' });
+          // it can reach — this boot's held key, or a machine wrapping while
+          // AFU. Otherwise refuse now so the drawer can prompt.
+          const reachable = this.unlockedApps.has(inst.id) || (hs.silentUnlock && this.ctx.machineKey.unlocked);
+          if (!reachable) {
+            throw new HarborError('INVALID_STATE', `${inst.name} is locked`, {
+              nextAction: hs.defaultKey ? 'Log in again to unlock apps on this machine, then Start again.' : hs.silentUnlock ? 'Log in again (it unlocks with your Harbor password), or unlock it with its passphrase, then Start again.' : 'Unlock it with its encryption passphrase (or recovery key), then Start again.',
+            });
           }
         }
         changes.push(`Verify release, retained volumes and secrets of "${inst.name}"`, `Start existing containers of project ${inst.project}`, 'Check readiness');

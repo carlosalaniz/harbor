@@ -316,8 +316,13 @@ app it would later call encrypted on plaintext.
 A locked app (this machine holds no key for it — after a reboot, before the
 first login) shows a quiet *Locked* tile; its drawer says so and, for a
 custom-passphrase app, offers the unlock form. Data-folder apps unlock at the
-next login; drive apps with a custom passphrase need the passphrase (or adopt)
-on a new machine. **Lock** (drawer button while the app is stopped, or
+next login. Drive apps whose passphrase **is your Harbor password** unlock at
+login too (this machine keeps a wrapping of their key behind your login, like
+data-folder apps — the passphrase still travels with the drive, so another
+Harbor machine adopts it the same way). Drive apps with **any other
+passphrase** ask for it every time they are locked: type it in the drawer
+(or the 12-word recovery key). Typing the passphrase once on a same-password
+app that predates this behaviour records the wrapping for next time. **Lock** (drawer button while the app is stopped, or
 `harbor lock <app>`) evicts the key again: Harbor refuses to lock a running
 app because its files are open. To see for yourself, on the machine:
 `sudo fscrypt status <home>/volumes` (shows `Unlocked: No` while locked) and

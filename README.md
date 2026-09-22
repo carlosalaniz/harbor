@@ -58,7 +58,7 @@ actually use (password + two-factor, tailnet, domains, storage picker, appearanc
 
 ## Status
 
-Harbor is a **beta preview** (v0.17.0-beta.2): one administrator, one daemon with Docker
+Harbor is a **beta preview** (v0.17.0-beta.3): one administrator, one daemon with Docker
 authority. It is not a hardened multi-user service. Encrypted apps are sealed in the kernel
 (fscrypt, one key per app): while locked their data is ciphertext for every reader, root and
 Docker included. After a reboot they stay locked (and down) until the first console login — see

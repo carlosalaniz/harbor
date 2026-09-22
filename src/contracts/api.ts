@@ -172,6 +172,11 @@ export interface AppHomeDto {
   // passphrase). A locked default-key home unlocks at the next login — the
   // drawer says "log in again", never "type the passphrase".
   defaultKey?: true;
+  // silentUnlock: this machine holds a wrapping of the app key under its own
+  // (login-sealed) machine key — default-key homes always, custom-passphrase
+  // homes when the passphrase equals the Harbor password. Such a home
+  // unlocks at login without typing; its own passphrase still works too.
+  silentUnlock: boolean;
   // sealed: <home>/volumes is fscrypt-encrypted in the kernel, so `locked`
   // means ciphertext names + ENOKEY for every reader, Docker included.
   // false only for homes installed before sealing worked: the next Start

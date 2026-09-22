@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto } from '../../src/contracts/api.js';
 import Database from 'better-sqlite3';
 import { FakeCryptoProvider } from '../../src/storage/crypto-provider.js';
-import { startHarness, type Harness } from './harness.js';
+import { ADMIN, startHarness, type Harness } from './harness.js';
 
 // Whole-app install locations: the app (including its database) lives
 // encrypted on a drive folder, unlockable on any Harbor machine with the
@@ -164,6 +164,54 @@ describe('install to an encrypted app home', () => {
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     expect(kernelUnlocked(drivePath)).toBe(true);
     expect((await h.api.instances()).find((i) => i.id === driveInstanceId)!.home).toMatchObject({ state: 'unlocked', sealed: true });
+  });
+});
+
+describe('same password, no retyping', () => {
+  it('a drive app sealed with the Harbor password unlocks at login; one with another passphrase asks', async () => {
+    const plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'samepass', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw'), passphrase: ADMIN.password } });
+    const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: plan.id, passphrase: ADMIN.password }, { 'idempotency-key': 'home-samepass-1' });
+    const op = await h.api.waitOperation(sub.operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    expect(op.events.map((e) => e.message).join('\n')).toMatch(/passphrase is your Harbor password/);
+    const same = (await h.api.instances()).find((i) => i.name === 'samepass')!;
+    expect(same.home).toMatchObject({ state: 'unlocked', sealed: true, silentUnlock: true });
+    expect(same.home!.defaultKey).toBeUndefined();
+    const otherHome = path.join(drive, 'harbor-apps', 'excalidraw', 'excalidraw');
+    const other = (await h.api.instances()).find((i) => i.home?.path === otherHome)!;
+    expect(other.home).toMatchObject({ silentUnlock: false });
+    // Reboot: the login inside restart() unlocks the same-password app, never the other one.
+    crypto.open.clear();
+    await h.restart();
+    await until(async () => (await h.api.instances()).find((i) => i.name === 'samepass')!.home!.state === 'unlocked', 'same-password app unlocked at login');
+    expect((await h.api.instances()).find((i) => i.home?.path === otherHome)!.home).toMatchObject({ state: 'locked', silentUnlock: false });
+    // The passphrase envelope still works on its own (portable), and the
+    // recorded wrapping holds no passphrase.
+    const db = new Database(path.join(h.stateDir, 'harbor.db'), { readonly: true });
+    try {
+      const rows = db.prepare(`SELECT metadata_json FROM resources WHERE role = '__home__'`).all() as { metadata_json: string }[];
+      for (const r of rows) expect(r.metadata_json).not.toContain(ADMIN.password);
+      const settings = db.prepare('SELECT value_json FROM settings').all() as { value_json: string }[];
+      for (const r of settings) expect(r.value_json).not.toContain(ADMIN.password);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('the login password opens an older same-password home too, and records the wrapping (backfill)', async () => {
+    // Forge a home sealed with the Harbor password but recorded without a wrapping.
+    const inst = (await h.api.instances()).find((i) => i.name === 'samepass')!;
+    const db = new Database(path.join(h.stateDir, 'harbor.db'));
+    try {
+      db.prepare(`UPDATE resources SET metadata_json = json_remove(metadata_json, '$.machineWrapped', '$.loginKey') WHERE instance_id = ? AND role = '__home__'`).run(inst.id);
+    } finally {
+      db.close();
+    }
+    crypto.open.clear();
+    await h.restart();
+    await until(async () => (await h.api.instances()).find((i) => i.name === 'samepass')!.home!.state === 'unlocked', 'backfilled app unlocked at login');
+    // The wrapping is recorded right after the unlock (one more scrypt): poll for it.
+    await until(async () => (await h.api.instances()).find((i) => i.name === 'samepass')!.home!.silentUnlock === true, 'wrapping backfilled');
   });
 });
 

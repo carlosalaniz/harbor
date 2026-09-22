@@ -223,6 +223,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Live (droplet, run vm-2026-09-22T03-30-37): A01 bootstrap re-run, **C01** memos Local install sealed (fscrypt v2, protector `harbor-sealed-demo-…`); Docker bind of the locked dir: ciphertext names, `cat` → `Required key not available`, write fails; Stop → Lock → Start restores; **A09** reboot → app reads Locked with ciphertext names before login, unlocked + healthy after the CLI login
 - [x] Docs: decision 103, guide §4a2/§5, APP_HOMES stage 4 built, README status, BETA_TODO correction, AI_CONTEXT map + gotchas, VERIFICATION §3d
 
+## Phase 29 — same password, no retyping (2026-09-21, v0.17.0-beta.3) ✅
+- [x] `service.matchesAdminPassword` (scrypt check against the admin hash); install with a custom passphrase, the unlock endpoint, adopt and every login record a machine wrapping (`machineWrapped` + `loginKey`) when the passphrase is the Harbor password — the drive envelope is untouched
+- [x] `MachineKeyHolder.onLogin/announceLogin` (every login, not only BFU → AFU) → `service.onLogin(password)`: kernel-unlock machine-wrapped homes, try the login password on locked custom homes, backfill the wrapping; the password is dropped after the call
+- [x] `AppHomeDto.silentUnlock`; drawer copy for same-password homes; Lock button visible but disabled (with reason) while the app runs; plan-time Start check + runner accept a machine wrapping as a reachable key
+- [x] Tests: integration 131 (+2: same-password install unlocks at login while the other passphrase stays locked, DB rows never contain the password; backfill on login for a pre-existing same-password home), unit 149, e2e 25
+- [x] Docs: decision 104, guide §4a2, AI_CONTEXT
+
 ## Test results (latest local run)
 
 | Command | Result |
@@ -230,7 +237,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
 | `pnpm test` (unit) | 149 passed |
-| `pnpm test:integration` (fake adapter) | 129 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test:integration` (fake adapter) | 131 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

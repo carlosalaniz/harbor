@@ -863,7 +863,8 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
   const retained = inst.installState === 'retained';
   const locked = home?.state === 'locked';
-  const canLock = Boolean(home && home.sealed && home.state === 'unlocked' && !retained && inst.runtime === 'stopped' && inst.installState === 'installed');
+  const lockable = Boolean(home && home.sealed && home.state === 'unlocked' && !retained && inst.installState === 'installed');
+  const canLock = lockable && inst.runtime === 'stopped';
   const [locking, setLocking] = useState(false);
   const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need && !locked;
   const canStop = (inst.installState === 'installed' || inst.installState === 'needs_action' || inst.installState === 'failed') && inst.runtime !== 'stopped';
@@ -894,6 +895,8 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
               {home!.sealed ? ': its files are ciphertext on the disk right now — nothing on this machine can read them, Docker included.' : '.'}{' '}
               {home!.defaultKey ? (
                 <>Log in again to unlock it silently.</>
+              ) : home!.silentUnlock ? (
+                <>Its passphrase is your Harbor password: logging in again unlocks it, or type the passphrase (or the 12-word recovery key) below. A reboot locks it again.</>
               ) : (
                 <>Type the app passphrase (or the 12-word recovery key) to unlock it for this boot. A reboot locks it again.</>
               )}
@@ -1008,10 +1011,10 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
             Stop
           </button>
         )}
-        {canLock && (
+        {lockable && (
           <button
             className="btn"
-            disabled={busy || locking}
+            disabled={busy || locking || !canLock}
             onClick={() => {
               setLocking(true);
               setError(null);
@@ -1022,7 +1025,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
                 .finally(() => setLocking(false));
             }}
             aria-label={`Lock ${inst.name}`}
-            title="Evict the key from the kernel: the app's files become unreadable until the next unlock"
+            title={canLock ? "Evict the key from the kernel: the app's files become unreadable until the next unlock" : 'Stop the app first — its files are open while it runs'}
           >
             {locking ? 'Locking…' : 'Lock'}
           </button>

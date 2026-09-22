@@ -620,7 +620,10 @@ export class OperationRunner {
         // machine wrapping: they stay locked until the operator types the
         // passphrase at Start (per-app lock). Default-key homes wrap so the
         // data folder unlocks silently at login.
-        const machineKey = defaultKey ? this.ctx.machineKey.take() : null;
+        // A custom passphrase that IS the Harbor password gets the same
+        // wrapping: it unlocks at login here, and still travels by passphrase.
+        const loginKey = !defaultKey && (await this.ctx.service.matchesAdminPassword(passphrase));
+        const machineKey = defaultKey || loginKey ? this.ctx.machineKey.take() : null;
         let wrapped: MachineWrappedKey | null = null;
         if (machineKey) {
           try {
@@ -647,7 +650,7 @@ export class OperationRunner {
           this.event(op, 'preparing', `kernel-sealed ${descriptor.home}/volumes (fscrypt v2, per-app key)`);
         }
         const sealedNote = crypto ? ' (kernel-sealed)' : '';
-        repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: descriptor.home, token: null, metadata: { home: true, driveId: descriptor.manifest.driveId, kernelSealed: Boolean(crypto), ...(defaultKey ? { defaultKey: true } : {}), ...(wrapped ? { machineWrapped: wrapped } : {}) } });
+        repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: descriptor.home, token: null, metadata: { home: true, driveId: descriptor.manifest.driveId, kernelSealed: Boolean(crypto), ...(defaultKey ? { defaultKey: true } : {}), ...(wrapped ? { machineWrapped: wrapped } : {}), ...(loginKey && wrapped ? { loginKey: true } : {}) } });
         // A fresh custom install just proved the passphrase: hold the unlock
         // for this boot so Start needs no retyping until reboot/lock.
         if (!defaultKey) {
@@ -659,7 +662,7 @@ export class OperationRunner {
         this.opResult = { ...(this.opResult ?? {}), recoveryKey, ...(defaultKey ? { recoveryNote: 'Write down these 12 words. They unlock this app if the machine is lost or the password is reset.' } : { recoveryNote: 'Write down these 12 words. They unlock this app on any Harbor machine if the passphrase is forgotten.' }) };
         this.event(op, 'preparing', defaultKey
           ? `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with the recovery key until first login)'}${sealedNote}`
-          : `created encrypted app home ${descriptor.home} (locked with its own passphrase — Start prompts for it)${sealedNote}`);
+          : `created encrypted app home ${descriptor.home} (${loginKey && wrapped ? 'its passphrase is your Harbor password: this machine unlocks it at login' : 'locked with its own passphrase — Start prompts for it'})${sealedNote}`);
         return descriptor.home;
       } finally {
         zeroKey(masterKey);
@@ -685,23 +688,31 @@ export class OperationRunner {
     const defaultKey = home.metadata?.['defaultKey'] === true;
     const sealed = home.metadata?.['kernelSealed'] === true;
     if (sealed && crypto.kernelState(home.name) === 'open') return;
-    let masterKey: Buffer;
-    if (defaultKey) {
-      const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+    // Key sources, in order: this boot's held copy (passphrase typed), then
+    // the machine wrapping while AFU (default-key homes, and custom homes
+    // whose passphrase is the Harbor password).
+    let masterKey: Buffer | null = this.ctx.service.takeAppUnlockCopy(inst.id);
+    const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+    if (!masterKey && wrapped) {
       const machineKey = this.ctx.machineKey.take();
-      if (!wrapped || !machineKey) {
-        if (machineKey) zeroMachineKey(machineKey);
-        throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: wrapped ? 'Log in again to unlock apps on this machine, then Start again.' : 'This app has no key on this machine; unlock it with its 12-word recovery key from the app drawer, then Start again.' });
+      if (machineKey) {
+        try {
+          masterKey = unwrapMasterKeyForMachine(wrapped, machineKey);
+        } finally {
+          zeroMachineKey(machineKey);
+        }
       }
-      try {
-        masterKey = unwrapMasterKeyForMachine(wrapped, machineKey);
-      } finally {
-        zeroMachineKey(machineKey);
-      }
-    } else {
-      const held = this.ctx.service.takeAppUnlockCopy(inst.id);
-      if (!held) throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Unlock it with its encryption passphrase (or recovery key), then Start again.' });
-      masterKey = held;
+    }
+    if (!masterKey) {
+      throw new HarborError('INVALID_STATE', `${inst.name} is locked`, {
+        nextAction: defaultKey
+          ? wrapped
+            ? 'Log in again to unlock apps on this machine, then Start again.'
+            : 'This app has no key on this machine; unlock it with its 12-word recovery key from the app drawer, then Start again.'
+          : wrapped
+            ? 'Log in again (it unlocks with your Harbor password), or unlock it with its passphrase, then Start again.'
+            : 'Unlock it with its encryption passphrase (or recovery key), then Start again.',
+      });
     }
     const ref = { instanceId: inst.id, home: home.name };
     try {
@@ -793,7 +804,8 @@ export class OperationRunner {
       const defaultKey = home.metadata?.['defaultKey'] === true;
       const sealed = home.metadata?.['kernelSealed'] === true;
       const kernelOpen = sealed && this.ctx.crypto ? this.ctx.crypto.kernelState(home.name) === 'open' : false;
-      if (!defaultKey && !this.ctx.service.isAppUnlocked(inst.id) && !kernelOpen) {
+      const machineReachable = home.metadata?.['machineWrapped'] !== undefined && this.ctx.machineKey.unlocked;
+      if (!defaultKey && !this.ctx.service.isAppUnlocked(inst.id) && !kernelOpen && !machineReachable) {
         const secret = this.ctx.service.takeInstallLocationSecret(_plan.id);
         if (!secret || secret === 'default-key' || secret === 'adopted') {
           throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Unlock it with its encryption passphrase (or recovery key), then Start again.' });

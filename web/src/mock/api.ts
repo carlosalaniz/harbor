@@ -219,7 +219,7 @@ export const mockApi = {
   adoptFoundApp: async (home: string) => {
     await beat();
     const inst = instances[0]!;
-    return { ...inst, name: 'immich-2', home: { path: home, encrypted: true, state: 'locked' as const, sealed: true } };
+    return { ...inst, name: 'immich-2', home: { path: home, encrypted: true, state: 'locked' as const, sealed: true, silentUnlock: false } };
   },
   unlockApp: async (id: string) => {
     await beat();

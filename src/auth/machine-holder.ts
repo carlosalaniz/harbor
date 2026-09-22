@@ -7,7 +7,7 @@ import { zeroMachineKey } from './machine-key.js';
 
 export class MachineKeyHolder {
   private key: Buffer | null = null;
-  private listeners: (() => void)[] = [];
+  private listeners: ((loginPassword: string) => void)[] = [];
 
   constructor(private readonly log?: Pick<Logger, 'info' | 'warn'>) {}
 
@@ -24,19 +24,24 @@ export class MachineKeyHolder {
     this.clear();
     this.key = Buffer.from(key);
     this.log?.info('machine key unlocked (AFU)', {});
+  }
+
+  // Every successful login (the first one lands AFU, later ones are already
+  // AFU): the service kernel-unlocks machine-wrapped homes and tries the
+  // login password on custom homes that were sealed with the same word.
+  // The password is handed over for that one call and never kept.
+  onLogin(listener: (loginPassword: string) => void): void {
+    this.listeners.push(listener);
+  }
+
+  announceLogin(loginPassword: string): void {
     for (const l of this.listeners) {
       try {
-        l();
+        l(loginPassword);
       } catch {
         /* listeners own their errors */
       }
     }
-  }
-
-  // BFU → AFU hook: the service kernel-unlocks every default-key app home
-  // as soon as the machine key is in memory (first login after boot).
-  onHold(listener: () => void): void {
-    this.listeners.push(listener);
   }
 
   clear(): void {

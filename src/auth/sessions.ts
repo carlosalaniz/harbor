@@ -52,7 +52,11 @@ export class SessionService {
   // into memory. Best-effort: a missing/corrupt blob (or no app homes yet)
   // never fails the login itself.
   private unlockMachineKey(password: string): void {
-    if (!this.machineKey || this.machineKey.unlocked) return;
+    if (!this.machineKey) return;
+    if (this.machineKey.unlocked) {
+      this.machineKey.announceLogin(password);
+      return;
+    }
     const sealed = this.repo.setting<SealedMachineKey>('security.machineKey');
     if (!sealed) return;
     void unsealMachineKey(sealed, password)
@@ -62,6 +66,7 @@ export class SessionService {
         } finally {
           zeroMachineKey(key);
         }
+        this.machineKey!.announceLogin(password);
       })
       .catch(() => {
         // Wrong-password logins never reach here (they fail above); a damaged

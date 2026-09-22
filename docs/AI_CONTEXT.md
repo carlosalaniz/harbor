@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–103 so far) | `docs/DECISIONS.md` — **next number is 104**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–104 so far) | `docs/DECISIONS.md` — **next number is 105**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -50,7 +50,7 @@ src/
   cli/main.ts          commander CLI (all console actions incl. install --location, found-apps, adopt, unlock/lock, recovery export/import, diagnostics + bootstrap/self-update/setup-code/totp reset)
 web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx (InstallWizard location picker + passphrase, PlanDialog Lives-on row, locked drawer banner), app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 catalog/               17 bundled packages (manifest.yaml, compose.yaml, README.md, release.json, icon)
-tests/unit (149) tests/integration (129 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
+tests/unit (149) tests/integration (131 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
 scripts/               package.mjs (release archive), catalog-pin/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
 install.sh             curl one-liner (published as a release asset too)
 ```
@@ -60,7 +60,7 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 ## 4. Versions, tags, releases
 
 Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0, v0.14.0, v0.15.0 → v0.15.2, v0.16.0 → v0.16.2.
-`package.json` version is **0.17.0-beta.2**. GitHub Releases exist for v0.7.0 → v0.16.2 (assets:
+`package.json` version is **0.17.0-beta.3**. GitHub Releases exist for v0.7.0 → v0.16.2 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
 push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
@@ -78,18 +78,19 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (103, executed 2026-09-21):** true at-rest sealing — per-app fscrypt v2 is
-mandatory and root-only through the polkit-allowed `harbor-app-crypto@<instanceId>:<action>`
-oneshot (request file + key FIFO + blocking `systemctl start` + status file; the root step
-re-validates path/manifest/instance id). Install seals the EMPTY `volumes/` before rooting any
-volume and fails hard otherwise; Start kernel-unlocks (machine key / held key) or migrates a
-never-sealed home in place; Lock refuses while running; the read model is a mkdir probe
-(ENOKEY = locked, kernel truth); login kernel-unlocks default-key homes and the lock-guard
-auto-starts them. Shipped as **v0.17.0-beta.2**; live proof = VM step C01 (Docker-bypass `ls`
-shows ciphertext, `cat` → `Required key not available`, write fails; Start restores) + A09
-(reboot returns the app to locked before login, back after).
+**Latest decision (104, executed 2026-09-21):** same password, no retyping — a drive app whose
+passphrase is the Harbor password gets a machine wrapping (`machineWrapped` + `loginKey`) at
+install/unlock/adopt/login, so it unlocks at login like a data-folder app; any other passphrase
+must be typed. Every login runs `service.onLogin(password)` (kernel-unlock machine-wrapped homes,
+try the login password on the rest, backfill the wrapping). `AppHomeDto.silentUnlock`. Built on
+decision 103 (true at-rest sealing, v0.17.0-beta.2: root-only `harbor-app-crypto@` oneshot,
+FIFO key handoff, hard failures, kernel mkdir probe, VM steps C01 + A09). Shipped as
+**v0.17.0-beta.3** for Carlos's manual test on carlos-desktop.
 
 **Last three actions, most recent first:**
+1. **Shipped v0.17.0-beta.3 same-password silent unlock (decision 104)** (2026-09-21) and
+   prepared carlos-desktop for Carlos's manual run (stick re-formatted NTFS, `harbor uninstall`,
+   public one-liner reinstall). Previous action (beta.2, decision 103) follows.
 1. **Shipped v0.17.0-beta.2 true at-rest sealing (decision 103)** (2026-09-21): `harbor-app-crypto@`
    unit + polkit prefix, `src/bootstrap/app-crypto-apply.ts` (tune2fs/fscrypt readiness, seal,
    unlock, lock, status, migrate-in-place with rollback), `RootCryptoProvider` rewrite (FIFO key
@@ -144,7 +145,7 @@ shows ciphertext, `cat` → `Required key not available`, write fails; Start res
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 149), `pnpm test:integration` (129 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 149), `pnpm test:integration` (131 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
 - Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.
