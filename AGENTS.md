@@ -14,7 +14,7 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **91**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **105**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -27,14 +27,21 @@ src/            daemon (TypeScript strict ESM, Node 24.12, pnpm 10.16)
   state/        SQLite (better-sqlite3, SCHEMA_VERSION 7, migrations v1→v7), repositories
   docker/       adapter interface, Dockerode adapter, Compose CLI runner, FAKE adapter, port probe
   lifecycle/    plans/operations service, serial runner, readiness, observer (drive-guard stop,
-              auto-mount on insert, auto-start on return), DTO mapping
+              auto-mount on insert, auto-start on return, lock-guard start once a sealed app's
+              key is back), DTO mapping
   auth/ api/    scrypt + bearer sessions (+TOTP), Fastify routes with Host/Origin/JSON guards
   exposure/     Tailscale + Caddy providers, URL rendering
   appearance/   wallpapers + rotation fetcher        system/  metrics, storage (lsblk devices,
               mounts, folders), device-mount service, power, terminal, logs, LAN, self-update
-  storage/      bring-your-own-folder validation + `.harbor-bind.json` drive identity
+  storage/      bring-your-own-folder validation + `.harbor-bind.json` drive identity; app-home.ts
+              (portable homes: plaintext manifest + dual-key envelope + machine wrapping),
+              fscrypt.ts (PURE builders/parsers) + crypto-provider.ts (root oneshot handoff:
+              request.json + key FIFO + blocking `systemctl start harbor-app-crypto@<id>:<action>`;
+              kernel mkdir probe = read model; fake provider for tests)
   bootstrap/    root-only installer/upgrader (units + polkit; harbor.service grants
-              ReadWritePaths `/var/lib/harbor /srv/harbor /mnt /media` so markers backfill)
+              ReadWritePaths `/var/lib/harbor /srv/harbor /mnt /media` so markers backfill);
+              app-crypto-apply.ts = root half of sealing (tune2fs/fscrypt readiness, seal,
+              unlock, lock, status, migrate-in-place) — the daemon NEVER runs fscrypt itself
   cli/          commander CLI (mirrors every console action)
   notify/       notifications engine + channels (ntfy/webhook/email; resolved rows delete fully)
 web/src/        React 19 + Vite, plain CSS tokens, strict CSP; App.tsx, app/pages/*, app/icons.tsx,
@@ -44,7 +51,7 @@ tests/          unit/ integration/ (fake adapter) e2e/ (Playwright) vm/ (live su
 scripts/        catalog-pin/hash/verify, openapi.ts, package.mjs, vm/ controllers
 docs/           OPERATOR_GUIDE.md (user manual), DEVELOPER_PACKAGES.md (package authoring),
                 VERIFICATION.md (evidence log), FUTURE.md (deliberately not built),
-                design/ (UI, CATALOG, EXPOSURE, ROUND9), openapi.json (GENERATED — never hand-edit)
+                design/ (UI, CATALOG, EXPOSURE, ROUND9, APP_HOMES), openapi.json (GENERATED — never hand-edit)
 ```
 
 Key separations (do not blur them):
@@ -70,6 +77,8 @@ Key separations (do not blur them):
 4. **Ownership is sacred.** Harbor only mutates Docker resources carrying its labels, only deletes
    volumes after an ownership check, never touches operator folders (`bind` resources), never
    chowns. When in doubt: refuse with a clear error code + next action, never guess.
+   Encryption is never best-effort: an app home that cannot be kernel-sealed fails its install
+   (decision 103); never log "skipped" and continue with plaintext the UI calls encrypted.
 5. **Every mutation is a plan → operation** through the serial queue with idempotency keys,
    15-minute plan expiry, persisted phases, and no replay after interruption (`needs_action`).
    No direct Docker writes from routes.
@@ -102,14 +111,14 @@ Key separations (do not blur them):
 4. **Gate before commit** (ALL must pass — this is exactly what CI runs):
    ```sh
    pnpm lint && pnpm typecheck
-   pnpm test                    # unit (96)
-   pnpm test:integration        # 112 + 3 live-Docker skipped (~3.5 min)
-   pnpm build && pnpm test:e2e  # 23 Playwright (~1.5 min, ports 18500/18700)
+   pnpm test                    # unit (149)
+   pnpm test:integration        # 131 + 3 live-Docker skipped (~3.5 min)
+   pnpm build && pnpm test:e2e  # 25 Playwright (~1.5 min, ports 18500/18700)
    pnpm catalog:verify && pnpm openapi -- --check
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **91**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **105**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant

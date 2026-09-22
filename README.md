@@ -10,6 +10,8 @@ curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh
 
 One command. A few minutes. Then open **http://harbor.local**, create your account, and
 install your first app. No Docker knowledge, no YAML, no terminal required after setup.
+(The installer picks the newest stable release; to try the current beta, prefix the command
+with `HARBOR_VERSION=0.17.0-beta.3`, i.e. `… | sudo HARBOR_VERSION=0.17.0-beta.3 bash`.)
 
 ![Harbor home screen](docs/assets/screenshots/home.png)
 

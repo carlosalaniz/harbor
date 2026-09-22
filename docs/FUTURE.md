@@ -96,3 +96,18 @@ refused while an app uses the drive). What remains future: **partition, LUKS, SM
   privileged work through the existing root-oneshot pattern (`harbor-tools-install@`-style unit +
   polkit). Test plan needs real USB/SATA hardware: enumerate, partition, format each filesystem,
   mount, bind into an app, reboot persistence, refusal cases (system disk, mounted root).
+
+## Encryption follow-ups (recorded 2026-09-22, after decisions 103–104)
+
+- **Unlock without a login (keyfile/TPM).** Today every sealed app is locked — and down — after a
+  reboot until the first console login (the machine key is sealed under the login password, by
+  design). A 1.0 item: an optional TPM-bound or keyfile-on-USB unseal of the machine key at boot
+  for headless boxes, with the trade-off spelled out (a stolen box then boots into AFU).
+- **Sealed instance secrets.** App-generated instance secrets and provisioned app logins live in
+  plaintext under `/var/lib/harbor/instances/<id>/secrets` (0600; SECURITY.md calls this out).
+  They could move into the app's sealed home so a locked app hides its database password too;
+  needs the runner to read them only while AFU and a migration for existing instances.
+- **Scrubbing after in-place migration.** Sealing a pre-beta.2 home copies the data into a fresh
+  sealed dir and deletes the plaintext copy; the old blocks are not scrubbed (SSD/ext4 make
+  `shred` unreliable). New installs seal before any data exists, which is the real fix.
+

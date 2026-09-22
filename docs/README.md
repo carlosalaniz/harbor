@@ -11,7 +11,7 @@ Everything about running Harbor, building for it, and working on it.
 | [DECISIONS.md](DECISIONS.md) | Contributors | Numbered decision log (product truth alongside the spec) |
 | [VERIFICATION.md](VERIFICATION.md) | Contributors | Evidence log: what ran, where, with what result |
 | [FUTURE.md](FUTURE.md) | Everyone | Deliberately not built (and why) |
-| [design/](design/) | Contributors | Design addenda: UI, CATALOG, EXPOSURE, ROUND9 |
+| [design/](design/) | Contributors | Design addenda: UI, CATALOG, EXPOSURE, ROUND9, APP_HOMES (portable homes + kernel sealing) |
 | [spec/](spec/) | Contributors | Original spec (`TDD.md`) + historical build order (`plan.md`) — frozen |
 | [dev/](dev/) | Contributors | Build changelog (`PROGRESS.md`), beta checklist (`BETA_TODO.md`) |
 | [openapi.json](openapi.json) | Developers | Generated API description — never hand-edit (`pnpm openapi`) |
