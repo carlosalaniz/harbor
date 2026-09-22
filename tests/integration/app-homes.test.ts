@@ -73,7 +73,7 @@ describe('install to an encrypted app home', () => {
   it('the data-folder plan needs no passphrase at submit; the home unlocks silently', async () => {
     const appsDir = path.join(h.userDataDir, 'harbor-apps');
     const p = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'defaultkey', location: { dir: path.join(appsDir, 'excalidraw') } });
-    expect(p.changes.join('\n')).toMatch(/unlocks it silently/);
+    expect(p.changes.join('\n')).toMatch(/this machine unlocks it when you log in/);
     const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: p.id }, { 'idempotency-key': 'home-default-key-1' });
     const op = await h.api.waitOperation(sub.operationId);
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
@@ -100,13 +100,18 @@ describe('install to an encrypted app home', () => {
   it('the plan names the encrypted home and warns about the drive and the passphrase', async () => {
     plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw'), passphrase: PASS } });
     expect(plan.location).toEqual({ dir: path.join(drive, 'harbor-apps', 'excalidraw'), encrypted: true });
-    expect(plan.changes.join('\n')).toMatch(/encrypted at .*harbor-apps\/excalidraw\//);
-    expect(plan.warnings.join('\n')).toMatch(/lose the passphrase/);
+    expect(plan.changes.join('\n')).toMatch(/sealed at .*harbor-apps\/excalidraw\//);
+    // This harness's "drive" is a tmpdir on the same filesystem as the data
+    // folder, so Harbor classifies it as local and the warning says so. The
+    // drive-specific wording is exercised by the install-wizard e2e.
+    expect(plan.warnings.join('\n')).toMatch(/its own passphrase opens it on another Harbor machine/);
     // The passphrase is never stored in the plan.
     expect(JSON.stringify(plan)).not.toContain(PASS);
   });
 
-  it('submitting without the passphrase is refused; with it the install succeeds', async () => {
+  it('a plan that asked for a passphrase still needs it at submit; with it the install succeeds', async () => {
+    // The plan is not a default-key one, so the runner has nothing to open the
+    // home with unless the submitter hands the passphrase over.
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/operations', { planId: plan.id }, { 'idempotency-key': 'home-no-secret-1' });
     const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: plan.id, passphrase: PASS }, { 'idempotency-key': 'home-with-secret-1' });
     const op = await h.api.waitOperation(sub.operationId);
@@ -183,6 +188,40 @@ describe('install to an encrypted app home', () => {
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     expect(kernelUnlocked(drivePath)).toBe(true);
     expect((await h.api.instances()).find((i) => i.id === driveInstanceId)!.home).toMatchObject({ state: 'unlocked', sealed: true });
+  });
+});
+
+describe('a per-app passphrase is optional everywhere', () => {
+  it('installs into an app-home folder with NO passphrase, and the Harbor card is what opens it elsewhere', async () => {
+    const plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'nopass', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw') } });
+    // The plan says how it opens, and never asks for a secret. (Before
+    // decision 106 a non-data-folder location refused a passphrase-less plan
+    // outright; the wizard e2e covers the removable-drive rendering.)
+    expect(plan.changes.join('\n')).toMatch(/Harbor recovery key opens it on any other machine/);
+    // Submitting with no passphrase at all succeeds.
+    const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: plan.id }, { 'idempotency-key': 'home-nopass-1' });
+    const op = await h.api.waitOperation(sub.operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    const inst = (await h.api.instances()).find((i) => i.name === 'nopass')!;
+    expect(inst.home).toMatchObject({ encrypted: true, state: 'unlocked', sealed: true, defaultKey: true, silentUnlock: true });
+    // No per-app words were issued: there is no passphrase to forget.
+    expect(op.result?.['recoveryKey']).toBeUndefined();
+    const manifest = JSON.parse(readFileSync(path.join(inst.home!.path, 'manifest.json'), 'utf8'));
+    expect(manifest.encryption.recovery).toBeUndefined();
+    expect(manifest.encryption.installation).toBeDefined();
+    // The Harbor card opens it: prove it against the envelope directly, the
+    // way another machine would when adopting the drive.
+    const { unlockAppHome, zeroKey } = await import('../../src/storage/app-home.js');
+    const key = await unlockAppHome(inst.home!.path, harborCard);
+    try {
+      expect(key).toHaveLength(32);
+    } finally {
+      zeroKey(key);
+    }
+  });
+
+  it('still enforces the 8-character floor when a passphrase IS given', async () => {
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', name: 'shortpass', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw'), passphrase: 'short' } });
   });
 });
 

@@ -239,6 +239,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 157 (installation-recovery round-trip + refusals, three-envelope unlock, adopt re-stamp), integration 137 (card issued once, default-key home has no per-app words, card opens a never-unlocked app, rotation retires the old card, nothing in the clear in the DB), e2e 25 (wizard step + Settings card)
 - [x] Docs: decision 105, guide §4a2, AI_CONTEXT, openapi 76 paths
 
+## Phase 31 — a per-app passphrase is always optional (2026-09-22, v0.17.0-beta.5) ✅
+- [x] Plan-time validation drops the data-folder condition: an absent or empty `location.passphrase` yields `defaultKey: true` at ANY location, so a removable drive installs with no secret to invent
+- [x] Wizard: the External branch gets the same *Use my own passphrase instead…* opt-in as Local, Install enabled without one, 8-character floor still gating once opted in; copy on both branches names the Harbor recovery key as the portable way in
+- [x] Plan changes + warnings branch on drive-versus-data-folder AND passphrase-versus-card, so the review step always states how the app opens
+- [x] Tests: integration 139 (+2: passphrase-less plan installs and the card opens the home, 8-character floor still enforced), e2e 25 (External offers the opt-in, Install enabled without a passphrase, disabled at 5 characters once opted in), unit 157
+- [x] Docs: decision 106, guide §4a2 rewritten, AI_CONTEXT
+
 ## Test results (latest local run)
 
 | Command | Result |
@@ -246,7 +253,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
 | `pnpm test` (unit) | 157 passed |
-| `pnpm test:integration` (fake adapter) | 137 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test:integration` (fake adapter) | 139 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

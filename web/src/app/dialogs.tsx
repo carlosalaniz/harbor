@@ -35,7 +35,7 @@ export function PlanDialog({ c }: { c: Console }) {
               <li>
                 <span className="fact-k">Lives on</span>
                 <span>
-                  <code>{plan.location.dir}</code> <span className="muted small">(whole app, encrypted — the passphrase unlocks it on any Harbor machine)</span>
+                  <code>{plan.location.dir}</code> <span className="muted small">(whole app, sealed on disk — see what Harbor will do, below, for how it opens)</span>
                 </span>
               </li>
             )}
@@ -269,7 +269,9 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
   useEffect(() => {
     setCustomPass(false);
   }, [place]);
-  const locationMissingPass = place === 'external' ? passphrase.length < 8 : customPass && passphrase.length < 8;
+  // A passphrase is opt-in wherever the app lives (decision 106): without one
+  // the Harbor recovery key is what opens the app on another machine.
+  const locationMissingPass = customPass && passphrase.length < 8;
   // Filesystems Harbor trusts for whole encrypted apps. Anything else (ntfs,
   // vfat, exfat, …) can never hold an app — mounting it still leaves the
   // wizard dead-ended, so offer Format instead of Mount/passphrase there.
@@ -519,7 +521,11 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           <div className="folder-choice">
             <code className="path">{locationHome ?? '…'}</code>
             <>
-              <p className="muted small">The whole app (including its database) is sealed here with the kernel's own encryption: on disk its files are unreadable without the key, even for root. Harbor unlocks it silently when you log in — nothing to remember, nothing to type.</p>
+              <p className="muted small">
+                The whole app (including its database) is sealed here with the kernel's own encryption: on disk its files are unreadable without the key, even
+                for root. Harbor unlocks it silently when you log in, and your Harbor recovery key opens it on another machine — nothing to remember, nothing
+                to type.
+              </p>
               {!customPass ? (
                 <p className="muted small">
                   <button className="btn ghost" type="button" onClick={() => setCustomPass(true)}>
@@ -528,7 +534,8 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
                 </p>
               ) : (
                 <label className="small">
-                  Encryption passphrase (8+ characters) — write it down; losing it loses the data. Needed only to open this app on another Harbor machine.
+                  Encryption passphrase (8+ characters) — write it down; losing it loses the data. Needed only to open this app somewhere that does not have
+                  your Harbor recovery key.
                   <span className="row">
                     <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
                     <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
@@ -602,19 +609,32 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           <div className="folder-choice">
             <code className="path">{locationHome ?? (formattedDrive && driveDir ? `${driveDir}/${item.id}/${slugName}` : '…')}</code>
             <>
-              <p className="muted small">The whole app (including its database) is sealed here with the kernel's own encryption: on disk its files are unreadable without the key, even for root. Unplug the drive and the app stops; the passphrase unlocks it on any Harbor machine.</p>
-              <label className="small">
-                Encryption passphrase (8+ characters) — write it down; losing it loses the data
-                <span className="row">
-                  <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
-                  <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
-                    {showPass ? 'Hide' : 'Show'}
+              <p className="muted small">
+                The whole app (including its database) is sealed here with the kernel's own encryption: on disk its files are unreadable without the key, even
+                for root. Unplug the drive and the app stops. This machine unlocks it when you log in, and your Harbor recovery key opens it on any other
+                machine — nothing to remember, nothing to type.
+              </p>
+              {!customPass ? (
+                <p className="muted small">
+                  <button className="btn ghost" type="button" onClick={() => setCustomPass(true)}>
+                    Use my own passphrase instead…
                   </button>
-                  <button className="btn ghost" type="button" onClick={genPassphrase} aria-label="Generate a recovery key">
-                    Generate
-                  </button>
-                </span>
-              </label>
+                </p>
+              ) : (
+                <label className="small">
+                  Encryption passphrase (8+ characters) — write it down; losing it loses the data. Needed only to open this app somewhere that does not have your
+                  Harbor recovery key, for example when you hand this drive to someone else.
+                  <span className="row">
+                    <input value={passphrase} onChange={(e) => setPassphrase(e.target.value)} type={showPass ? 'text' : 'password'} autoComplete="new-password" aria-label="Encryption passphrase for this app" placeholder="correct horse battery staple" />
+                    <button className="btn ghost" type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide passphrase' : 'Show passphrase'}>
+                      {showPass ? 'Hide' : 'Show'}
+                    </button>
+                    <button className="btn ghost" type="button" onClick={genPassphrase} aria-label="Generate a recovery key">
+                      Generate
+                    </button>
+                  </span>
+                </label>
+              )}
             </>
           </div>
         )}
@@ -654,7 +674,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         <button
           className="btn primary"
           disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass || locationBlocked || (place === 'local' && !locationDir) || (place === 'external' && !locationDir && !formattedDrive)}
-          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir ? (place === 'local' && !customPass ? { location: { dir: locationDir } } : { location: { dir: locationDir, passphrase } }) : formattedDrive && driveDir ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : {}) })}
+          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
           aria-label={`Install ${item.name} now`}
           title={locationBlocked ? (locationNeedsFormat ? 'This drive needs formatting as ext4 first' : 'Mount the drive before installing') : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
         >

@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–105 so far) | `docs/DECISIONS.md` — **next number is 106**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–106 so far) | `docs/DECISIONS.md` — **next number is 107**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -50,7 +50,7 @@ src/
   cli/main.ts          commander CLI (all console actions incl. install --location, found-apps, adopt, unlock/lock, recovery export/import, diagnostics + bootstrap/self-update/setup-code/totp reset)
 web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx (InstallWizard location picker + passphrase, PlanDialog Lives-on row, locked drawer banner), app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 catalog/               17 bundled packages (manifest.yaml, compose.yaml, README.md, release.json, icon)
-tests/unit (157) tests/integration (137 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
+tests/unit (157) tests/integration (139 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
 scripts/               package.mjs (release archive), catalog-pin/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
 install.sh             curl one-liner (published as a release asset too)
 ```
@@ -59,8 +59,8 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 
 ## 4. Versions, tags, releases
 
-Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0, v0.14.0, v0.15.0 → v0.15.2, v0.16.0 → v0.16.2, v0.17.0-beta.1 → v0.17.0-beta.4.
-`package.json` version is **0.17.0-beta.4**. GitHub Releases exist for v0.7.0 → v0.16.2 and v0.17.0-beta.1 → beta.4 (assets:
+Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0, v0.14.0, v0.15.0 → v0.15.2, v0.16.0 → v0.16.2, v0.17.0-beta.1 → v0.17.0-beta.5.
+`package.json` version is **0.17.0-beta.5**. GitHub Releases exist for v0.7.0 → v0.16.2 and v0.17.0-beta.1 → beta.5 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
 push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
@@ -78,17 +78,17 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (105, executed 2026-09-22):** two recovery scopes. One **Harbor recovery key**
-per installation (12 words, minted at first-run setup and shown once by the wizard, or lazily at
-the first encrypted install for CLI/bootstrap enrollments) wraps EVERY app home as a third
-envelope (`encryption.installation`), so one card restores every app on a new machine. Per-app
-words are issued only when the operator elects their own passphrase. Adopt re-stamps the
-envelope with the adopting Harbor's card; `POST /v1/account/recovery-key` replaces it, re-stamps
-what it can reach and names what it cannot. Stored only wrapped under the machine key. Also
-fixed: `login` now awaits the machine-key unseal, closing a race where an install right after
-login got no machine wrapping. Shipped as **v0.17.0-beta.4**.
+**Latest decision (106, executed 2026-09-22):** a per-app passphrase is always OPTIONAL, on a
+removable drive as much as in the data folder. Decision 105's installation card made the old
+"drives must have a passphrase" rule pointless: an absent `location.passphrase` now yields
+`defaultKey: true` at any location, the wizard's External branch shows the same *Use my own
+passphrase instead…* opt-in as Local, and a passphrase-less drive home has the data-folder
+shape (Harbor-generated secret, machine wrapping, `installation` envelope, no per-app words).
+The 8-character floor still applies when one is given. Shipped as **v0.17.0-beta.5**.
 
 **Last three actions, most recent first:**
+1. **Shipped v0.17.0-beta.5 optional per-app passphrase (decision 106)** (2026-09-22) after
+   Carlos hit the wizard's drive-passphrase requirement mid-test on the LAN box. Earlier below.
 1. **Shipped v0.17.0-beta.4 two recovery scopes (decision 105)** (2026-09-22): installation card
    + per-app words, `installation-recovery.ts`, setup wizard step, Settings → Account card with
    rotation, awaited machine-key unseal, unit/integration/e2e coverage. Earlier entries follow.
@@ -154,7 +154,7 @@ login got no machine wrapping. Shipped as **v0.17.0-beta.4**.
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 157), `pnpm test:integration` (137 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 157), `pnpm test:integration` (139 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
 - Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.

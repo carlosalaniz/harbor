@@ -1,6 +1,6 @@
 # Verification report
 
-Harbor local preview, version 0.17.0-beta.4. This report lists what actually ran, where, with which versions,
+Harbor local preview, version 0.17.0-beta.5. This report lists what actually ran, where, with which versions,
 and the outcome. Nothing here is asserted without a recorded run. Live runs are stored under
 `docs/evidence/<run-id>/` (report.md, report.json, bootstrap logs, screenshots, exported files).
 

@@ -331,8 +331,17 @@ test('install page: a wrong-filesystem drive offers Format, not Mount or a passp
   await expect(go).toBeEnabled();
   await go.click();
   await expect(where.getByRole('button', { name: /Formatting/ })).toBeVisible();
-  // the formatted drive lands selected with a passphrase prompt (removable = portable)
-  await expect(where.getByLabel('Encryption passphrase for this app')).toBeVisible({ timeout: 30_000 });
+  // The formatted drive lands selected and installable WITHOUT a passphrase
+  // (decision 106): the Harbor recovery key is what opens it elsewhere.
+  await expect(where.getByRole('button', { name: 'Use my own passphrase instead…' })).toBeVisible({ timeout: 30_000 });
+  await expect(where.getByLabel('Encryption passphrase for this app')).toHaveCount(0);
+  await expect(where.getByRole('button', { name: 'Install BentoPDF' })).toBeEnabled();
+  // …and opting in still offers one, with the 8-character floor gating Install.
+  await where.getByRole('button', { name: 'Use my own passphrase instead…' }).click();
+  await where.getByLabel('Encryption passphrase for this app').fill('short');
+  await expect(where.getByRole('button', { name: 'Install BentoPDF' })).toBeDisabled();
+  await where.getByLabel('Encryption passphrase for this app').fill('correct horse battery staple');
+  await expect(where.getByRole('button', { name: 'Install BentoPDF' })).toBeEnabled();
   // the enforced path nests package + instance under the drive
   await expect(where.locator('code.path')).toContainText('bentopdf/bentopdf');
   await where.getByRole('button', { name: 'Close', exact: true }).click();

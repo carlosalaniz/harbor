@@ -1347,21 +1347,28 @@ export class ApplicationService {
       // Default-encrypt (decision 94): the Harbor data folder (system disk,
       // not portable) encrypts with Harbor's own key — no passphrase needed,
       // silent unlock, nothing to remember. Removable drives are portable, so
-      // they still require an 8+ char passphrase (shown once) that unlocks
-      // the app on any Harbor machine.
+      // A per-app passphrase is ALWAYS optional, on the data folder and on a
+      // drive alike (decision 106). Every sealed home is already opened by the
+      // Harbor recovery key, so portability never depended on the operator
+      // inventing a second secret. Without one the home takes the same shape
+      // as a data-folder home: a Harbor-generated secret nobody ever types,
+      // the machine wrapping for silent unlock here, and the Harbor card for
+      // anywhere else. A passphrase is what you choose when you want to open
+      // ONE app on a machine that does not hold this Harbor's card, or to hand
+      // a single app over along with its drive.
       let location: PlanProposal['location'] = null;
       if (req.location) {
         const dir = this.resolveInstallLocation(req.location.dir, instances, pkg.id);
         const pass = req.location.passphrase;
-        const isDataFolder = this.isDataFolderLocation(dir);
-        if (isDataFolder && (pass === undefined || pass === '')) {
+        if (pass === undefined || pass === '') {
           location = { dir, defaultKey: true };
         } else {
-          if (typeof pass !== 'string' || pass.length < 8) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at least 8 characters', { nextAction: 'Choose a passphrase (or a generated recovery key) of 8+ characters.' });
+          if (typeof pass !== 'string' || pass.length < 8) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at least 8 characters', { nextAction: 'Choose a passphrase (or a generated recovery key) of 8+ characters, or install without one and rely on your Harbor recovery key.' });
           if (pass.length > 256) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at most 256 characters');
           location = { dir };
         }
       }
+      const locationOnDrive = location !== null && !this.isDataFolderLocation(location.dir);
       const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
       const proposal: PlanProposal = {
         packageId: pkg.id,
@@ -1376,7 +1383,13 @@ export class ApplicationService {
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
-          ...(location ? [location.defaultKey ? `Install the whole app encrypted at ${location.dir}/ (manifest.json + vault/); Harbor unlocks it silently on this machine` : `Install the whole app encrypted at ${location.dir}/ (manifest.json + vault/); the passphrase unlocks it on any Harbor machine`] : []),
+          ...(location
+            ? [
+                location.defaultKey
+                  ? `Install the whole app sealed at ${location.dir}/ (manifest.json + vault/ + volumes/); this machine unlocks it when you log in, and your Harbor recovery key opens it on any other machine`
+                  : `Install the whole app sealed at ${location.dir}/ (manifest.json + vault/ + volumes/); its own passphrase opens it on any Harbor machine, and your Harbor recovery key does too`,
+              ]
+            : []),
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
@@ -1387,7 +1400,17 @@ export class ApplicationService {
           ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
           ...(pkg.manifest.defaultCredentials ? [`This app ships with a default login (${pkg.manifest.defaultCredentials.username}); change it right after the first sign-in.`] : []),
-          ...(location ? [location.defaultKey ? 'The app (including its database) lives encrypted on this machine and unlocks silently when you log in.' : 'The app (including its database) lives on the drive: unplug it and the app stops; lose the passphrase and the data is gone.'] : []),
+          ...(location
+            ? [
+                locationOnDrive
+                  ? location.defaultKey
+                    ? 'The app (including its database) lives sealed on the drive: unplug it and the app stops. Opening it on another Harbor machine needs your Harbor recovery key, so keep that paper safe.'
+                    : 'The app (including its database) lives sealed on the drive: unplug it and the app stops. Lose both its passphrase and your Harbor recovery key and the data is gone.'
+                  : location.defaultKey
+                    ? 'The app (including its database) lives sealed on this machine and unlocks silently when you log in.'
+                    : 'The app (including its database) lives sealed on this machine; its own passphrase opens it on another Harbor machine.',
+              ]
+            : []),
         ],
         releaseHashes: pkg.hashes,
       };

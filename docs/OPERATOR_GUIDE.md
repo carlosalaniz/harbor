@@ -46,7 +46,7 @@ is typed on the terminal.
 - `HARBOR_LAN=off` keeps LAN mode off (console and apps then answer only on the machine, over Tailscale, or via SSH forwarding). On a cloud server LAN mode stays off automatically: there, "every interface" would be the public internet.
 - `HARBOR_TOOLS=1` also sets up Cockpit and Portainer. `HARBOR_VERSION=<version>` pins a release (e.g. `HARBOR_VERSION=0.12.5`).
   **Beta releases need the pin**: without it the installer (and the console's self-update) only consider stable `x.y.z`
-  releases, so `HARBOR_VERSION=0.17.0-beta.4` is how you install or upgrade to the current beta.
+  releases, so `HARBOR_VERSION=0.17.0-beta.5` is how you install or upgrade to the current beta.
 - Lost the setup code? On the machine: `sudo /opt/harbor/bin/harbor setup-code --config /etc/harbor/harbor.json`.
 
 **LAN mode** means the console (port 80) and every app port answer to any device on your local network,
@@ -285,15 +285,19 @@ are never touched.
 
 Some apps keep everything in a database that cannot live in one of your own
 folders — and on a machine with tiny onboard storage even the database needs to
-move. At install time the wizard asks **where the app should live**: **Local**
-(encrypted on this machine in the Harbor data folder — Harbor unlocks it
-silently when you log in, nothing to remember) or **External drive** (encrypted,
-portable with a passphrase). A removable-drive choice asks for an **encryption
-passphrase** (8+ characters, or a generated recovery key) — write it down;
-losing it loses the data. The Local choice needs no passphrase; *Use my own
-passphrase instead…* opts into one (needed only to open the app on another
-Harbor machine). The review step names the encrypted home and warns about the
-drive and the passphrase.
+move. At install time the wizard asks **where the app should live**: **Local**, in the
+Harbor data folder on this machine, or **External drive**. Either way the app is
+sealed, this machine unlocks it when you log in, and your Harbor recovery key
+opens it on any other machine. Neither choice asks you to invent a passphrase.
+
+*Use my own passphrase instead…* opts into one, for either location. Give an app
+its own passphrase for one of two reasons: you want to open that one app on a
+machine that does not have your Harbor recovery key, or you want to hand that
+one app over along with its drive without giving away everything else. A
+passphrase must be 8 characters or more, and the *Generate* button makes one for
+you. Write it down; an app whose passphrase and Harbor recovery key are both
+lost is gone. The review step names the sealed home and says exactly how it will
+open.
 
 The whole app — database included — then lives **sealed** in one folder on the
 drive (`<candidate>/<package>/<instance>/{manifest.json, vault/, volumes/}`, for
