@@ -398,10 +398,10 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
       <fieldset className="storage-choices">
         <legend>Where should the app live?</legend>
         <label className="check">
-          <input type="radio" name="loc" checked={place === 'local'} onChange={() => setPlace('local')} /> Local — encrypted on this machine, unlocks silently when you log in
+          <input type="radio" name="loc" checked={place === 'local'} onChange={() => setPlace('local')} /> Local — sealed on this machine, unlocks silently when you log in
         </label>
         <label className="check">
-          <input type="radio" name="loc" checked={place === 'external'} onChange={() => setPlace('external')} /> External drive — encrypted, portable with a passphrase
+          <input type="radio" name="loc" checked={place === 'external'} onChange={() => setPlace('external')} /> External drive — sealed, portable with a passphrase
         </label>
         {place === 'external' && (
           <>
@@ -519,7 +519,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           <div className="folder-choice">
             <code className="path">{locationHome ?? '…'}</code>
             <>
-              <p className="muted small">The whole app (including its database) is installed encrypted here. Harbor unlocks it silently when you log in — nothing to remember, nothing to type.</p>
+              <p className="muted small">The whole app (including its database) is sealed here with the kernel's own encryption: on disk its files are unreadable without the key, even for root. Harbor unlocks it silently when you log in — nothing to remember, nothing to type.</p>
               {!customPass ? (
                 <p className="muted small">
                   <button className="btn ghost" type="button" onClick={() => setCustomPass(true)}>
@@ -602,7 +602,7 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           <div className="folder-choice">
             <code className="path">{locationHome ?? (formattedDrive && driveDir ? `${driveDir}/${item.id}/${slugName}` : '…')}</code>
             <>
-              <p className="muted small">The whole app (including its database) is installed encrypted here. Unplug the drive and the app stops; the passphrase unlocks it on any Harbor machine.</p>
+              <p className="muted small">The whole app (including its database) is sealed here with the kernel's own encryption: on disk its files are unreadable without the key, even for root. Unplug the drive and the app stops; the passphrase unlocks it on any Harbor machine.</p>
               <label className="small">
                 Encryption passphrase (8+ characters) — write it down; losing it loses the data
                 <span className="row">
@@ -863,6 +863,8 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
   const retained = inst.installState === 'retained';
   const locked = home?.state === 'locked';
+  const canLock = Boolean(home && home.sealed && home.state === 'unlocked' && !retained && inst.runtime === 'stopped' && inst.installState === 'installed');
+  const [locking, setLocking] = useState(false);
   const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need && !locked;
   const canStop = (inst.installState === 'installed' || inst.installState === 'needs_action' || inst.installState === 'failed') && inst.runtime !== 'stopped';
   const canStart = inst.installState === 'installed' && inst.desired === 'stopped' && !need;
@@ -888,9 +890,10 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           <div>
             <strong>Locked</strong>
             <p className="muted small">
-              This app lives encrypted at <code className="path">{home!.path}</code>.{' '}
+              This app lives sealed at <code className="path">{home!.path}</code>
+              {home!.sealed ? ': its files are ciphertext on the disk right now — nothing on this machine can read them, Docker included.' : '.'}{' '}
               {home!.defaultKey ? (
-                <>This machine cannot read it yet — log in again to unlock it silently.</>
+                <>Log in again to unlock it silently.</>
               ) : (
                 <>Type the app passphrase (or the 12-word recovery key) to unlock it for this boot. A reboot locks it again.</>
               )}
@@ -908,6 +911,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
             />
           )}
         </div>
+      )}
+      {home && home.sealed === false && !locked && !retained && (
+        <p className="muted small" role="status">
+          Not sealed yet: this app was installed before Harbor sealed data in the kernel. Its next Start seals the existing data in place (one-time, verified, rolled back if it fails).
+        </p>
       )}
       {need && !retained && (
         <div className="update-banner needs-drive" role="alert">
@@ -998,6 +1006,25 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
         {canStop && inst.installState !== 'installing' && (
           <button className="btn" disabled={busy} onClick={() => onAction({ kind: 'stop', instance: inst })} aria-label={`Stop ${inst.name}`}>
             Stop
+          </button>
+        )}
+        {canLock && (
+          <button
+            className="btn"
+            disabled={busy || locking}
+            onClick={() => {
+              setLocking(true);
+              setError(null);
+              void api
+                .lockApp(inst.id)
+                .then((s) => setDetail((d) => (d ? { ...d, home: s.home } : d)))
+                .catch((e: Error) => setError(e.message))
+                .finally(() => setLocking(false));
+            }}
+            aria-label={`Lock ${inst.name}`}
+            title="Evict the key from the kernel: the app's files become unreadable until the next unlock"
+          >
+            {locking ? 'Locking…' : 'Lock'}
           </button>
         )}
         {!retained && inst.installState !== 'installing' && (

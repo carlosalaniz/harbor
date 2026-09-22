@@ -172,6 +172,11 @@ export interface AppHomeDto {
   // passphrase). A locked default-key home unlocks at the next login — the
   // drawer says "log in again", never "type the passphrase".
   defaultKey?: true;
+  // sealed: <home>/volumes is fscrypt-encrypted in the kernel, so `locked`
+  // means ciphertext names + ENOKEY for every reader, Docker included.
+  // false only for homes installed before sealing worked: the next Start
+  // seals their data in place (one-time migration).
+  sealed: boolean;
 }
 
 export interface StorageClaimDto {

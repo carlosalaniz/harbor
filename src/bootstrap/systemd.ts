@@ -1,5 +1,7 @@
 import { PRODUCT } from '../naming.js';
 import { UNIT_MARKER } from './host.js';
+import { APP_CRYPTO_UNIT_PREFIX } from '../storage/fscrypt.js';
+export { APP_CRYPTO_UNIT_FILE } from '../storage/fscrypt.js';
 
 // The unit restarts the daemon, runs it as the dedicated user with Docker group access, and kills
 // only Harbor's own child processes (KillMode=control-group). App containers belong to Docker's
@@ -91,6 +93,12 @@ polkit.addRule(function (action, subject) {
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
+  // Per-app kernel sealing (fscrypt): start harbor-app-crypto@<instanceId>:<action>.service
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("${APP_CRYPTO_UNIT_PREFIX}") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
   return polkit.Result.NOT_HANDLED;
 });
 `;
@@ -170,5 +178,25 @@ TimeoutStartSec=600
 # carlos-desktop: "mounted at /mnt/usb20fd" followed by "Unmounting /dev/sdb1").
 # KillMode=none lets the mount daemon survive; kernel mounts (ext4) are unaffected.
 KillMode=none
+`;
+}
+
+// Oneshot unit for per-app kernel sealing (fscrypt). The daemon (harbor user,
+// allowed by the polkit rule) starts `harbor-app-crypto@<instanceId>:<action>`
+// and BLOCKS on it; the root step runs `harbor app-crypto <spec>`, which
+// re-validates the request file under <stateDir>/instances/<id>/crypto/,
+// reads the app key from a FIFO there (never from disk) and writes its
+// verdict to status.json. No start timeout: an in-place migration copies the
+// whole app and is bounded by the data, not by us (the daemon applies
+// per-action timeouts of its own).
+export function appCryptoUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor per-app encryption step (%i: <instanceId>:<setup|seal|unlock|lock|status|migrate>)
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor app-crypto %i
+TimeoutStartSec=0
 `;
 }

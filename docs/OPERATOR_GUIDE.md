@@ -293,31 +293,57 @@ passphrase instead…* opts into one (needed only to open the app on another
 Harbor machine). The review step names the encrypted home and warns about the
 drive and the passphrase.
 
-The whole app — database included — then lives encrypted in one folder on the
-drive (`<candidate>/<package>/<instance>/{manifest.json, vault/}`, for example
-`/mnt/photos/harbor-apps/immich/immich`). Unplug the drive and the app
-stops; plug it into another Harbor machine and it appears under **Settings →
-Storage → Found apps**, where *Adopt* (with the passphrase) installs it there
-with fresh ports. Only ext4/btrfs/xfs/zfs/apfs drives qualify (a database on
-exFAT/NTFS is corruption, not portability — those show a *needs formatting as
-ext4* warning with a Format button instead of Mount or a passphrase, and Install
-stays disabled until the drive is ext4; a plugged-in but unmounted drive on an
-eligible filesystem offers *Mount it* right in the wizard, and a folder picked
-on an unmounted drive blocks Install with a mount prompt until the drive is
-mounted).
-A locked app (this machine cannot read it yet — after a reboot, before the first
-login) shows a quiet *Locked* tile; data-folder apps unlock at the next login,
-drive apps with a custom passphrase need the passphrase (or adopt) on a new machine.
+The whole app — database included — then lives **sealed** in one folder on the
+drive (`<candidate>/<package>/<instance>/{manifest.json, vault/, volumes/}`, for
+example `/mnt/photos/harbor-apps/immich/immich`). *Sealed* means the kernel's
+own directory encryption (fscrypt, v2 policy, one key per app): the app's data
+under `volumes/` is ciphertext on the disk — file names included — and stays
+that way for every reader, root and Docker included, until Harbor adds the
+app's key to the kernel. Unplug the drive and the app stops; plug it into
+another Harbor machine and it appears under **Settings → Storage → Found
+apps**, where *Adopt* (with the passphrase) installs it there with fresh
+ports. Only ext4 drives qualify for sealing (Harbor turns on the ext4 `encrypt`
+feature and sets fscrypt up by itself, at format time and again at install; a
+database on exFAT/NTFS is corruption, not portability — those show a *needs
+formatting as ext4* warning with a Format button instead of Mount or a
+passphrase, and Install stays disabled until the drive is ext4; a plugged-in
+but unmounted drive on an eligible filesystem offers *Mount it* right in the
+wizard, and a folder picked on an unmounted drive blocks Install with a mount
+prompt until the drive is mounted). A machine that cannot seal (no ext4, no
+`fscrypt`) refuses the install with the exact fix — Harbor never installs an
+app it would later call encrypted on plaintext.
 
-**Headless reboot, in plain words:** after a power cut or reboot, every encrypted app stays
+A locked app (this machine holds no key for it — after a reboot, before the
+first login) shows a quiet *Locked* tile; its drawer says so and, for a
+custom-passphrase app, offers the unlock form. Data-folder apps unlock at the
+next login; drive apps with a custom passphrase need the passphrase (or adopt)
+on a new machine. **Lock** (drawer button while the app is stopped, or
+`harbor lock <app>`) evicts the key again: Harbor refuses to lock a running
+app because its files are open. To see for yourself, on the machine:
+`sudo fscrypt status <home>/volumes` (shows `Unlocked: No` while locked) and
+`ls <home>/volumes` (ciphertext names; reading a file answers *Required key
+not available*).
+
+Apps installed by a Harbor older than 0.17.0-beta.2 have plaintext data under
+`volumes/` (the drawer says *Not sealed yet*). Their next **Start** seals the
+data in place: Harbor moves the folder aside, seals a fresh one under the same
+path, copies everything back as root, verifies entry counts and bytes, and only
+then deletes the plaintext copy (any failure puts the original back and the
+Start reports why). This needs free space for one extra copy, and it cannot
+scrub the old blocks from the device — a drive that already held plaintext may
+keep recoverable remnants until they are overwritten. Apps installed from
+0.17.0-beta.2 on are sealed before any data exists.
+
+**Headless reboot, in plain words:** after a power cut or reboot, every sealed app stays
 locked — and therefore down — until the first console login unlocks it. On a headless box
 that means Immich is down until someone logs in (any login unlocks every data-folder app at
-once; drive apps with a custom passphrase each need theirs typed once). This is deliberate:
-the unlock key lives behind your login, not on the disk. Automatic unlock without a login
-(keyfile/TPM) is a 1.0 item, not a beta one — for now, log in once after a reboot.
+once and Harbor starts them again; drive apps with a custom passphrase each need theirs typed
+once). This is deliberate: the unlock key lives behind your login, not on the disk, and while
+locked the data is ciphertext — Docker cannot even find the app's folder. Automatic unlock
+without a login (keyfile/TPM) is a 1.0 item, not a beta one — for now, log in once after a reboot.
 
 CLI: `harbor install <package> --location /mnt/photos/harbor-apps/immich --passphrase-stdin < passphrase.txt`
-(omit the passphrase for the Harbor data folder), `harbor found-apps`,
+(omit the passphrase for the Harbor data folder), `harbor lock <app>` / `harbor unlock <app>`, `harbor found-apps`,
 `harbor adopt <home-folder>`.
 ## 4b. Settings in the console (for people who do not use a terminal)
 
@@ -388,8 +414,8 @@ systemctl restart harbor         # apps keep running; UI recovers after login
 Restarting Harbor never stops application containers (they belong to Docker with
 `restart: unless-stopped`). After a host reboot, desired-running apps come back through Docker;
 intentionally stopped instances stay stopped. Harbor re-observes and reports actual readiness.
-Encrypted apps are the exception: they stay locked (and down) until the first login after the
-reboot — see §4a2 above.
+Sealed apps are the exception: they stay locked (and down) until the first login after the
+reboot, and come back on their own once it happened — see §4a2 above.
 
 ## 6. Platform tools
 

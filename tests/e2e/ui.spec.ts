@@ -121,9 +121,10 @@ test('store app page, install with plan review, progress tray, Open link; duplic
   const about = page.getByRole('dialog');
   await expect(about).toContainText('Runs on 127.0.0.1 only until you publish it');
   await expect(about).toContainText('website');
-  // Local is the default: encrypted on this machine, silent unlock
+  // Local is the default: sealed on this machine (kernel encryption), silent unlock
   await expect(about.getByRole('radio', { name: /Local/ })).toBeChecked();
   await expect(about.locator('code.path')).toContainText('excalidraw/excalidraw');
+  await expect(about).toContainText("sealed here with the kernel's own encryption");
   await about.getByRole('button', { name: 'Install Excalidraw now' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Review install');

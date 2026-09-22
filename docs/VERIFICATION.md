@@ -62,6 +62,25 @@ Same box as §3a (`carlos-desktop`, Ubuntu 24.04.3 x86_64), USB stick `sdb1` 14.
 | Format-first UI (0.15.1, live browser) | Settings → Storage row: `Not mounted · 14.4G · ntfs · cannot hold apps as-is — format it first` + `Mounting won't help — this filesystem can't hold apps.` + `Format as ext4…` (no Mount button). Found-apps row: `needs formatting as ext4 before it can hold apps — see Disks above` (no Mount prompt). Immich install wizard: `USB20FD (14.4G, ntfs) is plugged in but not mounted. It needs formatting as ext4 before it can hold apps.` + `Format as ext4…`, no Mount, no passphrase |
 | Suites | unit 123, integration 123 (+3 live-Docker skipped), e2e 25, `catalog:verify` 17 ok, `openapi --check` current |
 
+## 3d. True at-rest sealing on the droplet (2026-09-21, Harbor 0.17.0-beta.2, run `vm-2026-09-22T03-30-37`)
+
+Existing `harbor-test` droplet (Ubuntu 24.04 x86-64, root ext4 on `/dev/vda1` — the cloud image
+ships WITHOUT the `encrypt` feature; bootstrap enabled it online with `tune2fs -O encrypt`, no
+reboot). `pnpm test:vm -- --only A01,C01,A09` with the 0.17.0-beta.2 archive; evidence in
+`docs/evidence/vm-2026-09-22T03-30-37/` (report.json holds the raw `fscrypt status`, `ls` and
+Docker-bypass output).
+
+| Step | Result |
+|---|---|
+| A01 bootstrap re-run | identity/admin kept; bootstrap-1.log: `per-app encryption ready on / (ext4, /dev/vda1)`; unit `harbor-app-crypto@.service` + polkit prefix installed |
+| C01 install | `harbor install memos --name sealed-demo --location /srv/harbor/harbor-apps/memos` → operation events `kernel-sealed …/volumes (fscrypt v2, per-app key)` BEFORE `created retained volume … (…/volumes/data)`; `fscrypt status` = `policy_version:2`, `Unlocked: Yes`, `raw key protector "harbor-sealed-demo-3ea499e1"`; DTO `home.sealed=true, state=unlocked, defaultKey=true` |
+| C01 bypass while unlocked | `docker run --rm -v <home>/volumes/data:/d alpine sh -c 'echo … > /d/.harbor-probe && cat …'` → plaintext round-trip |
+| C01 lock | `harbor lock` while running → refused (*is running; its files are open — Stop the app first*); after `harbor stop`: `harbor lock` → `home.state=locked`, `fscrypt status` → `Unlocked: No`; `ls <home>/volumes` → `FAo3Rb73Ja_z429busZAm8pR1f1cwEDVDagJJltBS6PXon1iLJ09KA` (no `data`) |
+| C01 bypass while locked | `docker run --rm -v <home>/volumes:/d alpine …` → ciphertext names only; `cat` → `Required key not available` (×2); `echo > /d/write-probe` → `can't create /d/write-probe: Required key not available` |
+| C01 unlock | `harbor start` (default-key home, machine key AFU after the CLI login) → `home.state=unlocked`, healthy; the probe file read back through Docker |
+| A09 reboot | after `reboot`, BEFORE any login: `sealed-demo` reads `home.state=locked`, `ls <home>/volumes` shows the ciphertext name; after `harbor login`: `unlocked`, `running/healthy` (lock-guard auto-start); excalidraw-2 stayed stopped, sentinel untouched |
+| Suites | unit 149, integration 129 (+3 live-Docker skipped), e2e 25, `catalog:verify` 17 ok, `openapi --check` current |
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

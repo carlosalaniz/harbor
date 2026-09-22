@@ -12,7 +12,7 @@ per-claim folder picker (wrong tool — binds weld one path to whatever
 filesystem happens to be there, and Harbor never chowns operator folders), and
 there is no way to move an app to another disk or another Harbor machine.
 
-## 2. Answer: one folder per app, self-describing, optionally sealed
+## 2. Answer: one folder per app, self-describing, kernel-sealed
 
 An app home is a single folder — `<drive>/harbor-apps/<name>/` — that carries
 everything needed to adopt the app on any Harbor machine:
@@ -21,6 +21,9 @@ everything needed to adopt the app on any Harbor machine:
 <name>/
   manifest.json   plaintext descriptor (identity, package, encryption envelope)
   vault/          encrypted payload (file bytes AND names are ciphertext)
+  volumes/        the app's data, one subdir per storage claim — an fscrypt
+                  (v2) directory sealed under the same master key: ciphertext
+                  names + ENOKEY for every reader while locked
 ```
 
 The manifest is **deliberately plaintext**: a locked app still shows its name,
@@ -119,9 +122,23 @@ and memory lifetime.
    volumes at the existing home, and starts. Display-name collisions get
    ` (2)`/` (3)` suffixes (display only). `harbor found-apps` / `harbor adopt`
    mirror the console.
-4. **Kernel sealing (fscrypt):** replace or complement the AES payload layer
-   with ext4 native directory encryption once the format flow (FUTURE.md) can
-   guarantee `-O encrypt`. The manifest + key model above does not change.
+4. **Kernel sealing (built, decision 103; the 0.17.0-beta.1 attempt only logged
+   `sealing skipped`):** `<home>/volumes` is an fscrypt v2 directory whose
+   raw_key protector IS the app's master key. Root-only work runs in the
+   polkit-allowed `harbor-app-crypto@<instanceId>:<setup|seal|unlock|lock|status|migrate>`
+   oneshot (`src/bootstrap/app-crypto-apply.ts`): the daemon writes
+   `<stateDir>/instances/<id>/crypto/request.json` (never the key), streams the
+   key through `key.fifo`, blocks on `systemctl start`, reads `status.json`.
+   The root step re-validates the path (allowlisted `harbor-apps/<pkg>/<inst>`
+   under `/mnt`, `/media`, `/srv/harbor`; no symlinks; manifest instance id =
+   unit's) and readies the filesystem (`tune2fs -O encrypt`, `/etc/fscrypt.conf`,
+   `fscrypt setup <mount>`). Install seals the EMPTY dir before any volume is
+   rooted and fails hard otherwise; Start unlocks (machine key / held key) or
+   migrates a never-sealed home in place (seal-empty + `cp -a -T` + verify,
+   rollback on failure); Lock refuses while running. The read model is a
+   kernel probe (mkdir → ENOKEY ⇒ locked). The manifest + key model above did
+   not change: the same 32-byte master key opens the vault envelope and the
+   kernel policy.
 
 ## 8. Format reference (v1)
 

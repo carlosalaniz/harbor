@@ -13,8 +13,11 @@ README one-liner, put real data in it, and nothing Harbor says about that data i
 
 - [x] **Tell the truth about encryption.** Per-app fscrypt sealing (v2 policy, raw_key protector
       = vault master key via root oneshot; format `-O encrypt` + `fscrypt setup`; fake no-op in
-      tests/dev) + dual-key homes (passphrase + 12-word recovery, format v2). The wizard's
-      "installed encrypted here" claim is now true. (decision 101)
+      tests/dev) + dual-key homes (passphrase + 12-word recovery, format v2). (decision 101)
+      **Correction (decision 103, 0.17.0-beta.2):** beta.1 only *logged* `sealing skipped` (the
+      root helper ran unprivileged) and installed plaintext. Sealing is now root-only through
+      `harbor-app-crypto@`, mandatory (hard failure), verified live with a Docker bypass
+      (ciphertext + ENOKEY while locked) and a reboot re-lock. The wizard's claim is true now.
 - [ ] **Fresh-machine acceptance run of the current release.** Last A01–A16 run and catalog
       qualification are from 2026-09-15 (Harbor 0.8.x era); 0.9 → 0.16 were verified only as
       incremental upgrades on carlos-desktop. Rebuild `harbor-test`, install via the public

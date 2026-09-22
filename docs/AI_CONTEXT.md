@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–102 so far) | `docs/DECISIONS.md` — **next number is 103**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–103 so far) | `docs/DECISIONS.md` — **next number is 104**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -45,12 +45,12 @@ src/
   exposure/            tailscale.ts (CLI provider, operator self-heal, URL streaming), caddy.ts (admin API client + renderer incl. LAN console server), urls.ts
   appearance/          wallpaper rotation (fetcher.ts, sources.ts Reddit/Bing/Wikimedia, service.ts)
   system/              metrics, host-storage (lsblk devices, mounts, folders), device-mount.ts (mount/unmount service), net (public IP/DNS), power (systemctl via polkit), terminal (python pty bridge), logs (journal + ring buffer), lan.ts, selfupdate.ts (GitHub feed, unit starter)
-  storage/             bind-marker.ts (app-generated driveId identity in `.harbor-bind.json`), host-path.ts (bring-your-own-folder validation), app-home.ts (portable encrypted bundles: manifest.json + vault/, scrypt+AES-256-GCM, dual-key passphrase + 12-word recovery), fscrypt.ts + crypto-provider.ts (per-app kernel sealing, fake no-op in tests/dev), recovery-bundle.ts (passphrase-wrapped state export), install-location.ts (eligible drive folders)
-  bootstrap/           root-only installer/upgrader: bootstrap.ts, tools.ts (Cockpit/Portainer/Tailscale/Caddy), systemd.ts (units + polkit rule), selfupdate-apply.ts (root half of self-update, snapshot + rollback), device-crypto-apply.ts (fscrypt setup/seal/unlock/lock)
+  storage/             bind-marker.ts (app-generated driveId identity in `.harbor-bind.json`), host-path.ts (bring-your-own-folder validation), app-home.ts (portable encrypted bundles: manifest.json + vault/, scrypt+AES-256-GCM, dual-key passphrase + 12-word recovery), fscrypt.ts (pure: builders, parsers, unit names, handoff files, home-path allowlist) + crypto-provider.ts (RootCryptoProvider: request.json + key FIFO + blocking `systemctl start harbor-app-crypto@<id>:<action>` + status.json, kernel mkdir probe for the read model; FakeCryptoProvider keeps sealed/open sets), recovery-bundle.ts (passphrase-wrapped state export), install-location.ts (eligible drive folders)
+  bootstrap/           root-only installer/upgrader: bootstrap.ts, tools.ts (Cockpit/Portainer/Tailscale/Caddy), systemd.ts (units + polkit rule), selfupdate-apply.ts (root half of self-update, snapshot + rollback), app-crypto-apply.ts (root half of sealing: filesystem readiness via tune2fs/fscrypt setup, seal/unlock/lock/status/migrate-in-place), device-crypto-apply.ts (drive crypto-setup for the format flow)
   cli/main.ts          commander CLI (all console actions incl. install --location, found-apps, adopt, unlock/lock, recovery export/import, diagnostics + bootstrap/self-update/setup-code/totp reset)
 web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx (InstallWizard location picker + passphrase, PlanDialog Lives-on row, locked drawer banner), app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 catalog/               17 bundled packages (manifest.yaml, compose.yaml, README.md, release.json, icon)
-tests/unit (139) tests/integration (127 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
+tests/unit (149) tests/integration (129 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 25, two dev daemons on 18500/18700: normal + setup mode)
 scripts/               package.mjs (release archive), catalog-pin/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
 install.sh             curl one-liner (published as a release asset too)
 ```
@@ -60,7 +60,7 @@ Key runtime paths on a host: `/opt/harbor` (release), `/etc/harbor/harbor.json`,
 ## 4. Versions, tags, releases
 
 Tags on `main`: v0.1.0-mvp, v0.2.0, v0.2.1, v0.3.0, v0.3.1, v0.4.0, v0.5.0, v0.6.0, v0.7.0, v0.8.0, v0.8.1, v0.8.2, v0.9.0, v0.10.0, v0.11.0, v0.12.0 → v0.12.5, v0.13.0, v0.14.0, v0.15.0 → v0.15.2, v0.16.0 → v0.16.2.
-`package.json` version is **0.17.0-beta.1**. GitHub Releases exist for v0.7.0 → v0.16.2 (assets:
+`package.json` version is **0.17.0-beta.2**. GitHub Releases exist for v0.7.0 → v0.16.2 (assets:
 `harbor-<v>-linux-x64.tar.gz`, `SHA256SUMS`, `install.sh` from 0.8.0). Release archive is built with
 `pnpm build && pnpm package` → `release/`; since v0.9.0 CI publishes the release automatically on
 push to `main` (`.github/workflows/release.yml`); no manual `gh release create` needed.
@@ -78,17 +78,24 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (93, executed 2026-09-21):** format-as-ext4 in place — Settings → Storage
-offers *Format as ext4…* per removable drive (erase warning + typed device-name confirm,
-`Formatting…` spinner, `cannot hold apps as-is` row hint; ineligible install-location rows
-point at it). `POST /v1/host/devices/:name/format` + `GET …/format-status` reuse the mount
-oneshot shape (removable-only, refused while an app holds the drive, `BUSY` while one runs);
-the template unit now runs `harbor device-dispatch %i` (`TimeoutStartSec=600`); the root step
-does `umount → wipefs -a → mkfs.ext4 → mount at /mnt/<label> → chown harbor`. Shipped as
-**v0.14.0** (unit 120 + integration 122 + e2e 25 green, openapi 72 paths). Not yet deployed to
-carlos-desktop — the only stick there holds the live Immich library, so no live format.
+**Latest decision (103, executed 2026-09-21):** true at-rest sealing — per-app fscrypt v2 is
+mandatory and root-only through the polkit-allowed `harbor-app-crypto@<instanceId>:<action>`
+oneshot (request file + key FIFO + blocking `systemctl start` + status file; the root step
+re-validates path/manifest/instance id). Install seals the EMPTY `volumes/` before rooting any
+volume and fails hard otherwise; Start kernel-unlocks (machine key / held key) or migrates a
+never-sealed home in place; Lock refuses while running; the read model is a mkdir probe
+(ENOKEY = locked, kernel truth); login kernel-unlocks default-key homes and the lock-guard
+auto-starts them. Shipped as **v0.17.0-beta.2**; live proof = VM step C01 (Docker-bypass `ls`
+shows ciphertext, `cat` → `Required key not available`, write fails; Start restores) + A09
+(reboot returns the app to locked before login, back after).
 
 **Last three actions, most recent first:**
+1. **Shipped v0.17.0-beta.2 true at-rest sealing (decision 103)** (2026-09-21): `harbor-app-crypto@`
+   unit + polkit prefix, `src/bootstrap/app-crypto-apply.ts` (tune2fs/fscrypt readiness, seal,
+   unlock, lock, status, migrate-in-place with rollback), `RootCryptoProvider` rewrite (FIFO key
+   handoff, blocking unit start, kernel probe), hard-failing install seal + Start unlock/migration,
+   `AppHomeDto.sealed`, drawer Lock button + truthful wizard copy, lock-guard auto-start, unit/
+   integration/e2e coverage, VM steps C01 + A09 reboot re-lock. Previous entries below are older.
 1. **Shipped v0.14.0 format-as-ext4 (decision 93)** (2026-09-21): format routes + root step +
    device-dispatch unit, Settings button/dialog/hints, fixture overlay so e2e proves vfat → ext4 →
    mounted, docs (decision 93, guide §4a1, FUTURE, PROGRESS phase 20, VERIFICATION counts, openapi 72).
@@ -137,7 +144,7 @@ carlos-desktop — the only stick there holds the live Immich library, so no liv
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 120), `pnpm test:integration` (122 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 149), `pnpm test:integration` (129 + 3 live-Docker skipped), `pnpm test:e2e` (25, Playwright, ~1.5 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
 - Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.
@@ -145,6 +152,7 @@ carlos-desktop — the only stick there holds the live Immich library, so no liv
 
 ## 8. Gotchas learned the hard way (do not rediscover)
 
+- fscrypt (decision 103): `fscrypt status <dir>` needs ROOT (policy files under `/.fscrypt/policies` are 0600) — the daemon never calls it; it probes the kernel with a mkdir inside `<home>/volumes` (ENOKEY ⇒ locked; Node reports it as `Unknown system error -126`, errno -126, no `ENOKEY` code). `fscrypt encrypt` refuses a non-empty dir (hence seal-empty + `cp -a -T` for migrations); `fscrypt unlock` exits 1 with *already unlocked* when idempotent (check status first); `fscrypt lock` exits 1 with *incompletely locked* while any file is open (stop the app first; status then reads `Unlocked: Partially`). Ubuntu 24.04 cloud roots ship ext4 WITHOUT the `encrypt` feature: `tune2fs -O encrypt` on the mounted root works and takes effect immediately (verified, no reboot). `systemctl start <unit>` WITHOUT `--no-block` blocks until the oneshot finishes and returns its exit code — polkit's `manage-units` rule allows the verb either way, so that is how the daemon gets synchronous hard failures. Pass secrets to a root oneshot through a FIFO the daemon creates (`mkfifo -m 600`; open write side with `O_NONBLOCK`, retry on ENXIO until the root side opens for reading) — never a temp file.
 - `tailscale logout` wipes tailscaled prefs including `--operator=harbor`; fixed via root oneshot + polkit (decision 64). `tailscale up` demands all non-default flags be mentioned → pass `--ssh=false --operator=harbor` and retry with the CLI's suggested flags; the login URL can take seconds → stream output, fall back to `status --json`'s `AuthURL`.
 - Reddit blocks anonymous `.json` (403) since May 2026 → Reddit source needs the user's own "script" app credentials; Bing and Wikimedia work keyless. Wikimedia only serves standard thumbnail widths (use 1920px).
 - Node `fetch()` drops a custom `Host` header; use `node:http` in tests that need one.

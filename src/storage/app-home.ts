@@ -7,6 +7,8 @@
 // Layout under <parent>/<name>/ :
 //   manifest.json   plaintext descriptor: identity, package, encryption envelope  0644
 //   vault/          encrypted payload (files + names are ciphertext)              0700
+//   volumes/        the app's data (one subdir per storage claim), sealed with
+//                   fscrypt under the same master key (src/storage/fscrypt.ts)  0700
 //
 // The manifest is deliberately plaintext so a locked app still shows its name,
 // icon hint and package in the console ("locked" tile). Secrets never live in
@@ -29,6 +31,7 @@ import { RECOVERY_WORDS } from './recovery-words.js';
 export const APP_HOME_FORMAT = 2;
 export const APP_HOME_MANIFEST = 'manifest.json';
 export const APP_HOME_VAULT = 'vault';
+export const APP_HOME_VOLUMES = 'volumes';
 export const RECOVERY_WORD_COUNT = 12;
 
 // Keep in step with src/auth/password.ts SCRYPT_PARAMS (duplicated, not
@@ -317,6 +320,9 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<CreatedA
   mkdirSync(home, { recursive: false, mode: 0o700 });
   try {
     mkdirSync(path.join(home, APP_HOME_VAULT), { recursive: false, mode: 0o700 });
+    // Created EMPTY here (Harbor-owned, 0700): fscrypt can only seal an empty
+    // directory, and the runner seals it before rooting any volume inside.
+    mkdirSync(path.join(home, APP_HOME_VOLUMES), { recursive: false, mode: 0o700 });
     writeManifest(home, manifest);
   } catch (e) {
     throw new HarborError('STATE_UNAVAILABLE', `cannot create app home ${home}: ${(e as Error).message}`);

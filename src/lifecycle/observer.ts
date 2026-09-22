@@ -111,6 +111,7 @@ export class Observer {
       this.notifyDevices();
       this.notifyMissingFolders(runningByInstance);
       this.autoStartRecovered(runningByInstance);
+      this.autoStartUnlocked(runningByInstance);
       if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
         this.lastSourceCheck = Date.now();
         await this.service.checkAllSources();
@@ -331,6 +332,40 @@ export class Observer {
       }
     } catch (e) {
       this.ctx.log.warn(`drive-guard auto-start check failed: ${(e as Error).message}`);
+    }
+  }
+
+  // Auto-start sealed apps whose key is back in the kernel: after a reboot
+  // every sealed home is locked, so desired-running apps are down (Docker
+  // cannot even resolve their bind paths) until the first login unlocks the
+  // default-key homes (or the operator unlocks a custom one). One attempt
+  // per (instance, boot): a failed start must not loop, and the Start plan
+  // itself re-checks the seal. Same policy switch as the drive guard.
+  private readonly unlockStartAttempts = new Set<string>();
+  private autoStartUnlocked(runningByInstance: Map<string, boolean>): void {
+    try {
+      if ((this.ctx.repo.setting<boolean>('storage.autoStart') ?? true) !== true) return;
+      const crypto = this.ctx.crypto;
+      if (!crypto) return;
+      for (const inst of this.ctx.repo.listInstances()) {
+        if (inst.installState !== 'installed' || inst.activeOperationId) continue;
+        if (inst.desired !== 'running') continue;
+        if (runningByInstance.get(inst.id) ?? false) continue;
+        const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+        if (!home || home.metadata?.['kernelSealed'] !== true) continue;
+        if (crypto.kernelState(home.name) !== 'open') continue;
+        if (this.unlockStartAttempts.has(inst.id)) continue;
+        this.unlockStartAttempts.add(inst.id);
+        void this.service
+          .createPlan({ kind: 'start', instanceId: inst.id }, 'lock-guard')
+          .then((plan) => {
+            this.service.submit(plan.id, this.ctx.ids.uuid(), 'lock-guard');
+            this.ctx.log.warn(`lock-guard started ${inst.name}: its key is back in the kernel`, { instanceId: inst.id });
+          })
+          .catch((e) => this.ctx.log.warn(`lock-guard could not start ${inst.name}: ${(e as Error).message}`, { instanceId: inst.id }));
+      }
+    } catch (e) {
+      this.ctx.log.warn(`lock-guard auto-start check failed: ${(e as Error).message}`);
     }
   }
 

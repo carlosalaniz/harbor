@@ -1103,29 +1103,11 @@ program
   });
 
 program
-  .command('app-seal <home> <protector>')
-  .description('ROOT: seal one app volumes dir with its master key from stdin (hex, 64 chars)')
-  .action(async (home: string, protector: string) => {
-    const hex = (await readStdinAll()).trim();
-    const { applyAppSeal } = await import('../bootstrap/device-crypto-apply.js');
-    await applyAppSeal(home, hex, protector, (msg) => process.stderr.write(`[app-seal] ${msg}\n`));
-  });
-
-program
-  .command('app-unlock <home>')
-  .description('ROOT: unlock one app volumes dir with its master key from stdin (hex, 64 chars)')
-  .action(async (home: string) => {
-    const hex = (await readStdinAll()).trim();
-    const { applyAppUnlock } = await import('../bootstrap/device-crypto-apply.js');
-    await applyAppUnlock(home, hex, (msg) => process.stderr.write(`[app-unlock] ${msg}\n`));
-  });
-
-program
-  .command('app-lock <home>')
-  .description('ROOT: lock one app volumes dir (ciphertext until next unlock)')
-  .action(async (home: string) => {
-    const { applyAppLock } = await import('../bootstrap/device-crypto-apply.js');
-    await applyAppLock(home, (msg) => process.stderr.write(`[app-lock] ${msg}\n`));
+  .command('app-crypto <spec>')
+  .description('ROOT, run by harbor-app-crypto@<instanceId>:<action>.service: seal/unlock/lock/migrate one app home with fscrypt (request + key handed over by the daemon)')
+  .action(async (spec: string) => {
+    const { applyAppCrypto } = await import('../bootstrap/app-crypto-apply.js');
+    await applyAppCrypto(spec, (msg) => process.stderr.write(`[app-crypto] ${msg}\n`));
   });
 
 // ---------------- recovery bundle (local maintenance, daemon stopped)

@@ -1,0 +1,298 @@
+{
+  "startedAt": "2026-09-22T03:30:37.804Z",
+  "updatedAt": "2026-09-22T03:34:02.549Z",
+  "results": [
+    {
+      "id": "A01",
+      "title": "Clean VM bootstrap without Node/npm; re-run preserves identity/admin/app state",
+      "status": "pass",
+      "at": "2026-09-22T03:31:21.229Z",
+      "details": {
+        "preinstalledBefore": {
+          "docker": true,
+          "node": false,
+          "npm": false
+        },
+        "machineId": "17701662cbbf427ca2f5dfd6b45a52e2",
+        "versions": {
+          "ubuntu": "Ubuntu 24.04.4 LTS",
+          "arch": "x86_64",
+          "systemd": "systemd 255 (255.4-1ubuntu8.16)",
+          "docker": "29.8.1",
+          "compose": "5.5.1",
+          "node": "v24.12.0",
+          "harbor": "0.17.0-beta.2"
+        },
+        "installationId": "da4636ea-bdcf-4fa5-9237-a3e26027de4a",
+        "config": {
+          "stateDir": "/var/lib/harbor",
+          "catalogDir": "/opt/harbor/catalog",
+          "uiDir": "/opt/harbor/web",
+          "userDataDir": "/srv/harbor",
+          "listen": {
+            "host": "127.0.0.1",
+            "port": 18000
+          },
+          "docker": {
+            "mode": "socket",
+            "socketPath": "/var/run/docker.sock",
+            "cliPluginDirs": []
+          },
+          "appPortRange": {
+            "from": 18080,
+            "to": 18999
+          },
+          "logLevel": "info",
+          "lan": {
+            "enabled": false,
+            "port": 80
+          }
+        },
+        "listenersAfterBootstrap1": [
+          "*:443",
+          "*:80",
+          "*:9090",
+          "0.0.0.0:22",
+          "127.0.0.1:18000",
+          "127.0.0.1:18080",
+          "127.0.0.1:18081",
+          "127.0.0.1:18083",
+          "127.0.0.1:18085",
+          "127.0.0.1:2019",
+          "127.0.0.1:9443",
+          "127.0.0.53%lo:53",
+          "127.0.0.54:53",
+          "[::]:22"
+        ],
+        "listenersAfterBootstrap2": [
+          "*:443",
+          "*:80",
+          "*:9090",
+          "0.0.0.0:22",
+          "127.0.0.1:18000",
+          "127.0.0.1:18080",
+          "127.0.0.1:18081",
+          "127.0.0.1:18083",
+          "127.0.0.1:18085",
+          "127.0.0.1:2019",
+          "127.0.0.1:9443",
+          "127.0.0.53%lo:53",
+          "127.0.0.54:53",
+          "[::]:22"
+        ],
+        "toolsAfterBootstrap1": [
+          {
+            "id": "cockpit",
+            "name": "Cockpit",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9090/",
+            "observedAt": "2026-09-22T03:31:04Z",
+            "note": "Existing Cockpit installation bound without changes. Listener on port 9090 as configured by the host. Log in with an OS account. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "external",
+            "install": null
+          },
+          {
+            "id": "portainer",
+            "name": "Portainer",
+            "installationState": "installed",
+            "availability": "reachable",
+            "browserUrl": "https://localhost:9443/",
+            "observedAt": "2026-09-22T03:31:04Z",
+            "note": "Portainer CE 2.39.7 with Docker socket access (root-equivalent). First run: create the admin in Portainer's own form within 5 minutes of start; it asks for the one-time setup token printed in the container log (sudo docker logs hb_platform_portainer-portainer-1 2>&1 | grep setup_token). If the window expired, run: sudo docker restart hb_platform_portainer-portainer-1 (prints a new token). Self-signed certificate. Login page reachable (HTTP 200). Uses a self-signed certificate; your browser will ask you to trust it.",
+            "mode": "managed",
+            "install": null
+          },
+          {
+            "id": "tailscale",
+            "name": "Tailscale",
+            "browserUrl": null,
+            "observedAt": "2026-09-22T03:31:04Z",
+            "mode": "external",
+            "install": null,
+            "installationState": "setup_required",
+            "availability": "unreachable",
+            "note": "Installed but not logged in (state NeedsLogin). Run: sudo tailscale up  (then approve the printed login URL).",
+            "facts": {
+              "backendState": "NeedsLogin"
+            }
+          },
+          {
+            "id": "proxy",
+            "name": "Public proxy (Caddy)",
+            "browserUrl": null,
+            "observedAt": "2026-09-22T03:31:04Z",
+            "mode": "external",
+            "install": null,
+            "installationState": "installed",
+            "availability": "reachable",
+            "note": "Caddy admin API answering on 127.0.0.1:2019; routes are reconciled from Harbor state. Public exposure needs DNS records pointing at this host and ports 80/443 reachable.",
+            "facts": {
+              "adminApi": true
+            }
+          }
+        ],
+        "logs": [
+          "docs/evidence/vm-2026-09-22T03-30-37/bootstrap-1.log",
+          "docs/evidence/vm-2026-09-22T03-30-37/bootstrap-2.log"
+        ]
+      },
+      "notes": [
+        "VM NOT rebuilt (--fresh not given); A01 evidence is from a re-used VM",
+        "Docker 29.8.1 / Compose 5.5.1 installed by bootstrap; Node v24.12.0 bundled",
+        "bootstrap re-run kept installation id and administrator"
+      ]
+    },
+    {
+      "id": "C01",
+      "title": "Per-app kernel sealing: Local install is fscrypt-sealed; Lock = ciphertext + ENOKEY even via a Docker bypass; Start unlocks; reboot re-locks (A09)",
+      "status": "pass",
+      "at": "2026-09-22T03:32:00.513Z",
+      "details": {
+        "home": "/srv/harbor/harbor-apps/memos/sealed-demo",
+        "claim": "data",
+        "filesystem": "ext4 filesystem \"/\" has 0 protectors and 0 policies.\nAll users can create fscrypt metadata on this filesystem.\n\nFilesystem features:      has_journal ext_attr resize_inode dir_index filetype needs_recovery extent 64bit flex_bg encrypt sparse_super large_file huge_file dir_nlink extra_isize metadata_csum",
+        "sealEvents": [
+          "install accepted for instance sealed-demo",
+          "kernel-sealed /srv/harbor/harbor-apps/memos/sealed-demo/volumes (fscrypt v2, per-app key)",
+          "created encrypted app home /srv/harbor/harbor-apps/memos/sealed-demo (this machine unlocks it silently) (kernel-sealed)",
+          "created retained volume hb_3ea499e13902441ca9b269b93acdac90_data on the drive (/srv/harbor/harbor-apps/memos/sealed-demo/volumes/data)"
+        ],
+        "statusUnlocked": "\"/srv/harbor/harbor-apps/memos/sealed-demo/volumes\" is encrypted with fscrypt.\n\nPolicy:   4a5aac0f511cdb62eb07a8a2edfe3730\nOptions:  padding:32 contents:AES_256_XTS filenames:AES_256_CTS policy_version:2 \nUnlocked: Yes\n\nProtected with 1 protector:\nPROTECTOR         LINKED  DESCRIPTION\n2e8ec570d0a96aae  No      raw key protector \"harbor-sealed-demo-3ea499e1\"\n",
+        "statusLocked": "\"/srv/harbor/harbor-apps/memos/sealed-demo/volumes\" is encrypted with fscrypt.\n\nPolicy:   4a5aac0f511cdb62eb07a8a2edfe3730\nOptions:  padding:32 contents:AES_256_XTS filenames:AES_256_CTS policy_version:2 \nUnlocked: No\n\nProtected with 1 protector:\nPROTECTOR         LINKED  DESCRIPTION\n2e8ec570d0a96aae  No      raw key protector \"harbor-sealed-demo-3ea499e1\"\n",
+        "lsLocked": [
+          "FAo3Rb73Ja_z429busZAm8pR1f1cwEDVDagJJltBS6PXon1iLJ09KA"
+        ],
+        "bypass": "FAo3Rb73Ja_z429busZAm8pR1f1cwEDVDagJJltBS6PXon1iLJ09KA\n3HSLCEj7dc2LIQ35KNQQlnihDKoQn_x-2nWeDW67Odlj_VF1GT3x7g\nTHCaNDZ00c67fnH_RTDm0vindrNVSWH-g4d4wkhjWWc4HlSI_ZGyKw\ncat: can't open '/d/FAo3Rb73Ja_z429busZAm8pR1f1cwEDVDagJJltBS6PXon1iLJ09KA/3HSLCEj7dc2LIQ35KNQQlnihDKoQn_x-2nWeDW67Odlj_VF1GT3x7g': Required key not available\ncat: can't open '/d/FAo3Rb73Ja_z429busZAm8pR1f1cwEDVDagJJltBS6PXon1iLJ09KA/THCaNDZ00c67fnH_RTDm0vindrNVSWH-g4d4wkhjWWc4HlSI_ZGyKw': Required key not available\nsh: can't create /d/write-probe: Required key not available\n",
+        "units": "2"
+      },
+      "notes": [
+        "memos installed sealed at /srv/harbor/harbor-apps/memos/sealed-demo (fscrypt v2 raw_key protector, sealed before volumes were rooted)",
+        "Docker bind of the sealed dir: plaintext while unlocked; ciphertext names + \"Required key not available\" + failed write while locked",
+        "Lock refused while running; Stop → Lock → Start restored access with the machine key"
+      ]
+    },
+    {
+      "id": "A09",
+      "title": "Daemon restart leaves apps running; host reboot returns desired-running apps; intentional stop stays stopped",
+      "status": "pass",
+      "at": "2026-09-22T03:34:02.548Z",
+      "details": {
+        "beforeRestart": {
+          "a": [
+            {
+              "id": "5f2dbd789cf2fe3768395bb20f635de153d96dbf0f395213c0091584c8130817",
+              "name": "hb_49f35cd322fb4ee88bd4c6bc7c06c9bf-web-1",
+              "created": "2026-09-22 00:56:49 +0000 UTC",
+              "state": "running"
+            }
+          ],
+          "a2": [
+            {
+              "id": "2760bb7366931a3c3886ca86a9680517f32c338019dfdf1ed6263edb7f69f3b4",
+              "name": "hb_3b44a7273a8b408494d4f787fb24628a-web-1",
+              "created": "2026-09-22 00:57:50 +0000 UTC",
+              "state": "exited"
+            }
+          ],
+          "n8n": [
+            {
+              "id": "21f461d7e691a6f1b66909106c86f3d8eea077a1c7c39fe6fd31928593a53356",
+              "name": "hb_3ed9d94b504f4c1c821d92d5de1b5086-postgres-1",
+              "created": "2026-09-22 01:12:28 +0000 UTC",
+              "state": "running"
+            },
+            {
+              "id": "0c5f24ed1ddb14cb9f2cc5b040fab0ea4c142d6cd9cad1a40db62c6b93f7d1f2",
+              "name": "hb_3ed9d94b504f4c1c821d92d5de1b5086-web-1",
+              "created": "2026-09-22 01:25:00 +0000 UTC",
+              "state": "running"
+            }
+          ]
+        },
+        "reboot": {
+          "bootBefore": "2026-09-22 01:18:37",
+          "bootAfter": "2026-09-22 03:32:48",
+          "instances": [
+            {
+              "name": "excalidraw",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy",
+              "home": null
+            },
+            {
+              "name": "bentopdf",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy",
+              "home": null
+            },
+            {
+              "name": "excalidraw-2",
+              "desired": "stopped",
+              "installState": "installed",
+              "runtime": "stopped",
+              "readiness": "unknown",
+              "home": null
+            },
+            {
+              "name": "n8n",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy",
+              "home": null
+            },
+            {
+              "name": "n8n-2",
+              "desired": "retained",
+              "installState": "retained",
+              "runtime": "stopped",
+              "readiness": "unknown",
+              "home": null
+            },
+            {
+              "name": "interrupted",
+              "desired": "running",
+              "installState": "failed",
+              "runtime": "running",
+              "readiness": "unknown",
+              "home": null
+            },
+            {
+              "name": "sealed-demo",
+              "desired": "running",
+              "installState": "installed",
+              "runtime": "running",
+              "readiness": "healthy",
+              "home": {
+                "path": "/srv/harbor/harbor-apps/memos/sealed-demo",
+                "encrypted": true,
+                "state": "unlocked",
+                "sealed": true,
+                "defaultKey": true
+              }
+            }
+          ],
+          "sameContainerIds": true,
+          "sentinelState": "exited",
+          "sealed": {
+            "lockedAfterReboot": true,
+            "ciphertextNames": [
+              "FAo3Rb73Ja_z429busZAm8pR1f1cwEDVDagJJltBS6PXon1iLJ09KA"
+            ]
+          }
+        }
+      },
+      "notes": [
+        "daemon restart: container ids/creation unchanged; UI recovered after login",
+        "sealed-demo (C01) read Locked with ciphertext names after the reboot, before any login",
+        "sealed-demo unlocked silently by the login and came back healthy (lock-guard auto-start)",
+        "host reboot (2026-09-22 01:18:37 -> 2026-09-22 03:32:48): desired-running apps healthy again, excalidraw-2 stayed stopped"
+      ]
+    }
+  ]
+}

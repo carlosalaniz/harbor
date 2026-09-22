@@ -213,14 +213,24 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit 139 (fscrypt builders, recovery round-trip, rollback, openapi 75 paths), integration 127 + 3 skipped (app-homes lock/reboot, recovery round-trip onto fresh DB, diagnostics redaction), e2e 25 green
 - [x] Docs: decision 101, BETA_TODO ticked, openapi regenerated (75 paths)
 
+## Phase 28 — true at-rest sealing: per-app fscrypt, root-only, mandatory (2026-09-21, v0.17.0-beta.2) ✅
+- [x] Root cause of the beta.1 lie: `RootCryptoProvider` spawned `harbor app-seal` as the harbor user → root refusal → `app-home sealing skipped`, install continued unsealed (live: Immich `volumes/` plaintext, Docker-bypass write/read succeeded)
+- [x] Root path: polkit-allowed `harbor-app-crypto@<instanceId>:<setup|seal|unlock|lock|status|migrate>` oneshot → `harbor app-crypto` (`src/bootstrap/app-crypto-apply.ts`); daemon writes `request.json` (never the key), streams the key through `key.fifo`, blocks on `systemctl start`, reads `status.json`; root re-validates path allowlist / no symlinks / manifest instance id
+- [x] Filesystem: `tune2fs -O encrypt` (mounted ext4, immediate), `/etc/fscrypt.conf`, `fscrypt setup <mount>`, verified via `tune2fs -l` + `fscrypt status`; bootstrap prepares the data folder's filesystem (`per-app encryption ready on / (ext4, /dev/vda1)` in bootstrap-1.log); ext4/f2fs only
+- [x] Engine: `createAppHome` creates an empty `volumes/`; install seals it BEFORE rooting volumes and fails hard (home deleted) otherwise; Start kernel-unlocks (machine key / held key) or migrates never-sealed homes in place (rename → seal → `cp -a -T` → verify → delete; rollback); Lock refuses while running; adopt records root `status`; read model = mkdir probe (ENOKEY ⇒ locked); login kernel-unlocks default-key homes; lock-guard auto-starts sealed apps once their key is back
+- [x] UX: `AppHomeDto.sealed`, truthful wizard copy ("sealed here with the kernel's own encryption"), Locked banner says ciphertext, drawer Lock button (stopped apps), *Not sealed yet* hint for legacy homes
+- [x] Tests: unit 149 (parsers from real droplet output, unit names, allowlist, kernel probe, fake provider, root provider FIFO handoff + failure surfacing), integration 129 + 3 skipped (seal at install, reboot → locked, login unlocks default-key, lock refused while running, stop → lock → start, hard install failure leaves no home, in-place migration at Start), e2e 25 (wizard copy)
+- [x] Live (droplet, run vm-2026-09-22T03-30-37): A01 bootstrap re-run, **C01** memos Local install sealed (fscrypt v2, protector `harbor-sealed-demo-…`); Docker bind of the locked dir: ciphertext names, `cat` → `Required key not available`, write fails; Stop → Lock → Start restores; **A09** reboot → app reads Locked with ciphertext names before login, unlocked + healthy after the CLI login
+- [x] Docs: decision 103, guide §4a2/§5, APP_HOMES stage 4 built, README status, BETA_TODO correction, AI_CONTEXT map + gotchas, VERIFICATION §3d
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 125 passed |
-| `pnpm test:integration` (fake adapter) | 123 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 149 passed |
+| `pnpm test:integration` (fake adapter) | 129 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
@@ -228,6 +238,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |
 | `pnpm test:vm -- --fresh --exposure` (2026-09-15, run vm-2026-09-15T01-01-08) | **23 checks: 22 passed, 1 blocked (tailnet), 0 failed** with the console and the 17-package catalog |
 | `node scripts/vm/qualify-catalog.mjs --fresh` (2026-09-15) | **17/17 packages passed**, incl. 6 bring-your-own-folder variants (23/23 steps) |
+| `pnpm test:vm -- --only A01,C01,A09` (2026-09-21, run vm-2026-09-22T03-30-37) | **3 passed**: per-app sealing proven with a Docker bypass (ciphertext + ENOKEY while locked), reboot re-locks, login unlocks |
 
 ## Blockers
 None. The repository is public since 2026-09-15 (decision 75), after a `git filter-repo` history rewrite purged the credential-looking test fixtures that secret scanning had flagged. Unauthenticated `install.sh` and release downloads verified.

@@ -7,6 +7,7 @@ import { zeroMachineKey } from './machine-key.js';
 
 export class MachineKeyHolder {
   private key: Buffer | null = null;
+  private listeners: (() => void)[] = [];
 
   constructor(private readonly log?: Pick<Logger, 'info' | 'warn'>) {}
 
@@ -23,6 +24,19 @@ export class MachineKeyHolder {
     this.clear();
     this.key = Buffer.from(key);
     this.log?.info('machine key unlocked (AFU)', {});
+    for (const l of this.listeners) {
+      try {
+        l();
+      } catch {
+        /* listeners own their errors */
+      }
+    }
+  }
+
+  // BFU → AFU hook: the service kernel-unlocks every default-key app home
+  // as soon as the machine key is in memory (first login after boot).
+  onHold(listener: () => void): void {
+    this.listeners.push(listener);
   }
 
   clear(): void {

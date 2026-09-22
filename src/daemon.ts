@@ -190,7 +190,10 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     // Per-app kernel sealing (fscrypt): fake no-op in fake mode (tests/dev),
     // root helpers on a live host (same unit starter as mount/format).
     const { FakeCryptoProvider, RootCryptoProvider } = await import('./storage/crypto-provider.js');
-    ctx.crypto = overrides.crypto ?? (fakeMode ? new FakeCryptoProvider() : new RootCryptoProvider('/opt/harbor/bin/harbor', startUnit));
+    ctx.crypto = overrides.crypto ?? (fakeMode ? new FakeCryptoProvider() : new RootCryptoProvider(config.stateDir));
+    // First login after boot (BFU → AFU): unlock every default-key home's
+    // kernel seal so data-folder apps come back without anyone typing.
+    machineKey.onHold(() => void service.kernelUnlockDefaultHomes().catch((e: Error) => log.warn(`login-time app unlock failed: ${e.message}`)));
     const appearance = new AppearanceService(repo, config.stateDir, fetcher, clock, log);
     // the console's terminal: the harbor service account's shell on a real host; the developer's shell in fake mode
     const terminals = new TerminalService(log, fakeMode ? { shell: [process.env['SHELL'] ?? '/bin/bash', '-il'], env: { HOME: process.env['HOME'] ?? config.stateDir, USER: process.env['USER'] ?? 'harbor' }, cwd: config.stateDir } : { shell: ['/bin/bash', '-il'], env: { HOME: config.stateDir, USER: 'harbor', LOGNAME: 'harbor' }, cwd: config.stateDir });

@@ -740,6 +740,61 @@ const A14 = step('A14', 'Cockpit and Portainer bootstrapped with approval; onboa
   };
 });
 
+// ---------------------------------------------------------------- C01 per-app kernel sealing
+// Acceptance (decision 103): a Local install is fscrypt-sealed (v2, per-app
+// raw key); Lock makes the data ciphertext for EVERY reader — proven by
+// bypassing Harbor with a plain `docker run -v` bind of the sealed dir: names
+// are ciphertext, reads fail with "Required key not available" (ENOKEY),
+// writes fail; unlock (here: Start with the machine key) restores access.
+// The app stays installed so A09 can prove that a reboot returns it to locked.
+const C01 = step('C01', 'Per-app kernel sealing: Local install is fscrypt-sealed; Lock = ciphertext + ENOKEY even via a Docker bypass; Start unlocks; reboot re-locks (A09)', async () => {
+  const notes = [];
+  const leftover = byName('sealed-demo');
+  if (leftover) cliOk(target, ['purge', leftover.id, '--yes'], { timeoutMs: 600_000 });
+  sshTry('rm -rf /srv/harbor/harbor-apps/memos/sealed-demo');
+  const fsBefore = ssh('fscrypt status / 2>&1; tune2fs -l $(findmnt -n -o SOURCE /) | grep -i features').trim();
+  const op = cliOk(target, ['install', 'memos', '--name', 'sealed-demo', '--location', '/srv/harbor/harbor-apps/memos', '--yes'], { timeoutMs: 1800_000 });
+  if (op.state !== 'succeeded') throw new Error(`sealed-demo install ${op.state}: ${JSON.stringify(op.error)}`);
+  const sealEvents = (op.events ?? []).map((e) => e.message).filter((m) => /seal/i.test(m));
+  const inst = byName('sealed-demo');
+  const home = inst.home?.path;
+  if (!home || inst.home.sealed !== true || inst.home.state !== 'unlocked' || inst.home.defaultKey !== true) throw new Error(`home not sealed+unlocked after install: ${JSON.stringify(inst.home)}`);
+  const statusUnlocked = ssh(`fscrypt status ${home}/volumes`);
+  if (!/is encrypted with fscrypt/.test(statusUnlocked) || !/policy_version:2/.test(statusUnlocked) || !/Unlocked: Yes/.test(statusUnlocked) || !/raw key protector "harbor-sealed-demo-/.test(statusUnlocked)) throw new Error(`fscrypt status unexpected:\n${statusUnlocked}`);
+  const claims = ssh(`ls ${home}/volumes`).trim().split('\n').filter(Boolean);
+  if (!claims.length) throw new Error('no storage claim rooted inside the sealed dir');
+  const claim = claims[0];
+  // Docker bypass while unlocked: a bind of the claim dir reads and writes plaintext.
+  const probeWrite = sshTry(`docker run --rm -v ${home}/volumes/${claim}:/d alpine:3.20 sh -c 'echo harbor-seal-probe > /d/.harbor-probe && cat /d/.harbor-probe'`, { timeoutMs: 300_000 });
+  if (probeWrite.code !== 0 || !probeWrite.stdout.includes('harbor-seal-probe')) throw new Error(`docker write/read probe failed while unlocked: ${probeWrite.stderr.slice(-400)}`);
+  // Stop, then Lock (Lock refuses while the app runs).
+  const lockWhileRunning = cli(target, ['lock', inst.id]);
+  if (lockWhileRunning.code === 0) throw new Error('lock succeeded while the app was running');
+  const stop = cliOk(target, ['stop', inst.id, '--yes'], { timeoutMs: 600_000 });
+  if (stop.state !== 'succeeded') throw new Error(`stop ${stop.state}`);
+  const locked = cliOk(target, ['lock', inst.id]);
+  if (locked.home?.state !== 'locked') throw new Error(`lock did not lock: ${JSON.stringify(locked.home)}`);
+  const statusLocked = ssh(`fscrypt status ${home}/volumes`);
+  if (!/Unlocked: No/.test(statusLocked)) throw new Error(`fscrypt status after lock:\n${statusLocked}`);
+  const lsLocked = ssh(`ls ${home}/volumes`).trim().split('\n').filter(Boolean);
+  if (lsLocked.includes(claim) || lsLocked.some((n) => n.length < 16)) throw new Error(`plaintext names visible while locked: ${lsLocked.join(',')}`);
+  // Docker bypass while locked: names are ciphertext, reads ENOKEY, writes fail.
+  const bypass = sshTry(`docker run --rm -v ${home}/volumes:/d alpine:3.20 sh -c 'ls /d; for f in /d/*; do ls "$f" | head -2; cat "$f"/* 2>&1 | head -2; done; echo bypass-write > /d/write-probe && echo WRITE-SUCCEEDED'`, { timeoutMs: 300_000 });
+  const bypassOut = bypass.stdout + bypass.stderr;
+  if (bypassOut.includes(claim) || bypassOut.includes('harbor-seal-probe') || bypassOut.includes('WRITE-SUCCEEDED')) throw new Error(`docker bypass read plaintext or wrote while locked:\n${bypassOut}`);
+  if (!/Required key not available/.test(bypassOut)) throw new Error(`expected ENOKEY from the docker bypass:\n${bypassOut}`);
+  // Unlock = Start with this machine's key (default-key home, AFU after the CLI login).
+  const start = cliOk(target, ['start', inst.id, '--yes'], { timeoutMs: 600_000 });
+  if (start.state !== 'succeeded') throw new Error(`start ${start.state}: ${JSON.stringify(start.error)}`);
+  const after = byName('sealed-demo');
+  if (after.home?.state !== 'unlocked') throw new Error(`not unlocked after start: ${JSON.stringify(after.home)}`);
+  const probeRead = sshTry(`docker run --rm -v ${home}/volumes/${claim}:/d alpine:3.20 sh -c 'cat /d/.harbor-probe && rm /d/.harbor-probe'`, { timeoutMs: 300_000 });
+  if (probeRead.code !== 0 || !probeRead.stdout.includes('harbor-seal-probe')) throw new Error(`docker read probe failed after unlock: ${probeRead.stderr.slice(-400)}`);
+  const units = ssh('systemctl list-units --all --no-legend "harbor-app-crypto@*" | head -5; grep -c harbor-app-crypto /etc/polkit-1/rules.d/49-harbor-power.rules').trim();
+  notes.push(`memos installed sealed at ${home} (fscrypt v2 raw_key protector, sealed before volumes were rooted)`, 'Docker bind of the sealed dir: plaintext while unlocked; ciphertext names + "Required key not available" + failed write while locked', 'Lock refused while running; Stop → Lock → Start restored access with the machine key');
+  return { details: { home, claim, filesystem: fsBefore, sealEvents, statusUnlocked, statusLocked, lsLocked, bypass: bypassOut, units }, notes };
+});
+
 // ---------------------------------------------------------------- A09 restart + reboot
 const A09 = step('A09', 'Daemon restart leaves apps running; host reboot returns desired-running apps; intentional stop stays stopped', async () => {
   const a = byName('excalidraw');
@@ -766,6 +821,7 @@ const A09 = step('A09', 'Daemon restart leaves apps running; host reboot returns
   await ctx.close();
   const notes = ['daemon restart: container ids/creation unchanged; UI recovered after login'];
   let rebootDetails = null;
+  let rebootSealed = null;
   if (SKIP_REBOOT) notes.push('host reboot SKIPPED (--skip-reboot)');
   else {
     const bootBefore = ssh('uptime -s').trim();
@@ -775,6 +831,17 @@ const A09 = step('A09', 'Daemon restart leaves apps running; host reboot returns
     if (bootAfter === bootBefore) throw new Error('boot time unchanged; reboot did not happen');
     await waitFor(async () => target.ssh('systemctl is-active harbor').stdout.trim() === 'active', { timeoutMs: 180_000, intervalMs: 3000, what: 'harbor active after reboot' });
     await openTunnels();
+    // Sealed app (C01): after a reboot the kernel holds no key, so BEFORE the
+    // first login the app must read locked and its data must be ciphertext —
+    // login (BFU → AFU) is what brings it back below.
+    const sealedDemo = byName('sealed-demo');
+    if (sealedDemo) {
+      if (sealedDemo.home?.state !== 'locked') throw new Error(`sealed-demo not locked after reboot: ${JSON.stringify(sealedDemo.home)}`);
+      const lsLocked = ssh(`ls ${sealedDemo.home.path}/volumes`).trim();
+      if (!lsLocked || lsLocked.split('\n').some((n) => n === 'data' || n.length < 16)) throw new Error(`sealed-demo volumes readable after reboot: ${lsLocked}`);
+      rebootSealed = { lockedAfterReboot: true, ciphertextNames: lsLocked.split('\n') };
+      notes.push('sealed-demo (C01) read Locked with ciphertext names after the reboot, before any login');
+    }
     cliOk(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
     const list = await waitFor(() => {
       const l = listInstances();
@@ -784,7 +851,10 @@ const A09 = step('A09', 'Daemon restart leaves apps running; host reboot returns
     const a2After = list.find((i) => i.id === a2.id);
     if (a2After.runtime !== 'stopped' || a2After.desired !== 'stopped') throw new Error(`stopped instance came back: ${JSON.stringify(a2After)}`);
     const sentinelState = ssh('docker inspect -f {{.State.Status}} harbor-test-sentinel').trim();
-    rebootDetails = { bootBefore, bootAfter, instances: list.map((i) => ({ name: i.name, desired: i.desired, installState: i.installState, runtime: i.runtime, readiness: i.readiness })), sameContainerIds: JSON.stringify(containersOf(a.id).map((c) => c.id)) === JSON.stringify(before.a.map((c) => c.id)), sentinelState };
+    const sealedAfterLogin = byName('sealed-demo');
+    if (sealedAfterLogin && sealedAfterLogin.home?.state !== 'unlocked') throw new Error(`sealed-demo not unlocked after login: ${JSON.stringify(sealedAfterLogin.home)}`);
+    if (sealedAfterLogin) notes.push('sealed-demo unlocked silently by the login and came back healthy (lock-guard auto-start)');
+    rebootDetails = { bootBefore, bootAfter, instances: list.map((i) => ({ name: i.name, desired: i.desired, installState: i.installState, runtime: i.runtime, readiness: i.readiness, home: i.home ?? null })), sameContainerIds: JSON.stringify(containersOf(a.id).map((c) => c.id)) === JSON.stringify(before.a.map((c) => c.id)), sentinelState, sealed: rebootSealed };
     notes.push(`host reboot (${bootBefore} -> ${bootAfter}): desired-running apps healthy again, excalidraw-2 stayed stopped`);
   }
   return { details: { beforeRestart: before, reboot: rebootDetails }, notes };
@@ -939,9 +1009,8 @@ const B09 = step('B09', 'Reconfigure primary back to loopback; n8n works locally
   // Reruns (--only) may start with n8n already on loopback (a previous B09
   // withdrew it); only switch primary when it is actually public.
   const alreadyLoopback = ssh(`grep -E 'N8N_EDITOR_BASE_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim().includes('localhost:');
-  let op = null;
   if (!alreadyLoopback) {
-    op = cliOk(target, ['primary', n.id, 'loopback', '--yes'], { timeoutMs: 600_000 });
+    const op = cliOk(target, ['primary', n.id, 'loopback', '--yes'], { timeoutMs: 600_000 });
     if (op.state !== 'succeeded') throw new Error(`primary loopback ${op.state}: ${JSON.stringify(op.error)}`);
   }
   const env = ssh(`grep -E 'N8N_EDITOR_BASE_URL' /var/lib/harbor/instances/${n.id}/runtime/compose.yaml`).trim();
@@ -1037,7 +1106,7 @@ Files in this directory: report.json (full details), bootstrap logs, screenshots
 
 async function main() {
   await localPortsFree();
-  const steps = EXPOSURE ? [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, B01, B04, B05, B07, B10, B02, A09, B09, A15] : [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, A09, A15];
+  const steps = EXPOSURE ? [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, B01, B04, B05, B07, B10, B02, C01, A09, B09, A15] : [A01, A02, A03, A04, A05, A06, A07, A08, A11, A12, A10, A13, A14, C01, A09, A15];
   if (!should('A01')) await openTunnels();
   for (const s of steps) await s();
   if (should('A16')) {

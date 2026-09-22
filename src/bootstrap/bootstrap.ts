@@ -12,7 +12,8 @@ import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
 import { exec, execOk, aptGet } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
-import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit } from './systemd.js';
+import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit, APP_CRYPTO_UNIT_FILE, appCryptoUnit } from './systemd.js';
+import { prepareDataFolderForSealing } from './app-crypto-apply.js';
 import { privateInterfaces, lanUrl as lanUrlFor } from '../system/lan.js';
 import { readSetupCode, writeSetupCode } from '../auth/setup.js';
 import { hostname as osHostname } from 'node:os';
@@ -236,9 +237,14 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
       try {
         await aptGet(log, ['install', '-y', '-q', 'fscrypt'], { timeoutMs: 10 * 60_000 });
       } catch (e) {
-        log(`fscrypt install failed (${e instanceof Error ? e.message : String(e)}); app homes will install unsealed until it is present`);
+        log(`fscrypt install failed (${e instanceof Error ? e.message : String(e)}); encrypted installs will refuse until it is present`);
       }
     }
+    // Ready the filesystem under the data folder (encrypt feature via
+    // tune2fs, /etc/fscrypt.conf, /.fscrypt metadata) so the first "Local"
+    // install seals without a detour. Never fails bootstrap: a host that
+    // cannot seal refuses at install time with the same plain-words error.
+    await prepareDataFolderForSealing(log);
   }
 
   // 8. State (explicit initialization, never on accidental absence)
@@ -350,6 +356,7 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   writeFileSync(`/etc/systemd/system/${SELF_UPDATE_UNIT_FILE}`, selfUpdateUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}`, toolsInstallUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${DEVICE_MOUNT_UNIT.replace('.service', '@.service')}`, deviceMountUnit(), { mode: 0o644 });
+  writeFileSync(`/etc/systemd/system/${APP_CRYPTO_UNIT_FILE}`, appCryptoUnit(), { mode: 0o644 });
   await execOk('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['enable', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['restart', PRODUCT.paths.systemdUnit], { timeoutMs: 120_000 });

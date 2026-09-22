@@ -13,8 +13,9 @@ Docker (root-equivalent) authority. This policy describes what that means for re
   plaintext in the private generated Compose file. That is deliberate for the trusted local
   preview; there is no encrypted vault for them.
 - Whole-app encryption (install locations) protects data **at rest on the drive**: a locked app
-  is ciphertext until the passphrase or recovery key unlocks it. It does not protect against
-  root or Docker admins on the running machine.
+  is ciphertext (fscrypt v2 in the kernel, one key per app) until the passphrase, recovery key or
+  this machine's login-sealed key unlocks it — while locked, root and Docker read ciphertext too.
+  Once unlocked, it does not protect against root or Docker admins on the running machine.
 
 ## How to report a security issue
 

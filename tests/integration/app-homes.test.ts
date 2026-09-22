@@ -4,6 +4,8 @@ import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto } from '../../src/contracts/api.js';
+import Database from 'better-sqlite3';
+import { FakeCryptoProvider } from '../../src/storage/crypto-provider.js';
 import { startHarness, type Harness } from './harness.js';
 
 // Whole-app install locations: the app (including its database) lives
@@ -11,8 +13,22 @@ import { startHarness, type Harness } from './harness.js';
 // passphrase. The passphrase travels with the submission, never in the plan.
 let h: Harness;
 let drive: string;
+// One fake kernel for the whole file: `sealed` is what fscrypt would have on
+// disk, `open` is which keys the kernel holds this boot. A reboot is
+// simulated by clearing `open` before restarting the daemon.
+const crypto = new FakeCryptoProvider();
+const kernelUnlocked = (home: string) => crypto.kernelState(home) === 'open';
+const until = async <T>(fn: () => Promise<T | null | false | undefined>, what: string, ms = 8000): Promise<T> => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    const v = await fn();
+    if (v) return v;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`timed out waiting for ${what}`);
+};
 beforeAll(async () => {
-  h = await startHarness();
+  h = await startHarness({ overrides: { crypto } });
   // A "drive": a plain folder on a POSIX filesystem. The harness runs on the
   // same machine, so the candidate list (built from live mounts) will not
   // include it — the tests below create the apps folder directly and pass it
@@ -60,7 +76,10 @@ describe('install to an encrypted app home', () => {
     const op = await h.api.waitOperation(sub.operationId);
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     const got = (await h.api.instances()).find((i) => i.name === 'defaultkey')!;
-    expect(got.home).toMatchObject({ encrypted: true, state: 'unlocked', defaultKey: true });
+    expect(got.home).toMatchObject({ encrypted: true, state: 'unlocked', defaultKey: true, sealed: true });
+    // The volumes dir was kernel-sealed BEFORE any volume was rooted inside.
+    expect(crypto.calls.filter((c) => c.op === 'sealApp').map((c) => c.home)).toContain(got.home!.path);
+    expect(kernelUnlocked(got.home!.path)).toBe(true);
   });
 
   it('the plan names the encrypted home and warns about the drive and the passphrase', async () => {
@@ -82,7 +101,8 @@ describe('install to an encrypted app home', () => {
     const inst = (await h.api.instances()).find((i) => i.home?.path === path.join(drive, 'harbor-apps', 'excalidraw', 'excalidraw'))!;
     driveInstanceId = inst.id;
     expect(inst.installState).toBe('installed');
-    expect(inst.home).toMatchObject({ encrypted: true, state: 'unlocked' });
+    expect(inst.home).toMatchObject({ encrypted: true, state: 'unlocked', sealed: true });
+    expect(crypto.calls.filter((c) => c.op === 'sealApp').map((c) => c.home)).toContain(inst.home!.path);
   });
 
   it('the home holds a plaintext manifest plus an encrypted vault, and volumes are rooted inside it', async () => {
@@ -106,22 +126,88 @@ describe('install to an encrypted app home', () => {
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/found-apps/adopt', { home, passphrase: 'wrong passphrase here' });
   });
 
-  it('a reboot returns the custom app to locked; unlock + start with the passphrase brings it back', async () => {
-    // BFU/AFU per-app lock: the ephemeral unlock lives in memory only, so a
-    // daemon restart (same DB, fresh process) must show locked again.
+  it('a reboot returns every sealed app to locked; login unlocks default-key homes, the passphrase unlocks custom ones', async () => {
+    // Reboot = the kernel forgets every key (fake: clear `open`) and the
+    // daemon comes back BFU. The read model is the kernel probe, so both
+    // homes must read locked until a key is back.
+    crypto.open.clear();
     await h.restart();
+    const drivePath = (await h.api.instances()).find((i) => i.id === driveInstanceId)!.home!.path;
+    const defaultPath = (await h.api.instances()).find((i) => i.name === 'defaultkey')!.home!.path;
     const locked = (await h.api.instances()).find((i) => i.id === driveInstanceId)!;
-    expect(locked.home).toMatchObject({ encrypted: true, state: 'locked' });
-    // A locked start is refused at plan time so the drawer can prompt.
-    await h.api.expectError(422, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'stop', instanceId: driveInstanceId }).catch(() => {});
+    expect(locked.home).toMatchObject({ encrypted: true, state: 'locked', sealed: true });
+    // restart() logged in: BFU → AFU kernel-unlocks the default-key home
+    // (machine-wrapped key), never the custom-passphrase one.
+    await until(async () => (await h.api.instances()).find((i) => i.name === 'defaultkey')!.home!.state === 'unlocked', 'default-key home unlocked at login');
+    expect(crypto.calls.filter((c) => c.op === 'unlockApp').map((c) => c.home)).toContain(defaultPath);
+    expect(kernelUnlocked(defaultPath)).toBe(true);
+    expect(kernelUnlocked(drivePath)).toBe(false);
+    // Lock refuses while the app runs (its files are open in the kernel).
+    await h.api.expectError(409, 'INVALID_STATE', 'POST', `/v1/instances/${driveInstanceId}/lock`, {});
+    // Wrong passphrase never unlocks; the right one adds the key to the kernel.
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: 'wrong passphrase here' });
     const unlocked = await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: PASS });
-    expect(unlocked.home).toMatchObject({ encrypted: true, state: 'unlocked' });
+    expect(unlocked.home).toMatchObject({ encrypted: true, state: 'unlocked', sealed: true });
+    expect(kernelUnlocked(drivePath)).toBe(true);
+    // Stop, then Lock: the key is evicted and the data is ciphertext again.
+    const stop = await h.api.plan({ kind: 'stop', instanceId: driveInstanceId });
+    expect((await h.api.waitOperation((await h.api.submit(stop.id)).operationId)).state).toBe('succeeded');
     const relocked = await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/lock`, {});
     expect(relocked.home).toMatchObject({ encrypted: true, state: 'locked' });
-    // Wrong passphrase never unlocks.
-    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: 'wrong passphrase here' });
-    // Right passphrase unlocks again for this boot.
+    expect(kernelUnlocked(drivePath)).toBe(false);
+    expect(crypto.calls.filter((c) => c.op === 'lockApp').map((c) => c.home)).toContain(drivePath);
+    // Start without a key is refused; unlock + start kernel-unlocks before Docker.
+    await h.api.expectError(409, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'start', instanceId: driveInstanceId });
     await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: PASS });
+    const start = await h.api.plan({ kind: 'start', instanceId: driveInstanceId });
+    const op = await h.api.waitOperation((await h.api.submit(start.id)).operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    expect(kernelUnlocked(drivePath)).toBe(true);
+    expect((await h.api.instances()).find((i) => i.id === driveInstanceId)!.home).toMatchObject({ state: 'unlocked', sealed: true });
+  });
+});
+
+describe('sealing is not optional', () => {
+  it('a host that cannot seal fails the install and leaves no half-made home behind', async () => {
+    crypto.failWith = 'fscrypt is not installed on this machine';
+    try {
+      const plan = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'nosealer', location: { dir: path.join(drive, 'harbor-apps', 'excalidraw'), passphrase: PASS } });
+      const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: plan.id, passphrase: PASS }, { 'idempotency-key': 'home-noseal-1' });
+      const op = await h.api.waitOperation(sub.operationId);
+      expect(op.state).toBe('failed');
+      expect(op.error?.message).toMatch(/fscrypt is not installed/);
+      expect(op.error?.nextAction).toMatch(/Format the drive as ext4/);
+      // No plaintext home lingers for a later "encrypted" claim to cover.
+      expect(existsSync(path.join(drive, 'harbor-apps', 'excalidraw', 'nosealer'))).toBe(false);
+      const inst = (await h.api.instances()).find((i) => i.name === 'nosealer')!;
+      expect(inst.installState).toBe('failed');
+      expect(inst.home).toBeNull();
+    } finally {
+      crypto.failWith = null;
+    }
+  });
+
+  it('a home installed before sealing worked is sealed in place at its next Start (migration)', async () => {
+    const inst = (await h.api.instances()).find((i) => i.name === 'defaultkey')!;
+    const home = inst.home!.path;
+    const stop = await h.api.plan({ kind: 'stop', instanceId: inst.id });
+    expect((await h.api.waitOperation((await h.api.submit(stop.id)).operationId)).state).toBe('succeeded');
+    // Forge a pre-sealing record: no kernelSealed flag, plaintext volumes.
+    const db = new Database(path.join(h.stateDir, 'harbor.db'));
+    try {
+      db.prepare(`UPDATE resources SET metadata_json = json_remove(metadata_json, '$.kernelSealed') WHERE instance_id = ? AND role = '__home__'`).run(inst.id);
+    } finally {
+      db.close();
+    }
+    crypto.sealed.delete(home);
+    crypto.open.delete(home);
+    expect((await h.api.instances()).find((i) => i.id === inst.id)!.home).toMatchObject({ sealed: false, state: 'unlocked' });
+    const start = await h.api.plan({ kind: 'start', instanceId: inst.id });
+    const op = await h.api.waitOperation((await h.api.submit(start.id)).operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    expect(crypto.calls.filter((c) => c.op === 'migrateApp').map((c) => c.home)).toContain(home);
+    expect(op.events.map((e) => e.message).join('\n')).toMatch(/one-time migration[\s\S]*kernel-sealed/);
+    expect((await h.api.instances()).find((i) => i.id === inst.id)!.home).toMatchObject({ sealed: true, state: 'unlocked' });
   });
 });
 

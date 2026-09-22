@@ -19,6 +19,8 @@ import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { installCandidates } from '../storage/install-location.js';
 import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
+import { protectorFor, type AppHomeRef } from '../storage/crypto-provider.js';
+import type { ResourceRow } from '../state/repo.js';
 import { listMounts } from '../system/host-storage.js';
 import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
@@ -689,71 +691,147 @@ export class ApplicationService {
   isAppUnlocked(instanceId: string): boolean {
     return this.unlockedApps.has(instanceId);
   }
+  /** A copy of this boot's held key (the runner kernel-unlocks with it). The caller zeroes it. */
+  takeAppUnlockCopy(instanceId: string): Buffer | null {
+    const k = this.unlockedApps.get(instanceId);
+    return k ? Buffer.from(k) : null;
+  }
+  private homeRow(instanceId: string): ResourceRow | undefined {
+    return this.ctx.repo.resources(instanceId).find((r) => r.kind === 'volume' && r.role === '__home__');
+  }
+  /** Record whether <home>/volumes is kernel-sealed (set by the runner after seal/migrate/adopt-status). */
+  markHomeSealed(instanceId: string, sealed = true): void {
+    const home = this.homeRow(instanceId);
+    if (!home) return;
+    this.ctx.repo.upsertResource({ instanceId: home.instanceId, kind: home.kind, role: home.role, dockerId: home.dockerId, name: home.name, token: home.token, metadata: { ...(home.metadata ?? {}), kernelSealed: sealed } });
+  }
+  // Read model for the encrypted home. Sealed homes report KERNEL truth: a
+  // mkdir probe inside <home>/volumes answers ENOKEY while locked, for Docker
+  // as much as for us — so the tile says Locked exactly when the data on disk
+  // is unreadable, across daemon restarts, manual locks and reboots. Homes
+  // installed before sealing worked (`sealed: false`) keep the old memory
+  // model until their next Start seals them in place.
   private homeState(instanceId: string): InstanceSummary['home'] {
     try {
-      const home = this.ctx.repo.resources(instanceId).find((r) => r.kind === 'volume' && r.role === '__home__');
+      const home = this.homeRow(instanceId);
       if (!home) return null;
-      const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
       const defaultKey = home.metadata?.['defaultKey'] === true;
-      // Custom-passphrase apps: unlocked iff this boot holds their key.
-      if (!defaultKey) {
-        return { path: home.name, encrypted: true, state: this.unlockedApps.has(instanceId) ? 'unlocked' : 'locked' };
-      }
-      const machineKey = this.ctx.machineKey.take();
-      let state: 'locked' | 'unlocked' = 'locked';
-      if (wrapped && machineKey) {
-        try {
-          const master = unwrapMasterKeyForMachine(wrapped, machineKey);
-          master.fill(0);
-          state = 'unlocked';
-        } catch {
-          state = 'locked';
-        } finally {
-          zeroMachineKey(machineKey);
+      const sealed = home.metadata?.['kernelSealed'] === true;
+      const crypto = this.ctx.crypto;
+      let state: 'locked' | 'unlocked';
+      if (sealed && crypto) {
+        state = crypto.kernelState(home.name) === 'locked' ? 'locked' : 'unlocked';
+      } else if (!defaultKey) {
+        state = this.unlockedApps.has(instanceId) ? 'unlocked' : 'locked';
+      } else {
+        const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+        const machineKey = this.ctx.machineKey.take();
+        state = 'locked';
+        if (wrapped && machineKey) {
+          try {
+            const master = unwrapMasterKeyForMachine(wrapped, machineKey);
+            master.fill(0);
+            state = 'unlocked';
+          } catch {
+            state = 'locked';
+          } finally {
+            zeroMachineKey(machineKey);
+          }
         }
       }
-      return { path: home.name, encrypted: true, state, ...(defaultKey ? { defaultKey: true as const } : {}) };
+      return { path: home.name, encrypted: true, state, sealed, ...(defaultKey ? { defaultKey: true as const } : {}) };
     } catch {
       return null;
     }
   }
-  /** Unlock one custom-passphrase app for this boot (verifies, holds the key, never stores it). */
+  /** Unlock one custom-passphrase app for this boot: verify, hold the key, add it to the kernel. Hard: a kernel failure drops the hold and surfaces. */
   async unlockApp(instanceId: string, passphrase: string): Promise<InstanceSummary> {
     const inst = this.instanceRow(instanceId);
-    const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    const home = this.homeRow(inst.id);
     if (!home) throw new HarborError('INVALID_STATE', `${inst.name} has no encrypted home`, { nextAction: 'This app lives on the system disk; there is nothing to unlock.' });
-    if ((home.metadata?.['defaultKey'] as boolean | undefined) === true) throw new HarborError('INVALID_STATE', `${inst.name} unlocks silently at login`, { nextAction: 'Log in again if it shows locked.' });
+    const defaultKey = home.metadata?.['defaultKey'] === true;
+    const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+    if (defaultKey && wrapped) throw new HarborError('INVALID_STATE', `${inst.name} unlocks silently at login`, { nextAction: 'Log in again if it shows locked.' });
     const masterKey = await unlockAppHome(home.name, passphrase);
     this.holdAppUnlock(inst.id, masterKey);
-    // Kernel seal follows the ephemeral unlock where present (best-effort;
-    // fake mode records a no-op). A wrong passphrase already failed above.
-    try {
-      const crypto = this.ctx.crypto;
-      if (crypto) await crypto.unlockApp(home.name, masterKey.toString('hex'));
-    } catch (e) {
-      this.ctx.log.warn(`kernel unlock skipped for ${inst.name}: ${e instanceof Error ? e.message : String(e)}`, { instanceId: inst.id });
-    }
-    this.ctx.log.info('app unlocked for this boot', { instanceId: inst.id });
-    const meta = this.packageMeta(this.ctx.repo.instance(inst.id)!);
-    const fresh = this.ctx.repo.instance(inst.id)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
-  }
-  /** Lock one custom-passphrase app (drop this boot's key + kernel-lock the seal; running containers keep running). */
-  async lockAppApi(instanceId: string): Promise<InstanceSummary> {
-    const inst = this.instanceRow(instanceId);
-    const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
-    this.lockApp(inst.id);
-    if (home) {
+    const sealed = home.metadata?.['kernelSealed'] === true;
+    const crypto = this.ctx.crypto;
+    if (sealed && crypto) {
       try {
-        const crypto = this.ctx.crypto;
-        if (crypto) await crypto.lockApp(home.name);
+        await crypto.unlockApp({ instanceId: inst.id, home: home.name }, masterKey.toString('hex'));
       } catch (e) {
-        this.ctx.log.warn(`kernel lock skipped for ${inst.name}: ${e instanceof Error ? e.message : String(e)}`, { instanceId: inst.id });
+        this.lockApp(inst.id);
+        throw e;
       }
     }
-    this.ctx.log.info('app locked', { instanceId: inst.id });
-    const meta = this.packageMeta(this.ctx.repo.instance(inst.id)!);
-    const fresh = this.ctx.repo.instance(inst.id)!;
+    this.ctx.log.info(sealed ? 'app unlocked for this boot (kernel key added)' : 'app unlocked for this boot (not sealed yet; Start seals it)', { instanceId: inst.id });
+    return this.summaryOf(inst.id);
+  }
+  /** Lock one encrypted app: evict its key from the kernel (refused while it runs) and drop this boot's copy. */
+  async lockAppApi(instanceId: string): Promise<InstanceSummary> {
+    const inst = this.instanceRow(instanceId);
+    const home = this.homeRow(inst.id);
+    if (!home) throw new HarborError('INVALID_STATE', `${inst.name} has no encrypted home`, { nextAction: 'This app lives on the system disk; there is nothing to lock.' });
+    if (inst.runtime === 'running' || inst.runtime === 'starting') {
+      throw new HarborError('INVALID_STATE', `${inst.name} is running; its files are open`, { nextAction: 'Stop the app first, then lock it.' });
+    }
+    const sealed = home.metadata?.['kernelSealed'] === true;
+    const crypto = this.ctx.crypto;
+    if (sealed && crypto) await crypto.lockApp({ instanceId: inst.id, home: home.name });
+    this.lockApp(inst.id);
+    this.ctx.log.info('app locked', { instanceId: inst.id, sealed });
+    return this.summaryOf(inst.id);
+  }
+  // BFU → AFU (first login after boot): add the machine-wrapped key of every
+  // sealed default-key home to the kernel so data-folder apps come back
+  // without anyone typing. Failures are logged and notified; the tile stays
+  // Locked and Start reports the same error with its next action.
+  async kernelUnlockDefaultHomes(): Promise<void> {
+    const crypto = this.ctx.crypto;
+    if (!crypto) return;
+    let instances: InstanceRow[];
+    try {
+      instances = this.ctx.repo.listInstances();
+    } catch (e) {
+      // Login raced a shutdown (tests close the daemon right after logging in).
+      this.ctx.log.warn(`login-time app unlock skipped: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    for (const inst of instances) {
+      const home = this.homeRow(inst.id);
+      if (!home || home.metadata?.['defaultKey'] !== true || home.metadata?.['kernelSealed'] !== true) continue;
+      const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+      if (!wrapped || crypto.kernelState(home.name) !== 'locked') continue;
+      const machineKey = this.ctx.machineKey.take();
+      if (!machineKey) return;
+      let master: Buffer | null = null;
+      try {
+        master = unwrapMasterKeyForMachine(wrapped, machineKey);
+        await crypto.unlockApp({ instanceId: inst.id, home: home.name }, master.toString('hex'));
+        this.ctx.log.info('kernel-unlocked default-key app home at login', { instanceId: inst.id });
+        this.ctx.notifier.resolve(`home-locked:${inst.id}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.ctx.log.warn(`could not unlock ${inst.name} at login: ${msg}`, { instanceId: inst.id });
+        this.ctx.notifier.notify({ kind: 'home-locked', severity: 'warning', title: `${inst.displayName ?? inst.name} is still locked`, body: `${msg}${e instanceof HarborError ? ` ${e.nextAction}` : ''}`, instanceId: inst.id, dedupeKey: `home-locked:${inst.id}` });
+      } finally {
+        zeroMachineKey(machineKey);
+        if (master) zeroKey(master);
+      }
+    }
+  }
+  /** Protector name for one app (stable per instance; shown by `fscrypt status`). */
+  protectorNameFor(inst: InstanceRow): string {
+    return protectorFor(inst.name, inst.id);
+  }
+  /** Ref for the crypto provider. */
+  homeRefOf(instanceId: string): AppHomeRef | null {
+    const home = this.homeRow(instanceId);
+    return home ? { instanceId, home: home.name } : null;
+  }
+  private summaryOf(instanceId: string): InstanceSummary {
+    const fresh = this.ctx.repo.instance(instanceId)!;
+    const meta = this.packageMeta(fresh);
     return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
@@ -966,10 +1044,12 @@ export class ApplicationService {
       // Adopt reuses the install operation path: the runner sees the home
       // resource marker below and roots volumes at the existing home instead
       // of creating a fresh one. The passphrase was verified above (unlock
-      // succeeded) and is NOT stored: the home stays locked until Start.
-      // No machine wrapping — adopted apps unlock per-app with their own
-      // passphrase, never silently.
+      // succeeded) and is NOT stored; the key is held for THIS boot only so
+      // the install can unlock the kernel seal and start the app — a reboot
+      // locks it again. No machine wrapping — adopted apps unlock per-app
+      // with their own passphrase, never silently.
       this.ctx.repo.upsertResource({ instanceId, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId, adopted: true } });
+      this.holdAppUnlock(instanceId, Buffer.from(masterKey));
       // Adopt plans carry no passphrase (the operator already proved it by
       // unlocking above); pre-seed the secret check so submit() passes.
       this.submitInstallLocationSecret(plan.id, 'adopted');
@@ -978,7 +1058,7 @@ export class ApplicationService {
       void submit;
       const fresh = this.ctx.repo.instance(instanceId)!;
       const meta = this.packageMeta(fresh);
-      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), usage: null, needsDrive: null, home: { path: home, encrypted: true, state: 'locked' } });
+      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), usage: null, needsDrive: null, home: this.homeState(instanceId) });
     } finally {
       zeroKey(masterKey);
     }
@@ -1181,9 +1261,16 @@ export class ApplicationService {
         // per-app (Start carries the passphrase, or unlock first). Refuse a
         // locked start here so the drawer can prompt instead of failing deep
         // in the runner.
-        const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
-        if (home && (home.metadata?.['defaultKey'] as boolean | undefined) !== true && !this.unlockedApps.has(inst.id)) {
-          throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Unlock it with its encryption passphrase (or recovery key), then Start again.' });
+        const hs = this.homeState(inst.id);
+        if (hs?.state === 'locked') {
+          // Kernel-locked (or never unlocked this boot): the runner needs a key
+          // it can reach — this boot's held key for custom homes, the machine
+          // key (AFU) for default-key homes. Otherwise refuse now.
+          if (hs.defaultKey) {
+            if (!this.ctx.machineKey.unlocked) throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Log in again to unlock apps on this machine, then Start again.' });
+          } else if (!this.unlockedApps.has(inst.id)) {
+            throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: 'Unlock it with its encryption passphrase (or recovery key), then Start again.' });
+          }
         }
         changes.push(`Verify release, retained volumes and secrets of "${inst.name}"`, `Start existing containers of project ${inst.project}`, 'Check readiness');
         break;
