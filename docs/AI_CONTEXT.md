@@ -118,15 +118,20 @@ FIFO key handoff, hard failures, kernel mkdir probe, VM steps C01 + A09). Shippe
 
 ## 5a. Live hosts right now
 
-- **carlos-desktop** (physical Ubuntu 24.04.3 x86_64, `<lan-user>@<lan-ip>`): the live
-  box. Harbor **0.13.0** on `:18000` (prod) + dev on `:18100`. PNY USB stick, vfat label
-  `USB20FD`, mounted at `/mnt/usb20fd`; Immich's `library` claim lives at
-  `/mnt/usb20fd/immich` with a stamped marker. Local ship path: `pnpm package` → `scp`
-  tarball + `SHA256SUMS` to `/tmp/` → `sudo /opt/harbor/bin/harbor self-update apply --to
-  <ver> --archive /tmp/harbor-<ver>-linux-x64.tar.gz`. Gotcha: stacked ghost mounts can
-  hide a yank (`/proc` outlives the pull; the next insert lands on `sde1` etc.).
-  Note: the only removable drive on the box is vfat, so install-location (ext4+ only)
-  has no live drive target there — the data-folder candidate + e2e cover it.
+- **carlos-desktop** (physical Kubuntu 24.04 x86_64, `<lan-user>@<lan-ip>`, passwordless
+  sudo over SSH): the live box. Clean reinstall on 2026-09-22 (`harbor uninstall --yes`, then the
+  public one-liner pinned with `HARBOR_VERSION=0.17.0-beta.3` — the plain one-liner and the
+  self-update feed only see stable `x.y.z` tags, so betas need the pin). Harbor **0.17.0-beta.3**
+  on `:18000`, LAN mode (`http://harbor.local/`), administrator NOT yet created (Carlos finishes the
+  wizard himself; `sudo harbor setup-code` prints the code). Root is LUKS → ext4 (`kubuntu_2404`);
+  bootstrap enabled the `encrypt` feature online and wrote `/etc/fscrypt.conf` + `/.fscrypt`
+  (`per-app encryption ready on /`). PNY USB stick `sdb1` 14.4 GB, **NTFS, empty**, label
+  `USB20FD`, unmounted (re-formatted 2026-09-22 for the wizard-rejection + format-as-ext4 test;
+  the old Immich bind-folder setup is gone). Carlos's test plan: NTFS rejected in the wizard →
+  Format as ext4 from Settings → Local install (no passphrase) → drive install with the Harbor
+  password (silent unlock at login) and with another passphrase (asks) → Lock seals → nothing
+  at rest. Gotcha: stacked ghost mounts can hide a yank (`/proc` outlives the pull; the next
+  insert lands on `sde1` etc.).
 - DigitalOcean droplets (`harbor-test*`, each ~$0.07/h; token only in git-ignored
   `.env.vm.local`): see §6. The repo is public since decision 75 (history rewritten with
   `git filter-repo`; old SHAs refer to pre-rewrite history).
