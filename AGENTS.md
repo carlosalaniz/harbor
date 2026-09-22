@@ -176,8 +176,8 @@ The non-negotiable subset:
   socket. `pnpm test:vm` refuses without an explicit target — keep it that way.
 - Confirm before outward-facing/irreversible acts: repo visibility, destroying droplets,
   DNS changes, publishing releases by hand.
-- Never commit: real tokens/keys/passwords, VM IPs, `.env.vm.local`, `release/stage/`,
-  `test-results/`, `playwright-report/`.
+- Never commit: real tokens/keys/passwords, VM IPs, LAN addresses or SSH users of physical
+  boxes, setup codes, `.env.vm.local`, `release/stage/`, `test-results/`, `playwright-report/`.
 - macOS dev loop: no `timeout` (use `curl --max-time`), Node `fetch()` drops custom `Host`
   headers (use `node:http` in tests), plain-http LAN origins lack secure-context APIs
   (`crypto.randomUUID`, `clipboard` need fallbacks).

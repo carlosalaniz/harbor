@@ -118,8 +118,8 @@ FIFO key handoff, hard failures, kernel mkdir probe, VM steps C01 + A09). Shippe
 
 ## 5a. Live hosts right now
 
-- **carlos-desktop** (physical Kubuntu 24.04 x86_64, `<lan-user>@<lan-ip>`, passwordless
-  sudo over SSH): the live box. Clean reinstall on 2026-09-22 (`harbor uninstall --yes`, then the
+- **carlos-desktop** (physical Kubuntu 24.04 x86_64 on the home LAN; SSH user + address live in
+  Carlos's local notes, never in this public repo): the live box. Clean reinstall on 2026-09-22 (`harbor uninstall --yes`, then the
   public one-liner pinned with `HARBOR_VERSION=0.17.0-beta.3` — the plain one-liner and the
   self-update feed only see stable `x.y.z` tags, so betas need the pin). Harbor **0.17.0-beta.3**
   on `:18000`, LAN mode (`http://harbor.local/`), administrator NOT yet created (Carlos finishes the
