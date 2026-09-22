@@ -46,7 +46,7 @@ is typed on the terminal.
 - `HARBOR_LAN=off` keeps LAN mode off (console and apps then answer only on the machine, over Tailscale, or via SSH forwarding). On a cloud server LAN mode stays off automatically: there, "every interface" would be the public internet.
 - `HARBOR_TOOLS=1` also sets up Cockpit and Portainer. `HARBOR_VERSION=<version>` pins a release (e.g. `HARBOR_VERSION=0.12.5`).
   **Beta releases need the pin**: without it the installer (and the console's self-update) only consider stable `x.y.z`
-  releases, so `HARBOR_VERSION=0.17.0-beta.3` is how you install or upgrade to the current beta.
+  releases, so `HARBOR_VERSION=0.17.0-beta.4` is how you install or upgrade to the current beta.
 - Lost the setup code? On the machine: `sudo /opt/harbor/bin/harbor setup-code --config /etc/harbor/harbor.json`.
 
 **LAN mode** means the console (port 80) and every app port answer to any device on your local network,
@@ -314,6 +314,26 @@ wizard, and a folder picked on an unmounted drive blocks Install with a mount
 prompt until the drive is mounted). A machine that cannot seal (no ext4, no
 `fscrypt`) refuses the install with the exact fix — Harbor never installs an
 app it would later call encrypted on plaintext.
+
+**Your Harbor recovery key.** Setting Harbor up shows you twelve words, once,
+and never again. They are the master key to everything this Harbor encrypts:
+with them you open your apps on another machine even if this one is stolen,
+wiped or dead. Harbor keeps them only behind your password, which is why it
+cannot show them twice. Write them on paper and keep them away from the
+machine, the way you would a spare house key. Settings → Account tells you
+when they were issued and lets you *Replace it…* if the paper is lost or
+someone saw it. Replacing re-stamps every app Harbor can reach at that moment
+and names any it could not, for example an app on an unplugged drive: those
+keep opening with the old words until you plug the drive in and replace again,
+so keep the old paper until the list comes back empty. If you set Harbor up
+from the command line rather than the browser, the card is issued the first
+time you install an encrypted app and shown once in that install's result.
+
+An app you gave **its own passphrase** also gets its own twelve words at
+install. Those open that one app and nothing else, which is what you hand over
+along with a drive when you give somebody a single app. An app installed
+without a passphrase has none, because there is no passphrase to forget: your
+Harbor recovery key is its way back.
 
 A locked app (this machine holds no key for it — after a reboot, before the
 first login) shows a quiet *Locked* tile; its drawer says so and, for a

@@ -21,6 +21,8 @@ import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome
 import { verifyPassword } from '../auth/password.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import { protectorFor, type AppHomeRef } from '../storage/crypto-provider.js';
+import { INSTALLATION_RECOVERY_SETTING, newInstallationRecoveryKey, openInstallationRecovery, sealInstallationRecovery, type StoredInstallationRecovery } from '../storage/installation-recovery.js';
+import { stampInstallationRecovery } from '../storage/app-home.js';
 import type { ResourceRow } from '../state/repo.js';
 import { listMounts } from '../system/host-storage.js';
 import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
@@ -881,6 +883,85 @@ export class ApplicationService {
       }
     }
   }
+  // ---- the Harbor recovery key (one card per installation, decision 105)
+  /** The installation's 12 words, or null while BFU or before one was issued. */
+  installationRecoveryKey(): string | null {
+    const stored = this.ctx.repo.setting<StoredInstallationRecovery>(INSTALLATION_RECOVERY_SETTING);
+    if (!stored) return null;
+    const machineKey = this.ctx.machineKey.take();
+    if (!machineKey) return null;
+    try {
+      return openInstallationRecovery(stored, machineKey);
+    } finally {
+      zeroMachineKey(machineKey);
+    }
+  }
+  // Issue the card if this installation has none yet (it predates decision
+  // 105). Returns the words plus whether they were minted just now, so the
+  // caller can show them once. Null when BFU: the caller then creates the
+  // home without the envelope and the next install stamps one.
+  ensureInstallationRecoveryKey(): { words: string; minted: boolean } | null {
+    const existing = this.installationRecoveryKey();
+    if (existing) return { words: existing, minted: false };
+    if (this.ctx.repo.setting(INSTALLATION_RECOVERY_SETTING)) return null; // present but unreadable (BFU or damaged)
+    const machineKey = this.ctx.machineKey.take();
+    if (!machineKey) return null;
+    try {
+      const words = newInstallationRecoveryKey();
+      this.ctx.repo.setSetting(INSTALLATION_RECOVERY_SETTING, sealInstallationRecovery(words, machineKey, this.ctx.clock.now()));
+      this.ctx.log.info('issued the Harbor recovery key for this installation', {});
+      return { words, minted: true };
+    } finally {
+      zeroMachineKey(machineKey);
+    }
+  }
+  // Replace the card (lost or leaked paper): mint new words, re-stamp every
+  // app home Harbor can reach right now, and name the ones it could not.
+  // An unreachable home keeps opening with the OLD card, so the operator is
+  // told rather than left with a silent gap.
+  async rotateInstallationRecoveryKey(): Promise<{ recoveryKey: string; restamped: string[]; unreachable: string[] }> {
+    const machineKey = this.ctx.machineKey.take();
+    if (!machineKey) throw new HarborError('INVALID_STATE', 'Harbor cannot reach its own keys right now', { nextAction: 'Log in again, then replace the recovery key.' });
+    const words = newInstallationRecoveryKey();
+    const restamped: string[] = [];
+    const unreachable: string[] = [];
+    try {
+      for (const inst of this.ctx.repo.listInstances()) {
+        const home = this.homeRow(inst.id);
+        if (!home) continue;
+        const label = inst.displayName ?? inst.name;
+        const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+        // The master key has to come from somewhere without asking: this
+        // boot's held key, or the machine wrapping. Otherwise the home is a
+        // custom-passphrase app nobody unlocked this boot.
+        let master: Buffer | null = this.takeAppUnlockCopy(inst.id);
+        if (!master && wrapped) {
+          try {
+            master = unwrapMasterKeyForMachine(wrapped, machineKey);
+          } catch {
+            master = null;
+          }
+        }
+        if (!master) {
+          unreachable.push(label);
+          continue;
+        }
+        try {
+          await stampInstallationRecovery(home.name, master, words);
+          restamped.push(label);
+        } catch {
+          unreachable.push(label);
+        } finally {
+          zeroKey(master);
+        }
+      }
+      this.ctx.repo.setSetting(INSTALLATION_RECOVERY_SETTING, sealInstallationRecovery(words, machineKey, this.ctx.clock.now()));
+    } finally {
+      zeroMachineKey(machineKey);
+    }
+    this.ctx.log.info('replaced the Harbor recovery key', { restamped: restamped.length, unreachable: unreachable.length });
+    return { recoveryKey: words, restamped, unreachable };
+  }
   /** Protector name for one app (stable per instance; shown by `fscrypt status`). */
   protectorNameFor(inst: InstanceRow): string {
     return protectorFor(inst.name, inst.id);
@@ -1112,6 +1193,17 @@ export class ApplicationService {
       this.ctx.repo.upsertResource({ instanceId, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId, adopted: true } });
       this.holdAppUnlock(instanceId, Buffer.from(masterKey));
       await this.backfillLoginKey(instanceId, masterKey, passphrase);
+      // The adopting Harbor stamps its own card: from now on THIS machine's
+      // recovery key opens the app. The previous machine's card stops working
+      // for it; the app's own passphrase and words are untouched.
+      const card = this.ensureInstallationRecoveryKey();
+      if (card) {
+        try {
+          await stampInstallationRecovery(home, masterKey, card.words);
+        } catch (e) {
+          this.ctx.log.warn(`could not stamp the Harbor recovery key onto ${home}: ${e instanceof Error ? e.message : String(e)}`, { instanceId });
+        }
+      }
       // Adopt plans carry no passphrase (the operator already proved it by
       // unlocking above); pre-seed the secret check so submit() passes.
       this.submitInstallLocationSecret(plan.id, 'adopted');

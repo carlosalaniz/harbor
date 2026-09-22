@@ -148,11 +148,17 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
   // The range must stay clear of the management port AND any test LAN port (e.g. 18999
   // in setup-selfupdate.test.ts): freePort() can hand out any ephemeral port, so if the
   // random range swallows either one, shift it above both.
+  // …and inside the valid port space: freePort() can hand out anything up to
+  // 65535, and a range running past it fails config validation outright
+  // (flaky "appPortRange/to must be <= 65535" on unlucky draws).
   let range = opts.portRange ?? { from: base + 1, to: base + 40 };
   if (!opts.portRange) {
     const reserved = [port, 18999];
-    while (reserved.some((p) => p >= range.from && p <= range.to)) {
-      range = { from: range.to + 1, to: range.to + 40 };
+    const fits = (r: { from: number; to: number }) => r.to <= 65_000 && !reserved.some((p) => p >= r.from && p <= r.to);
+    let seed = base;
+    while (!fits(range)) {
+      seed = seed > 60_000 ? 20_000 + (seed % 10_000) : seed + 41;
+      range = { from: seed + 1, to: seed + 40 };
     }
   }
   const config = normalizeConfig(

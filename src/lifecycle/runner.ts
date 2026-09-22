@@ -599,6 +599,10 @@ export class OperationRunner {
     // createAppHome takes the parent + the home name separately.
     const parentDir = loc.dir;
     const homeName = plan.proposal.name;
+    // The Harbor recovery key: one card per installation, stamped onto every
+    // home so a single set of words restores all of them. Issued lazily here
+    // for installations that predate it, and then shown once in this result.
+    const card = this.ctx.service.ensureInstallationRecoveryKey();
     try {
       const { descriptor, masterKey, recoveryKey } = await createAppHome({
         parentDir,
@@ -608,6 +612,7 @@ export class OperationRunner {
         packageRevision: pkg.revision,
         displayName: pkg.manifest.metadata.name,
         ...(defaultKey ? {} : { passphrase }),
+        ...(card ? { installationRecoveryKey: card.words } : {}),
         harborVersion: this.ctx.version,
         now: this.ctx.clock.now(),
       });
@@ -656,12 +661,20 @@ export class OperationRunner {
         if (!defaultKey) {
           this.ctx.service.holdAppUnlock(inst.id, Buffer.from(masterKey));
         }
-        // The recovery key is shown once in the operation result (same UX as
+        // Cards are shown once in the operation result (same UX as
         // provisioned credentials / exposure basic-auth). Never logged, never
-        // stored — the operator writes it down or loses the data with it.
-        this.opResult = { ...(this.opResult ?? {}), recoveryKey, ...(defaultKey ? { recoveryNote: 'Write down these 12 words. They unlock this app if the machine is lost or the password is reset.' } : { recoveryNote: 'Write down these 12 words. They unlock this app on any Harbor machine if the passphrase is forgotten.' }) };
+        // stored — the operator writes them down or loses the data with them.
+        // A custom passphrase earns the app its OWN words; every home is also
+        // covered by the Harbor card, which is only ever displayed the once it
+        // is issued.
+        if (recoveryKey) {
+          this.opResult = { ...(this.opResult ?? {}), recoveryKey, recoveryNote: 'Write down these 12 words. They unlock THIS app on any Harbor machine if its passphrase is forgotten. Hand them over with the drive to give someone this one app.' };
+        }
+        if (card?.minted) {
+          this.opResult = { ...(this.opResult ?? {}), installationRecoveryKey: card.words, installationRecoveryNote: 'This is your Harbor recovery key, shown once. Write it down and keep it somewhere safe: it opens every app this Harbor encrypts, on any machine, even if this one dies.' };
+        }
         this.event(op, 'preparing', defaultKey
-          ? `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with the recovery key until first login)'}${sealedNote}`
+          ? `created encrypted app home ${descriptor.home}${wrapped ? ' (this machine unlocks it silently)' : ' (unlock with your Harbor recovery key until first login)'}${sealedNote}`
           : `created encrypted app home ${descriptor.home} (${loginKey && wrapped ? 'its passphrase is your Harbor password: this machine unlocks it at login' : 'locked with its own passphrase — Start prompts for it'})${sealedNote}`);
         return descriptor.home;
       } finally {

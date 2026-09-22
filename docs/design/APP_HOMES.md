@@ -19,12 +19,23 @@ everything needed to adopt the app on any Harbor machine:
 
 ```
 <name>/
-  manifest.json   plaintext descriptor (identity, package, encryption envelope)
+  manifest.json   plaintext descriptor (identity, package, encryption envelopes)
   vault/          encrypted payload (file bytes AND names are ciphertext)
   volumes/        the app's data, one subdir per storage claim — an fscrypt
                   (v2) directory sealed under the same master key: ciphertext
                   names + ENOKEY for every reader while locked
 ```
+
+One master key per app, wrapped once per way in (decision 105). Any of them
+opens it, and a wrong secret always reports the same error so nothing leaks
+about which envelopes a home carries:
+
+| Envelope | Who holds it | Scope |
+|---|---|---|
+| `passphrase` | the operator's own passphrase, or a Harbor-generated secret for default-key homes | this app; changeable |
+| `recovery` | the app's own 12 words, shown once — only for homes given a custom passphrase | this app; what you hand over with a drive |
+| `installation` | the Harbor recovery key, 12 words issued once per installation | every app this Harbor encrypted; re-stamped on adopt |
+| machine wrapping (in Harbor state, not on the drive) | the machine key, sealed under the login password | silent unlock on this machine |
 
 The manifest is **deliberately plaintext**: a locked app still shows its name,
 package id and revision in the console (the "locked" tile with a padlock). The

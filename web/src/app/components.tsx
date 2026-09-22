@@ -528,3 +528,43 @@ export function openUrl(inst: InstanceSummary, endpoint = inst.endpoints.find((e
   }
   return endpoint.urls.loopback;
 }
+
+// A 12-word card shown exactly once: at install (the app's own words), at
+// first-run setup and on rotation (the Harbor recovery key). The "Done"
+// button stays disabled until the operator confirms they wrote it down,
+// because Harbor genuinely cannot show it again.
+export function RecoveryCard({ words, note, title, onDismiss }: { words: string; note: string | null; title?: string; onDismiss: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [acked, setAcked] = useState(false);
+  return (
+    <div className="recovery-card" role="alert">
+      <p>
+        <strong>{title ?? 'Write down these 12 words.'}</strong> {note ?? 'They unlock this app if the passphrase is forgotten.'} Harbor never shows them again.
+      </p>
+      <p className="recovery-words">
+        <code>{words}</code>{' '}
+        <button
+          className="btn ghost small"
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(words).then(
+              () => setCopied(true),
+              () => setCopied(false),
+            );
+          }}
+          aria-label="Copy recovery key"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </p>
+      <label className="row small">
+        <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} aria-label="I wrote down the recovery key" /> I wrote it down
+      </label>
+      <div className="row end">
+        <button className="btn primary small" type="button" disabled={!acked} onClick={onDismiss} aria-label="Dismiss recovery key" title={acked ? undefined : 'Confirm you wrote it down first'}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}

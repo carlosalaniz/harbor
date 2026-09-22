@@ -16,6 +16,16 @@ test('first-run wizard: name the machine, create the account with the setup code
   await expect(page.getByRole('alert')).toContainText('wrong setup code');
   await page.getByLabel('Setup code').fill('424 242');
   await page.getByRole('button', { name: 'Create account' }).click();
+  // The Harbor recovery key: 12 words, shown exactly once, gated on "I wrote it down".
+  await expect(page.getByRole('heading', { name: 'Your recovery key' })).toBeVisible();
+  const card = page.getByRole('alert');
+  await expect(card).toContainText('Your Harbor recovery key.');
+  await expect(card).toContainText('opens every app this Harbor encrypts');
+  await expect(card.locator('code')).toHaveText(/^(\S+ ){11}\S+$/);
+  const done = page.getByRole('button', { name: 'Dismiss recovery key' });
+  await expect(done).toBeDisabled();
+  await page.getByLabel('I wrote down the recovery key').check();
+  await done.click();
   await expect(page.getByRole('heading', { name: 'Make it yours' })).toBeVisible();
   await page.getByRole('option', { name: 'Wallpaper dusk' }).click();
   await page.getByRole('button', { name: 'Open Harbor' }).click();
@@ -30,4 +40,11 @@ test('first-run wizard: name the machine, create the account with the setup code
   await page.getByLabel('Password', { exact: true }).fill('first-run-FIXTURE-password');
   await page.getByRole('button', { name: 'Log in' }).click();
   await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
+  // …and it is never shown again: Settings says only when it was issued.
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Account/ }).click();
+  const rec = page.locator('section', { has: page.getByRole('heading', { name: 'Recovery key' }) });
+  await expect(rec).toContainText('Issued');
+  await expect(rec.locator('code')).toHaveCount(0);
+  await expect(rec.getByRole('button', { name: 'Replace the recovery key' })).toBeVisible();
 });

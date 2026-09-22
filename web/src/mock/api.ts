@@ -165,7 +165,7 @@ export const mockApi = {
   },
   currentToken: (): string | null => 'mock-token',
   setupStatus: async () => ({ needed: false, hostname: 'harbor', deviceName: 'homelab', lan: { enabled: false, url: null }, tailscale: { installed: true, loggedIn: true }, version: '0.9.0' }),
-  setup: async () => ({ token: 'mock-token', expiresAt: new Date(Date.now() + 3600_000).toISOString() }),
+  setup: async () => ({ token: 'mock-token', expiresAt: new Date(Date.now() + 3600_000).toISOString(), recoveryKey: 'abandon ability able about above absent absorb abstract absurd abuse access accident' }),
   selfUpdate: async () => mockSystem().update,
   selfUpdateCheck: async () => mockSystem().update,
   selfUpdateApply: async () => mockSystem().update,
@@ -352,7 +352,11 @@ export const mockApi = {
   },
   setInstanceAppearance: async (id: string) => instances.find((i) => i.id === id) ?? instances[0]!,
   systemHost: async (): Promise<SystemHostDto> => mockHost(),
-  security: async () => ({ username: 'carlos', twoFactor: false, pending: false }),
+  security: async () => ({ username: 'carlos', twoFactor: false, pending: false, recoveryKey: { createdAt: new Date(Date.now() - 86_400_000).toISOString() } }),
+  rotateRecoveryKey: async () => {
+    await beat();
+    return { recoveryKey: 'zebra zone zoo zero youth yellow year wrong write worth world work', restamped: ['Immich'], unreachable: [] };
+  },
   totpSetup: async () => ({ secret: 'MOCK-SECRET', otpauthUrl: 'otpauth://totp/Harbor?secret=MOCK' }),
   totpEnable: async (): Promise<void> => {
     await beat(150);

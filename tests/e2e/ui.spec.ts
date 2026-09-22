@@ -24,16 +24,19 @@ async function approve(page: Page, label: string | RegExp) {
 const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
 const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
-// Every install shows the 12-word recovery card once (with its "I wrote it
-// down" gate): dismiss it so it stops covering the launcher underneath.
+// A finished install may show recovery cards: the Harbor recovery key the
+// first time this installation encrypts anything, and the app's own 12 words
+// when the operator chose their own passphrase. Dismiss whatever is there so
+// nothing covers the launcher underneath.
 async function dismissRecovery(page: Page) {
-  const gate = page.getByRole('button', { name: 'Dismiss recovery key' });
-  if (await gate.count()) {
-    await page.getByLabel('I wrote down the recovery key').check();
+  for (let i = 0; i < 2; i++) {
+    const gate = page.getByRole('button', { name: 'Dismiss recovery key' }).first();
+    if (!(await gate.count())) break;
+    await page.getByLabel('I wrote down the recovery key').first().check();
     await gate.click();
-  } else {
-    await page.getByRole('button', { name: 'Dismiss' }).click();
   }
+  const plain = page.getByRole('button', { name: 'Dismiss' });
+  if (await plain.count()) await plain.click();
 }
 
 async function installFromStore(page: Page, pkgName: string) {

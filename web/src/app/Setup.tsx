@@ -3,11 +3,14 @@ import type { SetupStatusDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
 import { WALLPAPERS, applyWallpaper, type Wallpaper } from './theme';
 import { Mark } from './icons';
+import { RecoveryCard } from './components';
 
 // First run: this Harbor has no administrator yet. Three screens, Umbrel-style: name it, create the
 // account (with the setup code from the installer), pick a look; then straight into the console, logged in.
 export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone: () => void }) {
-  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
+  // Shown once, on the screen between the account and the look.
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState(status.deviceName ?? '');
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
@@ -25,7 +28,8 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
     if (password !== again) return setError('The two passwords do not match.');
     setBusy(true);
     try {
-      await api.setup({ code: code.replace(/\D/g, ''), username: username.trim(), password, ...(deviceName.trim() ? { deviceName: deviceName.trim() } : {}) });
+      const r = await api.setup({ code: code.replace(/\D/g, ''), username: username.trim(), password, ...(deviceName.trim() ? { deviceName: deviceName.trim() } : {}) });
+      setRecoveryKey(r.recoveryKey);
       setStep(2);
     } catch (err) {
       setError(err instanceof ApiError ? `${err.message}. ${err.nextAction}` : String(err));
@@ -43,7 +47,7 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
           <h1>Harbor</h1>
         </div>
         <ol className="setup-steps" aria-label="Steps">
-          {['Name it', 'Your account', 'Your look'].map((label, i) => (
+          {['Name it', 'Your account', 'Recovery key', 'Your look'].map((label, i) => (
             <li key={label} className={i === step ? 'current' : i < step ? 'done' : ''} aria-current={i === step ? 'step' : undefined}>
               {label}
             </li>
@@ -118,6 +122,17 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
           </form>
         )}
         {step === 2 && (
+          <div className="stack">
+            <h2 id="setup-h">Your recovery key</h2>
+            <p className="muted small">
+              Harbor encrypts every app you install. These 12 words are the master key to all of them: they open your apps on a new machine even if this one
+              is lost, stolen or wiped. Harbor stores them only behind your password, so this is the one time you will see them. Write them on paper and keep
+              them somewhere safe, away from this machine.
+            </p>
+            {recoveryKey && <RecoveryCard words={recoveryKey} title="Your Harbor recovery key." note="It opens every app this Harbor encrypts, on any machine." onDismiss={() => setStep(3)} />}
+          </div>
+        )}
+        {step === 3 && (
           <div className="stack">
             <h2 id="setup-h">Make it yours</h2>
             <p className="muted small">Pick a wallpaper (you can change it, or let Harbor rotate photos daily, in Settings → Appearance).</p>

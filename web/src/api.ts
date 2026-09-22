@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, SetupRequest, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
 import { isMockUi, mockApi } from './mock/api';
 
 export class ApiError extends Error {
@@ -95,8 +95,8 @@ const realApi = {
   currentToken: (): string | null => token,
   // first-run setup (open routes)
   setupStatus: () => call<SetupStatusDto>('GET', '/v1/setup'),
-  async setup(req: SetupRequest): Promise<SessionDto> {
-    const s = await call<SessionDto>('POST', '/v1/setup', req);
+  async setup(req: SetupRequest): Promise<SetupResultDto> {
+    const s = await call<SetupResultDto>('POST', '/v1/setup', req);
     token = s.token;
     return s;
   },
@@ -176,6 +176,7 @@ const realApi = {
   systemHost: () => call<SystemHostDto>('GET', '/v1/system/host'),
   // security, device, logs
   security: () => call<SecurityDto>('GET', '/v1/account/security'),
+  rotateRecoveryKey: (password: string) => call<RecoveryKeyRotationDto>('POST', '/v1/account/recovery-key', { password }),
   totpSetup: () => call<TotpSetupDto>('POST', '/v1/account/totp/setup', {}),
   totpEnable: (code: string) => call<void>('POST', '/v1/account/totp/enable', { code }),
   totpDisable: (password: string) => call<void>('POST', '/v1/account/totp/disable', { password }),

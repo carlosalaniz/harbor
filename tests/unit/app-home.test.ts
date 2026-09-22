@@ -12,6 +12,7 @@ import {
   scanAppHomes,
   sealPayload,
   unlockAppHome,
+  stampInstallationRecovery,
   unwrapMasterKeyForMachine,
   verifyPassphrase,
   wrapMasterKeyForMachine,
@@ -33,7 +34,8 @@ async function makeHome(passphrase = 'correct horse passphrase') {
     passphrase,
     harborVersion: '0.13.0',
   });
-  return { parent, descriptor, masterKey, recoveryKey };
+  // makeHome always elects a passphrase, so the per-app card always exists.
+  return { parent, descriptor, masterKey, recoveryKey: recoveryKey! };
 }
 
 describe('app homes', () => {
@@ -307,3 +309,90 @@ describe('cross-machine portability (non-negotiable)', () => {
     zeroKey(key);
   });
 });
+
+// The Harbor recovery key (decision 105): one card per installation, added as
+// a third envelope on every home this Harbor creates. Per-app words exist only
+// where the operator elected their own passphrase.
+describe('Harbor recovery key (installation-wide envelope)', () => {
+  const HARBOR_CARD = 'abandon ability able about above absent absorb abstract absurd abuse access accident';
+  const OTHER_CARD = 'zebra zone zoo zero youth yellow year wrong write worth world work';
+
+  async function make(parent: string, opts: { passphrase?: string; card?: string } = {}) {
+    return createAppHome({
+      parentDir: parent,
+      name: 'app',
+      instanceId: INSTANCE,
+      packageId: 'immich',
+      packageRevision: '3',
+      displayName: 'Immich',
+      ...(opts.passphrase === undefined ? {} : { passphrase: opts.passphrase }),
+      ...(opts.card === undefined ? {} : { installationRecoveryKey: opts.card }),
+      harborVersion: '0.17.0',
+    });
+  }
+
+  it('a default-key home gets the Harbor card and NO per-app words', async () => {
+    const { descriptor, masterKey, recoveryKey } = await make(tempDir('harbor-inst-'), { card: HARBOR_CARD });
+    try {
+      expect(recoveryKey).toBeNull();
+      expect(descriptor.manifest.encryption.recovery).toBeUndefined();
+      expect(descriptor.manifest.encryption.installation).toBeDefined();
+      const viaCard = await unlockAppHome(descriptor.home, HARBOR_CARD);
+      try {
+        expect(viaCard.equals(masterKey)).toBe(true);
+      } finally {
+        zeroKey(viaCard);
+      }
+      // The card itself never lands in the manifest, only its envelope.
+      expect(readFileSync(path.join(descriptor.home, 'manifest.json'), 'utf8')).not.toContain(HARBOR_CARD);
+    } finally {
+      zeroKey(masterKey);
+    }
+  });
+
+  it('a custom-passphrase home carries all three ways in, and each opens it alone', async () => {
+    const { descriptor, masterKey, recoveryKey } = await make(tempDir('harbor-inst-'), { passphrase: 'correct horse passphrase', card: HARBOR_CARD });
+    const expected = Buffer.from(masterKey);
+    zeroKey(masterKey);
+    expect(recoveryKey).not.toBeNull();
+    expect(descriptor.manifest.encryption.recovery).toBeDefined();
+    expect(descriptor.manifest.encryption.installation).toBeDefined();
+    for (const secret of ['correct horse passphrase', recoveryKey!, HARBOR_CARD]) {
+      const key = await unlockAppHome(descriptor.home, secret);
+      try {
+        expect(key.equals(expected)).toBe(true);
+      } finally {
+        zeroKey(key);
+      }
+    }
+    // Another Harbor's card does not open it, and the error names the passphrase.
+    await expect(unlockAppHome(descriptor.home, OTHER_CARD)).rejects.toThrowError(/wrong passphrase/);
+  });
+
+  it('adopt re-stamps the envelope: the new Harbor card opens it, the old one stops', async () => {
+    const { descriptor, masterKey } = await make(tempDir('harbor-inst-'), { passphrase: 'correct horse passphrase', card: HARBOR_CARD });
+    const expected = Buffer.from(masterKey);
+    try {
+      await stampInstallationRecovery(descriptor.home, masterKey, OTHER_CARD);
+    } finally {
+      zeroKey(masterKey);
+    }
+    const viaNew = await unlockAppHome(descriptor.home, OTHER_CARD);
+    try {
+      expect(viaNew.equals(expected)).toBe(true);
+    } finally {
+      zeroKey(viaNew);
+    }
+    await expect(unlockAppHome(descriptor.home, HARBOR_CARD)).rejects.toThrowError(/wrong passphrase/);
+    // The app's own passphrase is untouched by the re-stamp.
+    expect(await verifyPassphrase(descriptor.home, 'correct horse passphrase')).toBe(true);
+  });
+
+  it('a home written without a card reads fine (older Harbor, and older Harbors read ours)', async () => {
+    const { descriptor, masterKey } = await make(tempDir('harbor-inst-'), { passphrase: 'correct horse passphrase' });
+    zeroKey(masterKey);
+    expect(descriptor.manifest.encryption.installation).toBeUndefined();
+    expect(await verifyPassphrase(descriptor.home, 'correct horse passphrase')).toBe(true);
+  });
+});
+

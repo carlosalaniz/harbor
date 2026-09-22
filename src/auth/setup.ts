@@ -5,6 +5,7 @@ import { HarborError } from '../errors.js';
 import type { Repo } from '../state/repo.js';
 import { hashPassword, validatePasswordPolicy } from './password.js';
 import { createSealedMachineKey, zeroMachineKey } from './machine-key.js';
+import { INSTALLATION_RECOVERY_SETTING, newInstallationRecoveryKey, sealInstallationRecovery } from '../storage/installation-recovery.js';
 import type { SessionService } from './sessions.js';
 
 // First-run setup from the browser. While no administrator exists the daemon is "unclaimed": one open
@@ -36,7 +37,7 @@ export class SetupService {
     return this.repo.administrator() === null;
   }
   // Create the administrator, name the machine, log the browser in. One shot: afterwards the route is gone.
-  async claim(req: { code: string; username: string; password: string; deviceName?: string }, client: string): Promise<{ token: string; expiresAt: string }> {
+  async claim(req: { code: string; username: string; password: string; deviceName?: string }, client: string): Promise<{ token: string; expiresAt: string; recoveryKey: string }> {
     if (!this.needed()) throw new HarborError('INVALID_STATE', 'this Harbor already has an administrator', { nextAction: 'Log in instead.' });
     const now = Date.now();
     if (now < this.blockedUntil) throw new HarborError('RATE_LIMITED', 'too many wrong setup codes', { nextAction: 'Wait a minute and try again with the code shown by the installer.' });
@@ -62,17 +63,24 @@ export class SetupService {
     // login below lands straight in AFU. The live key is held by the session
     // layer's unlock step, not here.
     const { sealed, machineKey } = await createSealedMachineKey(req.password);
+    // The Harbor recovery key is issued here, once, and shown once by the
+    // wizard. Stored only wrapped under the machine key, so every later app
+    // install can stamp its envelope without asking for the card again.
+    const recoveryKey = newInstallationRecoveryKey();
     try {
+      const storedRecovery = sealInstallationRecovery(recoveryKey, machineKey, new Date());
       this.repo.transaction(() => {
         if (this.repo.administrator()) throw new HarborError('INVALID_STATE', 'this Harbor already has an administrator');
         this.repo.setAdministrator({ username, passwordHash: hashed.hash, salt: hashed.salt, params: hashed.params });
         this.repo.setSetting('security.machineKey', sealed);
+        this.repo.setSetting(INSTALLATION_RECOVERY_SETTING, storedRecovery);
         if (deviceName) this.repo.setSetting('device.name', deviceName);
       });
     } finally {
       zeroMachineKey(machineKey);
     }
     rmSync(path.join(this.stateDir, SETUP_CODE_FILE), { force: true });
-    return this.sessions.login(username, req.password, client);
+    const session = await this.sessions.login(username, req.password, client);
+    return { ...session, recoveryKey };
   }
 }

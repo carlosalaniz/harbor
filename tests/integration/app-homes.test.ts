@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto } from '../../src/contracts/api.js';
+import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto, RecoveryKeyRotationDto, SecurityDto } from '../../src/contracts/api.js';
 import Database from 'better-sqlite3';
 import { FakeCryptoProvider } from '../../src/storage/crypto-provider.js';
 import { ADMIN, startHarness, type Harness } from './harness.js';
@@ -13,6 +13,8 @@ import { ADMIN, startHarness, type Harness } from './harness.js';
 // passphrase. The passphrase travels with the submission, never in the plan.
 let h: Harness;
 let drive: string;
+// The installation's 12 words, captured once from the first encrypted install.
+let harborCard = '';
 // One fake kernel for the whole file: `sealed` is what fscrypt would have on
 // disk, `open` is which keys the kernel holds this boot. A reboot is
 // simulated by clearing `open` before restarting the daemon.
@@ -75,8 +77,21 @@ describe('install to an encrypted app home', () => {
     const sub = await h.api.expect<{ operationId: string }>(202, 'POST', '/v1/operations', { planId: p.id }, { 'idempotency-key': 'home-default-key-1' });
     const op = await h.api.waitOperation(sub.operationId);
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    // This harness enrolled its administrator from the CLI, so no Harbor
+    // recovery key existed yet: the first encrypted install issues one and
+    // shows it exactly once, in this operation's result.
+    harborCard = op.result?.['installationRecoveryKey'] as string;
+    expect(harborCard.split(' ')).toHaveLength(12);
+    expect(op.result?.['installationRecoveryNote']).toMatch(/opens every app this Harbor encrypts/);
+    // A default-key home has no passphrase to forget, so it gets no per-app
+    // words: the Harbor card is its one way back.
+    expect(op.result?.['recoveryKey']).toBeUndefined();
     const got = (await h.api.instances()).find((i) => i.name === 'defaultkey')!;
     expect(got.home).toMatchObject({ encrypted: true, state: 'unlocked', defaultKey: true, sealed: true });
+    const dkManifest = JSON.parse(readFileSync(path.join(got.home!.path, 'manifest.json'), 'utf8'));
+    expect(dkManifest.encryption.recovery).toBeUndefined();
+    expect(dkManifest.encryption.installation).toBeDefined();
+    expect(JSON.stringify(dkManifest)).not.toContain(harborCard);
     // The volumes dir was kernel-sealed BEFORE any volume was rooted inside.
     expect(crypto.calls.filter((c) => c.op === 'sealApp').map((c) => c.home)).toContain(got.home!.path);
     expect(kernelUnlocked(got.home!.path)).toBe(true);
@@ -102,6 +117,10 @@ describe('install to an encrypted app home', () => {
     driveInstanceId = inst.id;
     expect(inst.installState).toBe('installed');
     expect(inst.home).toMatchObject({ encrypted: true, state: 'unlocked', sealed: true });
+    // Own passphrase => own words, on top of the Harbor card. The card itself
+    // is issued once, so this later install does not show it again.
+    expect((op.result?.['recoveryKey'] as string).split(' ')).toHaveLength(12);
+    expect(op.result?.['installationRecoveryKey']).toBeUndefined();
     expect(crypto.calls.filter((c) => c.op === 'sealApp').map((c) => c.home)).toContain(inst.home!.path);
   });
 
@@ -302,3 +321,58 @@ describe('volumes rooted in the home', () => {
     expect(Object.keys(runtime.volumes.data)).toMatchObject({});
   });
 });
+
+// One card per Harbor opens every app it encrypted, so a dead machine needs
+// one piece of paper rather than one per app (decision 105).
+describe('the Harbor recovery key', () => {
+  it('opens a custom-passphrase app that this boot never unlocked', async () => {
+    const inst = (await h.api.instances()).find((i) => i.packageId === 'homevol')!;
+    // Forget everything this machine knows about the app's key.
+    crypto.open.clear();
+    await h.restart();
+    await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/lock`, {}).catch(() => undefined);
+    const locked = (await h.api.instances()).find((i) => i.id === inst.id)!;
+    expect(locked.home).toMatchObject({ state: 'locked' });
+    // Neither the app's passphrase nor its own words are typed here: the
+    // Harbor card alone opens it.
+    const opened = await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/unlock`, { passphrase: harborCard });
+    expect(opened.home).toMatchObject({ state: 'unlocked' });
+    // A card from some other Harbor does not.
+    await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/lock`, {}).catch(() => undefined);
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', `/v1/instances/${inst.id}/unlock`, { passphrase: 'zebra zone zoo zero youth yellow year wrong write worth world work' });
+  });
+
+  it('is reported by date only, never by value, and is not stored in the clear', async () => {
+    const sec = await h.api.expect<SecurityDto>(200, 'GET', '/v1/account/security');
+    expect(sec.recoveryKey).not.toBeNull();
+    expect(JSON.stringify(sec)).not.toContain(harborCard);
+    const db = new Database(path.join(h.stateDir, 'harbor.db'), { readonly: true });
+    try {
+      const rows = db.prepare('SELECT value_json FROM settings').all() as { value_json: string }[];
+      expect(rows.some((r) => r.value_json.includes('"wrapped"'))).toBe(true);
+      for (const r of rows) expect(r.value_json).not.toContain(harborCard);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('replacing it re-stamps reachable apps, retires the old card, and names what it could not reach', async () => {
+    const before = harborCard;
+    const rot = await h.api.expect<RecoveryKeyRotationDto>(200, 'POST', '/v1/account/recovery-key', { password: ADMIN.password });
+    expect(rot.recoveryKey.split(' ')).toHaveLength(12);
+    expect(rot.recoveryKey).not.toBe(before);
+    expect(rot.restamped.length).toBeGreaterThan(0);
+    const inst = (await h.api.instances()).find((i) => i.packageId === 'homevol')!;
+    if (rot.restamped.includes(inst.displayName ?? inst.name)) {
+      await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/lock`, {}).catch(() => undefined);
+      await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/unlock`, { passphrase: rot.recoveryKey });
+      await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${inst.id}/lock`, {}).catch(() => undefined);
+      // The retired card no longer opens a re-stamped app.
+      await h.api.expectError(422, 'INVALID_REQUEST', 'POST', `/v1/instances/${inst.id}/unlock`, { passphrase: before });
+    }
+    // A wrong password never rotates.
+    await h.api.expectError(401, 'UNAUTHENTICATED', 'POST', '/v1/account/recovery-key', { password: 'not my password' });
+    harborCard = rot.recoveryKey;
+  });
+});
+

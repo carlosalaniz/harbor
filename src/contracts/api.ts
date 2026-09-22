@@ -487,6 +487,13 @@ export interface SetupStatusDto {
   tailscale: { installed: boolean; loggedIn: boolean };
   version: string;
 }
+export interface SetupResultDto {
+  token: string;
+  expiresAt: string;
+  // The Harbor recovery key: 12 words, shown once by the wizard and never
+  // again. It opens every app this Harbor encrypts, on any machine.
+  recoveryKey: string;
+}
 export interface SetupRequest {
   code: string; // the setup code printed by the installer
   username: string;
@@ -499,6 +506,17 @@ export interface SecurityDto {
   username: string; // the enrolled administrator (shown in the Home greeting)
   twoFactor: boolean;
   pending: boolean;
+  // The Harbor recovery key: when it was issued, never the words themselves.
+  // Null on an installation that predates it; the next encrypted install
+  // mints one and shows it once.
+  recoveryKey: { createdAt: string } | null;
+}
+export interface RecoveryKeyRotationDto {
+  recoveryKey: string; // the new 12 words, shown once
+  // App homes re-stamped with the new card, and the ones that could not be
+  // reached (drive unplugged): those keep opening with the OLD card.
+  restamped: string[];
+  unreachable: string[];
 }
 export interface TotpSetupDto {
   secret: string; // base32, for typing into an authenticator

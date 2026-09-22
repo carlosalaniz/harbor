@@ -3,6 +3,7 @@ import type { Repo } from '../state/repo.js';
 import { HarborError } from '../errors.js';
 import { addSeconds, rfc3339, type Clock, type Ids } from '../util.js';
 import { hashPassword, validatePasswordPolicy, verifyPassword } from './password.js';
+import { INSTALLATION_RECOVERY_SETTING } from '../storage/installation-recovery.js';
 import { newTotpSecret, otpauthUrl, verifyTotp } from './totp.js';
 import { unsealMachineKey, zeroMachineKey, type SealedMachineKey } from './machine-key.js';
 import type { MachineKeyHolder } from './machine-holder.js';
@@ -51,7 +52,12 @@ export class SessionService {
   // BFU -> AFU: the first successful login after boot unseals the machine key
   // into memory. Best-effort: a missing/corrupt blob (or no app homes yet)
   // never fails the login itself.
-  private unlockMachineKey(password: string): void {
+  // BFU -> AFU. AWAITED on purpose: a login that returns before the machine
+  // key is in memory lets the very next request (an install, say) run without
+  // it, so a default-key home would be created with no machine wrapping and
+  // would never unlock silently again. One extra scrypt on the login path is
+  // the price of that guarantee. A damaged blob never fails the login itself.
+  private async unlockMachineKey(password: string): Promise<void> {
     if (!this.machineKey) return;
     if (this.machineKey.unlocked) {
       this.machineKey.announceLogin(password);
@@ -59,19 +65,19 @@ export class SessionService {
     }
     const sealed = this.repo.setting<SealedMachineKey>('security.machineKey');
     if (!sealed) return;
-    void unsealMachineKey(sealed, password)
-      .then((key) => {
-        try {
-          this.machineKey!.hold(key);
-        } finally {
-          zeroMachineKey(key);
-        }
-        this.machineKey!.announceLogin(password);
-      })
-      .catch(() => {
-        // Wrong-password logins never reach here (they fail above); a damaged
-        // blob stays damaged until the next login retry. Stay BFU.
-      });
+    try {
+      const key = await unsealMachineKey(sealed, password);
+      try {
+        this.machineKey.hold(key);
+      } finally {
+        zeroMachineKey(key);
+      }
+    } catch {
+      // Wrong-password logins never reach here (they fail above); a damaged
+      // blob stays damaged until the next login retry. Stay BFU.
+      return;
+    }
+    this.machineKey.announceLogin(password);
   }
 
   private windowFor(client: string): FailureWindow {
@@ -118,7 +124,7 @@ export class SessionService {
     const ttl = opts.remember ? 30 * 24 * 3600 : this.ttlSeconds;
     const expiresAt = rfc3339(addSeconds(this.clock.now(), ttl));
     this.repo.insertSession(hashToken(token), username, expiresAt, opts.remember ? 'remember' : 'session');
-    this.unlockMachineKey(password);
+    await this.unlockMachineKey(password);
     return { token, expiresAt };
   }
 
@@ -152,8 +158,15 @@ export class SessionService {
   // Password change by the logged-in administrator: current password required, policy applied,
   // every other session revoked so a stolen token does not outlive the change.
   // ---- two-factor (TOTP): setup creates a pending secret; enable confirms it with a live code; disable needs the password.
-  security(): { username: string; twoFactor: boolean; pending: boolean } {
-    return { username: this.repo.administrator()?.username ?? 'admin', twoFactor: this.repo.setting('security.totp') !== null, pending: this.repo.setting('security.totp.pending') !== null };
+  security(): { username: string; twoFactor: boolean; pending: boolean; recoveryKey: { createdAt: string } | null } {
+    const card = this.repo.setting<{ createdAt?: string }>(INSTALLATION_RECOVERY_SETTING);
+    return {
+      username: this.repo.administrator()?.username ?? 'admin',
+      twoFactor: this.repo.setting('security.totp') !== null,
+      pending: this.repo.setting('security.totp.pending') !== null,
+      // Only when it was issued, never the words: they were shown once.
+      recoveryKey: card?.createdAt ? { createdAt: card.createdAt } : null,
+    };
   }
   setupTotp(issuer: string): { secret: string; otpauthUrl: string } {
     if (this.repo.setting('security.totp')) throw new HarborError('INVALID_STATE', 'two-factor authentication is already on', { nextAction: 'Turn it off first to set up a new authenticator.' });
@@ -171,6 +184,13 @@ export class SessionService {
       this.repo.setSetting('security.totp', { secret: pending.secret, enabledAt: rfc3339(this.clock.now()), lastStep: step });
       this.repo.deleteSetting('security.totp.pending');
     });
+  }
+  /** Confirm the operator's password before a sensitive account action. */
+  async verifyAdminPassword(password: string): Promise<void> {
+    const admin = this.repo.administrator();
+    if (!admin) throw new HarborError('STATE_UNAVAILABLE', 'no administrator enrolled');
+    const ok = await verifyPassword(password, { hash: admin.passwordHash, salt: admin.salt, params: admin.params });
+    if (!ok) throw new HarborError('UNAUTHENTICATED', 'password is wrong', { nextAction: 'Type your password again.' });
   }
   async disableTotp(password: string): Promise<void> {
     const admin = this.repo.administrator();

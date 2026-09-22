@@ -230,14 +230,23 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: integration 131 (+2: same-password install unlocks at login while the other passphrase stays locked, DB rows never contain the password; backfill on login for a pre-existing same-password home), unit 149, e2e 25
 - [x] Docs: decision 104, guide §4a2, AI_CONTEXT
 
+## Phase 30 — two recovery scopes: one card per Harbor, plus per-app words (2026-09-22, v0.17.0-beta.4) ✅
+- [x] `encryption.installation`: every app home's master key wrapped a third way under the installation's 12-word card, so ONE paper restores every app on a new machine (`src/storage/installation-recovery.ts`, stored only wrapped under the machine key)
+- [x] Per-app words now only for homes given a custom passphrase (the hand-over-one-app card); default-key homes carry none. `unlockAppHome` tries passphrase → per-app → Harbor card with one error shape
+- [x] Minted at first-run setup (new wizard step, gated on "I wrote it down") or lazily at the first encrypted install for CLI/bootstrap enrollments, shown once in the operation result
+- [x] Adopt re-stamps the envelope with the adopting Harbor's card; `POST /v1/account/recovery-key` (password required) replaces it, re-stamps every reachable home and names the unreachable ones; `SecurityDto.recoveryKey` reports the date only
+- [x] Fixed a real race: `login` now AWAITS the machine-key unseal, so an install right after login can no longer be created without its machine wrapping
+- [x] Tests: unit 157 (installation-recovery round-trip + refusals, three-envelope unlock, adopt re-stamp), integration 137 (card issued once, default-key home has no per-app words, card opens a never-unlocked app, rotation retires the old card, nothing in the clear in the DB), e2e 25 (wizard step + Settings card)
+- [x] Docs: decision 105, guide §4a2, AI_CONTEXT, openapi 76 paths
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 149 passed |
-| `pnpm test:integration` (fake adapter) | 131 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 157 passed |
+| `pnpm test:integration` (fake adapter) | 137 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

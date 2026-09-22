@@ -11,7 +11,9 @@ afterAll(async () => h.close());
 
 describe('two-factor login', () => {
   it('setup → enable with a live code → login needs the code → replay refused → disable with the password', async () => {
-    expect(await h.api.expect<SecurityDto>(200, 'GET', '/v1/account/security')).toEqual({ username: ADMIN.username, twoFactor: false, pending: false });
+    // A CLI/bootstrap enrollment mints no Harbor recovery key: the first
+    // encrypted install issues one and shows it once (see app-homes).
+    expect(await h.api.expect<SecurityDto>(200, 'GET', '/v1/account/security')).toEqual({ username: ADMIN.username, twoFactor: false, pending: false, recoveryKey: null });
     await h.api.expect(200, 'PUT', '/v1/system/name', { name: '  Living room box ' });
     const setup = await h.api.expect<TotpSetupDto>(200, 'POST', '/v1/account/totp/setup', {});
     expect(setup.secret).toMatch(/^[A-Z2-7]{32}$/);
@@ -22,7 +24,7 @@ describe('two-factor login', () => {
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/account/totp/enable', { code: '000000' });
     const now = () => h.clock.now().getTime();
     await h.api.expect(204, 'POST', '/v1/account/totp/enable', { code: totpCode(setup.secret, now()) });
-    expect(await h.api.expect<SecurityDto>(200, 'GET', '/v1/account/security')).toEqual({ username: ADMIN.username, twoFactor: true, pending: false });
+    expect(await h.api.expect<SecurityDto>(200, 'GET', '/v1/account/security')).toEqual({ username: ADMIN.username, twoFactor: true, pending: false, recoveryKey: null });
     // login: password alone → TOTP_REQUIRED (401); wrong code → UNAUTHENTICATED; right code → session
     await h.api.expectError(401, 'TOTP_REQUIRED', 'POST', '/v1/sessions', { username: ADMIN.username, password: ADMIN.password }, { authorization: '' });
     await h.api.expectError(401, 'UNAUTHENTICATED', 'POST', '/v1/sessions', { username: ADMIN.username, password: ADMIN.password, code: '000000' }, { authorization: '' });

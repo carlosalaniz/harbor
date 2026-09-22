@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
 import type { AppearanceDto, DomainsDto, FoundAppDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
-import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, appLabel } from '../components';
+import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, RecoveryCard, appLabel } from '../components';
 import { Mark, PencilIcon } from '../icons';
 import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
@@ -80,7 +80,7 @@ const SECTION_ICON: Record<Section, ReactNode> = {
 };
 const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: 'overview', label: 'Overview', blurb: 'This machine at a glance' },
-  { id: 'account', label: 'Account', blurb: 'Password and session' },
+  { id: 'account', label: 'Account', blurb: 'Password, recovery key and sessions' },
   { id: 'remote', label: 'Remote access', blurb: 'Reach Harbor from your other devices' },
   { id: 'public', label: 'Public addresses', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', blurb: 'Disks and folders your apps use' },
@@ -472,6 +472,96 @@ function Overview({ c, go }: { c: Console; go: (s: Section) => void }) {
   );
 }
 
+// The Harbor recovery key: one card per installation that opens every app it
+// encrypts. Shown once at setup, so Settings can only say when it was issued
+// and offer to replace it. Replacing re-stamps every app Harbor can reach
+// right now; an unplugged drive keeps opening with the old card, and the
+// result says which ones.
+function RecoveryKey() {
+  const [sec, setSec] = useState<SecurityDto | null>(null);
+  const [password, setPassword] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [fresh, setFresh] = useState<{ words: string; restamped: string[]; unreachable: string[] } | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const load = useCallback(() => api.security().then(setSec, () => setSec(null)), []);
+  useEffect(() => void load(), [load]);
+  const rotate = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.rotateRecoveryKey(password);
+      setPassword('');
+      setAsking(false);
+      setFresh({ words: r.recoveryKey, restamped: r.restamped, unreachable: r.unreachable });
+      await load();
+    } catch (err) {
+      setMsg(err instanceof ApiError ? `${err.message}. ${err.nextAction}` : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card" aria-labelledby="rec-h">
+      <h2 id="rec-h">Recovery key</h2>
+      <p className="muted small">
+        Twelve words that open every app this Harbor encrypts, on any machine, even if this one is lost. Harbor showed them once when you set it up and keeps
+        them only behind your password, so it cannot show them again. Replace them if the paper is lost or someone else has seen it.
+      </p>
+      {sec && !sec.recoveryKey && (
+        <p className="muted small">
+          No recovery key yet on this Harbor. The next app you install encrypted issues one and shows it once.
+        </p>
+      )}
+      {sec?.recoveryKey && <p className="muted small">Issued {new Date(sec.recoveryKey.createdAt).toLocaleDateString()}.</p>}
+      {fresh && (
+        <>
+          <RecoveryCard
+            words={fresh.words}
+            title="Your new Harbor recovery key."
+            note={`It replaces the previous one${fresh.restamped.length ? ` for ${fresh.restamped.join(', ')}` : ''}.`}
+            onDismiss={() => setFresh(null)}
+          />
+          {fresh.unreachable.length > 0 && (
+            <p className="warn" role="alert">
+              Still opening with the OLD key: {fresh.unreachable.join(', ')}. Harbor could not reach {fresh.unreachable.length === 1 ? 'it' : 'them'} just now.
+              Plug the drive in, or unlock the app, then replace the key again. Keep the old card until then.
+            </p>
+          )}
+        </>
+      )}
+      {msg && (
+        <p className="error" role="alert">
+          {msg}
+        </p>
+      )}
+      {asking ? (
+        <form className="stack" onSubmit={rotate}>
+          <label>
+            Your Harbor password
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required aria-label="Password to replace the recovery key" />
+          </label>
+          <div className="row">
+            <button className="btn primary" type="submit" disabled={busy || !password}>
+              {busy ? 'Replacing…' : 'Replace it'}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => (setAsking(false), setPassword(''), setMsg(null))}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="row">
+          <button className="btn" onClick={() => setAsking(true)} aria-label="Replace the recovery key">
+            Replace it…
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function Account() {
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -498,6 +588,7 @@ function Account() {
   return (
     <>
       <TwoFactor />
+      <RecoveryKey />
       <section className="card" aria-labelledby="pw-h">
         <h2 id="pw-h">Change password</h2>
         <p className="muted small">Use at least 8 characters. Every other logged-in browser or CLI is signed out when you change it.</p>

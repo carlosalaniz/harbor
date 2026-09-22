@@ -401,6 +401,15 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     },
   );
 
+  app.post(
+    '/v1/account/recovery-key',
+    { preHandler: requireAuth, schema: { description: 'Replace the Harbor recovery key: mint 12 new words (shown once), re-stamp every reachable app home, and name the ones still opening with the old card. Password required.', body: { type: 'object', additionalProperties: false, required: ['password'], properties: { password: { type: 'string', minLength: 1, maxLength: 1024 } } } } },
+    async (req) => {
+      await sessions.verifyAdminPassword((req.body as { password: string }).password);
+      return service.rotateInstallationRecoveryKey();
+    },
+  );
+
   // --- device name
   app.put(
     '/v1/system/name',

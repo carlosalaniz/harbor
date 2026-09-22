@@ -65,12 +65,22 @@ export interface AppHomeManifest {
   // creation, travels with the folder on restore/replacement.
   driveId: string;
   vault: string; // encrypted payload directory name (relative, single segment)
-  // Format 2 (dual-key): the same master key wrapped twice — once under the
-  // changeable operator passphrase, once under an immutable 12-word recovery
-  // key shown once at install. Either unwraps. Format 1 homes carry only
-  // `passphrase` and read fine (unlock tries it); change only touches
-  // `passphrase`, never `recovery`.
-  encryption: { algorithm: 'aes-256-gcm'; passphrase: AppHomeScryptEnvelope; recovery?: AppHomeScryptEnvelope };
+  // The same master key, wrapped once per way in. Any of them unwraps it.
+  //   passphrase   the operator's own passphrase, or (for default-key homes)
+  //                a Harbor-generated secret nobody ever sees. Changeable.
+  //   recovery     the app's own 12 words, shown once at install. Only for
+  //                homes the operator gave a passphrase: it is the "I forgot
+  //                THIS app's passphrase" card, and the one secret you can
+  //                hand over with a drive without exposing the rest of this
+  //                Harbor. Immutable except by explicit rotation.
+  //   installation the Harbor recovery key: one card per installation, issued
+  //                at first-run setup, opening every home this Harbor made.
+  //                Re-stamped on adopt so the Harbor that owns the app is
+  //                always the one whose card works.
+  // Format 1 homes carry only `passphrase` and read fine. All three are
+  // additive, so an older Harbor still reads a newer home through the
+  // passphrase or the per-app words.
+  encryption: { algorithm: 'aes-256-gcm'; passphrase: AppHomeScryptEnvelope; recovery?: AppHomeScryptEnvelope; installation?: AppHomeScryptEnvelope };
 }
 
 export interface AppHomeDescriptor {
@@ -171,26 +181,24 @@ function parseManifest(raw: Buffer): AppHomeManifest {
   unhex(env['nonce'] as string, 'encryption.nonce');
   unhex(env['wrappedKey'] as string, 'encryption.wrappedKey');
   unhex(env['tag'] as string, 'encryption.tag');
-  // Format 2 recovery envelope (optional; absent on format 1 homes). When
-  // present it must be well-formed too.
-  if (enc['recovery'] !== undefined) {
-    if (typeof enc['recovery'] !== 'object' || enc['recovery'] === null) {
+  // Optional extra envelopes (absent on format 1 homes, and `recovery` is
+  // absent on default-key homes). When present they must be well-formed too.
+  for (const kind of ['recovery', 'installation'] as const) {
+    if (enc[kind] === undefined) continue;
+    if (typeof enc[kind] !== 'object' || enc[kind] === null) {
       throw new HarborError('INVALID_PACKAGE', 'app home manifest.json has an unsupported encryption envelope', {
         nextAction: 'Update Harbor to a version that understands this app home, then try again.',
       });
     }
-    const rec = enc['recovery'] as Record<string, unknown>;
+    const rec = enc[kind] as Record<string, unknown>;
     for (const f of ['salt', 'nonce', 'wrappedKey', 'tag'] as const) {
       if (typeof rec[f] !== 'string' || (rec[f] as string).length === 0) {
-        throw new HarborError('INVALID_PACKAGE', `app home manifest.json is missing encryption.recovery.${f}`, {
+        throw new HarborError('INVALID_PACKAGE', `app home manifest.json is missing encryption.${kind}.${f}`, {
           nextAction: 'This folder is not a Harbor app home Harbor can read. Adopt the drive it came from, or restore the folder from backup.',
         });
       }
+      unhex(rec[f] as string, `encryption.${kind}.${f}`);
     }
-    unhex(rec['salt'] as string, 'encryption.recovery.salt');
-    unhex(rec['nonce'] as string, 'encryption.recovery.nonce');
-    unhex(rec['wrappedKey'] as string, 'encryption.recovery.wrappedKey');
-    unhex(rec['tag'] as string, 'encryption.recovery.tag');
   }
   return manifest;
 }
@@ -243,6 +251,10 @@ export interface CreateAppHomeInput {
   // homes (data folder): the envelope wraps a Harbor-generated secret the
   // operator never sees — silent unlock, nothing to remember, not portable.
   passphrase?: string;
+  // The Harbor recovery key (12 words) of the installation creating this
+  // home. Adds the `installation` envelope so one card opens every app.
+  // Omitted only when this Harbor has no card yet (pre-setup or BFU).
+  installationRecoveryKey?: string;
   harborVersion: string;
   now?: Date;
 }
@@ -250,10 +262,10 @@ export interface CreateAppHomeInput {
 export interface CreatedAppHome {
   descriptor: AppHomeDescriptor;
   masterKey: Buffer;
-  // The 12-word recovery key (space-joined), returned once at creation.
-  // The server shows it once and never stores it; the operator writes it
-  // down. Either the passphrase or this key unwraps the master key.
-  recoveryKey: string;
+  // The app's own 12-word recovery key (space-joined), returned once at
+  // creation and never stored. Null for default-key homes: they have no
+  // passphrase to forget, so the Harbor recovery key is their only card.
+  recoveryKey: string | null;
 }
 
 // 12 words from the vendored BIP-39 list (132 bits of entropy: 12 × 11).
@@ -302,8 +314,11 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<CreatedA
   // data — the 12 words shown once at install always unwrap.
   const effectivePassphrase = input.passphrase ?? `harbor-default-key ${randomBytes(32).toString('hex')}`;
   const envelope = await wrapMasterKey(masterKey, effectivePassphrase);
-  const recoveryKey = generateRecoveryKey();
-  const recoveryEnvelope = await wrapMasterKey(masterKey, recoveryKey);
+  // Own passphrase => own recovery card. Default-key homes get none: there is
+  // nothing to forget, and the Harbor card below already covers them.
+  const recoveryKey = input.passphrase !== undefined ? generateRecoveryKey() : null;
+  const recoveryEnvelope = recoveryKey === null ? null : await wrapMasterKey(masterKey, recoveryKey);
+  const installationEnvelope = input.installationRecoveryKey ? await wrapMasterKey(masterKey, input.installationRecoveryKey) : null;
   const now = input.now ?? new Date();
   const manifest: AppHomeManifest = {
     format: APP_HOME_FORMAT,
@@ -315,7 +330,7 @@ export async function createAppHome(input: CreateAppHomeInput): Promise<CreatedA
     harborVersion: input.harborVersion,
     driveId: randomBytes(16).toString('hex'),
     vault: APP_HOME_VAULT,
-    encryption: { algorithm: 'aes-256-gcm', passphrase: envelope, recovery: recoveryEnvelope },
+    encryption: { algorithm: 'aes-256-gcm', passphrase: envelope, ...(recoveryEnvelope ? { recovery: recoveryEnvelope } : {}), ...(installationEnvelope ? { installation: installationEnvelope } : {}) },
   };
   mkdirSync(home, { recursive: false, mode: 0o700 });
   try {
@@ -374,19 +389,36 @@ export function describeAppHome(home: string): AppHomeDescriptor {
 // The caller zeroes the key when done.
 export async function unlockAppHome(home: string, passphrase: string): Promise<Buffer> {
   const { manifest } = describeAppHome(home);
+  const enc = manifest.encryption;
   try {
-    return await unwrapMasterKey(manifest.encryption.passphrase, passphrase);
+    return await unwrapMasterKey(enc.passphrase, passphrase);
   } catch (e) {
-    const recovery = manifest.encryption.recovery;
-    if (recovery && HarborError.is(e, 'INVALID_REQUEST')) {
+    if (!HarborError.is(e, 'INVALID_REQUEST')) throw e;
+    // The app's own words, then the Harbor card. Either opens it; a miss
+    // falls through to the single passphrase error so a wrong secret never
+    // reveals which envelopes this home carries.
+    for (const alt of [enc.recovery, enc.installation]) {
+      if (!alt) continue;
       try {
-        return await unwrapMasterKey(recovery, passphrase);
+        return await unwrapMasterKey(alt, passphrase);
       } catch {
-        // fall through to the passphrase error below (single error shape)
+        /* try the next envelope */
       }
     }
     throw e;
   }
+}
+
+// Re-stamp the `installation` envelope so the Harbor that owns this app is
+// the one whose recovery card opens it. Called on adopt: the previous
+// machine's card stops working for this home, while the app's own passphrase
+// and per-app words are untouched and keep travelling with the drive.
+export async function stampInstallationRecovery(home: string, masterKey: Buffer, installationRecoveryKey: string): Promise<void> {
+  const norm = normalizeHostPath(home);
+  const { manifest } = describeAppHome(norm);
+  manifest.encryption.installation = await wrapMasterKey(masterKey, installationRecoveryKey);
+  manifest.format = APP_HOME_FORMAT;
+  writeManifest(norm, manifest);
 }
 
 // Change the passphrase (re-wrap the same master key). The old passphrase OR
@@ -534,13 +566,23 @@ export interface MachineWrappedKey {
   tag: string;
 }
 
-export function wrapMasterKeyForMachine(masterKey: Buffer, machineKey: Buffer): MachineWrappedKey {
-  if (masterKey.length !== MASTER_KEY_BYTES) throw new HarborError('INVALID_REQUEST', 'app master key has the wrong length');
+// Wrap arbitrary bytes under the machine key (app master keys, and the
+// Harbor recovery key's words). The blob is JSON-serializable for settings.
+export function wrapSecretForMachine(secret: Buffer, machineKey: Buffer): MachineWrappedKey {
   if (machineKey.length !== MASTER_KEY_BYTES) throw new HarborError('INVALID_REQUEST', 'machine key has the wrong length');
   const nonce = randomBytes(GCM_NONCE_BYTES);
   const cipher = createCipheriv('aes-256-gcm', machineKey, nonce);
-  const wrappedKey = Buffer.concat([cipher.update(masterKey), cipher.final()]);
+  const wrappedKey = Buffer.concat([cipher.update(secret), cipher.final()]);
   return { algorithm: 'aes-256-gcm', nonce: hex(nonce), wrappedKey: hex(wrappedKey), tag: hex(cipher.getAuthTag()) };
+}
+
+export function unwrapSecretForMachine(wrapped: MachineWrappedKey, machineKey: Buffer): Buffer {
+  return unwrapMasterKeyForMachine(wrapped, machineKey);
+}
+
+export function wrapMasterKeyForMachine(masterKey: Buffer, machineKey: Buffer): MachineWrappedKey {
+  if (masterKey.length !== MASTER_KEY_BYTES) throw new HarborError('INVALID_REQUEST', 'app master key has the wrong length');
+  return wrapSecretForMachine(masterKey, machineKey);
 }
 
 export function unwrapMasterKeyForMachine(wrapped: MachineWrappedKey, machineKey: Buffer): Buffer {

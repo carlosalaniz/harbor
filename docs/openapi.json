@@ -1119,6 +1119,37 @@
         }
       }
     },
+    "/v1/account/recovery-key": {
+      "post": {
+        "description": "Replace the Harbor recovery key: mint 12 new words (shown once), re-stamp every reachable app home, and name the ones still opening with the old card. Password required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/system/name": {
       "put": {
         "description": "Name this machine (shown in Settings and on the login page); empty resets to the hostname.",
