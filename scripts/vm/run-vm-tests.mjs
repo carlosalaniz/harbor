@@ -745,6 +745,15 @@ const A09 = step('A09', 'Daemon restart leaves apps running; host reboot returns
   const a = byName('excalidraw');
   const a2 = byName('excalidraw-2'); // stopped in A07
   if (a2.desired !== 'stopped') throw new Error('excalidraw-2 expected stopped from A07');
+  // The sentinel is an A05/A08 fixture; recreate it when a partial rerun
+  // starts at/after A09 so the reboot check below can verify it survived.
+  if (sshTry('docker inspect -f {{.Id}} harbor-test-sentinel').code !== 0) {
+    const image = ssh("jq -r '.images.web.reference' /opt/harbor/catalog/excalidraw/release.json").trim();
+    const used = new Set(listInstances().flatMap((i) => i.endpoints.map((e) => e.hostPort)));
+    let port = 18080;
+    while (used.has(port)) port += 1;
+    ssh(`docker volume create harbor-test-sentinel-data >/dev/null; docker run -d --name harbor-test-sentinel -p 127.0.0.1:${port}:80 --label harbor.test.fixture=sentinel ${image} >/dev/null`);
+  }
   const before = { a: containersOf(a.id), a2: containersOf(a2.id), n8n: containersOf(byName('n8n').id) };
   ssh('systemctl restart harbor');
   await waitFor(async () => (await fetch(`${UI}/healthz`)).ok, { timeoutMs: 60_000, intervalMs: 1000, what: 'daemon after restart' });
@@ -857,6 +866,15 @@ const B04 = step('B04', 'Public exposure of n8n as primary: HTTPS via Let\'s Enc
 const B05 = step('B05', 'Public exposure of BentoPDF with basic protection: 401 without credentials, merge works with them', async () => {
   const b = byName('bentopdf');
   if (!b) throw new Error('bentopdf instance missing');
+  // Reruns (--only) may leave a stale public exposure from a partial run;
+  // withdraw it so the fresh hostname below is the only public route.
+  for (const x of cliOk(target, ['exposures']).items.filter((x) => x.via === 'public')) {
+    try {
+      cliOk(target, ['unexpose', x.instanceName, '--via', 'public', '--yes'], { timeoutMs: 300_000 });
+    } catch {
+      /* best effort */
+    }
+  }
   const host = publicHost('pdf');
   dnsSet(host);
   const op = cliOk(target, ['expose', b.id, '--via', 'public', '--host', host, '--yes'], { timeoutMs: 600_000 });
@@ -889,6 +907,17 @@ const B05 = step('B05', 'Public exposure of BentoPDF with basic protection: 401 
 
 const B07 = step('B07', 'Provider down: exposures degrade, apps stay fine on loopback; recovery', async () => {
   const b = byName('bentopdf');
+  // Reruns (--only) may start with zero public exposures (B09 withdrew them);
+  // expose bentopdf first so the degrade/recover cycle has a live target.
+  // (B05 covers the same flow with basic-auth; here protection does not matter.)
+  let owned = cliOk(target, ['exposures']).items.some((x) => x.via === 'public');
+  if (!owned) {
+    const host = publicHost('b07');
+    dnsSet(host);
+    const op = cliOk(target, ['expose', b.id, '--via', 'public', '--host', host, '--protect', 'none', '--yes'], { timeoutMs: 600_000 });
+    if (op.state !== 'succeeded') throw new Error(`B07 setup expose ${op.state}`);
+    await waitFor(() => (cliOk(target, ['exposures']).items.find((x) => x.hostname === host)?.state === 'active' ? true : null), { timeoutMs: 300_000, intervalMs: 10_000, what: 'B07 setup exposure active' });
+  }
   ssh('systemctl stop caddy');
   const degraded = await waitFor(() => {
     const items = cliOk(target, ['exposures']).items.filter((x) => x.via === 'public');
