@@ -246,13 +246,21 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: integration 139 (+2: passphrase-less plan installs and the card opens the home, 8-character floor still enforced), e2e 25 (External offers the opt-in, Install enabled without a passphrase, disabled at 5 characters once opted in), unit 157
 - [x] Docs: decision 106, guide §4a2 rewritten, AI_CONTEXT
 
+## Phase 32 — `harbor.local` must survive Harbor's own Docker bridges; the beta ships as 0.17.0 (2026-09-23, v0.17.0) ✅
+- [x] Live fault on carlos-desktop: `http://harbor.local/` stopped resolving from the Mac while `http://<ip>/` served 200; `avahi-resolve -n harbor.local` on the box returned `172.17.0.1` (Docker bridge) — avahi publishes on every up interface
+- [x] `src/bootstrap/mdns.ts`: `defaultRouteInterfaces()` + `avahiConfWithAllowInterfaces()` (pure, idempotent, never empty) + `configureAvahiForLan()` run by LAN-mode bootstrap; always restarts `avahi-daemon.socket` + `.service` together (service-only restart left avahi answering legacy unicast but not standard queries)
+- [x] Box fixed live (pinned to `wlp5s0`, full restart): Mac resolves `harbor.local` → 192.168.0.146, HTTP 200
+- [x] Tests: unit 163 (+6 mdns: route parsing, rewrite/idempotence/insert/create/empty-list/section-scoped); integration 139, e2e 25 unchanged
+- [x] Docs: decision 107, guide §7 troubleshooting row, AI_CONTEXT gotchas (two-ended mDNS diagnosis without Mac sudo)
+- [x] Release model (decision 108): version `0.17.0`, no `-beta.N`; the installer and self-update now pick it as newest; `docs/releases/v0.17.0.md` is the release body via `body_path`; pre-0.17.0 and beta.N releases to be withdrawn on Carlos's confirmation
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 157 passed |
+| `pnpm test` (unit) | 163 passed |
 | `pnpm test:integration` (fake adapter) | 139 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |

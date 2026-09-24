@@ -10,8 +10,8 @@ curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh
 
 One command. A few minutes. Then open **http://harbor.local**, create your account, and
 install your first app. No Docker knowledge, no YAML, no terminal required after setup.
-(The installer picks the newest stable release; to try the current beta, prefix the command
-with `HARBOR_VERSION=0.17.0-beta.5`, i.e. `… | sudo HARBOR_VERSION=0.17.0-beta.5 bash`.)
+The installer takes the newest release. Do not use releases older than 0.17.0: they said
+"installed encrypted" and were not (see [docs/releases/v0.17.0.md](docs/releases/v0.17.0.md)).
 
 ![Harbor home screen](docs/assets/screenshots/home.png)
 
@@ -60,7 +60,7 @@ actually use (password + two-factor, tailnet, domains, storage picker, appearanc
 
 ## Status
 
-Harbor is a **beta preview** (v0.17.0-beta.5): one administrator, one daemon with Docker
+Harbor is a **beta preview** (v0.17.0): one administrator, one daemon with Docker
 authority. It is not a hardened multi-user service. Encrypted apps are sealed in the kernel
 (fscrypt, one key per app): while locked their data is ciphertext for every reader, root and
 Docker included. After a reboot they stay locked (and down) until the first console login — see

@@ -6,8 +6,8 @@ Shipped 2026-09-21 as v0.17.0-beta.1 (decision 101, PROGRESS phase 27): local su
 (unit 139, integration 127 + 3 live-Docker skipped, e2e 25, openapi 75 paths).
 Followed by v0.17.0-beta.2 (decision 103, real kernel sealing — beta.1 had only logged it) and
 v0.17.0-beta.3 (decision 104, same-password silent unlock) on 2026-09-21/22: unit 149,
-integration 131 + 3 skipped, e2e 25. Betas are installed with `HARBOR_VERSION=<v>` on the
-one-liner; the plain one-liner and the self-update feed only see stable `x.y.z` releases.
+integration 131 + 3 skipped, e2e 25. From 2026-09-23 the beta is `0.17.0` (decision 108), so the plain
+one-liner and the self-update feed pick it up without a pin.
 Tick items here as they land; each one that ships gets its usual DECISIONS row + PROGRESS phase.
 
 Beta means: a stranger can install the current release on a fresh Ubuntu 24.04 box from the
@@ -46,10 +46,10 @@ README one-liner, put real data in it, and nothing Harbor says about that data i
       keyfile/TPM auto-unlock deferred to 1.0. (decision 101)
 - [x] **Beta-tester plumbing.** `SECURITY.md`, `.github/ISSUE_TEMPLATE/bug.md`, `harbor diagnostics`
       + `GET /v1/system/diagnostics` (redacted), guide §7 "Report a problem" line. (decision 101)
-- [ ] **Beta version + release notes.** Tags `v0.17.0-beta.1` → `beta.3` exist; the release
-      workflow uses `generate_release_notes`, so the hand-crafted "What to expect / what not to
-      trust yet" section still has to be written into the GitHub Release body of the beta Carlos
-      hands to testers (beta.3 is the first one whose encryption claim is true).
+- [x] **Beta version + release notes.** The beta is `0.17.0` (decision 108: an ordinary tag so the
+      installer and self-update pick it); `docs/releases/v0.17.0.md` carries "what to expect / what
+      not to trust yet" and becomes the GitHub release body. Withdrawal of pre-0.17.0 and beta.N
+      releases pending Carlos's confirmation.
 
 ## Explicitly deferred (Carlos, 2026-09-21)
 

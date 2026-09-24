@@ -14,6 +14,7 @@ import { exec, execOk, aptGet } from './exec.js';
 import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
 import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit, APP_CRYPTO_UNIT_FILE, appCryptoUnit } from './systemd.js';
 import { prepareDataFolderForSealing } from './app-crypto-apply.js';
+import { configureAvahiForLan } from './mdns.js';
 import { privateInterfaces, lanUrl as lanUrlFor } from '../system/lan.js';
 import { readSetupCode, writeSetupCode } from '../auth/setup.js';
 import { hostname as osHostname } from 'node:os';
@@ -218,6 +219,9 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
       await aptGet(log, ['install', '-y', '-q', 'avahi-daemon', 'avahi-utils', 'libnss-mdns'], { timeoutMs: 10 * 60_000 });
     }
     await execOk('/usr/bin/systemctl', ['enable', '--now', 'avahi-daemon'], { timeoutMs: 60_000 });
+    // Publish <hostname>.local only on the LAN interface (never on Docker's
+    // bridges) and restart avahi socket+service together (decision 107).
+    await configureAvahiForLan(log);
   }
   // git: transport for git app sources (decision 80; tiny, Ubuntu archive)
   {

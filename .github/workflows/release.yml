@@ -38,11 +38,19 @@ jobs:
       - name: Read version
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      # Hand-written notes live in docs/releases/v<version>.md (what to expect, what not to trust
+      # yet). When the file exists it becomes the release body; the generated changelog is appended.
+      - name: Pick release notes
+        id: notes
+        run: |
+          f="docs/releases/v${{ steps.version.outputs.version }}.md"
+          if [ -f "$f" ]; then echo "path=$f" >> "$GITHUB_OUTPUT"; else echo "path=" >> "$GITHUB_OUTPUT"; fi
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Harbor ${{ steps.version.outputs.version }}
+          body_path: ${{ steps.notes.outputs.path }}
           files: |
             release/harbor-${{ steps.version.outputs.version }}-linux-x64.tar.gz
             release/SHA256SUMS
