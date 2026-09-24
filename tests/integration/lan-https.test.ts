@@ -2,6 +2,8 @@
 // mints the local CA on enable (openssl), serves the cert openly, reports
 // the secure address + fingerprint, and adds lanSecure to app endpoints.
 import { execFileSync } from 'node:child_process';
+import { statSync } from 'node:fs';
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { InstanceSummary, NetworkHttpsDto, SystemDto } from '../../src/contracts/api.js';
 import { startHarness, type Harness } from './harness.js';
@@ -56,6 +58,12 @@ describe('LAN HTTPS (local CA + secure addresses)', () => {
     expect(on.url).toBe('https://harbor.local/');
     expect(on.fingerprint).toMatch(/:/); // AA:BB:… SHA-256 of the CA
     expect(on.hosts).toContain('harbor.local');
+    // The server cert/key are group-readable (0640) so Caddy (added to the
+    // harbor group) can terminate TLS for the LAN hostnames; the CA key stays 0600.
+    const tlsDir = path.join(h.stateDir, 'tls');
+    expect(statSync(path.join(tlsDir, 'server.crt')).mode & 0o777).toBe(0o640);
+    expect(statSync(path.join(tlsDir, 'server.key')).mode & 0o777).toBe(0o640);
+    expect(statSync(path.join(tlsDir, 'ca.key')).mode & 0o777).toBe(0o600);
     // The CA cert is public key material: downloadable without a token.
     const raw = await h.api.raw('GET', '/v1/network/https/ca.crt', undefined, { authorization: '' });
     expect(raw.status).toBe(200);

@@ -63,6 +63,21 @@ describe('LAN mode', () => {
     expect(cfg.apps.http.servers['harbor']!.listen).toEqual([':443']);
     expect(renderCaddyConfig([]).apps).not.toHaveProperty(['http', 'servers', 'harbor_lan']);
   });
+  it('Caddy config serves LAN HTTPS on :443 with the Harbor cert when lanHttps is set', () => {
+    const cfg = renderCaddyConfig([{ id: 'e1', hostname: 'photos.example.com', upstreamPort: 18089, basicAuth: null }], {
+      lan: { hosts: ['harbor.local', '*.local', '192.168.1.20'], consolePort: 18000 },
+      lanHttps: { hosts: ['harbor.local', '192.168.1.20'], consolePort: 18000, cert: '/var/lib/harbor/tls/server.crt', key: '/var/lib/harbor/tls/server.key' },
+    }) as { apps: { http: { servers: Record<string, { listen: string[]; routes: { match: { host: string[] }[] }[]; tls_connection_policies?: { match: { sni: string[] }; certificate_selection: { any_tag: string[] } }[] }> }; tls: { certificates: { load_files: { certificate: string; key: string; tags: string[] }[] } } } };
+    // LAN HTTPS is a route on the SAME :443 `harbor` server as the public routes (Caddy cannot have two servers on one port).
+    const harbor = cfg.apps.http.servers['harbor']!;
+    expect(harbor.listen).toEqual([':443']);
+    expect(harbor.routes[0]!.match[0]!.host).toEqual(['192.168.1.20', 'harbor.local']);
+    expect(harbor.tls_connection_policies![0]).toEqual({ match: { sni: ['192.168.1.20', 'harbor.local'] }, certificate_selection: { any_tag: ['harbor-lan'] } });
+    expect(cfg.apps.tls.certificates.load_files).toEqual([{ certificate: '/var/lib/harbor/tls/server.crt', key: '/var/lib/harbor/tls/server.key', tags: ['harbor-lan'] }]);
+    // public routes still present on the same server
+    expect(harbor.routes.some((r) => r.match[0]!.host[0] === 'photos.example.com')).toBe(true);
+    expect(renderCaddyConfig([]).apps).not.toHaveProperty(['http', 'servers', 'harbor_lan_https']);
+  });
   it('setup code: six digits, written 0600, read back', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'harbor-setup-'));
     const code = writeSetupCode(dir);

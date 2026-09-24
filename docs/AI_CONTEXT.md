@@ -78,15 +78,23 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (107, executed 2026-09-23):** LAN-mode bootstrap pins avahi to the
-default-route interface (`allow-interfaces=` in `/etc/avahi/avahi-daemon.conf`, via the new pure
-helpers in `src/bootstrap/mdns.ts`) so `harbor.local` is never answered with Docker bridge
-addresses, and restarts `avahi-daemon.socket` + `.service` together (a service-only restart left
-avahi answering legacy unicast but not standard mDNS queries). Found while chasing "harbor.local
-stopped resolving from the Mac" on carlos-desktop; the box itself is fixed live and resolves again.
-Shipped as **v0.17.0** (see decision 108 for why not `-beta.6`).
+**Latest decision (110, executed 2026-09-24):** When Caddy (the public proxy) is installed it owns
+`:443`, so LAN HTTPS (decision 109) is served THROUGH Caddy — the LAN hostnames become a route on the
+SAME :443 `harbor` server as the public hostnames (Caddy can't have two servers on one port), pinned
+to the Harbor-minted cert (`tls_connection_policies` SNI → `any_tag: harbor-lan` +
+`apps.tls.certificates.load_files`), proxying to the management port, same pattern as the :80 LAN
+console. The daemon's `reconcileLanHttps` skips its own 443 listener when `ctx.caddy.available()`.
+Cert access: `tls/` is 0750, server cert/key 0640 (group-readable by `harbor`), CA key stays 0600;
+bootstrap adds the `caddy` user to the `harbor` group and makes the state dir group-traversable
+(0710). Fixes `ERR_SSL_PROTOCOL_ERROR` on `https://harbor.local` when Caddy owns 443. Schema
+validated live against Caddy v2.11.4.
 
 **Last three actions, most recent first:**
+1. **Fixed `https://harbor.local` on carlos-desktop (decision 110)** (2026-09-24): Caddy owned :443
+   so the daemon's LAN HTTPS listener failed (`port 443 is already in use`); Caddy now terminates TLS
+   for the LAN hostnames with the Harbor cert. `renderCaddyConfig` `lanHttps` option, `caddyLanHttps`
+   helper, observer wiring, daemon 443 skip, 0640 cert perms + caddy-in-harbor-group bootstrap,
+   unit/integration coverage, decision 110 + gotcha. Earlier entries follow.
 1. **Fixed `harbor.local` on carlos-desktop + shipped v0.17.0 (decisions 107–108)** (2026-09-23):
    two-ended packet captures, avahi pinned to `wlp5s0`, socket+service restart, `mdns.ts` +
    unit tests, guide §7 row, gotchas below. Earlier entries follow.
@@ -171,7 +179,7 @@ Shipped as **v0.17.0** (see decision 108 for why not `-beta.6`).
 - Reddit blocks anonymous `.json` (403) since May 2026 → Reddit source needs the user's own "script" app credentials; Bing and Wikimedia work keyless. Wikimedia only serves standard thumbnail widths (use 1920px).
 - Node `fetch()` drops a custom `Host` header; use `node:http` in tests that need one.
 - Plain-http LAN origins are not secure contexts: no `crypto.randomUUID`, no `navigator.clipboard` (fallbacks exist in `web/src/api.ts`, `components.tsx`).
-- Caddy (public proxy) owns port 80 → the LAN console is a Caddy route (`harbor_lan` server) reconciled by the observer; the daemon's direct :80 listener is a fallback when free. Caddy's stock config used to squat :80 until the first exposure; the observer now reconciles at startup.
+- Caddy (public proxy) owns ports 80 AND 443 → the LAN console is a Caddy route (`harbor_lan` server on :80) reconciled by the observer, and LAN HTTPS is served THROUGH Caddy too (the LAN hostnames are a route on the same :443 `harbor` server, pinned to the Harbor cert, decision 110); the daemon's direct :80/:443 listeners are fallbacks when Caddy is absent. Caddy's stock config used to squat :80 until the first exposure; the observer now reconciles at startup. Caddy runs as user `caddy`, which bootstrap adds to the `harbor` group so it can read the 0640 server cert/key under `<stateDir>/tls` (the CA key stays 0600); the state dir is 0710 (group-traverse) so Caddy can reach `tls/`.
 - Commander: an option named `--version` collides with the global version flag (that is why the root apply step uses `--to`).
 - `pnpm package | head` SIGPIPE leaves a stale archive; always `| tail`.
 - xterm.js needs `style-src 'unsafe-inline'`; the WebSocket terminal authenticates by first message, never URL.

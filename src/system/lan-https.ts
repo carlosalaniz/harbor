@@ -139,9 +139,13 @@ function daysUntil(iso: string, now = Date.now()): number {
 
 // Mint (or renew when expiring/changed): CA 10y self-signed, leaf 825d signed
 // by it. Idempotent: returns the current state when it is fresh and covers hosts.
+// The tls/ dir is 0750 and the server cert/key 0640 (group-readable): when Caddy
+// (the public proxy) is installed it terminates TLS for the LAN hostnames and must
+// read the server key. The group is `harbor`; bootstrap adds the caddy user to it.
+// The CA key stays 0600 — Caddy never needs it.
 export async function ensureTlsCerts(stateDir: string, hosts: string[]): Promise<TlsState> {
   const p = P(stateDir);
-  mkdirSync(tlsDir(stateDir), { recursive: true, mode: 0o700 });
+  mkdirSync(tlsDir(stateDir), { recursive: true, mode: 0o750 });
   const cur = readTlsState(stateDir);
   const sameHosts = cur && hosts.length === cur.hosts.length && hosts.every((h) => cur.hosts.includes(h));
   if (cur && sameHosts && daysUntil(cur.expiresAt) > 30 && daysUntil(cur.caExpiresAt) > 30) return cur;
@@ -151,7 +155,7 @@ export async function ensureTlsCerts(stateDir: string, hosts: string[]): Promise
     chmodSync(p.caKey, 0o600);
   }
   await openssl(['ecparam', '-genkey', '-name', 'prime256v1', '-out', p.key]);
-  chmodSync(p.key, 0o600);
+  chmodSync(p.key, 0o640);
   const csr = path.join(tlsDir(stateDir), 'server.csr');
   const ext = path.join(tlsDir(stateDir), 'server.ext');
   const srl = path.join(tlsDir(stateDir), 'ca.srl');
@@ -164,6 +168,7 @@ export async function ensureTlsCerts(stateDir: string, hosts: string[]): Promise
     rmSync(ext, { force: true });
     rmSync(srl, { force: true });
   }
+  chmodSync(p.crt, 0o640);
   writeFileSync(p.meta, JSON.stringify({ hosts, createdAt: new Date().toISOString() }) + '\n', { mode: 0o600 });
   const st = readTlsState(stateDir);
   if (!st) throw new HarborError('OPERATION_FAILED', 'certificate generation produced no readable cert');
@@ -301,15 +306,24 @@ export async function reconcileLanHttps(ctx: Ctx): Promise<void> {
     ctx.log.warn('LAN HTTPS is on but no certificate exists yet; turn it off and on again to mint one');
     return;
   }
+  // When Caddy (the public proxy) is installed it owns :443 and terminates TLS for the LAN hostnames
+  // itself (see caddyLanHttps in runner.ts) — the daemon must not try to bind 443 too. App proxies on
+  // hostPort + OFFSET are still served by the daemon (Caddy only proxies the console, not app endpoints).
+  let caddyOwns443 = false;
+  try {
+    caddyOwns443 = await ctx.caddy.available();
+  } catch {
+    /* Caddy unreachable: the daemon keeps its own 443 listener */
+  }
   const routing = (ctx as { __routing?: (req: never, res: never) => void }).__routing;
-  if (routing) {
+  if (routing && !caddyOwns443) {
     try {
       await servers.ensureConsole(routing, pair.key, pair.cert);
     } catch (e) {
       ctx.log.warn(`LAN HTTPS console listener failed: ${(e as Error).message}`);
     }
   }
-  const wanted = new Set<number>([consoleHttpsPort()]);
+  const wanted = new Set<number>(caddyOwns443 ? [] : [consoleHttpsPort()]);
   for (const i of ctx.repo.listInstances()) {
     if (i.purgedAt) continue;
     for (const e of i.endpoints) {

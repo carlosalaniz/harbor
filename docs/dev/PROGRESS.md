@@ -260,6 +260,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `lan-https.test.ts` (ports/hosts/SAN/endpoint urls) + `openapi.test.ts` route pin (+2 routes, 78 paths); integration `lan-https.test.ts` (off-by-default, LAN-off refusal, mint + open CA + lanSecure + disable); e2e Network card off-by-default + LAN-off note; unit 169, integration 139 + 3 skipped, e2e 26
 - [x] Docs: decision 109, operator guide §2a LAN paragraph + §4b Network row, openapi regenerated (78 paths)
 
+## Phase 34 — LAN HTTPS through Caddy when it owns :443 (2026-09-24, v0.17.1) ✅
+- [x] Caddy-owns-443 fix (decision 110): `renderCaddyConfig` `lanHttps` option adds the LAN hostnames as a route on the SAME :443 `harbor` server as the public routes (Caddy cannot have two servers on one port), pinned to the Harbor cert (`tls_connection_policies` SNI → `any_tag: harbor-lan` + `apps.tls.certificates.load_files`); ACME coexists with the static cert. `caddyLanHttps` helper + signature in `runner.ts`; observer passes it to the renderer. `reconcileLanHttps` skips the daemon's own 443 console listener when `ctx.caddy.available()` (app proxies on hostPort + 20000 stay daemon-served). Cert access: `tls/` 0750, server cert/key 0640 (group-readable by `harbor`), CA key stays 0600; bootstrap adds the `caddy` user to the `harbor` group (`usermod -aG`) and makes the state dir group-traversable (0710).
+- [x] Tests: unit `selfupdate-lan.test.ts` (lanHttps route + cert load_files + public routes intact); integration `lan-https.test.ts` (server cert/key 0640, CA key 0600)
+- [x] Docs: decision 110, AI_CONTEXT gotcha + latest-decision, PROGRESS row
+
 ## Test results (latest local run)
 
 | Command | Result |

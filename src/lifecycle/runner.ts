@@ -16,8 +16,9 @@ import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/r
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
 import { exposureUrl, primaryUrlFor } from '../exposure/urls.js';
-import { renderCaddyConfig, type CaddyLanConsole, type CaddyRoute } from '../exposure/caddy.js';
+import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
 import { lanHostnames, machineAddresses } from '../system/lan.js';
+import { HTTPS_SETTING, lanHttpsHosts, readTlsState } from '../system/lan-https.js';
 import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
 import bcrypt from 'bcryptjs';
 
@@ -1131,11 +1132,24 @@ export function caddyRoutesFromState(ctx: Ctx, sink: string[]): CaddyRoute[] {
 export function caddySignature(ctx: Ctx): string {
   const parts = ctx.repo.exposures().filter((x) => x.via === 'public' && x.state !== 'removing').map((e) => `${e.id}:${e.hostname}:${e.port}:${e.protection}`);
   const lan = caddyLanConsole(ctx.config);
-  return JSON.stringify({ parts: parts.sort(), lan });
+  const lanHttps = caddyLanHttps(ctx);
+  return JSON.stringify({ parts: parts.sort(), lan, lanHttps });
 }
 export function caddyLanConsole(config: Ctx['config']): CaddyLanConsole | null {
   if (!config.lan.enabled) return null;
   return { hosts: [...lanHostnames(), '*.local', ...machineAddresses().filter((a) => !a.includes(':'))], consolePort: config.listen.port };
+}
+// LAN HTTPS served through Caddy (decision 109 + Caddy-owns-443 fix): when LAN HTTPS is on and the Harbor
+// cert exists, Caddy terminates TLS for the LAN hostnames (harbor.local, <hostname>.local, the machine's
+// addresses) using the Harbor-minted cert and proxies to the management port. The daemon's own 443 listener
+// is skipped in this case (Caddy owns 443). Returns null when LAN HTTPS is off or no cert exists yet.
+export function caddyLanHttps(ctx: Ctx): CaddyLanHttps | null {
+  if (!ctx.config.lan.enabled) return null;
+  if (!(ctx.repo.setting<boolean>(HTTPS_SETTING) ?? false)) return null;
+  const tls = readTlsState(ctx.config.stateDir);
+  if (!tls) return null;
+  const hosts = lanHttpsHosts().filter((h) => !h.includes(':'));
+  return { hosts, consolePort: ctx.config.listen.port, cert: path.join(ctx.config.stateDir, 'tls', 'server.crt'), key: path.join(ctx.config.stateDir, 'tls', 'server.key') };
 }
 
 // ---------- exposure helpers (module scope; used by the class below via prototype extension)

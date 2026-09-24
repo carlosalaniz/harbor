@@ -1,4 +1,4 @@
-import { chownSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { loadConfig, normalizeConfig, type DaemonConfig } from '../config.js';
 import { HarborError } from '../errors.js';
@@ -324,6 +324,11 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   if (opts.withPublicProxy) {
     if (await opts.confirm('Set up the public proxy (Caddy, HTTPS with Let\'s Encrypt)?', caddyPreview(facts.existing.caddy))) {
       tools.push(await setupCaddy(log, facts.existing.caddy, now));
+      // Caddy terminates TLS for the LAN hostnames using the Harbor-minted cert (decision 110): it must
+      // traverse the state dir to read <stateDir>/tls/server.{crt,key}. The state dir becomes group-
+      // traversable (0710) — the caddy user is in the `harbor` group — but every sensitive subdir
+      // (instances/, platform/, docker-config/, the DB) stays 0700/0600, so Caddy reaches only tls/.
+      chmodSync(PRODUCT.paths.var, 0o710);
     } else log('public proxy skipped');
   }
   if (tools.length) {

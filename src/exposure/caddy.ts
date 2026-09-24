@@ -20,7 +20,17 @@ export interface CaddyLanConsole {
   hosts: string[]; // harbor.local, <hostname>.local, *.local, the machine's addresses
   consolePort: number;
 }
-export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: string; email?: string | null; lan?: CaddyLanConsole | null } = {}): Record<string, unknown> {
+// LAN HTTPS with Caddy installed (decision 109 + this fix): Caddy owns :443 for public hostnames, so it also
+// terminates TLS for the LAN hostnames using the Harbor-minted cert (apps.tls.certificates.load_files) and
+// proxies to the management port — the same pattern as the :80 LAN console. The daemon's own 443 listener is
+// skipped in this case (it cannot bind 443 anyway). cert/key are the Harbor-minted server cert + key paths.
+export interface CaddyLanHttps {
+  hosts: string[]; // harbor.local, <hostname>.local, the machine's addresses (no *.local — the cert has no wildcard)
+  consolePort: number;
+  cert: string; // server.crt path
+  key: string; // server.key path
+}
+export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: string; email?: string | null; lan?: CaddyLanConsole | null; lanHttps?: CaddyLanHttps | null } = {}): Record<string, unknown> {
   const sorted = [...routes].sort((a, b) => a.hostname.localeCompare(b.hostname));
   const lanServer = opts.lan
     ? {
@@ -38,6 +48,30 @@ export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: st
         },
       }
     : {};
+  // LAN HTTPS served through Caddy: the LAN hostnames are added as a route on the SAME :443 `harbor`
+  // server as the public hostnames (Caddy cannot have two servers on one port), pinned to the Harbor
+  // cert via a tls_connection_policy (SNI → any_tag: harbor-lan). Everything else falls through to ACME.
+  const lanHttpsHosts = opts.lanHttps ? [...new Set(opts.lanHttps.hosts)].sort() : [];
+  const lanHttpsRoute = opts.lanHttps
+    ? [
+        {
+          '@id': 'lan-https-console',
+          match: [{ host: lanHttpsHosts }],
+          handle: [{ handler: 'reverse_proxy', upstreams: [{ dial: `127.0.0.1:${opts.lanHttps.consolePort}` }] }],
+          terminal: true,
+        },
+      ]
+    : [];
+  const lanHttpsPolicy = opts.lanHttps
+    ? [{ match: { sni: lanHttpsHosts }, certificate_selection: { any_tag: ['harbor-lan'] } }, {}]
+    : [];
+  const tlsCerts = opts.lanHttps
+    ? {
+        certificates: {
+          load_files: [{ certificate: opts.lanHttps.cert, key: opts.lanHttps.key, tags: ['harbor-lan'] }],
+        },
+      }
+    : {};
   return {
     admin: { listen: opts.adminListen ?? '127.0.0.1:2019' },
     logging: { logs: { default: { level: 'INFO' } } },
@@ -48,7 +82,9 @@ export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: st
           harbor: {
             '@id': CADDY_MARKER,
             listen: [':443'],
-            routes: sorted.map((r) => ({
+            routes: [
+              ...lanHttpsRoute,
+              ...sorted.map((r) => ({
               '@id': `exposure-${r.id}`,
               match: [{ host: [r.hostname] }],
               handle: [
@@ -70,10 +106,15 @@ export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: st
               ],
               terminal: true,
             })),
+            ],
+            ...(lanHttpsPolicy.length ? { tls_connection_policies: lanHttpsPolicy } : {}),
           },
         },
       },
-      tls: opts.email ? { automation: { policies: [{ issuers: [{ module: 'acme', email: opts.email }] }] } } : {},
+      tls: {
+        ...tlsCerts,
+        ...(opts.email ? { automation: { policies: [{ issuers: [{ module: 'acme', email: opts.email }] }] } } : {}),
+      },
     },
   };
 }

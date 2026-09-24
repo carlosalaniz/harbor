@@ -7,7 +7,7 @@ import { LABELS } from '../naming.js';
 import type { Readiness, Runtime } from '../state/repo.js';
 import { exposureUrl } from '../exposure/urls.js';
 import { renderCaddyConfig } from '../exposure/caddy.js';
-import { caddyLanConsole, caddyRoutesFromState, caddySignature } from './runner.js';
+import { caddyLanConsole, caddyLanHttps, caddyRoutesFromState, caddySignature } from './runner.js';
 import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
 import { listDevices } from '../system/host-storage.js';
@@ -404,9 +404,9 @@ export class Observer {
       if (!(await this.ctx.caddy.available())) return;
       const sink: string[] = [];
       const routes = caddyRoutesFromState(this.ctx, sink);
-      await this.ctx.caddy.load(renderCaddyConfig(routes, { lan: caddyLanConsole(this.ctx.config) }));
+      await this.ctx.caddy.load(renderCaddyConfig(routes, { lan: caddyLanConsole(this.ctx.config), lanHttps: caddyLanHttps(this.ctx) }));
       this.caddyApplied = want;
-      this.ctx.log.info('caddy config reconciled', { publicRoutes: routes.length, lan: this.ctx.config.lan.enabled });
+      this.ctx.log.info('caddy config reconciled', { publicRoutes: routes.length, lan: this.ctx.config.lan.enabled, lanHttps: Boolean(caddyLanHttps(this.ctx)) });
     } catch (e) {
       this.ctx.log.warn(`caddy reconcile failed: ${(e as Error).message}`);
     }
