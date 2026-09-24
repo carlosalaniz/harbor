@@ -710,17 +710,15 @@ tailscaleCmd
 // --- network: secure addresses on the home network (Settings → Network, from the terminal)
 const networkCmd = program.command('network').description('secure addresses on the home network (LAN HTTPS)');
 networkCmd
-  .command('https')
-  .description('show whether https://harbor.local/ answers, the CA fingerprint, and the covered names')
-  .action(async () => {
-    const s = await client().get<{ enabled: boolean; url: string | null; fingerprint: string | null; expiresAt: string | null; hosts: string[] }>('/v1/network/https');
-    out(s, () => (s.enabled ? `Secure addresses ON: ${s.url}\nCA fingerprint: ${s.fingerprint}\nCovers: ${s.hosts.join(', ')}` : 'Secure addresses off. Turn on with: harbor network https on'));
-  });
-networkCmd
-  .command('https <on|off>')
-  .description('turn secure addresses on (mints the local CA, needs LAN mode) or off')
-  .action(async (state: string) => {
-    if (state !== 'on' && state !== 'off') throw new HarborError('INVALID_REQUEST', 'expected "on" or "off"');
+  .command('https [on|off]')
+  .description('show status (no argument) or turn secure addresses on (mints the local CA, needs LAN mode) or off')
+  .action(async (state?: string) => {
+    if (state !== undefined && state !== 'on' && state !== 'off') throw new HarborError('INVALID_REQUEST', 'expected "on" or "off"');
+    if (state === undefined) {
+      const s = await client().get<{ enabled: boolean; url: string | null; fingerprint: string | null; expiresAt: string | null; hosts: string[] }>('/v1/network/https');
+      out(s, () => (s.enabled ? `Secure addresses ON: ${s.url}\nCA fingerprint: ${s.fingerprint}\nCovers: ${s.hosts.join(', ')}` : 'Secure addresses off. Turn on with: harbor network https on'));
+      return;
+    }
     const s = await client().post<{ enabled: boolean; url: string | null; fingerprint: string | null }>('/v1/network/https', { enabled: state === 'on' }, {}, 'PUT');
     out(s, () => (s.enabled ? `Secure addresses on: ${s.url}\nTrust the certificate once per device (Settings → Network shows how).` : 'Secure addresses off; plain HTTP stays.'));
   });
