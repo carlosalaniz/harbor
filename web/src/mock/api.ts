@@ -6,6 +6,7 @@ import type {
   HostStorageDto,
   InstanceDetail,
   InstanceSummary,
+  NetworkHttpsDto,
   NotificationChannelDto,
   NotificationsDto,
   OperationDto,
@@ -331,6 +332,16 @@ export const mockApi = {
   tailscaleLogout: async (): Promise<void> => {
     await beat(150);
   },
+  // LAN HTTPS in design mode: the toggle flips the fixture so the card, the
+  // trust probe (mocked trusted) and the banner can be exercised with clicks.
+  networkHttps: async (): Promise<NetworkHttpsDto> => mockSystem().network.https,
+  setNetworkHttps: async (enabled: boolean): Promise<NetworkHttpsDto> => {
+    await beat(150);
+    return enabled
+      ? { enabled: true, url: 'https://harbor.local/', fingerprint: 'AA:BB:CC (mock)', expiresAt: new Date(Date.now() + 800 * 86400_000).toISOString(), hosts: ['harbor.local', 'homelab.local'] }
+      : { enabled: false, url: null, fingerprint: null, expiresAt: null, hosts: [] };
+  },
+  probeHttpsTrust: async (): Promise<'trusted' | 'untrusted' | 'unreachable'> => 'trusted',
   domains: async (): Promise<DomainsDto> => mockDomains(),
   addDomain: async (hostname: string) => {
     await beat();

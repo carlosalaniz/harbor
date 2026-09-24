@@ -4,12 +4,13 @@ import { Terminal } from '../Terminal';
 import type { AppearanceDto, DomainsDto, FoundAppDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, RecoveryCard, appLabel } from '../components';
+import { Network } from './Network';
 import { Mark, PencilIcon } from '../icons';
 import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
 import { WALLPAPERS, applySurfacesOpacity, applyTheme, applyWallpaper, hasExplicitWallpaper, readSurfacesOpacity, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'overview' | 'account' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
+type Section = 'overview' | 'account' | 'network' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
 // One 16px stroke set for the settings rail: same weight, same box, no emoji.
 const SECTION_ICON: Record<Section, ReactNode> = {
   overview: (
@@ -29,6 +30,13 @@ const SECTION_ICON: Record<Section, ReactNode> = {
       <path d="M2.5 9.5a6.5 6.5 0 0 1 11 0" />
       <path d="M4.8 11.5a3.4 3.4 0 0 1 6.4 0" />
       <circle cx="8" cy="13.2" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  ),
+  network: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="6.5" width="10" height="6" rx="1.5" />
+      <path d="M5.5 9.5h1.2M7.7 9.5h1.1" />
+      <path d="M5.5 4.5v1M8 3.5v2M10.5 4.5v1" />
     </svg>
   ),
   public: (
@@ -81,6 +89,7 @@ const SECTION_ICON: Record<Section, ReactNode> = {
 const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: 'overview', label: 'Overview', blurb: 'This machine at a glance' },
   { id: 'account', label: 'Account', blurb: 'Password, recovery key and sessions' },
+  { id: 'network', label: 'Network', blurb: 'Secure addresses on your home network' },
   { id: 'remote', label: 'Remote access', blurb: 'Reach Harbor from your other devices' },
   { id: 'public', label: 'Public addresses', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', blurb: 'Disks and folders your apps use' },
@@ -123,6 +132,7 @@ export function Settings({ c, initialSection, onSection }: { c: Console; initial
       <div className="settings-body">
         {section === 'overview' && <Overview c={c} go={setSection} />}
         {section === 'account' && <Account />}
+        {section === 'network' && <Network c={c} />}
         {section === 'remote' && <RemoteAccess c={c} />}
         {section === 'public' && <PublicAddresses c={c} />}
         {section === 'storage' && <Storage />}

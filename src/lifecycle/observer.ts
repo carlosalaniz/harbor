@@ -19,6 +19,7 @@ export class Observer {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
   private caddyApplied: string | null = null;
+  private lanHttpsApplied: string | null = null;
   private lastSourceCheck = 0;
   private lastDevices: string | null = null;
   constructor(
@@ -112,6 +113,7 @@ export class Observer {
       this.notifyMissingFolders(runningByInstance);
       this.autoStartRecovered(runningByInstance);
       this.autoStartUnlocked(runningByInstance);
+      await this.reconcileLanHttps();
       if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
         this.lastSourceCheck = Date.now();
         await this.service.checkAllSources();
@@ -446,6 +448,21 @@ export class Observer {
         this.ctx.repo.addEvent({ instanceId: e.instanceId, phase: 'observer', message: `tailnet address restored after Tailscale reconnected (${fixes.join('; ')})` });
         this.ctx.log.info('tailnet exposure reconciled', { instanceId: e.instanceId, port: e.port, fixes });
       }
+    }
+  }
+
+  // LAN HTTPS listeners follow state: console 443 + one proxy per app
+  // endpoint while the setting is on, closed when it is off. Signature-gated
+  // so the steady state is a cheap string compare per tick.
+  private async reconcileLanHttps(): Promise<void> {
+    const { lanHttpsSignature, reconcileLanHttps } = await import('../system/lan-https.js');
+    const want = lanHttpsSignature(this.ctx);
+    if (want === this.lanHttpsApplied) return;
+    try {
+      await reconcileLanHttps(this.ctx);
+      this.lanHttpsApplied = want;
+    } catch (e) {
+      this.ctx.log.warn(`LAN HTTPS reconcile failed: ${(e as Error).message}`);
     }
   }
 

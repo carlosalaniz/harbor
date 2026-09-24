@@ -191,6 +191,11 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     // root helpers on a live host (same unit starter as mount/format).
     const { FakeCryptoProvider, RootCryptoProvider } = await import('./storage/crypto-provider.js');
     ctx.crypto = overrides.crypto ?? (fakeMode ? new FakeCryptoProvider() : new RootCryptoProvider(config.stateDir));
+    // LAN HTTPS (decision 109): daemon-terminated TLS on 443 + one proxy per
+    // app endpoint. The routing function is stashed on the ctx so the HTTPS
+    // console listener serves the same Fastify routes (same guards, auth).
+    const { LanHttpsServers, reconcileLanHttps } = await import('./system/lan-https.js');
+    ctx.lanHttps = new LanHttpsServers();
     // Every login: kernel-unlock machine-wrapped homes (data-folder apps and
     // drive apps sealed with the Harbor password) and try the login password
     // on the rest, so "same password" never means typing it twice.
@@ -216,6 +221,12 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     };
     const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version });
     await app.listen({ host: config.listen.host, port: config.listen.port });
+    // The HTTPS console listener serves these same routes (same Host/Origin
+    // guards, same bearer auth) — stashed before the LAN listeners start.
+    ctx.__routing = (req: never, res: never) => app.routing(req as never, res as never);
+    // LAN HTTPS from state (survives restarts): mint nothing here, just open
+    // the listeners when the setting says on and certs exist.
+    await reconcileLanHttps(ctx).catch((e: Error) => log.warn(`LAN HTTPS reconcile at startup failed: ${e.message}`));
     // LAN mode: a second listener on every interface hands requests (and WebSocket upgrades) to the same routes.
     let lanServer: HttpServer | null = null;
     if (config.lan.enabled) {
@@ -247,6 +258,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       appearance.stop();
       selfUpdate.stop();
       terminals.closeAll();
+      await ctx.lanHttps?.closeAll().catch(() => undefined);
       if (lanServer) await new Promise<void>((r) => lanServer!.close(() => r()));
       const graceful = runner.shutdown();
       await Promise.race([graceful, new Promise((r) => setTimeout(r, 20_000))]);

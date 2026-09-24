@@ -16,7 +16,8 @@ export interface EndpointDto {
   hostPort: number;
   browserUrl: string; // loopback URL (compatibility)
   // lan: present in LAN mode, http://<hostname>.local:<port> (the console swaps in the host it was opened with)
-  urls: { loopback: string; lan?: string; tailnet?: string; public?: string };
+  // lanSecure: present when LAN HTTPS is on, https://<hostname>.local:<port+offset> (same swap)
+  urls: { loopback: string; lan?: string; lanSecure?: string; tailnet?: string; public?: string };
   primary: PrimaryExposure;
 }
 
@@ -76,6 +77,17 @@ export interface StorageUsageDto {
   sampledAt: string;
   apps: { instanceId: string; name: string; volumes: { id: string; volumeName: string; sizeBytes: number }[]; totalBytes: number }[];
   unownedBytes: number; // volumes on the engine that no Harbor instance owns
+}
+
+// ---- LAN HTTPS (decision 109): the local CA + secure addresses. The CA
+// cert itself is public key material (trusting it is the whole point), so it
+// is served openly; the private key never leaves <stateDir>/tls (0600).
+export interface NetworkHttpsDto {
+  enabled: boolean;
+  url: string | null; // https://harbor.local/ when on (console)
+  fingerprint: string | null; // SHA-256 of the CA cert, for the "compare on the device" step
+  expiresAt: string | null; // server cert notAfter
+  hosts: string[]; // names the server cert covers
 }
 
 // ---- notifications (decision 77)
@@ -261,6 +273,12 @@ export interface SystemDto {
   deviceName: string | null; // operator-chosen name for this machine (Settings → Overview); null = use the hostname
   hostname: string;
   lan: { enabled: boolean; url: string | null }; // http://<hostname>.local[:port] when LAN mode is on
+  // LAN HTTPS (decision 109): off by default; when on, the console answers at
+  // https://harbor.local/ (plus <hostname>.local) with a Harbor-minted local
+  // CA the operator trusts once per device. Apps get one secure address each.
+  network: {
+    https: { enabled: boolean; url: string | null; fingerprint: string | null; expiresAt: string | null; hosts: string[] };
+  };
   update: SelfUpdateStatusDto;
   docker: { available: boolean; observedAt: string | null; version: string | null; error: string | null };
   busyOperationId: string | null;

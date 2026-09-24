@@ -2451,6 +2451,54 @@
           }
         }
       }
+    },
+    "/v1/network/https": {
+      "get": {
+        "description": "LAN HTTPS state: whether https://harbor.local/ answers, the CA fingerprint to compare on the device, and the names the server cert covers.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      },
+      "put": {
+        "description": "Turn LAN HTTPS on (mints the local CA + server cert, starts the secure listeners) or off (closes them; plain HTTP stays).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/network/https/ca.crt": {
+      "get": {
+        "description": "The Harbor local CA certificate (PEM). Trust it once per device, then https://harbor.local/ opens with no warning.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
     }
   },
   "servers": [

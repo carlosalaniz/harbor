@@ -254,16 +254,22 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Docs: decision 107, guide §7 troubleshooting row, AI_CONTEXT gotchas (two-ended mDNS diagnosis without Mac sudo)
 - [x] Release model (decision 108): version `0.17.0`, no `-beta.N`; the installer and self-update now pick it as newest; `docs/releases/v0.17.0.md` is the release body via `body_path`; pre-0.17.0 and beta.N releases to be withdrawn on Carlos's confirmation
 
+## Phase 33 — LAN HTTPS: `https://harbor.local` with no warning (2026-09-24, v0.17.1) ✅
+- [x] Local CA + daemon TLS (decision 109): `src/system/lan-https.ts` (EC P-256 via openssl, CA 10y + server 825d for harbor.local + hostname.local + LAN IPv4, `<stateDir>/tls` 0600, idempotent renew <30d); console on 443 + one reverse proxy per app endpoint on hostPort + 20000 (deterministic, no migration, Docker keeps HTTP binds); plain HTTP :80 kept for the banner; `network.httpsEnabled` setting; observer signature-gated reconcile; routes `GET/PUT /v1/network/https` + open `GET /v1/network/https/ca.crt`; `lanSecure` on every endpoint; `SystemDto.network.https`
+- [x] Console: Settings → Network card (toggle, secure address, live trust probe, fingerprint) + trust sheet (Download primary, macOS/iOS/Windows/Android/Linux steps with iOS two-stage, Firefox note) + plain-HTTP banner; app tiles prefer `lanSecure`
+- [x] Tests: unit `lan-https.test.ts` (ports/hosts/SAN/endpoint urls) + `openapi.test.ts` route pin (+2 routes, 78 paths); integration `lan-https.test.ts` (off-by-default, LAN-off refusal, mint + open CA + lanSecure + disable); e2e Network card off-by-default + LAN-off note; unit 169, integration 139 + 3 skipped, e2e 26
+- [x] Docs: decision 109, operator guide §2a LAN paragraph + §4b Network row, openapi regenerated (78 paths)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 163 passed |
-| `pnpm test:integration` (fake adapter) | 139 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 169 passed |
+| `pnpm test:integration` (fake adapter) | 139 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 25 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 26 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

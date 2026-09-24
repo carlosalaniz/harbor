@@ -80,6 +80,22 @@ export class ApiClient {
   get<T>(url: string): Promise<T> {
     return this.call<T>('GET', url).then((r) => r.body);
   }
+  // Raw text GET (the CA cert is PEM, not JSON).
+  async getText(url: string): Promise<string> {
+    const h: Record<string, string> = {};
+    if (this.token) h['authorization'] = `Bearer ${this.token}`;
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${url}`, { method: 'GET', headers: h });
+    } catch (e) {
+      throw new HarborError('STATE_UNAVAILABLE', `cannot reach ${this.baseUrl}: ${(e as Error).cause ? String((e as Error).cause) : (e as Error).message}`, {
+        nextAction: 'Is the Harbor daemon running? Check `systemctl status harbor` or your SSH port forward.',
+      });
+    }
+    const text = await res.text();
+    if (res.status >= 400) throw new HarborError('INTERNAL', `HTTP ${res.status}`, {});
+    return text;
+  }
   post<T>(url: string, body: unknown, headers: Record<string, string> = {}, method: 'POST' | 'PUT' = 'POST'): Promise<T> {
     return this.call<T>(method, url, body, headers).then((r) => r.body);
   }

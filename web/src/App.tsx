@@ -15,7 +15,7 @@ import { isMockUi } from './mock/api';
 import { Palette, usePaletteShortcut } from './app/Palette';
 import { SetupWizard } from './app/Setup';
 import type { SetupStatusDto } from '../../src/contracts/api';
-import { isFinal, useConsole } from './app/store';
+import { isFinal, useConsole, type Console } from './app/store';
 
 type View = { kind: 'login' } | { kind: 'console' };
 applyTheme(readTheme());
@@ -361,6 +361,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
         </div>
       </nav>
       <main className="content">
+        <HttpsBanner c={c} go={go} />
         {c.loadError && (
           <p className="error banner" role="alert">
             Cannot load: {c.loadError}
@@ -642,5 +643,37 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
         <EventList events={op.events} />
       </details>
     </aside>
+  );
+}
+
+// The first-visit helper (decision 109): the browser's own scary page for the
+// HTTPS address cannot be styled by Harbor, so the plain-HTTP console carries
+// the pointer instead. Shown only when secure addresses are on AND this page
+// was opened over plain HTTP — the one combination where the operator has the
+// secure address but is not using it yet.
+function HttpsBanner({ c, go }: { c: Console; go: (r: Route) => void }) {
+  const state = c.data.system?.network.https;
+  const [dismissed, setDismissed] = useState(false);
+  if (!state?.enabled || !state.url) return null;
+  if (dismissed) return null;
+  try {
+    if (window.location.protocol === 'https:') return null;
+  } catch {
+    // no window (tests): show the banner
+  }
+  return (
+    <p className="notice banner" role="status">
+      Secure addresses are on — open Harbor at{' '}
+      <a href={state.url} target="_blank" rel="noopener noreferrer">
+        {state.url}
+      </a>{' '}
+      with no warning once this browser trusts the certificate.{' '}
+      <button className="btn ghost small" onClick={() => go({ page: 'settings', section: 'network' })}>
+        How to trust it…
+      </button>{' '}
+      <button className="btn ghost icon" onClick={() => setDismissed(true)} aria-label="Dismiss">
+        ×
+      </button>
+    </p>
   );
 }

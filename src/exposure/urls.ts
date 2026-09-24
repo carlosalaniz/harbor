@@ -1,6 +1,7 @@
 import type { EndpointDto, PrimaryExposure } from '../contracts/api.js';
 import type { EndpointAllocation, ExposureRow } from '../state/repo.js';
 import { browserUrlFor } from '../config.js';
+import { lanHttpsUrl } from '../system/lan-https.js';
 
 // The single place that turns allocations + exposures into the addresses users see.
 export function exposureUrl(e: Pick<ExposureRow, 'via' | 'hostname' | 'port'>): string {
@@ -8,9 +9,16 @@ export function exposureUrl(e: Pick<ExposureRow, 'via' | 'hostname' | 'port'>): 
   return e.port === 443 ? `https://${e.hostname}/` : `https://${e.hostname}:${e.port}/`;
 }
 
-export function endpointUrls(alloc: EndpointAllocation, exposures: ExposureRow[], lanHost: string | null = null): EndpointDto['urls'] {
+export function endpointUrls(alloc: EndpointAllocation, exposures: ExposureRow[], lanHost: string | null = null, lanSecure: { host: string } | null = null): EndpointDto['urls'] {
   const urls: EndpointDto['urls'] = { loopback: browserUrlFor(alloc.hostPort) };
   if (lanHost) urls.lan = `http://${lanHost}:${alloc.hostPort}/`;
+  if (lanSecure) {
+    try {
+      urls.lanSecure = lanHttpsUrl(lanSecure.host, alloc.hostPort);
+    } catch {
+      /* offset overflow: no secure address for this endpoint */
+    }
+  }
   for (const e of exposures) {
     if (e.endpointId !== alloc.id) continue;
     if (e.via === 'tailnet') urls.tailnet = exposureUrl(e);

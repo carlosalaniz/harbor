@@ -15,6 +15,7 @@ import type { CaddyAdmin } from '../exposure/caddy.js';
 import type { MachineKeyHolder } from '../auth/machine-holder.js';
 import type { ApplicationService } from './service.js';
 import type { CryptoProvider } from '../storage/crypto-provider.js';
+import type { LanHttpsServers } from '../system/lan-https.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
 export type UrlVerifier = (url: string, opts?: { expectStatus?: number[]; timeoutMs?: number }) => Promise<{ ok: boolean; status: number | null; error: string | null }>;
@@ -59,6 +60,12 @@ export interface Ctx {
   // Per-app kernel sealing (fscrypt). Fake no-op in tests/dev; root helpers
   // on a live host. Never null after daemon wiring (defaults to fake).
   crypto?: CryptoProvider | null;
+  // LAN HTTPS listeners (console 443 + one proxy per app endpoint). Wired in
+  // daemon.ts; the observer reconciles them from state every tick.
+  lanHttps?: LanHttpsServers | null;
+  // The Fastify routing function, stashed by daemon.ts so the HTTPS console
+  // listener serves the same routes (same guards, same auth).
+  __routing?: (req: never, res: never) => void;
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';

@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
+import type { ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
 import { isMockUi, mockApi } from './mock/api';
 
 export class ApiError extends Error {
@@ -163,6 +163,26 @@ const realApi = {
   createFolder: (parent: string, name: string) => call<{ name: string; path: string; writable: boolean }>('POST', '/v1/host/folders', { parent, name }),
   tailscaleLogin: (authKey?: string) => call<TailscaleLoginDto>('POST', '/v1/platform-tools/tailscale/login', authKey ? { authKey } : {}),
   tailscaleLogout: () => call<void>('POST', '/v1/platform-tools/tailscale/logout', {}),
+  // LAN HTTPS (decision 109): local CA + secure addresses, off by default.
+  networkHttps: () => call<NetworkHttpsDto>('GET', '/v1/network/https'),
+  setNetworkHttps: (enabled: boolean) => call<NetworkHttpsDto>('PUT', '/v1/network/https', { enabled }),
+  // The trust probe: fetch the secure console address and report whether THIS
+  // browser already trusts the Harbor CA. A trusted browser gets 200 through
+  // fetch; an untrusted one fails the TLS handshake (TypeError), which is the
+  // whole signal — no cert parsing, no fingerprint comparison in the page.
+  probeHttpsTrust: async (url: string): Promise<'trusted' | 'untrusted' | 'unreachable'> => {
+    try {
+      const res = await fetch(url, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' });
+      void res;
+      // no-cors hides the status (opaque), but reaching here means the TLS
+      // handshake succeeded: this browser trusts the CA.
+      return 'trusted';
+    } catch (e) {
+      // A failed handshake is a TypeError; anything else (offline box, mixed
+      // content from an http page is blocked before TLS) is unreachable.
+      return e instanceof TypeError ? 'untrusted' : 'unreachable';
+    }
+  },
   domains: () => call<DomainsDto>('GET', '/v1/domains'),
   addDomain: (hostname: string) => call<DomainDto>('POST', '/v1/domains', { hostname }),
   checkDomain: (hostname: string) => call<DomainDto>('POST', `/v1/domains/${encodeURIComponent(hostname)}/check`, {}),

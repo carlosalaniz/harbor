@@ -878,6 +878,35 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     },
   );
 
+  // --- LAN HTTPS (decision 109): local CA + secure addresses. The CA cert
+  // is public key material (trusting it is the point); the key never leaves
+  // <stateDir>/tls. Enabling mints the certs and starts the 443 console
+  // listener + one proxy per app endpoint; disabling closes them.
+  app.get('/v1/network/https', { preHandler: requireAuth, schema: { description: 'LAN HTTPS state: whether https://harbor.local/ answers, the CA fingerprint to compare on the device, and the names the server cert covers.' } }, async () => service.networkHttps());
+  app.put(
+    '/v1/network/https',
+    { preHandler: requireAuth, schema: { description: 'Turn LAN HTTPS on (mints the local CA + server cert, starts the secure listeners) or off (closes them; plain HTTP stays).', body: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } } } },
+    async (req) => service.setNetworkHttps((req.body as { enabled: boolean }).enabled),
+  );
+  app.get(
+    '/v1/network/https/ca.crt',
+    // Open on purpose: the CA cert is public key material and the trust sheet
+    // downloads it from the plain-HTTP console (the HTTPS address warns until
+    // it is trusted). Same-origin/Host guards above still apply.
+    { schema: { description: 'The Harbor local CA certificate (PEM). Trust it once per device, then https://harbor.local/ opens with no warning.', security: [] } },
+    async (_req, reply) => {
+      try {
+        const pem = service.caPem();
+        reply.header('content-type', 'application/x-pem-file');
+        reply.header('content-disposition', 'attachment; filename="harbor-local-ca.crt"');
+        reply.header('cache-control', 'no-store');
+        return reply.send(pem);
+      } catch {
+        throw new HarborError('NOT_FOUND', 'LAN HTTPS has not been turned on yet', { nextAction: 'Turn on Secure addresses in Settings → Network first.' });
+      }
+    },
+  );
+
   // --- static UI
   if (config.uiDir && existsSync(path.join(config.uiDir, 'index.html'))) {
     await app.register(fastifyStatic, {

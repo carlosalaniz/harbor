@@ -1,8 +1,9 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NetworkHttpsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanUrl } from '../system/lan.js';
+import { caPem, ensureTlsCerts, lanHttpsHosts, readTlsState, reconcileLanHttps } from '../system/lan-https.js';
 import { hostname } from 'node:os';
 import { defaultCredentialsOf } from '../packages/catalog.js';
 import { dnsState } from '../system/net.js';
@@ -403,7 +404,7 @@ export class ApplicationService {
     this.ctx.repo.setAutoUpdate(row.id, enabled);
     const meta = this.packageMeta(row);
     const fresh = this.ctx.repo.instance(row.id)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
   // One update plan per eligible instance, submitted through the normal queue ("Update all").
   // Failures roll back per instance and never stop the rest (the queue is serial anyway).
@@ -529,6 +530,7 @@ export class ApplicationService {
       deviceName: this.ctx.repo.setting<string>('device.name'),
       hostname: hostname(),
       lan: { enabled: this.ctx.config.lan.enabled, url: this.ctx.config.lan.enabled ? lanUrl(this.ctx.config.lan.port) : null },
+      network: { https: this.networkHttps() },
       update: this.ctx.selfUpdate.status(),
     };
   }
@@ -544,6 +546,40 @@ export class ApplicationService {
   // http://<hostname>.local for app addresses in LAN mode (the console swaps in the host it was opened with)
   private lanHost(): string | null {
     return this.ctx.config.lan.enabled ? `${hostname().toLowerCase().replace(/\.local$/, '')}.local` : null;
+  }
+  // https://<hostname>.local for app addresses when LAN HTTPS is on (same swap as lanHost)
+  private lanSecureHost(): string | null {
+    return this.httpsEnabled() ? (this.lanHost() ?? 'harbor.local') : null;
+  }
+  // ---- LAN HTTPS (decision 109): local CA + secure addresses. Off by
+  // default; stored as a setting (no migration). Enabling mints the CA +
+  // server cert (openssl) and starts the 443 console listener + one proxy
+  // per app endpoint; disabling closes them. The CA cert is public key
+  // material (trusting it is the point); the key never leaves tls/ (0600).
+  httpsEnabled(): boolean {
+    return this.ctx.config.lan.enabled && (this.ctx.repo.setting<boolean>('network.httpsEnabled') ?? false);
+  }
+  networkHttps(): NetworkHttpsDto {
+    const enabled = this.httpsEnabled();
+    const tls = readTlsState(this.ctx.config.stateDir);
+    return { enabled, url: enabled ? 'https://harbor.local/' : null, fingerprint: tls?.fingerprint ?? null, expiresAt: tls?.expiresAt ?? null, hosts: tls?.hosts ?? [] };
+  }
+  async setNetworkHttps(enabled: boolean): Promise<NetworkHttpsDto> {
+    if (enabled && !this.ctx.config.lan.enabled) throw new HarborError('INVALID_STATE', 'LAN mode is off', { nextAction: 'Turn on LAN mode first (bootstrap --lan): HTTPS secures the LAN addresses.' });
+    if (enabled) {
+      const hosts = lanHttpsHosts();
+      await ensureTlsCerts(this.ctx.config.stateDir, hosts);
+      this.ctx.repo.setSetting('network.httpsEnabled', true);
+      this.ctx.log.info('LAN HTTPS enabled', { hosts: hosts.join(',') });
+    } else {
+      this.ctx.repo.setSetting('network.httpsEnabled', false);
+      this.ctx.log.info('LAN HTTPS disabled', {});
+    }
+    await reconcileLanHttps(this.ctx);
+    return this.networkHttps();
+  }
+  caPem(): string {
+    return caPem(this.ctx.config.stateDir);
   }
   setDeviceName(name: string | null): SystemDto {
     const clean = name?.trim().replace(/\s+/g, ' ') ?? '';
@@ -660,7 +696,7 @@ export class ApplicationService {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id) });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id) });
     });
   }
   // Install-location read model: the encrypted home on the drive (null =
@@ -974,7 +1010,7 @@ export class ApplicationService {
   private summaryOf(instanceId: string): InstanceSummary {
     const fresh = this.ctx.repo.instance(instanceId)!;
     const meta = this.packageMeta(fresh);
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
     try {
@@ -1053,7 +1089,7 @@ export class ApplicationService {
     this.ctx.log.info('drive adopted', { instanceId, storageId, path: hostPath, actor });
     const meta = this.packageMeta(this.ctx.repo.instance(instanceId)!);
     const fresh = this.ctx.repo.instance(instanceId)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
   }
 
   // ---- your own apps
@@ -1212,7 +1248,7 @@ export class ApplicationService {
       void submit;
       const fresh = this.ctx.repo.instance(instanceId)!;
       const meta = this.packageMeta(fresh);
-      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), usage: null, needsDrive: null, home: this.homeState(instanceId) });
+      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: null, needsDrive: null, home: this.homeState(instanceId) });
     } finally {
       zeroKey(masterKey);
     }
@@ -1221,7 +1257,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id) });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id) });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
