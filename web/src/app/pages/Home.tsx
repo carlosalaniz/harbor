@@ -14,15 +14,18 @@ function greeting(): string {
   return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 }
 
-// The header greets the administrator by name ("Good morning, Carlos") once the
+// The header greets by display name ("Good morning, Carlos") once the
 // account endpoint answers; before that it falls back to the bare greeting.
-// The username is capitalized for display ("carlos" → "Carlos").
+// The display name is shown as-is (it is already what the operator typed);
+// without one the login name is capitalized for display ("carlos" → "Carlos").
 function useGreeting(): string {
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     api
       .security()
       .then((s) => {
+        const display = s.displayName?.trim();
+        if (display) return setName(display);
         const raw = s.username?.trim();
         setName(raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : null);
       })

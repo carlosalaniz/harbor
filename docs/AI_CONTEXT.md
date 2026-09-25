@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (c
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–108 so far) | `docs/DECISIONS.md` — **next number is 109**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–111 so far) | `docs/DECISIONS.md` — **next number is 112**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -78,7 +78,9 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest decision (110, executed 2026-09-24):** When Caddy (the public proxy) is installed it owns
+**Latest decision (111, executed 2026-09-25):** Home greets with an optional display name (`account.displayName`, `PUT /v1/account/name`, setup wizard + Settings → Account card; login name stays the credential); the shared `<dialog>` wrapper no longer `close()`s in cleanup (StrictMode remount killed every dialog — the Network trust sheet looked dead); `.content` is centered with wider caps on big screens.
+
+**Previous decision (110, executed 2026-09-24):** When Caddy (the public proxy) is installed it owns
 `:443`, so LAN HTTPS (decision 109) is served THROUGH Caddy — the LAN hostnames become a route on the
 SAME :443 `harbor` server as the public hostnames (Caddy can't have two servers on one port), pinned
 to the Harbor-minted cert (`tls_connection_policies` SNI → `any_tag: harbor-lan` +

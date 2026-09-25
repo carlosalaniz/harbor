@@ -196,6 +196,7 @@ const realApi = {
   systemHost: () => call<SystemHostDto>('GET', '/v1/system/host'),
   // security, device, logs
   security: () => call<SecurityDto>('GET', '/v1/account/security'),
+  setDisplayName: (name: string | null) => call<{ username: string; displayName: string | null }>('PUT', '/v1/account/name', { name }),
   rotateRecoveryKey: (password: string) => call<RecoveryKeyRotationDto>('POST', '/v1/account/recovery-key', { password }),
   totpSetup: () => call<TotpSetupDto>('POST', '/v1/account/totp/setup', {}),
   totpEnable: (code: string) => call<void>('POST', '/v1/account/totp/enable', { code }),

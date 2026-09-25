@@ -13,6 +13,7 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState(status.deviceName ?? '');
   const [username, setUsername] = useState('admin');
+  const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [again, setAgain] = useState('');
   const [code, setCode] = useState('');
@@ -28,7 +29,7 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
     if (password !== again) return setError('The two passwords do not match.');
     setBusy(true);
     try {
-      const r = await api.setup({ code: code.replace(/\D/g, ''), username: username.trim(), password, ...(deviceName.trim() ? { deviceName: deviceName.trim() } : {}) });
+      const r = await api.setup({ code: code.replace(/\D/g, ''), username: username.trim(), password, ...(deviceName.trim() ? { deviceName: deviceName.trim() } : {}), ...(displayName.trim() ? { displayName: displayName.trim() } : {}) });
       setRecoveryKey(r.recoveryKey);
       setStep(2);
     } catch (err) {
@@ -90,6 +91,10 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
             <label>
               Username
               <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" pattern="[A-Za-z][A-Za-z0-9._-]{1,31}" required aria-label="Username" />
+            </label>
+            <label>
+              What should Home call you? <span className="muted small">(optional — the greeting name, not the login)</span>
+              <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} autoComplete="nickname" maxLength={40} placeholder="Carlos" aria-label="Display name" />
             </label>
             <label>
               Password <span className="muted small">(at least 8 characters)</span>

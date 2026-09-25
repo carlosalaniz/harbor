@@ -265,13 +265,20 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `selfupdate-lan.test.ts` (lanHttps route + cert load_files + public routes intact); integration `lan-https.test.ts` (server cert/key 0640, CA key 0600)
 - [x] Docs: decision 110, AI_CONTEXT gotcha + latest-decision, PROGRESS row
 
+## Phase 35 — greeting name, dialog fix, centered wide layout (2026-09-25, v0.17.3) ✅
+- [x] Display name (decision 111): optional `account.displayName` setting (settings table, no migration; trim/collapse, 40 chars); `SecurityDto.displayName`, `SetupRequest.displayName`, `PUT /v1/account/name` (set/clear), `harbor account name [name]`; setup wizard asks `What should Home call you?`; Settings → Account card shows greeting vs login name with Set/Change/Clear; Home greets the display name as-is, else the capitalized login name
+- [x] Dialog fix: shared `<dialog>` wrapper no longer `close()`s in effect cleanup (StrictMode remount fired it after the second `showModal` and instantly unmounted every dialog); listens for the native `close` event via ref — the Network trust sheet opens again
+- [x] Wide layout: `.content` centered (`margin-inline: auto`) with wider caps (1440px ≥1600px, 1600px ≥2000px) instead of pinning left
+- [x] Tests: unit `openapi.test.ts` route pin (+1 route, 79 paths); integration `security-terminal.test.ts` (displayName null default, set/clear/validation); unit 170, integration 139 + 3 skipped, e2e 26
+- [x] Docs: decision 111, operator guide setup/Account/CLI rows, openapi regenerated (79 paths)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 169 passed |
+| `pnpm test` (unit) | 170 passed |
 | `pnpm test:integration` (fake adapter) | 139 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 26 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |

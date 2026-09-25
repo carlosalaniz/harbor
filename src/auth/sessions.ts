@@ -158,15 +158,33 @@ export class SessionService {
   // Password change by the logged-in administrator: current password required, policy applied,
   // every other session revoked so a stolen token does not outlive the change.
   // ---- two-factor (TOTP): setup creates a pending secret; enable confirms it with a live code; disable needs the password.
-  security(): { username: string; twoFactor: boolean; pending: boolean; recoveryKey: { createdAt: string } | null } {
+  security(): { username: string; displayName: string | null; twoFactor: boolean; pending: boolean; recoveryKey: { createdAt: string } | null } {
     const card = this.repo.setting<{ createdAt?: string }>(INSTALLATION_RECOVERY_SETTING);
     return {
       username: this.repo.administrator()?.username ?? 'admin',
+      displayName: this.repo.setting<string>('account.displayName'),
       twoFactor: this.repo.setting('security.totp') !== null,
       pending: this.repo.setting('security.totp.pending') !== null,
       // Only when it was issued, never the words: they were shown once.
       recoveryKey: card?.createdAt ? { createdAt: card.createdAt } : null,
     };
+  }
+  /** What Home greets ("Carlos"): the chosen display name, else the login name. Never empty. */
+  greetingName(): string {
+    const display = this.repo.setting<string>('account.displayName')?.trim();
+    if (display) return display;
+    return this.repo.administrator()?.username ?? 'admin';
+  }
+  /** Set (or clear with null/empty) the Home greeting name. Login name is untouched. */
+  setDisplayName(name: string | null): { username: string; displayName: string | null } {
+    const clean = name?.trim().replace(/\s+/g, ' ') ?? '';
+    if (!clean) {
+      this.repo.deleteSetting('account.displayName');
+      return { username: this.repo.administrator()?.username ?? 'admin', displayName: null };
+    }
+    if (clean.length > 40) throw new HarborError('INVALID_REQUEST', 'the name can be at most 40 characters');
+    this.repo.setSetting('account.displayName', clean);
+    return { username: this.repo.administrator()?.username ?? 'admin', displayName: clean };
   }
   setupTotp(issuer: string): { secret: string; otpauthUrl: string } {
     if (this.repo.setting('security.totp')) throw new HarborError('INVALID_STATE', 'two-factor authentication is already on', { nextAction: 'Turn it off first to set up a new authenticator.' });

@@ -293,9 +293,22 @@ pre.code {
   max-width: 1200px;
   width: 100%;
   min-width: 0;
+  margin-inline: auto;
   display: grid;
   gap: 18px;
   align-content: start;
+}
+/* wide screens: the 1200px cap leaves a dead gutter on the right, so let the
+   centered column breathe instead of pinning everything to the left */
+@media (min-width: 1600px) {
+  .content {
+    max-width: 1440px;
+  }
+}
+@media (min-width: 2000px) {
+  .content {
+    max-width: 1600px;
+  }
 }
 
 /* login: lock-screen feel */

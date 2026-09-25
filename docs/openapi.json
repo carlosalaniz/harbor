@@ -83,6 +83,10 @@
                   "deviceName": {
                     "type": "string",
                     "maxLength": 80
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "maxLength": 80
                   }
                 }
               }
@@ -1039,7 +1043,40 @@
     },
     "/v1/account/security": {
       "get": {
-        "description": "The administrator username (for the Home greeting) and whether two-factor login is on.",
+        "description": "The administrator login name, the Home greeting name, and whether two-factor login is on.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/account/name": {
+      "put": {
+        "description": "What Home calls you (\"Good evening, Carlos\"). Login name is untouched; empty clears back to the username.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 80
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Default Response"

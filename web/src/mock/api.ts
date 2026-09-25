@@ -363,7 +363,11 @@ export const mockApi = {
   },
   setInstanceAppearance: async (id: string) => instances.find((i) => i.id === id) ?? instances[0]!,
   systemHost: async (): Promise<SystemHostDto> => mockHost(),
-  security: async () => ({ username: 'carlos', twoFactor: false, pending: false, recoveryKey: { createdAt: new Date(Date.now() - 86_400_000).toISOString() } }),
+  security: async () => ({ username: 'carlos', displayName: 'Carlos', twoFactor: false, pending: false, recoveryKey: { createdAt: new Date(Date.now() - 86_400_000).toISOString() } }),
+  setDisplayName: async (name: string | null) => {
+    await beat(150);
+    return { username: 'carlos', displayName: name?.trim() ? name.trim() : null };
+  },
   rotateRecoveryKey: async () => {
     await beat();
     return { recoveryKey: 'zebra zone zoo zero youth yellow year wrong write worth world work', restamped: ['Immich'], unreachable: [] };

@@ -517,11 +517,13 @@ export interface SetupRequest {
   username: string;
   password: string;
   deviceName?: string;
+  displayName?: string; // what Home calls you ("Good evening, Carlos"); defaults to the username
 }
 
 // ---- account security, logs, terminal
 export interface SecurityDto {
-  username: string; // the enrolled administrator (shown in the Home greeting)
+  username: string; // the login name (never shown in the Home greeting when a display name is set)
+  displayName: string | null; // what Home greets ("Carlos"); null = fall back to the username
   twoFactor: boolean;
   pending: boolean;
   // The Harbor recovery key: when it was issued, never the words themselves.

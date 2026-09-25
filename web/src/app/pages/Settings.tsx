@@ -599,6 +599,7 @@ function Account() {
     <>
       <TwoFactor />
       <RecoveryKey />
+      <DisplayName />
       <section className="card" aria-labelledby="pw-h">
         <h2 id="pw-h">Change password</h2>
         <p className="muted small">Use at least 8 characters. Every other logged-in browser or CLI is signed out when you change it.</p>
@@ -663,6 +664,117 @@ function SessionList() {
         </li>
       ))}
     </ul>
+  );
+}
+
+// What Home calls you ("Good evening, Carlos"). Separate from the login
+// name on purpose: the username stays the credential, this is just the greeting.
+function DisplayName() {
+  const [sec, setSec] = useState<SecurityDto | null>(null);
+  const [draft, setDraft] = useState('');
+  const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const load = useCallback(() => api.security().then((s) => (setSec(s), setDraft(s.displayName ?? ''), s), () => null), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  if (!sec) return null;
+  const shown = sec.displayName?.trim() ? sec.displayName : null;
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.setDisplayName(draft.trim() ? draft : null);
+      setSec({ ...sec, displayName: r.displayName });
+      setDraft(r.displayName ?? '');
+      setEditing(false);
+      setMsg({ tone: 'ok', text: r.displayName ? `Home will greet you as ${r.displayName}.` : 'Cleared — Home falls back to your login name.' });
+    } catch (err) {
+      setMsg({ tone: 'bad', text: err instanceof ApiError ? `${err.message}. ${err.nextAction}` : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card" aria-labelledby="name-h">
+      <h2 id="name-h">What should Home call you?</h2>
+      <p className="muted small">
+        {shown ? (
+          <>
+            Home greets you as <strong>{shown}</strong>. Your login name stays <code>{sec.username}</code>.
+          </>
+        ) : (
+          <>
+            Home greets you with your login name (<code>{sec.username}</code>). Set a name to hear that instead.
+          </>
+        )}
+      </p>
+      {editing ? (
+        <form className="stack" onSubmit={save}>
+          <label>
+            Name
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={sec.username} maxLength={40} aria-label="Display name" autoFocus />
+          </label>
+          {msg && (
+            <p className={msg.tone === 'ok' ? 'notice' : 'error'} role={msg.tone === 'ok' ? 'status' : 'alert'}>
+              {msg.text}
+            </p>
+          )}
+          <div className="row">
+            <button className="btn primary" type="submit" disabled={busy}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              className="btn ghost"
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setDraft(sec.displayName ?? '');
+                setMsg(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          {msg && (
+            <p className={msg.tone === 'ok' ? 'notice' : 'error'} role={msg.tone === 'ok' ? 'status' : 'alert'}>
+              {msg.text}
+            </p>
+          )}
+          <div className="row">
+            <button className="btn" onClick={() => setEditing(true)}>
+              {shown ? 'Change name' : 'Set a name'}
+            </button>
+            {shown && (
+              <button
+                className="btn ghost"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  setMsg(null);
+                  void api
+                    .setDisplayName(null)
+                    .then((r) => {
+                      setSec({ ...sec, displayName: r.displayName });
+                      setDraft('');
+                      setMsg({ tone: 'ok', text: 'Cleared — Home falls back to your login name.' });
+                    })
+                    .catch((err: unknown) => setMsg({ tone: 'bad', text: err instanceof ApiError ? `${err.message}. ${err.nextAction}` : String(err) }))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

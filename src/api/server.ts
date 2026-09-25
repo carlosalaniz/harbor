@@ -172,7 +172,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       schema: {
         description: 'Create the first administrator (setup code from the installer required), optionally name the machine, and get a session. Refused once an administrator exists.',
         security: [],
-        body: { type: 'object', additionalProperties: false, required: ['code', 'username', 'password'], properties: { code: { type: 'string', minLength: 6, maxLength: 8 }, username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, deviceName: { type: 'string', maxLength: 80 } } },
+        body: { type: 'object', additionalProperties: false, required: ['code', 'username', 'password'], properties: { code: { type: 'string', minLength: 6, maxLength: 8 }, username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, deviceName: { type: 'string', maxLength: 80 }, displayName: { type: 'string', maxLength: 80 } } },
       },
     },
     async (req, reply) => reply.status(201).send(await setup.claim(req.body as SetupRequest, req.ip)),
@@ -382,7 +382,15 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   );
 
   // --- two-factor authentication (TOTP)
-  app.get('/v1/account/security', { preHandler: requireAuth, schema: { description: 'The administrator username (for the Home greeting) and whether two-factor login is on.' } }, async () => sessions.security());
+  app.get('/v1/account/security', { preHandler: requireAuth, schema: { description: 'The administrator login name, the Home greeting name, and whether two-factor login is on.' } }, async () => sessions.security());
+  app.put(
+    '/v1/account/name',
+    {
+      preHandler: requireAuth,
+      schema: { description: 'What Home calls you ("Good evening, Carlos"). Login name is untouched; empty clears back to the username.', body: { type: 'object', additionalProperties: false, required: ['name'], properties: { name: { type: ['string', 'null'], maxLength: 80 } } } },
+    },
+    async (req) => sessions.setDisplayName((req.body as { name: string | null }).name),
+  );
   app.post('/v1/account/totp/setup', { preHandler: requireAuth, schema: { description: 'Start two-factor setup: returns a fresh secret (base32) and an otpauth URL for a QR code. Not active until enabled with a live code.' } }, async () => sessions.setupTotp(`Harbor${service.system().deviceName ? ` (${service.system().deviceName})` : ''}`));
   app.post(
     '/v1/account/totp/enable',

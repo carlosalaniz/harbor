@@ -48,13 +48,36 @@ export function StatusPill({ inst }: { inst: InstanceSummary }) {
 export function Dialog({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const headingId = useId(); // dialogs can nest (install page → folder picker); each needs its own label
+  // StrictMode-safe: the cleanup closes the element, but that close() must not
+  // re-fire onClose (in dev StrictMode the mount → unmount → remount cycle
+  // would otherwise call onClose during cleanup and instantly unmount the
+  // dialog, so every dialog button looks like it "does nothing").
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const el = ref.current;
-    if (el && !el.open) el.showModal();
-    return () => el?.close();
+    if (!el) return;
+    // No close() in the cleanup: in dev StrictMode the mount → unmount →
+    // remount cycle would close the freshly re-shown dialog (the cleanup's
+    // close event lands after the second showModal and instantly unmounts
+    // it, so every dialog button looks like it "does nothing"). Removing an
+    // open <dialog> from the DOM exits the top layer cleanly, so no
+    // cleanup close is needed; Escape still fires a native close event.
+    if (!el.open) {
+      try {
+        el.showModal();
+      } catch {
+        /* already open (StrictMode remount) */
+      }
+    }
+    const handleClose = () => onCloseRef.current();
+    el.addEventListener('close', handleClose);
+    return () => {
+      el.removeEventListener('close', handleClose);
+    };
   }, []);
   return (
-    <dialog ref={ref} className={`dialog ${wide ? 'wide' : ''}`} onClose={onClose} aria-labelledby={headingId}>
+    <dialog ref={ref} className={`dialog ${wide ? 'wide' : ''}`} aria-labelledby={headingId}>
       <div className="dialog-head">
         <h2 id={headingId}>{title}</h2>
         <button className="btn ghost icon" onClick={onClose} aria-label="Close dialog">

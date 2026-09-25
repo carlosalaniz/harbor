@@ -626,7 +626,7 @@ const totp = account.command('totp').description('two-factor login (authenticato
 totp
   .command('status')
   .action(async () => {
-    const s = await client().get<{ twoFactor: boolean; pending: boolean }>('/v1/account/security');
+    const s = await client().get<{ displayName: string | null; twoFactor: boolean; pending: boolean }>('/v1/account/security');
     out(s, () => (s.twoFactor ? 'Two-factor login is ON.' : s.pending ? 'Setup started but not confirmed; run: harbor account totp enable <code>' : 'Two-factor login is off.'));
   });
 totp
@@ -669,6 +669,15 @@ program
     const api = client();
     const s = name === undefined ? await api.get<SystemDto>('/v1/system') : await api.post<SystemDto>('/v1/system/name', { name }, {}, 'PUT');
     out({ deviceName: s.deviceName }, () => (s.deviceName ? `This machine is called "${s.deviceName}" in Harbor.` : 'No name set; Harbor shows the hostname.'));
+  });
+
+account
+  .command('name [name]')
+  .description("show or set what Home calls you (empty string clears back to the login name)")
+  .action(async (name?: string) => {
+    const api = client();
+    const s = name === undefined ? await api.get<{ username: string; displayName: string | null }>('/v1/account/security') : await api.post<{ username: string; displayName: string | null }>('/v1/account/name', { name }, {}, 'PUT');
+    out(s, () => (s.displayName ? `Home will greet you as ${s.displayName}.` : `No greeting name set; Home uses your login name (${s.username}).`));
   });
 
 program

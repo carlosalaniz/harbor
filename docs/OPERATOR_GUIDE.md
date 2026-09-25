@@ -39,7 +39,8 @@ curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh
 It checks the machine, installs Docker if needed, downloads the newest release from GitHub and verifies its
 checksum, names the machine `harbor` (so it answers as **http://harbor.local** on your network through mDNS),
 installs Tailscale and the HTTPS proxy, and prints a **setup code**. Then open the printed address in a
-browser and follow the wizard: name your Harbor, create your account (type the code), pick a look. Nothing
+browser and follow the wizard: name your Harbor, create your account (type the code, pick a login name,
+tell Home what to call you), pick a look. Nothing
 is typed on the terminal.
 
 - `HARBOR_HOSTNAME=mybox` changes the mDNS name (`http://mybox.local`); `HARBOR_HOSTNAME=` keeps the current one.
@@ -391,7 +392,7 @@ The console's **Settings** page covers what a household operator needs after boo
 
 | Section | What you can do |
 |---|---|
-| Account | change the administrator password (every other logged-in browser or CLI is signed out); *Remember this browser* (30-day session), the session list, *Log out of other sessions*, *Log out* |
+| Account | change the administrator password (every other logged-in browser or CLI is signed out); *Remember this browser* (30-day session), the session list, *Log out of other sessions*, *Log out*; *What should Home call you?* sets the greeting name Home shows ("Good evening, Carlos") — the login name stays the credential, clearing it falls back to the login name |
 | Network | **secure addresses** on your home network: turn on HTTPS for Harbor and every app (`https://harbor.local/` with no warning once each device trusts the one Harbor certificate); the card shows whether *this* browser already trusts it, and *How to trust it on a new device…* walks through macOS, iOS (install the profile, then enable full trust), Windows, Android and Linux, plus the Firefox note |
 | Remote access | connect this machine to your Tailscale tailnet by clicking *Log in with Tailscale* (opens the approval page) or by pasting an auth key; see the node name; turn *Harbor on your tailnet* on or off; log out of the tailnet |
 | Public addresses | the wizard for publishing on the internet: this machine's public address, your domains with a DNS check (*Points here* / *Points elsewhere* / *No DNS record yet*), which app uses each, re-check and forget; certificates are automatic |
@@ -404,7 +405,7 @@ The console's **Settings** page covers what a household operator needs after boo
 | Account (two-factor) | turn on a 6-digit authenticator code at login (QR code or typed key); turn off with the password; lost the app? on the machine: `sudo /opt/harbor/bin/harbor account totp reset --local --config /etc/harbor/harbor.json` |
 | Overview (name) | rename the machine (shown in Settings and the browser tab) |
 
-The same actions exist as commands: `harbor account set-password`, `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor network https` / `harbor network https on|off` / `harbor network ca`, `harbor storage`, `harbor domains [add|check|forget]`, `harbor purge`.
+The same actions exist as commands: `harbor account set-password`, `harbor account name [name]` (show or set the Home greeting name; empty clears it), `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor network https` / `harbor network https on|off` / `harbor network ca`, `harbor storage`, `harbor domains [add|check|forget]`, `harbor purge`.
 
 Search everything with **⌘K / Ctrl+K** (or `/`): installed apps open on Enter, store apps show their page, settings sections jump straight there.
 
