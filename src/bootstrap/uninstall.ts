@@ -41,7 +41,7 @@ export function uninstallPreview(facts: HostFacts, opts: { keepData: boolean }):
     opts.keepData ? `Keep ${PRODUCT.paths.var} (state, secrets, release snapshots)` : `Remove ${PRODUCT.paths.var} (state, secrets, release snapshots — apps' data volumes are already gone above)`,
     `Remove ${PRODUCT.paths.data} only if empty (your folders inside it are never deleted)`,
     `Remove Harbor-owned systemd units (${TAILSCALE_OPERATOR_UNIT}, ${SELF_UPDATE_UNIT_FILE}, ${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}, ${DEVICE_MOUNT_UNIT.replace('.service', '@.service')}, ${APP_CRYPTO_UNIT_FILE}) and ${POLKIT_RULE_PATH}`,
-    `Delete service user ${PRODUCT.serviceUser}`,
+    `Delete service user ${PRODUCT.serviceUser} and its group (even when Caddy is still a member — otherwise the next install fails at useradd)`,
     'Leave untouched: Docker Engine, Cockpit/Tailscale/Caddy packages, your own folders, non-Harbor Docker objects',
   ];
   if (facts.existing.unit === 'foreign') lines[0] = `Keep foreign systemd unit ${PRODUCT.paths.systemdUnit} (not written by Harbor bootstrap)`;
@@ -195,13 +195,31 @@ export async function uninstall(opts: UninstallOptions): Promise<UninstallResult
   }
   await exec('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
 
-  // 5. Service account.
+  // 5. Service account. The group must go too: bootstrap's useradd creates a
+  // same-named group, and useradd fails (exit 9) when that group already exists
+  // — which is exactly what happens when Caddy is still a member of it (the
+  // Caddy-owns-443 fix adds caddy to the harbor group, and userdel leaves the
+  // group behind while it has members). Remove other members first, then the
+  // user, then the group.
   if (facts.existing.user) {
+    const members = await exec('/usr/bin/getent', ['group', PRODUCT.serviceUser], { timeoutMs: 10_000 });
+    const names = members.stdout.trim().split(':')[3]?.split(',').filter(Boolean) ?? [];
+    for (const m of names) {
+      if (m === PRODUCT.serviceUser) continue;
+      const r = await exec('/usr/sbin/deluser', [m, PRODUCT.serviceUser], { timeoutMs: 30_000 });
+      log(r.code === 0 ? `removed ${m} from group ${PRODUCT.serviceUser}` : `could not remove ${m} from group ${PRODUCT.serviceUser}: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+    }
     const r = await exec('/usr/sbin/userdel', [PRODUCT.serviceUser], { timeoutMs: 30_000 });
     if (r.code === 0) {
       removed.push(`user ${PRODUCT.serviceUser}`);
     } else {
       kept.push(`user ${PRODUCT.serviceUser} (userdel failed: ${(r.stderr || r.stdout).trim().slice(0, 200)})`);
+    }
+    const g = await exec('/usr/sbin/groupdel', [PRODUCT.serviceUser], { timeoutMs: 30_000 });
+    if (g.code === 0) {
+      removed.push(`group ${PRODUCT.serviceUser}`);
+    } else if (!/does not exist|no such/i.test((g.stderr || g.stdout).trim())) {
+      kept.push(`group ${PRODUCT.serviceUser} (groupdel failed: ${(g.stderr || g.stdout).trim().slice(0, 200)})`);
     }
   }
 

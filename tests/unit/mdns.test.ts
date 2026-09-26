@@ -28,7 +28,7 @@ publish-workstation=no
 
 describe('default-route interface parsing', () => {
   it('reads the dev of each default route, unique and in order', () => {
-    expect(defaultRouteInterfaces('default via 192.168.0.1 dev wlp5s0 proto dhcp src 192.168.0.146 metric 600 \n')).toEqual(['wlp5s0']);
+    expect(defaultRouteInterfaces('default via 192.168.0.1 dev wlp5s0 proto dhcp src 192.168.0.10 metric 600 \n')).toEqual(['wlp5s0']);
     expect(defaultRouteInterfaces('default via 10.0.0.1 dev eth0 metric 100\ndefault via 192.168.0.1 dev wlp5s0 metric 600\ndefault via 10.0.0.1 dev eth0 metric 100\n')).toEqual(['eth0', 'wlp5s0']);
     expect(defaultRouteInterfaces('')).toEqual([]);
     // Tailscale/Docker are never default routes on a LAN box, but a stray

@@ -30,6 +30,7 @@ describe('uninstall preview', () => {
     expect(text).toContain('harbor-device-mount@.service');
     expect(text).toContain('49-harbor-power.rules');
     expect(text).toContain('Delete service user harbor');
+    expect(text).toContain('and its group');
     expect(text).toContain('Leave untouched');
   });
   it('--keep-data keeps state; foreign unit and release are never deleted', () => {

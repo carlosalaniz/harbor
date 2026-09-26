@@ -40,7 +40,7 @@
             "note": "Node harbor-test.tail7d0db4.ts.net is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).",
             "facts": {
               "dnsName": "harbor-test.tail7d0db4.ts.net",
-              "tailnet": "carlosglvn93@gmail.com",
+              "tailnet": "operator@example.invalid",
               "magicDnsEnabled": true,
               "httpsEnabled": false,
               "online": true
@@ -103,7 +103,7 @@
           "note": "Node harbor-test.tail7d0db4.ts.net is logged in, but HTTPS certificates are not enabled for the tailnet. Enable MagicDNS and HTTPS in the Tailscale admin console (DNS settings).",
           "facts": {
             "dnsName": "harbor-test.tail7d0db4.ts.net",
-            "tailnet": "carlosglvn93@gmail.com",
+            "tailnet": "operator@example.invalid",
             "magicDnsEnabled": true,
             "httpsEnabled": false,
             "online": true

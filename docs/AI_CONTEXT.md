@@ -11,7 +11,7 @@ Ubuntu 24.04 x86-64 machine, one administrator, apps installed from a catalog of
 (manifest + Compose subset pinned by image digest), a React console with a launcher home screen, and
 three ways to reach apps: loopback (always), LAN mode (`http://harbor.local`, opt-in at install),
 Tailscale tailnet, and public HTTPS via Caddy + Let's Encrypt. Everything a user can do in the console
-is also a `harbor` CLI command against the same local API. Owner/user: Carlos (carlos.alaniz@playlist.com).
+is also a `harbor` CLI command against the same local API. Owner/user: Carlos (operator@example.invalid).
 
 ## 2. Where things are
 
@@ -92,12 +92,12 @@ bootstrap adds the `caddy` user to the `harbor` group and makes the state dir gr
 validated live against Caddy v2.11.4.
 
 **Last three actions, most recent first:**
-1. **Fixed `https://harbor.local` on carlos-desktop (decision 110)** (2026-09-24): Caddy owned :443
+1. **Fixed `https://harbor.local` on home-server (decision 110)** (2026-09-24): Caddy owned :443
    so the daemon's LAN HTTPS listener failed (`port 443 is already in use`); Caddy now terminates TLS
    for the LAN hostnames with the Harbor cert. `renderCaddyConfig` `lanHttps` option, `caddyLanHttps`
    helper, observer wiring, daemon 443 skip, 0640 cert perms + caddy-in-harbor-group bootstrap,
    unit/integration coverage, decision 110 + gotcha. Earlier entries follow.
-1. **Fixed `harbor.local` on carlos-desktop + shipped v0.17.0 (decisions 107–108)** (2026-09-23):
+1. **Fixed `harbor.local` on home-server + shipped v0.17.0 (decisions 107–108)** (2026-09-23):
    two-ended packet captures, avahi pinned to `wlp5s0`, socket+service restart, `mdns.ts` +
    unit tests, guide §7 row, gotchas below. Earlier entries follow.
 1. **Shipped v0.17.0-beta.5 optional per-app passphrase (decision 106)** (2026-09-22) after
@@ -106,7 +106,7 @@ validated live against Caddy v2.11.4.
    + per-app words, `installation-recovery.ts`, setup wizard step, Settings → Account card with
    rotation, awaited machine-key unseal, unit/integration/e2e coverage. Earlier entries follow.
 1. **Shipped v0.17.0-beta.3 same-password silent unlock (decision 104)** (2026-09-21) and
-   prepared carlos-desktop for Carlos's manual run (stick re-formatted NTFS, `harbor uninstall`,
+   prepared home-server for Carlos's manual run (stick re-formatted NTFS, `harbor uninstall`,
    public one-liner reinstall). Previous action (beta.2, decision 103) follows.
 1. **Shipped v0.17.0-beta.2 true at-rest sealing (decision 103)** (2026-09-21): `harbor-app-crypto@`
    unit + polkit prefix, `src/bootstrap/app-crypto-apply.ts` (tune2fs/fscrypt readiness, seal,
@@ -117,14 +117,14 @@ validated live against Caddy v2.11.4.
 1. **Shipped v0.14.0 format-as-ext4 (decision 93)** (2026-09-21): format routes + root step +
    device-dispatch unit, Settings button/dialog/hints, fixture overlay so e2e proves vfat → ext4 →
    mounted, docs (decision 93, guide §4a1, FUTURE, PROGRESS phase 20, VERIFICATION counts, openapi 72).
-   Not deployed to carlos-desktop (stick holds live Immich data).
-2. **Shipped v0.13.0 install-location + adopt, deployed to carlos-desktop** (2026-09-20):
+   Not deployed to home-server (stick holds live Immich data).
+2. **Shipped v0.13.0 install-location + adopt, deployed to home-server** (2026-09-20):
    wizard location picker + passphrase, Lives-on plan row, Locked tiles/drawer banner,
    Found-apps in Settings → Storage, CLI `install --location / found-apps / adopt`,
    unit 116 + integration 122 + e2e 24 green, decision 92, docs (APP_HOMES stages 2–3,
    operator guide §4a2, openapi 70 paths). Deployed via local `pnpm package` + `scp` +
    `harbor self-update apply --archive`. Pushed to `main` (CI publishes the release).
-2. **Shipped and verified v0.12.3 → v0.12.5 on carlos-desktop** (2026-09-20): drive guard
+2. **Shipped and verified v0.12.3 → v0.12.5 on home-server** (2026-09-20): drive guard
    (app-generated `driveId` in `.harbor-bind.json`, observer stop through the queue, Start refusal,
    adopt-drive, needs-drive UI) → auto-mount/auto-start with `storage.autoMount`/`storage.autoStart`
    policies → sandbox fix (`ReadWritePaths` + `/mnt /media`) + notification-delete fix.
@@ -135,7 +135,7 @@ validated live against Caddy v2.11.4.
 
 ## 5a. Live hosts right now
 
-- **carlos-desktop** (physical Kubuntu 24.04 x86_64 on the home LAN; SSH user + address live in
+- **home-server** (physical Kubuntu 24.04 x86_64 on the home LAN; SSH user + address live in
   Carlos's local notes, never in this public repo): the live box. Clean reinstall on 2026-09-22 (`harbor uninstall --yes`, then the
   public one-liner pinned with `HARBOR_VERSION=0.17.0-beta.3` — the plain one-liner and the
   self-update feed only see stable `x.y.z` tags, so betas need the pin). Harbor **0.17.0-beta.3**

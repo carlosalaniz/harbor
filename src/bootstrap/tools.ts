@@ -290,7 +290,8 @@ export async function setupCaddy(log: (m: string) => void, existing: { installed
   // Caddy terminates TLS for the LAN hostnames using the Harbor-minted cert (decision 109 + Caddy-owns-443
   // fix): the server cert/key are group-readable by the `harbor` group, so the caddy user must be in it.
   // Idempotent: `usermod -aG` is a no-op when the user is already a member.
-  await execOk('/usr/bin/usermod', ['-aG', PRODUCT.serviceUser, 'caddy'], { timeoutMs: 30_000 });
+  // (usermod lives in /usr/sbin on Ubuntu 24.04, not /usr/bin.)
+  await execOk('/usr/sbin/usermod', ['-aG', PRODUCT.serviceUser, 'caddy'], { timeoutMs: 30_000 });
   if (!existing.harborConfig) {
     mkdirSync('/etc/caddy', { recursive: true, mode: 0o755 });
     writeFileSync(CADDY_CONFIG, JSON.stringify({ admin: { listen: '127.0.0.1:2019' }, apps: { http: { servers: { harbor: { '@id': 'harbor-managed', listen: [':443'], routes: [] } } } } }, null, 2) + '\n', { mode: 0o644 });

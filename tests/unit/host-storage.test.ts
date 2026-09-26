@@ -48,7 +48,7 @@ describe('host storage', () => {
   });
 
   it('backfills a blank lsblk fstype from the live mount table (stale partition type after format)', () => {
-    // Live on carlos-desktop: Harbor formatted /dev/sdb1 as ext4 in place,
+    // Live on home-server: Harbor formatted /dev/sdb1 as ext4 in place,
     // but the partition still types W95 FAT32, so lsblk reports fstype null
     // while /proc/self/mounts says ext4. The device must report ext4.
     const json = JSON.stringify({

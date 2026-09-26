@@ -4,7 +4,7 @@
 // up, and Harbor creates Docker bridges (docker0, one br-* per app). With an
 // app running, `harbor.local` gets answered with 172.17.0.1 / 172.18.0.1 next
 // to the real LAN address, and clients (macOS in particular) end up with an
-// unroutable address or no answer at all. Seen live on carlos-desktop
+// unroutable address or no answer at all. Seen live on home-server
 // (decision 107): `avahi-resolve -n harbor.local` returned 172.17.0.1.
 //
 // Fix: publish only on the interface(s) carrying the IPv4 default route, via

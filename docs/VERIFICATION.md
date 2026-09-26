@@ -53,7 +53,7 @@ Same box and stick as §3a, now with Immich installed and its `library` claim at
 
 ## 3c. Format-first + FUSE-safe mount unit on physical hardware (2026-09-21, Harbor 0.15.0 → 0.15.1 via local archive self-update)
 
-Same box as §3a (`carlos-desktop`, Ubuntu 24.04.3 x86_64), USB stick `sdb1` 14.4 GB **ntfs** label `USB20FD`, unmounted, no apps installed. Deployed with `pnpm package` → `scp` tarball + `SHA256SUMS` to `/tmp/` → `sudo /opt/harbor/bin/harbor self-update apply --to 0.15.1` (checksum verified, bootstrap re-run, daemon back `ok`).
+Same box as §3a (`home-server`, Ubuntu 24.04.3 x86_64), USB stick `sdb1` 14.4 GB **ntfs** label `USB20FD`, unmounted, no apps installed. Deployed with `pnpm package` → `scp` tarball + `SHA256SUMS` to `/tmp/` → `sudo /opt/harbor/bin/harbor self-update apply --to 0.15.1` (checksum verified, bootstrap re-run, daemon back `ok`).
 
 | Step | Result |
 |---|---|

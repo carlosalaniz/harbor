@@ -24,7 +24,7 @@ README one-liner, put real data in it, and nothing Harbor says about that data i
       (ciphertext + ENOKEY while locked) and a reboot re-lock. The wizard's claim is true now.
 - [ ] **Fresh-machine acceptance run of the current release.** Last A01–A16 run and catalog
       qualification are from 2026-09-15 (Harbor 0.8.x era); 0.9 → 0.16 were verified only as
-      incremental upgrades on carlos-desktop. Rebuild `harbor-test`, install via the public
+      incremental upgrades on home-server. Rebuild `harbor-test`, install via the public
       one-liner (`install.sh` → latest release), finish the browser setup wizard, run
       `pnpm test:vm -- --fresh --exposure` (check the runner still matches the setup-code flow)
       and `node scripts/vm/qualify-catalog.mjs --fresh`; refresh `docs/VERIFICATION.md` §3/§4
