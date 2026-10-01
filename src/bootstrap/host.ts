@@ -7,11 +7,14 @@ import { exec, httpGetStatus, which } from './exec.js';
 export interface HostFacts {
   osId: string;
   versionId: string;
+  osIdLike: string;
+  // base-distro codename for apt repositories (UBUNTU_CODENAME ?? VERSION_CODENAME ?? '')
+  osCodename: string;
   prettyName: string;
   arch: string;
   systemd: boolean;
   root: boolean;
-  docker: { binary: string | null; version: string | null; composeVersion: string | null; daemonActive: boolean; socket: string };
+  docker: { binary: string | null; version: string | null; composeVersion: string | null; daemonActive: boolean; socket: string; aptRepo: { family: string; codename: string; keyUrl: string } };
   existing: {
     optDir: 'absent' | 'harbor' | 'foreign';
     optReleaseVersion: string | null;
@@ -93,11 +96,13 @@ export async function gatherHostFacts(): Promise<HostFacts> {
   return {
     osId: os['ID'] ?? platform(),
     versionId: os['VERSION_ID'] ?? '',
+    osIdLike: os['ID_LIKE'] ?? '',
+    osCodename: os['UBUNTU_CODENAME'] ?? os['VERSION_CODENAME'] ?? '',
     prettyName: os['PRETTY_NAME'] ?? platform(),
     arch: arch(),
     systemd: existsSync('/run/systemd/system'),
     root: typeof process.getuid === 'function' && process.getuid() === 0,
-    docker: { binary: dockerBin, version: dockerVersion, composeVersion, daemonActive, socket: '/var/run/docker.sock' },
+    docker: { binary: dockerBin, version: dockerVersion, composeVersion, daemonActive, socket: '/var/run/docker.sock', aptRepo: dockerAptRepo(os) },
     existing: {
       optDir,
       optReleaseVersion,
@@ -113,13 +118,47 @@ export async function gatherHostFacts(): Promise<HostFacts> {
   };
 }
 
-export function assertSupportedHost(f: HostFacts): void {
-  const problems: string[] = [];
-  if (!f.root) problems.push('bootstrap must run as root (sudo)');
-  if (f.osId !== 'ubuntu' || !f.versionId.startsWith('24.04')) problems.push(`unsupported OS ${f.prettyName}; Ubuntu 24.04 LTS is required`);
-  if (f.arch !== 'x64') problems.push(`unsupported architecture ${f.arch}; x86-64 is required`);
-  if (!f.systemd) problems.push('systemd is required');
-  if (problems.length) throw new HarborError('UNSUPPORTED_CAPABILITY', problems.join('; '), { nextAction: 'Use a supported host (Ubuntu 24.04 x86-64 with systemd) and run as root.' });
+// Same family/codename logic as the installer, on the raw os-release record. Local copy keeps the
+// import cycle away (host.ts is imported by everything bootstrap; docker-install is a leaf).
+function dockerAptRepo(os: Record<string, string>): { family: string; codename: string; keyUrl: string } {
+  const like = (os['ID_LIKE'] ?? '').toLowerCase().split(/\s+/);
+  const family = like.includes('debian') && !like.includes('ubuntu') ? 'debian' : 'ubuntu';
+  const codename = os['UBUNTU_CODENAME'] ?? os['VERSION_CODENAME'] ?? (family === 'debian' ? 'bookworm' : 'noble');
+  return { family, codename, keyUrl: `https://download.docker.com/linux/${family}/gpg` };
+}
+
+// Distros bootstrap knows how to service without --force (decision 113). Compatibility needs
+// more than a shared package manager: the apt recipes (Docker's per-distro repository, Caddy's
+// cloudsmith list, the universe/archive package names) must actually exist for the release.
+export type DistroSupport = 'supported' | 'derived' | 'unknown';
+
+export function distroSupport(osId: string, versionId: string, osIdLike: string): DistroSupport {
+  const id = osId.toLowerCase();
+  if (id === 'ubuntu') return versionId.startsWith('24.04') ? 'supported' : 'unknown';
+  if (id === 'debian') return ['12', '13'].includes(versionId.split('.')[0] ?? '') ? 'supported' : 'unknown';
+  // Downstream derivatives (Linux Mint, Pop!_OS, Raspberry Pi OS, Proxmox, ...) declare their
+  // family in ID_LIKE; they work when they track a supported base, but Harbor never ran there.
+  const like = osIdLike.toLowerCase().split(/\s+/);
+  return like.includes('ubuntu') || like.includes('debian') ? 'derived' : 'unknown';
+}
+
+export function assertSupportedHost(f: HostFacts, opts: { force?: boolean } = {}): void {
+  const hard: string[] = [];
+  if (!f.root) hard.push('bootstrap must run as root (sudo)');
+  if (f.arch !== 'x64') hard.push(`unsupported architecture ${f.arch}; x86-64 is required`);
+  if (!f.systemd) hard.push('systemd is required');
+  if (hard.length) throw new HarborError('UNSUPPORTED_CAPABILITY', hard.join('; '), { nextAction: 'Use a supported host (Ubuntu 24.04 or Debian 12/13, x86-64 with systemd) and run as root.' });
+  const support = distroSupport(f.osId, f.versionId, f.osIdLike);
+  if (support === 'supported') return;
+  if (support === 'derived' && opts.force) return;
+  if (support === 'derived') {
+    throw new HarborError('UNSUPPORTED_CAPABILITY', `unsupported OS ${f.prettyName}; supported hosts are Ubuntu 24.04 LTS and Debian 12/13`, {
+      nextAction: 'This distro is Debian/Ubuntu-based, so it will probably work; re-run with --force to install anyway (not a tested configuration — you keep the pieces).',
+    });
+  }
+  throw new HarborError('UNSUPPORTED_CAPABILITY', `unsupported OS ${f.prettyName}; supported hosts are Ubuntu 24.04 LTS and Debian 12/13`, {
+    nextAction: 'Use a supported host. If this machine is really Debian/Ubuntu-based, re-run with --force (not a tested configuration — you keep the pieces).',
+  });
 }
 
 export function isDir(p: string): boolean {

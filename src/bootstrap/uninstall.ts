@@ -202,20 +202,20 @@ export async function uninstall(opts: UninstallOptions): Promise<UninstallResult
   // group behind while it has members). Remove other members first, then the
   // user, then the group.
   if (facts.existing.user) {
-    const members = await exec('/usr/bin/getent', ['group', PRODUCT.serviceUser], { timeoutMs: 10_000 });
+    const members = await exec('getent', ['group', PRODUCT.serviceUser], { timeoutMs: 10_000 });
     const names = members.stdout.trim().split(':')[3]?.split(',').filter(Boolean) ?? [];
     for (const m of names) {
       if (m === PRODUCT.serviceUser) continue;
-      const r = await exec('/usr/sbin/deluser', [m, PRODUCT.serviceUser], { timeoutMs: 30_000 });
+      const r = await exec('deluser', [m, PRODUCT.serviceUser], { timeoutMs: 30_000 });
       log(r.code === 0 ? `removed ${m} from group ${PRODUCT.serviceUser}` : `could not remove ${m} from group ${PRODUCT.serviceUser}: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
     }
-    const r = await exec('/usr/sbin/userdel', [PRODUCT.serviceUser], { timeoutMs: 30_000 });
+    const r = await exec('userdel', [PRODUCT.serviceUser], { timeoutMs: 30_000 });
     if (r.code === 0) {
       removed.push(`user ${PRODUCT.serviceUser}`);
     } else {
       kept.push(`user ${PRODUCT.serviceUser} (userdel failed: ${(r.stderr || r.stdout).trim().slice(0, 200)})`);
     }
-    const g = await exec('/usr/sbin/groupdel', [PRODUCT.serviceUser], { timeoutMs: 30_000 });
+    const g = await exec('groupdel', [PRODUCT.serviceUser], { timeoutMs: 30_000 });
     if (g.code === 0) {
       removed.push(`group ${PRODUCT.serviceUser}`);
     } else if (!/does not exist|no such/i.test((g.stderr || g.stdout).trim())) {

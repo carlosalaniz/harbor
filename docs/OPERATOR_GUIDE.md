@@ -9,7 +9,7 @@ Docker (root-equivalent) authority. It is not a hardened multi-user management s
 
 | Item | Requirement |
 |---|---|
-| Host | Ubuntu 24.04 LTS, x86-64, systemd |
+| Host | Ubuntu 24.04 LTS or Debian 12/13, x86-64, systemd. Debian/Ubuntu derivatives (Linux Mint, Pop!_OS, Raspberry Pi OS, …) usually work but are not tested: bootstrap refuses them unless you pass `--force` (one-line installer: `HARBOR_FORCE=1`). |
 | Memory | 4 GiB RAM minimum (8 GiB recommended — see the heavy apps below) |
 | Disk | 20 GiB free minimum (apps + images + one recovery bundle); 50+ GiB if you run Immich or Nextcloud |
 | Docker | Docker Engine + Compose plugin. Absent: bootstrap can install them from Docker's apt repository when you pass `--install-docker`. Present: validated, never modified. |
@@ -30,7 +30,7 @@ Engine and Compose versions installed by `--install-docker` on the date of quali
 
 ### 2a. The one-line installer (recommended)
 
-On a machine (or VM) running Ubuntu 24.04 x86-64, from a terminal on it (SSH or keyboard):
+On a machine (or VM) running Ubuntu 24.04 or Debian 12/13 x86-64, from a terminal on it (SSH or keyboard):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh | sudo bash
@@ -79,7 +79,7 @@ sudo ./harbor-<version>-linux-x64/bin/harbor bootstrap [--install-docker] [--wit
 
 Bootstrap previews every step and asks for approval (or `--yes`). It:
 
-1. verifies Ubuntu 24.04 / x86-64 / systemd / root and detects existing Harbor, Docker, Cockpit, Portainer;
+1. verifies the distro (Ubuntu 24.04 / Debian 12/13, or a derivative with `--force`) / x86-64 / systemd / root, checks that every system tool it will call is present, and detects existing Harbor, Docker, Cockpit, Portainer;
 2. validates Docker, or installs it only with `--install-docker` (separately approved; never touches an existing setup);
 3. copies the release to `/opt/harbor`, creates the `harbor` system user (in the `docker` group), `/etc/harbor` and `/var/lib/harbor`;
 4. initializes state explicitly and prompts for the administrator password without echo (`--password-stdin` for automation);
@@ -408,6 +408,16 @@ The console's **Settings** page covers what a household operator needs after boo
 The same actions exist as commands: `harbor account set-password`, `harbor account name [name]` (show or set the Home greeting name; empty clears it), `harbor tailscale login [--authkey-stdin]`, `harbor tailscale logout`, `harbor network https` / `harbor network https on|off` / `harbor network ca`, `harbor storage`, `harbor domains [add|check|forget]`, `harbor purge`.
 
 Search everything with **⌘K / Ctrl+K** (or `/`): installed apps open on Enter, store apps show their page, settings sections jump straight there.
+
+### The notification bell
+
+The bell (bottom of the sidebar, a badge when something is unread) collects updates, warnings and
+failures. Clicking a row marks it read and, for app rows, opens the app. Each row has a **×** to
+dismiss it, and the panel header has **Dismiss all** to clear the list; **Mark all read** quiets the
+badge without deleting anything. Dismissing deletes the row outright — a one-shot event (a failed
+install) is gone for good, while a row for a problem that still exists (a missing drive) comes back
+on the next check, because the condition is still true. When more than 30 rows pile up, a
+**View all** button opens the full history in a dialog.
 
 ### 4c. Make it yours: arrange and customise the launcher
 

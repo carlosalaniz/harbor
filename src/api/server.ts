@@ -238,6 +238,8 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   );
   app.post('/v1/notifications/:id/read', { preHandler: requireAuth, schema: { description: 'Mark one notification read.', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.markNotificationRead((req.params as { id: string }).id));
   app.post('/v1/notifications/read-all', { preHandler: requireAuth, schema: { description: 'Mark every notification read.' } }, async () => service.markAllNotificationsRead());
+  app.delete('/v1/notifications/:id', { preHandler: requireAuth, schema: { description: 'Dismiss one notification (deletes the row; a still-true persisting condition re-creates it on the next tick).', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.dismissNotification((req.params as { id: string }).id));
+  app.delete('/v1/notifications', { preHandler: requireAuth, schema: { description: 'Dismiss every notification (deletes all rows; still-true persisting conditions re-create theirs on the next tick).' } }, async () => service.dismissAllNotifications());
   app.get('/v1/notifications/channels', { preHandler: requireAuth, schema: { description: 'External delivery channels (ntfy, webhook, email); secrets redacted.' } }, async () => service.notificationChannels());
   app.put(
     '/v1/notifications/channels',

@@ -7,7 +7,7 @@ date or a version before relying on it. Authoritative documents are linked; this
 ## 1. What Harbor is, in one paragraph
 
 A self-hosted application manager ("a private cloud for humans", Umbrel/HexOS-like but simpler): one
-Ubuntu 24.04 x86-64 machine, one administrator, apps installed from a catalog of data-only packages
+Ubuntu 24.04 / Debian 12+ x86-64 machine (derivatives via `bootstrap --force`, decision 113), one administrator, apps installed from a catalog of data-only packages
 (manifest + Compose subset pinned by image digest), a React console with a launcher home screen, and
 three ways to reach apps: loopback (always), LAN mode (`http://harbor.local`, opt-in at install),
 Tailscale tailnet, and public HTTPS via Caddy + Let's Encrypt. Everything a user can do in the console

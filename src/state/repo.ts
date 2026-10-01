@@ -516,6 +516,17 @@ export class Repo {
   markAllNotificationsRead(): number {
     return this.db.prepare('UPDATE notifications SET read_at = ? WHERE read_at IS NULL').run(this.now()).changes;
   }
+  // Operator dismissal: the row is deleted outright (same end state as a resolved condition —
+  // deleteNotificationByKey). A persisting condition that is still true re-creates it on the next
+  // upsert, so dismissing a live problem only clears it until the next observer tick.
+  deleteNotification(id: string): boolean {
+    return this.db.prepare('DELETE FROM notifications WHERE id = ?').run(id).changes > 0;
+  }
+  // Dismiss-all: every row goes, read or not. Persisting conditions that are still true
+  // re-create their row on the next observer tick, so this clears history, not live problems.
+  deleteAllNotifications(): number {
+    return this.db.prepare('DELETE FROM notifications').run().changes;
+  }
   markNotificationDelivered(id: string): void {
     this.db.prepare('UPDATE notifications SET delivered_at = ? WHERE id = ?').run(this.now(), id);
   }

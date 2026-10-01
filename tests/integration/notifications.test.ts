@@ -54,6 +54,40 @@ describe('notifications engine', () => {
     expect(all.unread).toBe(0);
   });
 
+  it('dismiss deletes the row and drops the unread count', async () => {
+    // Seed a fresh unread row via a failed operation.
+    h.fake.behaviour.failPull = 'dismiss-me';
+    const r = await h.api.run({ kind: 'install', packageId: 'memos' });
+    expect(r.op.state).toBe('failed');
+    h.fake.behaviour.failPull = null;
+    const before = await notifications();
+    const target = before.items.find((x) => x.kind === 'operation-failed' && x.body.includes('dismiss-me'))!;
+    expect(target).toBeTruthy();
+    const unreadBefore = before.unread;
+    const after = await h.api.expect<NotificationsDto>(200, 'DELETE', `/v1/notifications/${target.id}`);
+    expect(after.items.find((x) => x.id === target.id)).toBeUndefined();
+    expect(after.unread).toBe(unreadBefore - (target.read ? 0 : 1));
+    // Dismissing an unknown id is a no-op success (idempotent).
+    const again = await h.api.expect<NotificationsDto>(200, 'DELETE', `/v1/notifications/${target.id}`);
+    expect(again.items.length).toBe(after.items.length);
+  });
+
+  it('dismiss-all clears every row and zeroes the unread count', async () => {
+    // Seed a couple of rows (a failed op plus whatever the suite already produced).
+    h.fake.behaviour.failPull = 'clear-me';
+    const r = await h.api.run({ kind: 'install', packageId: 'uptime-kuma' });
+    expect(r.op.state).toBe('failed');
+    h.fake.behaviour.failPull = null;
+    const before = await notifications();
+    expect(before.items.length).toBeGreaterThan(0);
+    const after = await h.api.expect<NotificationsDto>(200, 'DELETE', '/v1/notifications');
+    expect(after.items).toHaveLength(0);
+    expect(after.unread).toBe(0);
+    // Idempotent: a second dismiss-all on an empty list is a no-op success.
+    const again = await h.api.expect<NotificationsDto>(200, 'DELETE', '/v1/notifications');
+    expect(again.items).toHaveLength(0);
+  });
+
   it('channels: set, redacted read, delivery to ntfy and webhook with HMAC, and test endpoint', async () => {
     await h.api.expect(200, 'PUT', '/v1/notifications/channels', {
       channels: [

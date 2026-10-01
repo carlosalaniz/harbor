@@ -403,6 +403,14 @@
             "description": "Default Response"
           }
         }
+      },
+      "delete": {
+        "description": "Dismiss every notification (deletes all rows; still-true persisting conditions re-create theirs on the next tick).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
       }
     },
     "/v1/notifications/{id}/read": {
@@ -429,6 +437,27 @@
     "/v1/notifications/read-all": {
       "post": {
         "description": "Mark every notification read.",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/notifications/{id}": {
+      "delete": {
+        "description": "Dismiss one notification (deletes the row; a still-true persisting condition re-creates it on the next tick).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response"

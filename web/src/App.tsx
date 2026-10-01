@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import type { CatalogItemDto, InstanceDetail, InstanceSummary } from '../../src/contracts/api';
+import type { CatalogItemDto, InstanceDetail, InstanceSummary, NotificationsDto } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken, restoreRemembered } from './api';
-import { EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
+import { Dialog, EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
 import { EyeIcon, EyeOffIcon, Mark } from './app/icons';
 import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
 import { Home } from './app/pages/Home';
@@ -475,6 +475,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
 // Bell + panel: history of conditions and events (the Home attention list shows live state).
 function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; onOpenApp: (instanceId: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const n = c.data.notifications;
   const unread = n?.unread ?? 0;
   const panelRef = useRef<HTMLDivElement>(null);
@@ -493,6 +494,35 @@ function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; 
   }, [open]);
   const markRead = (id: string) => api.markNotificationRead(id).then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
   const markAll = () => api.markAllNotificationsRead().then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
+  const dismiss = (id: string) => api.dismissNotification(id).then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
+  const dismissAll = () => api.dismissAllNotifications().then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
+  const openItem = (item: NonNullable<NotificationsDto['items']>[number], closePanel: boolean) => {
+    if (!item.read) void markRead(item.id);
+    if (item.instanceId) {
+      onOpenApp(item.instanceId);
+      if (closePanel) setOpen(false);
+      setShowAll(false);
+    }
+  };
+  const renderItem = (item: NonNullable<NotificationsDto['items']>[number], closePanel: boolean) => (
+    <li key={item.id} className={item.read ? 'read' : 'unread'}>
+      <div className="bell-row">
+        <button className="bell-item" onClick={() => openItem(item, closePanel)}>
+          <span className={`dot tone-${item.severity === 'error' ? 'bad' : item.severity === 'warning' ? 'warn' : 'ok'}`} aria-hidden="true" />
+          <span className="bell-text">
+            <strong>{item.title}</strong>
+            <span className="muted small">{item.body}</span>
+            <span className="muted small">{new Date(item.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+          </span>
+        </button>
+        <button className="bell-dismiss" aria-label={`Dismiss notification: ${item.title}`} title="Dismiss" onClick={() => void dismiss(item.id)}>
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
+      </div>
+    </li>
+  );
   return (
     <div className="bell-wrap bell-bottom" ref={panelRef}>
       <button className="btn ghost bell-btn" onClick={() => setOpen((v) => !v)} aria-label={unread ? `Notifications: ${unread} unread` : 'Notifications'} aria-expanded={open} title="Notifications">
@@ -509,37 +539,37 @@ function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; 
         <div className="bell-panel card" role="dialog" aria-label="Notifications">
           <div className="row between">
             <strong>Notifications</strong>
-            {unread > 0 && (
-              <button className="btn ghost small" onClick={() => void markAll()}>
-                Mark all read
-              </button>
-            )}
+            <span className="row" style={{ gap: 4 }}>
+              {unread > 0 && (
+                <button className="btn ghost small" onClick={() => void markAll()}>
+                  Mark all read
+                </button>
+              )}
+              {n && n.items.length > 0 && (
+                <button className="btn ghost small" onClick={() => void dismissAll()}>
+                  Dismiss all
+                </button>
+              )}
+            </span>
           </div>
           {(!n || n.items.length === 0) && <p className="muted small">Nothing yet. Updates, warnings and failures appear here.</p>}
-          <ul className="plain bell-list">
-            {n?.items.slice(0, 30).map((item) => (
-              <li key={item.id} className={item.read ? 'read' : 'unread'}>
-                <button
-                  className="bell-item"
-                  onClick={() => {
-                    if (!item.read) void markRead(item.id);
-                    if (item.instanceId) {
-                      onOpenApp(item.instanceId);
-                      setOpen(false);
-                    }
-                  }}
-                >
-                  <span className={`dot tone-${item.severity === 'error' ? 'bad' : item.severity === 'warning' ? 'warn' : 'ok'}`} aria-hidden="true" />
-                  <span className="bell-text">
-                    <strong>{item.title}</strong>
-                    <span className="muted small">{item.body}</span>
-                    <span className="muted small">{new Date(item.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <ul className="plain bell-list">{n?.items.slice(0, 30).map((item) => renderItem(item, true))}</ul>
+          {n && n.items.length > 30 && (
+            <button className="btn ghost small bell-viewall" onClick={() => setShowAll(true)}>
+              View all {n.items.length} notifications
+            </button>
+          )}
         </div>
+      )}
+      {showAll && n && (
+        <Dialog title={`Notifications (${n.items.length})`} onClose={() => setShowAll(false)} wide>
+          {unread > 0 && (
+            <p className="muted small">
+              {unread} unread · <button className="btn ghost small" onClick={() => void markAll()}>Mark all read</button>
+            </p>
+          )}
+          {n.items.length === 0 ? <p className="muted small">Nothing yet. Updates, warnings and failures appear here.</p> : <ul className="plain bell-list">{n.items.map((item) => renderItem(item, false))}</ul>}
+        </Dialog>
       )}
     </div>
   );

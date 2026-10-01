@@ -2089,6 +2089,49 @@ button.vital:hover {
 .bell-item:hover {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
+.bell-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+.bell-row .bell-item {
+  flex: 1;
+  min-width: 0;
+}
+.bell-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.bell-row:hover .bell-dismiss,
+.bell-dismiss:focus-visible {
+  opacity: 1;
+}
+.bell-dismiss:hover {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  color: var(--fg);
+}
+.bell-dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.bell-viewall {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  text-align: center;
+}
 .bell-item .dot {
   margin-top: 5px;
   flex: none;

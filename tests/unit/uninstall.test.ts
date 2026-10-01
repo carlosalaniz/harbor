@@ -6,11 +6,13 @@ function facts(over: Partial<HostFacts['existing']> = {}): HostFacts {
   return {
     osId: 'ubuntu',
     versionId: '24.04',
+    osIdLike: '',
+    osCodename: 'noble',
     prettyName: 'Ubuntu 24.04',
     arch: 'x64',
     systemd: true,
     root: true,
-    docker: { binary: '/usr/bin/docker', version: '28.0', composeVersion: '2.0', daemonActive: true, socket: '/var/run/docker.sock' },
+    docker: { binary: '/usr/bin/docker', version: '28.0', composeVersion: '2.0', daemonActive: true, socket: '/var/run/docker.sock', aptRepo: { family: 'ubuntu', codename: 'noble', keyUrl: 'https://download.docker.com/linux/ubuntu/gpg' } },
     existing: { optDir: 'harbor', optReleaseVersion: '0.10.0', config: true, state: true, unit: 'harbor', user: true, cockpit: { installed: false, socketActive: false }, portainer: { containerPresent: false }, tailscale: { installed: false, backendState: null, dnsName: null }, caddy: { installed: false, adminReachable: false, harborConfig: false }, ...over },
   };
 }

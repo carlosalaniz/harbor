@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Harbor one-line installer for Ubuntu 24.04 x86-64.
+# Harbor one-line installer for Ubuntu 24.04 / Debian 12+ on x86-64.
 #
 #   curl -fsSL https://raw.githubusercontent.com/carlosalaniz/harbor/main/install.sh | sudo bash
 #
@@ -13,6 +13,8 @@
 #   HARBOR_HOSTNAME=harbor   mDNS name (default harbor -> http://harbor.local); empty keeps the current hostname
 #   HARBOR_LAN=auto|on|off   LAN mode (default auto: on when the machine has a private-network address)
 #   HARBOR_TOOLS=1           also set up Cockpit and Portainer
+#   HARBOR_FORCE=1           allow a Debian/Ubuntu DERIVATIVE (Linux Mint, Pop!_OS, Raspberry Pi OS, ...):
+#                            not a tested configuration; you keep the pieces
 #   HARBOR_REPO=owner/name   GitHub repository (default carlosalaniz/harbor)
 #   HARBOR_ARCHIVE=/path/harbor-X.Y.Z-linux-x64.tar.gz   install from a local archive (with SHA256SUMS next to it) instead of GitHub
 set -euo pipefail
@@ -32,7 +34,21 @@ command -v tar  >/dev/null || die "tar is required"
 
 say "Checking this machine"
 . /etc/os-release 2>/dev/null || die "cannot read /etc/os-release"
-[ "${ID:-}" = "ubuntu" ] && [[ "${VERSION_ID:-}" == 24.04* ]] || die "Harbor supports Ubuntu 24.04 LTS (this is ${PRETTY_NAME:-unknown})"
+FORCE="${HARBOR_FORCE:-0}"
+SUPPORTED=0
+case "${ID:-}" in
+  ubuntu) [[ "${VERSION_ID:-}" == 24.04* ]] && SUPPORTED=1 ;;
+  debian) [[ "${VERSION_ID:-}" == 12* || "${VERSION_ID:-}" == 13* ]] && SUPPORTED=1 ;;
+esac
+if [ "$SUPPORTED" != "1" ]; then
+  case " ${ID_LIKE:-} " in
+    *debian*|*ubuntu*)
+      [ "$FORCE" = "1" ] || die "Harbor supports Ubuntu 24.04 LTS and Debian 12/13 (this is ${PRETTY_NAME:-unknown}). This distro is Debian/Ubuntu-based and will probably work: re-run with HARBOR_FORCE=1 (not a tested configuration; you keep the pieces)."
+      warn "HARBOR_FORCE=1: ${PRETTY_NAME:-unknown} is not a tested configuration; proceeding anyway"
+      ;;
+    *) die "Harbor supports Ubuntu 24.04 LTS and Debian 12/13 (this is ${PRETTY_NAME:-unknown})" ;;
+  esac
+fi
 [ "$(uname -m)" = "x86_64" ] || die "Harbor supports x86-64 machines (this is $(uname -m))"
 [ -d /run/systemd/system ] || die "systemd is required"
 FREE_KB=$(df --output=avail -k / | tail -1)
@@ -86,6 +102,7 @@ HOST_FLAGS=""
 if [ -n "$WANT_HOSTNAME" ] && [ "$(hostname)" != "$WANT_HOSTNAME" ]; then HOST_FLAGS="--hostname $WANT_HOSTNAME"; fi
 TOOL_FLAGS="--with-tailscale --with-public-proxy"
 [ "${HARBOR_TOOLS:-0}" = "1" ] && TOOL_FLAGS="$TOOL_FLAGS --with-tools"
+[ "$FORCE" = "1" ] && TOOL_FLAGS="$TOOL_FLAGS --force"
 
 say "Installing Harbor $VERSION (Docker, mDNS, Tailscale, HTTPS proxy; a few minutes)"
 # shellcheck disable=SC2086

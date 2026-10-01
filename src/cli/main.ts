@@ -909,8 +909,9 @@ program
 
 program
   .command('bootstrap')
-  .description('install or update Harbor on this Ubuntu 24.04 x86-64 host (run as root from the extracted release)')
+  .description('install or update Harbor on this host (Ubuntu 24.04 or Debian 12/13, x86-64, systemd; run as root from the extracted release)')
   .option('--yes', 'approve all previewed steps non-interactively', false)
+  .option('--force', 'install on a Debian/Ubuntu derivative that is not a tested configuration (never overrides root/x86-64/systemd or an unknown distro)', false)
   .option('--with-tools', 'also set up Cockpit and Portainer (each separately approved)', false)
   .option('--install-docker', 'approve installing Docker Engine + Compose from download.docker.com if absent', false)
   .option('--port <n>', 'management port (default 18000; only for a fresh installation)', (v) => Number(v), PRODUCT.defaults.managementPort)
@@ -926,7 +927,7 @@ program
   .option('--lan', 'LAN mode (home network): console on port 80 and app ports on every interface, mDNS name <hostname>.local', false)
   .option('--lan-force', 'allow --lan on a machine without a private-network address (cloud server: everything faces the internet)', false)
   .option('--hostname <name>', 'set the machine hostname (the mDNS name becomes <name>.local)')
-  .action(async (opts: { yes: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; withTailscale: boolean; tailscaleAuthkeyStdin?: boolean; withPublicProxy: boolean; releaseDir?: string; setupInBrowser: boolean; lan: boolean; lanForce: boolean; hostname?: string }) => {
+  .action(async (opts: { yes: boolean; force: boolean; withTools: boolean; installDocker: boolean; port: number; adminUsername?: string; passwordStdin?: boolean; bindCockpit?: string; bindPortainer?: string; withTailscale: boolean; tailscaleAuthkeyStdin?: boolean; withPublicProxy: boolean; releaseDir?: string; setupInBrowser: boolean; lan: boolean; lanForce: boolean; hostname?: string }) => {
     const { bootstrap, accessInstructions } = await import('../bootstrap/bootstrap.js');
     const releaseDir = opts.releaseDir ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const log = (m: string) => process.stderr.write(`[bootstrap] ${m}\n`);
@@ -963,6 +964,7 @@ program
     const result = await bootstrap({
       releaseDir,
       yes: opts.yes,
+      force: opts.force,
       withTools: opts.withTools,
       installDocker: opts.installDocker,
       port: opts.port,

@@ -467,6 +467,14 @@ export class ApplicationService {
     this.ctx.repo.markAllNotificationsRead();
     return this.notifications(false);
   }
+  dismissNotification(id: string): NotificationsDto {
+    this.ctx.repo.deleteNotification(id);
+    return this.notifications(false);
+  }
+  dismissAllNotifications(): NotificationsDto {
+    this.ctx.repo.deleteAllNotifications();
+    return this.notifications(false);
+  }
   notificationChannels(): { channels: NotificationChannelDto[] } {
     // Secrets are write-only through the API: redact on read.
     const channels = this.ctx.notifier.channels().map((c) => {

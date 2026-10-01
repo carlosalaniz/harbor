@@ -94,6 +94,40 @@ export async function which(name: string): Promise<string | null> {
   return null;
 }
 
+// Binaries bootstrap calls that are NOT covered by the apt steps below them (those install git,
+// avahi, fscrypt, docker, cockpit, caddy, tailscale themselves). Everything is part of the base
+// system on the supported distros, so a miss means a genuinely unusual host (busybox, a stripped
+// container image, a non-FHS layout) — fail before mutating anything, with the package to install.
+export const REQUIRED_TOOLS: ReadonlyArray<readonly [name: string, debianPackage: string]> = [
+  ['systemctl', 'systemd'],
+  ['useradd', 'passwd'],
+  ['usermod', 'passwd'],
+  ['groupadd', 'passwd'],
+  ['id', 'coreutils'],
+  ['getent', 'libc-bin'],
+  ['chown', 'coreutils'],
+  ['dpkg-query', 'dpkg'],
+  ['apt-get', 'apt'],
+  ['hostnamectl', 'systemd'],
+  ['lsb_release', 'lsb-release'],
+  ['gpg', 'gpg'],
+  ['tar', 'tar'],
+  ['timeout', 'coreutils'],
+  ['cp', 'coreutils'],
+];
+
+export async function assertRequiredTools(find: (name: string) => Promise<string | null> = which): Promise<void> {
+  const missing: string[] = [];
+  for (const [name, pkg] of REQUIRED_TOOLS) {
+    if (!(await find(name))) missing.push(`${name} (package ${pkg})`);
+  }
+  if (missing.length) {
+    throw new HarborError('UNSUPPORTED_CAPABILITY', `required tools missing: ${missing.join(', ')}`, {
+      nextAction: 'Install the named packages (on a Debian host: apt-get install -y <package>) and re-run bootstrap.',
+    });
+  }
+}
+
 // Plain GET without fetch's Sec-Fetch-* headers (Caddy's admin API rejects those without an Origin).
 export function httpGetStatus(host: string, port: number, path: string, timeoutMs = 3000): Promise<number> {
   return new Promise((resolve) => {

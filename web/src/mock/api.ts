@@ -283,6 +283,15 @@ export const mockApi = {
     notifications = { unread: 0, items: notifications.items.map((i) => ({ ...i, read: true })) };
     return notifications;
   },
+  dismissNotification: async (id: string): Promise<NotificationsDto> => {
+    const removed = notifications.items.find((i) => i.id === id);
+    notifications = { unread: Math.max(0, notifications.unread - (removed && !removed.read ? 1 : 0)), items: notifications.items.filter((i) => i.id !== id) };
+    return notifications;
+  },
+  dismissAllNotifications: async (): Promise<NotificationsDto> => {
+    notifications = { unread: 0, items: [] };
+    return notifications;
+  },
   notificationChannels: async () => ({ channels }),
   setNotificationChannels: async (next: NotificationChannelDto[]) => {
     await beat();

@@ -10,8 +10,8 @@ import { acquireLock } from '../state/lock.js';
 import { loopbackPortFree } from '../docker/ports.js';
 import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
-import { exec, execOk, aptGet } from './exec.js';
-import { assertSupportedHost, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
+import { assertRequiredTools, exec, execOk, aptGet } from './exec.js';
+import { assertSupportedHost, distroSupport, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
 import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit, APP_CRYPTO_UNIT_FILE, appCryptoUnit } from './systemd.js';
 import { prepareDataFolderForSealing } from './app-crypto-apply.js';
 import { configureAvahiForLan } from './mdns.js';
@@ -39,6 +39,9 @@ export interface BootstrapOptions {
   lan: boolean;
   lanForce: boolean; // allow LAN mode without a private-network interface (cloud VM: everything becomes public)
   hostname: string | null; // set the machine's hostname (mDNS name becomes <hostname>.local)
+  // escape hatch for the distro whitelist: allow Debian/Ubuntu DERIVATIVES (ID_LIKE) that are not
+  // a tested configuration. Never overrides the hard gates (root, x86-64, systemd) or an unknown distro.
+  force: boolean;
   log: (m: string) => void;
   confirm: (question: string, preview: string[]) => Promise<boolean>;
 }
@@ -61,8 +64,12 @@ const lanPort = 80; // LAN mode console port (plain http://<hostname>.local)
 export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult> {
   const log = opts.log;
   const facts = await gatherHostFacts();
-  assertSupportedHost(facts);
+  assertSupportedHost(facts, { force: opts.force });
   log(`host: ${facts.prettyName} ${facts.arch}, systemd ${facts.systemd ? 'yes' : 'no'}`);
+  if (opts.force && distroSupport(facts.osId, facts.versionId, facts.osIdLike) === 'derived') {
+    log(`--force: ${facts.prettyName} is not a tested configuration (supported: Ubuntu 24.04, Debian 12/13); proceeding anyway`);
+  }
+  await assertRequiredTools();
 
   // 1. Conflicts with unrelated installations fail before anything is written.
   if (facts.existing.optDir === 'foreign') throw new HarborError('OWNERSHIP_CONFLICT', `${PRODUCT.paths.opt} exists but is not a Harbor release (no ${RELEASE_MARKER})`, { nextAction: 'Move or remove that directory manually; bootstrap never overwrites unrelated files.' });
@@ -89,7 +96,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<BootstrapResult
       });
     }
     if (facts.docker.binary) throw new HarborError('DOCKER_UNAVAILABLE', `${why}; --install-docker refuses to modify an existing Docker installation`, { nextAction: 'Repair Docker manually, then re-run bootstrap.' });
-    if (!(await opts.confirm('Install Docker Engine and Compose from Docker\'s apt repository?', dockerInstallPreview()))) throw new HarborError('INVALID_REQUEST', 'Docker installation not approved');
+    if (!(await opts.confirm('Install Docker Engine and Compose from Docker\'s apt repository?', dockerInstallPreview(facts.docker.aptRepo)))) throw new HarborError('INVALID_REQUEST', 'Docker installation not approved');
     await installDocker(log);
     Object.assign(facts, await gatherHostFacts());
   } else {
@@ -150,14 +157,18 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   }
   await execOk('/usr/bin/chown', ['-R', 'root:root', PRODUCT.paths.opt]);
 
-  // 5. Service account
+  // 5. Service account. The group is created explicitly first: `useradd` leaves the group
+  // behind when the user is deleted, and without this the next bootstrap's useradd fails
+  // with exit 9 "group already exists" (found live on a reinstall). Binaries are resolved
+  // through exec's pinned PATH (no shell), not hardcoded /usr/sbin paths (decision 113).
   if (!facts.existing.user) {
-    await execOk('/usr/sbin/useradd', ['--system', '--home-dir', PRODUCT.paths.var, '--no-create-home', '--shell', '/usr/sbin/nologin', '--comment', 'Harbor application manager', PRODUCT.serviceUser]);
+    await exec('groupadd', ['--system', PRODUCT.serviceUser], { timeoutMs: 30_000 }); // ok if it exists
+    await execOk('useradd', ['--system', '--home-dir', PRODUCT.paths.var, '--no-create-home', '--gid', PRODUCT.serviceUser, '--shell', '/usr/sbin/nologin', '--comment', 'Harbor application manager', PRODUCT.serviceUser]);
     log(`created system user ${PRODUCT.serviceUser}`);
   }
-  await execOk('/usr/sbin/usermod', ['-aG', 'docker', PRODUCT.serviceUser]);
-  const uid = Number((await execOk('/usr/bin/id', ['-u', PRODUCT.serviceUser])).stdout.trim());
-  const gid = Number((await execOk('/usr/bin/id', ['-g', PRODUCT.serviceUser])).stdout.trim());
+  await execOk('usermod', ['-aG', 'docker', PRODUCT.serviceUser]);
+  const uid = Number((await execOk('id', ['-u', PRODUCT.serviceUser])).stdout.trim());
+  const gid = Number((await execOk('id', ['-g', PRODUCT.serviceUser])).stdout.trim());
 
   // 6. Directories (Harbor-owned only)
   mkdirSync(PRODUCT.paths.etc, { recursive: true, mode: 0o750 });

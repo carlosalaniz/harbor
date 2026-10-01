@@ -272,14 +272,28 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `openapi.test.ts` route pin (+1 route, 79 paths); integration `security-terminal.test.ts` (displayName null default, set/clear/validation); unit 170, integration 139 + 3 skipped, e2e 26
 - [x] Docs: decision 111, operator guide setup/Account/CLI rows, openapi regenerated (79 paths)
 
+## Phase 36 — supported-distro whitelist + `--force`, tool preflight (2026-09-30, unreleased) ✅
+- [x] Distro gate (decision 113): `assertSupportedHost` classifies `/etc/os-release` into supported (Ubuntu 24.04, Debian 12/13) / derived (`ID_LIKE` ubuntu|debian — refuses without `--force`, names it in `nextAction`) / unknown (always refuses); root/x86-64/systemd stay hard, never force-able. `harbor bootstrap --force`; one-line installer `HARBOR_FORCE=1` (mirrors the same whitelist in bash and forwards `--force`)
+- [x] Tool preflight (decision 113): `assertRequiredTools` resolves the 15 binaries bootstrap calls that its apt steps do not install (systemctl, useradd/usermod/groupadd, id, getent, chown, dpkg-query, apt-get, hostnamectl, lsb_release, gpg, tar, timeout, cp) via `which()` and fails BEFORE any mutation, naming each missing tool + package
+- [x] Bare-name account tools (decision 113): `useradd`/`usermod`/`getent`/`deluser`/`userdel`/`groupdel` resolve through exec's pinned PATH (no shell) — the bin/sbin split stops mattering; bootstrap runs `groupadd --system` before `useradd --gid` so the decision-112 leftover-group reinstall failure cannot recur
+- [x] Docker apt repo by distro family (decision 113): `--install-docker` writes `download.docker.com/linux/<ubuntu|debian> <BASE codename>` (`UBUNTU_CODENAME ?? VERSION_CODENAME` — a derivative's own codename has no Docker suite); `HostFacts.docker.aptRepo` carries the computed line into the preview
+- [x] Tests: unit `host-gate.test.ts` (distroSupport matrix, force semantics, hard-gate refusals, tool preflight) + `docker-install.test.ts` (family/codename mapping incl. Mint→noble, preview line); unit 187
+- [x] Docs: decisions 112 (backfilled) + 113, OPERATOR_GUIDE requirements/bootstrap rows, AI_CONTEXT platform line, install.sh header
+
+## Phase 37 — dismissible notifications (2026-09-30, unreleased) ✅
+- [x] Dismiss one / all (decision 114): `DELETE /v1/notifications/:id` and `DELETE /v1/notifications` (both idempotent, both return the fresh `NotificationsDto`); `repo.deleteNotification` + `deleteAllNotifications` DELETE the row (same end state as a resolved condition — a still-true persisting condition re-creates its row on the next observer tick)
+- [x] Bell UI (decision 114): each row is body-button + a separate × (fades in on hover/focus, accessible name, focus ring); panel header gains **Dismiss all** next to **Mark all read**; past the 30-row cap a **View all** button opens the full history in the shared StrictMode-safe `<Dialog>`
+- [x] Tests: integration `notifications.test.ts` (dismiss one deletes row + drops unread + idempotent; dismiss-all clears + zeroes + idempotent); openapi route pin (`/v1/notifications/{id}`); unit 187, integration 141 + 3 skipped
+- [x] Docs: decision 114, OPERATOR_GUIDE "The notification bell" section, openapi regenerated (80 paths)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 170 passed |
-| `pnpm test:integration` (fake adapter) | 139 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 187 passed |
+| `pnpm test:integration` (fake adapter) | 141 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 26 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
