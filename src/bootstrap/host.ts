@@ -121,8 +121,10 @@ export async function gatherHostFacts(): Promise<HostFacts> {
 // Same family/codename logic as the installer, on the raw os-release record. Local copy keeps the
 // import cycle away (host.ts is imported by everything bootstrap; docker-install is a leaf).
 function dockerAptRepo(os: Record<string, string>): { family: string; codename: string; keyUrl: string } {
+  const id = (os['ID'] ?? '').toLowerCase();
   const like = (os['ID_LIKE'] ?? '').toLowerCase().split(/\s+/);
-  const family = like.includes('debian') && !like.includes('ubuntu') ? 'debian' : 'ubuntu';
+  const debianFlavoured = id === 'debian' || id === 'raspbian' || (like.includes('debian') && !like.includes('ubuntu'));
+  const family = debianFlavoured ? 'debian' : 'ubuntu';
   const codename = os['UBUNTU_CODENAME'] ?? os['VERSION_CODENAME'] ?? (family === 'debian' ? 'bookworm' : 'noble');
   return { family, codename, keyUrl: `https://download.docker.com/linux/${family}/gpg` };
 }

@@ -16,6 +16,15 @@ describe('dockerAptRepo', () => {
     expect(repo.keyUrl).toBe('https://download.docker.com/linux/debian/gpg');
   });
 
+  it('uses the debian repo on REAL Debian 13, where ID_LIKE is empty (live-found bug)', () => {
+    // DigitalOcean debian-13-x64: ID=debian, VERSION_ID=13, ID_LIKE unset, VERSION_CODENAME=trixie.
+    // The old ID_LIKE-only check fell through to ubuntu+trixie, which has no Docker Release file.
+    const repo = dockerAptRepo({ ID: 'debian', VERSION_ID: '13', VERSION_CODENAME: 'trixie' });
+    expect(repo.family).toBe('debian');
+    expect(repo.codename).toBe('trixie');
+    expect(repo.keyUrl).toBe('https://download.docker.com/linux/debian/gpg');
+  });
+
   it('maps a derivative to its BASE codename, never its own (Linux Mint 22 "xia" has no Docker suite)', () => {
     const repo = dockerAptRepo({ ID: 'linuxmint', VERSION_ID: '22', VERSION_CODENAME: 'xia', UBUNTU_CODENAME: 'noble', ID_LIKE: 'ubuntu debian' });
     expect(repo.family).toBe('ubuntu');

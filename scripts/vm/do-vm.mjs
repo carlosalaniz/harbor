@@ -37,7 +37,9 @@ const KEY_FILE = process.env.HARBOR_VM_SSH_KEY ?? path.join(homedir(), '.ssh', '
 
 const VM_NAME = process.env.HARBOR_VM_NAME ?? 'harbor-test';
 const VM_TAG = 'harbor-test';
-const IMAGE = 'ubuntu-24-04-x64';
+// Default Ubuntu 24.04 (the reference host); override to validate other supported distros
+// (decision 113), e.g. HARBOR_VM_IMAGE=debian-12-x64.
+const IMAGE = process.env.HARBOR_VM_IMAGE ?? 'ubuntu-24-04-x64';
 const SIZE = process.env.HARBOR_VM_SIZE ?? 's-4vcpu-8gb';
 const REGION = process.env.HARBOR_VM_REGION ?? 'sfo3';
 const API = 'https://api.digitalocean.com/v2';
