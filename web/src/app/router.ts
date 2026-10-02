@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 
-// Tiny hash router: #/home, #/store, #/publishing, #/platform, #/settings, #/store/<packageId>, #/app/<instanceId>
+// Tiny hash router: #/home, #/store, #/publishing, #/platform, #/notifications, #/settings, #/store/<packageId>, #/app/<instanceId>
 export type Route =
   | { page: 'home' }
   | { page: 'store'; packageId?: string }
   | { page: 'publishing' }
   | { page: 'platform' }
+  | { page: 'notifications' }
   | { page: 'settings'; section?: string }
   | { page: 'app'; instanceId: string };
 
@@ -18,6 +19,8 @@ export function parseRoute(hash: string): Route {
       return { page: 'publishing' };
     case 'platform':
       return { page: 'platform' };
+    case 'notifications':
+      return { page: 'notifications' };
     case 'settings':
       return parts[1] ? { page: 'settings', section: parts[1] } : { page: 'settings' };
     case 'app':

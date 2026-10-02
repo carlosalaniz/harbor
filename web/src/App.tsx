@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary, NotificationsDto } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken, restoreRemembered } from './api';
-import { Dialog, EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
+import { EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
 import { EyeIcon, EyeOffIcon, Mark } from './app/icons';
 import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
 import { Home } from './app/pages/Home';
+import { Notifications } from './app/pages/Notifications';
 import { Platform } from './app/pages/Platform';
 import { Publishing } from './app/pages/Publishing';
 import { Settings } from './app/pages/Settings';
@@ -263,6 +264,16 @@ const NAV: { route: Route; label: string; icon: (active: boolean) => ReactNode }
     ),
   },
   {
+    route: { page: 'notifications' },
+    label: 'Notifications',
+    icon: (active) => (
+      <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" strokeWidth={active ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M10 3.5c-3 0-4.8 2-4.8 5v2.6L3.8 13h12.4l-1.4-1.9V8.5c0-3-1.8-5-4.8-5Z" />
+        <path d="M8.3 15.5c.3 1 1 1.5 1.7 1.5s1.4-.5 1.7-1.5" />
+      </svg>
+    ),
+  },
+  {
     route: { page: 'settings' },
     label: 'Settings',
     icon: (active) => (
@@ -355,7 +366,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             );
           })}
         </ul>
-        <NotificationBell c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} />
+        <NotificationBell c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} onViewAll={() => go({ page: 'notifications' })} />
         <div className="side-foot">
           <span className="muted small">{c.data.system ? `Harbor ${c.data.system.version}` : ''}</span>
         </div>
@@ -379,6 +390,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
         {page === 'store' && <Store c={c} onOpen={setStoreItem} onInstall={(item) => setStoreItem(item)} onUpload={() => setUploading(true)} />}
         {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
         {page === 'platform' && <Platform c={c} />}
+        {page === 'notifications' && <Notifications c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} />}
         {page === 'settings' && <Settings c={c} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go(s === 'overview' ? { page: 'settings' } : { page: 'settings', section: s })} />}
       </main>
 
@@ -472,10 +484,10 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   );
 }
 
-// Bell + panel: history of conditions and events (the Home attention list shows live state).
-function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; onOpenApp: (instanceId: string) => void }) {
+// Bell + panel: a quick preview of recent conditions and events. The full list lives on the
+// Notifications screen (decision 114); "View all" navigates there.
+function NotificationBell({ c, onOpenApp, onViewAll }: { c: ReturnType<typeof useConsole>; onOpenApp: (instanceId: string) => void; onViewAll: () => void }) {
   const [open, setOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   const n = c.data.notifications;
   const unread = n?.unread ?? 0;
   const panelRef = useRef<HTMLDivElement>(null);
@@ -496,33 +508,13 @@ function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; 
   const markAll = () => api.markAllNotificationsRead().then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
   const dismiss = (id: string) => api.dismissNotification(id).then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
   const dismissAll = () => api.dismissAllNotifications().then((res) => c.patchData((d) => ({ ...d, notifications: res }))).catch(() => {});
-  const openItem = (item: NonNullable<NotificationsDto['items']>[number], closePanel: boolean) => {
+  const openItem = (item: NonNullable<NotificationsDto['items']>[number]) => {
     if (!item.read) void markRead(item.id);
     if (item.instanceId) {
       onOpenApp(item.instanceId);
-      if (closePanel) setOpen(false);
-      setShowAll(false);
+      setOpen(false);
     }
   };
-  const renderItem = (item: NonNullable<NotificationsDto['items']>[number], closePanel: boolean) => (
-    <li key={item.id} className={item.read ? 'read' : 'unread'}>
-      <div className="bell-row">
-        <button className="bell-item" onClick={() => openItem(item, closePanel)}>
-          <span className={`dot tone-${item.severity === 'error' ? 'bad' : item.severity === 'warning' ? 'warn' : 'ok'}`} aria-hidden="true" />
-          <span className="bell-text">
-            <strong>{item.title}</strong>
-            <span className="muted small">{item.body}</span>
-            <span className="muted small">{new Date(item.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-          </span>
-        </button>
-        <button className="bell-dismiss" aria-label={`Dismiss notification: ${item.title}`} title="Dismiss" onClick={() => void dismiss(item.id)}>
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
-      </div>
-    </li>
-  );
   return (
     <div className="bell-wrap bell-bottom" ref={panelRef}>
       <button className="btn ghost bell-btn" onClick={() => setOpen((v) => !v)} aria-label={unread ? `Notifications: ${unread} unread` : 'Notifications'} aria-expanded={open} title="Notifications">
@@ -553,23 +545,39 @@ function NotificationBell({ c, onOpenApp }: { c: ReturnType<typeof useConsole>; 
             </span>
           </div>
           {(!n || n.items.length === 0) && <p className="muted small">Nothing yet. Updates, warnings and failures appear here.</p>}
-          <ul className="plain bell-list">{n?.items.slice(0, 30).map((item) => renderItem(item, true))}</ul>
-          {n && n.items.length > 30 && (
-            <button className="btn ghost small bell-viewall" onClick={() => setShowAll(true)}>
-              View all {n.items.length} notifications
+          <ul className="plain bell-list">
+            {n?.items.slice(0, 30).map((item) => (
+              <li key={item.id} className={item.read ? 'read' : 'unread'}>
+                <div className="bell-row">
+                  <button className="bell-item" onClick={() => openItem(item)}>
+                    <span className={`dot tone-${item.severity === 'error' ? 'bad' : item.severity === 'warning' ? 'warn' : 'ok'}`} aria-hidden="true" />
+                    <span className="bell-text">
+                      <strong>{item.title}</strong>
+                      <span className="muted small">{item.body}</span>
+                      <span className="muted small">{new Date(item.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    </span>
+                  </button>
+                  <button className="bell-dismiss" aria-label={`Dismiss notification: ${item.title}`} title="Dismiss" onClick={() => void dismiss(item.id)}>
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                      <path d="M4 4l8 8M12 4l-8 8" />
+                    </svg>
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {n && n.items.length > 0 && (
+            <button
+              className="btn ghost small bell-viewall"
+              onClick={() => {
+                setOpen(false);
+                onViewAll();
+              }}
+            >
+              All notifications{n.items.length > 30 ? ` (${n.items.length})` : ''}
             </button>
           )}
         </div>
-      )}
-      {showAll && n && (
-        <Dialog title={`Notifications (${n.items.length})`} onClose={() => setShowAll(false)} wide>
-          {unread > 0 && (
-            <p className="muted small">
-              {unread} unread · <button className="btn ghost small" onClick={() => void markAll()}>Mark all read</button>
-            </p>
-          )}
-          {n.items.length === 0 ? <p className="muted small">Nothing yet. Updates, warnings and failures appear here.</p> : <ul className="plain bell-list">{n.items.map((item) => renderItem(item, false))}</ul>}
-        </Dialog>
       )}
     </div>
   );

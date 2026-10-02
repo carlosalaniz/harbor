@@ -309,6 +309,28 @@ test('phone width: bottom tabs navigate, tiles render in two columns, dialogs op
   expect(await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')).toBe(true);
 });
 
+test('notifications screen: nav destination renders, empty state, bell links to it', async ({ page }) => {
+  await login(page);
+  // The nav has a Notifications destination that opens the full screen.
+  await page.getByRole('link', { name: 'Notifications', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
+  // Fresh daemon: either the empty state or whatever rows the suite already produced.
+  const rows = page.locator('.notif-page-list li');
+  if ((await rows.count()) === 0) {
+    await expect(page.getByText('Nothing yet')).toBeVisible();
+  } else {
+    // Every row has a body button and a separate dismiss × with an accessible name.
+    await expect(rows.first().getByRole('button', { name: /Dismiss notification:/ })).toBeVisible();
+  }
+  // The bell's "All notifications" navigates to the same screen.
+  await page.getByRole('button', { name: /^Notifications/ }).first().click(); // bell toggle
+  const viewAll = page.getByRole('button', { name: /All notifications/ });
+  if (await viewAll.count()) {
+    await viewAll.click();
+    await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
+  }
+});
+
 test('install page: a wrong-filesystem drive offers Format, not Mount or a passphrase', async ({ page }) => {
   await login(page);
   // order-independent: a prior run may have left the fixture formatted —

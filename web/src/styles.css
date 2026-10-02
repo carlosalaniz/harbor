@@ -2132,6 +2132,21 @@ button.vital:hover {
   margin-top: 6px;
   text-align: center;
 }
+/* Notifications screen: rows are roomier and the dismiss × is always visible (no hover hunt). */
+.notif-page-list {
+  margin-top: 14px;
+  gap: 4px;
+  max-width: 720px;
+}
+.notif-page-list .bell-item {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.notif-page-list .bell-dismiss {
+  opacity: 1;
+  margin-top: 12px;
+}
 .bell-item .dot {
   margin-top: 5px;
   flex: none;
