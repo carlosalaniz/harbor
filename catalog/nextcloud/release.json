@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "package": {
     "id": "nextcloud",
-    "revision": "2"
+    "revision": "3"
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "75d5f9ac3f7e1f8302e3109f9b984565a5daecdcb942b42717783640607774d2"
+      "sha256": "e5e863dfa7a4eeff386ec5b64622575f7743b9966eba99ee9e7099de0989f472"
     },
     "compose.yaml": {
       "sha256": "00aecb49aecd7e0c6fef589a2548b135b489cb02ed722ce208c609d8620a1deb"
@@ -51,7 +51,7 @@
     "status": "pending",
     "date": "2026-10-03",
     "notes": [
-      "Revision 2 (decision 116: multi-address hook, Harbor-provisioned admin) awaits a live qualification run; revision 1 passed in catalog-2026-09-15T00-13-13."
+      "Revision 3 (decision 117: hook sets up a never-installed Nextcloud) awaits a live qualification run; revision 1 passed in catalog-2026-09-15T00-13-13."
     ]
   },
   "assets": {

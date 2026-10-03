@@ -301,6 +301,9 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `exposure` (secure main URL, appAuthorities), `manifest` (hooks, httpsRequired); integration `addresses.test.ts` (hook env, failing hook, publish re-runs hook, HTTPS gate + catalog flag, install with tailnet main, LAN HTTPS + Restart re-render, restart refused when stopped); e2e main-address picker + Restart; unit 194, integration 149 + 3 skipped, e2e 27
 - [x] Docs: decision 116, OPERATOR_GUIDE "Every address at once" / Restart, DEVELOPER_PACKAGES hooks + httpsRequired, CATALOG design note, Nextcloud README
 
+## Phase 40 — Nextcloud sets itself up from the hook (2026-10-03, 0.17.8) ✅
+- [x] Found live (decision 117): a never-set-up revision-1 instance updated to revision 2 skipped the image's auto-install, the hook exited "not installed yet", the web setup page then kept the `localhost` pin. Revision 3's hook runs `occ maintenance:install` with the provisioned admin first; prototyped on nextcloud:34-apache + postgres:17
+
 ## Test results (latest local run)
 
 | Command | Result |

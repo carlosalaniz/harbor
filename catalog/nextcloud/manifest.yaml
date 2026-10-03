@@ -5,7 +5,7 @@ metadata:
   name: "Nextcloud"
   description: "Files, calendar, contacts and office documents on your own machine. Sync clients for every platform; Nextcloud Office included via the recommended apps."
 release:
-  revision: "2"
+  revision: "3"
 deployment:
   compose: compose.yaml
   multiInstance: true
@@ -47,7 +47,13 @@ hooks:
       - -c
       - |
         cd /var/www/html || exit 1
-        if ! php occ status 2>/dev/null | grep -q "installed: true"; then echo "Nextcloud is not installed yet"; exit 1; fi
+        # Never set up (its setup page was left open, or the image skipped its own auto-install because
+        # the volume was already initialised): set it up now with the admin login Harbor generated.
+        if ! php occ status 2>/dev/null | grep -q "installed: true"; then
+          if [ -z "${NEXTCLOUD_ADMIN_PASSWORD:-}" ]; then echo "Nextcloud is not installed yet"; exit 1; fi
+          echo "setting Nextcloud up with the admin login Harbor generated"
+          php occ maintenance:install -n --database pgsql --database-host "$POSTGRES_HOST" --database-name "$POSTGRES_DB" --database-user "$POSTGRES_USER" --database-pass "$POSTGRES_PASSWORD" --admin-user "${NEXTCLOUD_ADMIN_USER:-admin}" --admin-pass "$NEXTCLOUD_ADMIN_PASSWORD" --data-dir /var/www/html/data >/dev/null || exit 1
+        fi
         php occ config:system:delete trusted_domains >/dev/null
         i=0
         for d in $HARBOR_ADDRESSES; do php occ config:system:set trusted_domains "$i" --value="$d" >/dev/null || exit 1; i=$((i+1)); done
@@ -91,4 +97,4 @@ presentation:
   icon: icon.svg
   developer: "Nextcloud GmbH and contributors"
   website: https://nextcloud.com
-  releaseNotes: "Revision 2: works on every address at once (LAN, secure LAN, Tailscale, your domains); Harbor creates the admin login. Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis; Nextcloud Office uses the built-in CODE server."
+  releaseNotes: "Revision 3: sets Nextcloud up itself if it was never set up (no more localhost redirect after the setup page). Revision 2: works on every address at once (LAN, secure LAN, Tailscale, your domains); Harbor creates the admin login. Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis; Nextcloud Office uses the built-in CODE server."
