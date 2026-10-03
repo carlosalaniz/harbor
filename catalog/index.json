@@ -54,7 +54,7 @@
       "dir": "navidrome"
     },
     "nextcloud": {
-      "revision": "1",
+      "revision": "2",
       "dir": "nextcloud"
     },
     "open-webui": {

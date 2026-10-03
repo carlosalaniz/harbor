@@ -179,3 +179,23 @@ describe('compose source subset', () => {
     expect(hc('      test: [CMD, "true"]\n      interval: 5s\n      timeout: 3s\n      retries: 3\n      start_period: 10s\n').services['web']?.healthcheck?.retries).toBe(3);
   });
 });
+
+describe('afterStart hooks (decision 116)', () => {
+  const HOOK = 'hooks:\n  afterStart:\n    service: web\n    user: www-data\n    timeoutSeconds: 900\n    command:\n      - sh\n      - -c\n      - |\n        for d in $HARBOR_ADDRESSES; do echo "$d" > /dev/null; done\n';
+  it('accepts a command in a declared service, shell text included (it runs inside the container)', () => {
+    const { manifest } = full(MINIMAL_MANIFEST + HOOK, MINIMAL_COMPOSE);
+    expect(manifest.hooks?.afterStart?.command[0]).toBe('sh');
+    expect(manifest.hooks?.afterStart?.command[2]).toContain('$HARBOR_ADDRESSES');
+    expect(manifest.hooks?.afterStart?.user).toBe('www-data');
+  });
+  it('rejects an unknown service, a bad user, an empty command and an out-of-range timeout', () => {
+    expectCode(() => full(MINIMAL_MANIFEST + HOOK.replace('service: web', 'service: ghost'), MINIMAL_COMPOSE), 'INVALID_PACKAGE', /unknown service ghost/);
+    expectCode(() => manifestOf(MINIMAL_MANIFEST + HOOK.replace('user: www-data', 'user: "root; rm"')), 'INVALID_PACKAGE', /user/);
+    expectCode(() => manifestOf(MINIMAL_MANIFEST + 'hooks:\n  afterStart:\n    service: web\n    command: []\n'), 'INVALID_PACKAGE', /command/);
+    expectCode(() => manifestOf(MINIMAL_MANIFEST + HOOK.replace('timeoutSeconds: 900', 'timeoutSeconds: 5')), 'INVALID_PACKAGE', /timeoutSeconds/);
+  });
+  it('accepts httpsRequired on an endpoint', () => {
+    const m = manifestOf(MINIMAL_MANIFEST.replace('browserContext: secure', 'browserContext: secure\n    httpsRequired: true'));
+    expect(m.endpoints['web']?.httpsRequired).toBe(true);
+  });
+});

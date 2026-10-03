@@ -343,12 +343,13 @@ export const mockApi = {
   },
   // LAN HTTPS in design mode: the toggle flips the fixture so the card, the
   // trust probe (mocked trusted) and the banner can be exercised with clicks.
-  networkHttps: async (): Promise<NetworkHttpsDto> => mockSystem().network.https,
+  networkHttps: async (): Promise<NetworkHttpsDto> => ({ ...mockSystem().network.https, breaksWhenOff: [], restartToApply: [] }),
+  addressOptions: async () => ({ local: { kind: 'http' as const, host: 'homelab.local' }, tailnet: { hostname: 'homelab.tail1234.ts.net' }, domains: ['cloud.example.com'] }),
   setNetworkHttps: async (enabled: boolean): Promise<NetworkHttpsDto> => {
     await beat(150);
     return enabled
-      ? { enabled: true, url: 'https://harbor.local/', fingerprint: 'AA:BB:CC (mock)', expiresAt: new Date(Date.now() + 800 * 86400_000).toISOString(), hosts: ['harbor.local', 'homelab.local'] }
-      : { enabled: false, url: null, fingerprint: null, expiresAt: null, hosts: [] };
+      ? { enabled: true, url: 'https://harbor.local/', fingerprint: 'AA:BB:CC (mock)', expiresAt: new Date(Date.now() + 800 * 86400_000).toISOString(), hosts: ['harbor.local', 'homelab.local'], breaksWhenOff: [], restartToApply: ['nextcloud'] }
+      : { enabled: false, url: null, fingerprint: null, expiresAt: null, hosts: [], breaksWhenOff: [], restartToApply: ['nextcloud'] };
   },
   probeHttpsTrust: async (): Promise<'trusted' | 'untrusted' | 'unreachable'> => 'trusted',
   domains: async (): Promise<DomainsDto> => mockDomains(),

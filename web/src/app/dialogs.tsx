@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { DomainsDto, HostStorageDto } from '../../../src/contracts/api';
-import type { CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
+import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
 import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
 import { categoryLabel, fmtBytes, fmtTime } from './format';
@@ -148,6 +148,23 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
   const [deviceError, setDeviceError] = useState<string | null>(null);
   const [formatTarget, setFormatTarget] = useState<HostStorageDto['devices'][number] | null>(null);
   const [formatTyped, setFormatTyped] = useState('');
+  // Main address (decision 116): only choices that exist right now; apps that need HTTPS cannot pick plain http.
+  const [addr, setAddr] = useState<AddressOptionsDto | null>(null);
+  const [mainPick, setMainPick] = useState<string | null>(null); // 'local' | 'tailnet' | 'public:<host>'
+  useEffect(() => {
+    api.addressOptions().then(setAddr, () => setAddr({ local: { kind: 'loopback', host: 'localhost' }, tailnet: null, domains: [] }));
+  }, []);
+  const localOk = !item.requiresHttps || (addr?.local.kind ?? 'loopback') !== 'http';
+  const mainChoices: { id: string; label: string; ok: boolean }[] = addr
+    ? [
+        { id: 'local', label: addr.local.kind === 'https' ? `This network, secure (https://${addr.local.host}:…)` : addr.local.kind === 'http' ? `This network (http://${addr.local.host}:…)` : 'This machine (localhost)', ok: localOk },
+        ...(addr.tailnet ? [{ id: 'tailnet', label: `Tailscale (https://${addr.tailnet.hostname}:…)`, ok: true }] : []),
+        ...addr.domains.map((d) => ({ id: `public:${d}`, label: `Your domain (https://${d})`, ok: true })),
+      ]
+    : [];
+  const mainSel = mainPick ?? mainChoices.find((m) => m.ok)?.id ?? null;
+  const mainBlocked = addr !== null && !mainChoices.some((m) => m.ok);
+  const main = mainSel === 'tailnet' ? { via: 'tailnet' as const } : mainSel?.startsWith('public:') ? { via: 'public' as const, hostname: mainSel.slice('public:'.length) } : undefined;
   const external = item.claims.filter((c) => c.external);
   const missingRequired = external.some((c) => c.external!.required && !(folders[c.id] ?? '').trim());
   const storage = Object.fromEntries(Object.entries(folders).filter(([, v]) => v.trim()).map(([k, v]) => [k, { hostPath: v.trim() }]));
@@ -395,6 +412,23 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
               )}
             </div>
           ))}
+        </fieldset>
+      )}
+      {addr && (mainChoices.length > 1 || mainBlocked || !localOk) && (
+        <fieldset className="storage-choices">
+          <legend>Main address</legend>
+          <p className="muted small">It opens on every address you have set up; this is the one it uses in links it sends out (emails, share links, webhooks).</p>
+          {mainChoices.map((m) => (
+            <label key={m.id} className="check" title={m.ok ? undefined : 'Needs HTTPS'}>
+              <input type="radio" name="main-address" checked={mainSel === m.id} disabled={!m.ok} onChange={() => setMainPick(m.id)} /> {m.label}
+              {!m.ok && <span className="muted small"> — needs HTTPS</span>}
+            </label>
+          ))}
+          {mainBlocked && (
+            <p className="warn small" role="alert">
+              {item.name} needs HTTPS: browsers block what it needs on a plain http:// address. Turn on secure addresses in Settings → Network, or connect Tailscale, then install it.
+            </p>
+          )}
         </fieldset>
       )}
       <fieldset className="storage-choices">
@@ -673,8 +707,8 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         </button>
         <button
           className="btn primary"
-          disabled={busy || item.availability !== 'available' || missingRequired || locationMissingPass || locationBlocked || (place === 'local' && !locationDir) || (place === 'external' && !locationDir && !formattedDrive)}
-          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
+          disabled={busy || item.availability !== 'available' || mainBlocked || missingRequired || locationMissingPass || locationBlocked || (place === 'local' && !locationDir) || (place === 'external' && !locationDir && !formattedDrive)}
+          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(main ? { main } : {}), ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
           aria-label={`Install ${item.name} now`}
           title={locationBlocked ? (locationNeedsFormat ? 'This drive needs formatting as ext4 first' : 'Mount the drive before installing') : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
         >
@@ -1026,6 +1060,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
             Start
           </button>
         )}
+        {canStop && inst.installState === 'installed' && inst.runtime === 'running' && (
+          <button className="btn" disabled={busy} onClick={() => onAction({ kind: 'restart', instance: inst })} aria-label={`Restart ${inst.name}`} title="Restart with the current addresses, for example after changing network settings">
+            Restart
+          </button>
+        )}
         {canStop && inst.installState !== 'installing' && (
           <button className="btn" disabled={busy} onClick={() => onAction({ kind: 'stop', instance: inst })} aria-label={`Stop ${inst.name}`}>
             Stop
@@ -1171,6 +1210,8 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
       return `Harbor will start ${n} again with the same data and address.`;
     case 'stop':
       return `Harbor will stop ${n}. Nothing is deleted; Start brings it back.`;
+    case 'restart':
+      return `Harbor will restart ${n} with its current addresses (for example after you changed network settings). Data, secrets and ports stay.`;
     case 'remove':
       return `Harbor will remove ${n} but keep its data.`;
     case 'reinstall':
@@ -1189,7 +1230,7 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

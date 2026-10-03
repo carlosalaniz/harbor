@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NetworkHttpsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanAppHost, lanUrl } from '../system/lan.js';
 import { caPem, ensureTlsCerts, lanHttpsHosts, readTlsState, reconcileLanHttps } from '../system/lan-https.js';
@@ -26,13 +26,13 @@ import { INSTALLATION_RECOVERY_SETTING, newInstallationRecoveryKey, openInstalla
 import { stampInstallationRecovery } from '../storage/app-home.js';
 import type { ResourceRow } from '../state/repo.js';
 import { listMounts } from '../system/host-storage.js';
-import type { InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
+import type { EndpointAllocation, InstanceRow, OperationRow, PackageSourceRow, PlanProposal, PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
 import { validateGitSourceInput } from '../packages/git.js';
 import { ComposeError } from '../docker/adapter.js';
 import type { Ctx } from './context.js';
 import { exposureDto, instanceSummary, operationDto, planDto } from './dto.js';
-import type { ExposureDto } from '../contracts/api.js';
+import type { ExposureDto, ExposureVia } from '../contracts/api.js';
 import { HOSTNAME_RE, exposureUrl } from '../exposure/urls.js';
 import { instanceDir, loadReleaseSnapshot, secretExists } from './instance-dir.js';
 
@@ -570,7 +570,52 @@ export class ApplicationService {
   networkHttps(): NetworkHttpsDto {
     const enabled = this.httpsEnabled();
     const tls = readTlsState(this.ctx.config.stateDir);
-    return { enabled, url: enabled ? 'https://harbor.local/' : null, fingerprint: tls?.fingerprint ?? null, expiresAt: tls?.expiresAt ?? null, hosts: tls?.hosts ?? [] };
+    return { enabled, url: enabled ? 'https://harbor.local/' : null, fingerprint: tls?.fingerprint ?? null, expiresAt: tls?.expiresAt ?? null, hosts: tls?.hosts ?? [], ...this.addressDependents() };
+  }
+
+  // Decision 116: who a LAN HTTPS switch affects. breaksWhenOff = apps that need HTTPS whose main address
+  // is "this network" and that have no tailnet/public address; restartToApply = running apps that embed
+  // their address or keep a host list (configuration bindings / afterStart hook).
+  private addressDependents(): { breaksWhenOff: string[]; restartToApply: string[] } {
+    const breaksWhenOff: string[] = [];
+    const restartToApply: string[] = [];
+    for (const inst of this.ctx.repo.listInstances()) {
+      if (inst.installState !== 'installed') continue;
+      let pkg: LoadedPackage;
+      try {
+        pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+      } catch {
+        continue;
+      }
+      const label = inst.displayName ?? inst.name;
+      const published = this.ctx.repo.exposures(inst.id).length > 0;
+      if (requiresHttps(pkg) && inst.primaryExposure === 'loopback' && !published) breaksWhenOff.push(label);
+      if (inst.runtime === 'running' && ((pkg.manifest.configuration ?? []).length > 0 || pkg.manifest.hooks?.afterStart)) restartToApply.push(label);
+    }
+    return { breaksWhenOff: breaksWhenOff.sort(), restartToApply: restartToApply.sort() };
+  }
+
+  // Decision 116: the main-address choices that exist right now (the install page shows only these).
+  async addressOptions(): Promise<AddressOptionsDto> {
+    const lanHost = this.lanHost();
+    const local: AddressOptionsDto['local'] = this.httpsEnabled() && lanHost ? { kind: 'https', host: lanHost } : lanHost ? { kind: 'http', host: lanHost } : { kind: 'loopback', host: 'localhost' };
+    let tailnet: AddressOptionsDto['tailnet'] = null;
+    try {
+      const st = await this.ctx.tailscale.status();
+      if (st && st.backendState === 'Running' && st.dnsName && st.httpsEnabled) tailnet = { hostname: st.dnsName };
+    } catch {
+      tailnet = null;
+    }
+    const domains = (await this.caddyReady()) ? this.ctx.repo.domains().filter((d) => d.dnsState === 'points_here').map((d) => d.hostname).sort() : [];
+    return { local, tailnet, domains };
+  }
+
+  private async caddyReady(): Promise<boolean> {
+    try {
+      return await this.ctx.caddy.available();
+    } catch {
+      return false;
+    }
   }
   async setNetworkHttps(enabled: boolean): Promise<NetworkHttpsDto> {
     if (enabled && !this.ctx.config.lan.enabled) throw new HarborError('INVALID_STATE', 'LAN mode is off', { nextAction: 'Turn on LAN mode first (bootstrap --lan): HTTPS secures the LAN addresses.' });
@@ -1414,6 +1459,18 @@ export class ApplicationService {
       }
       const locationOnDrive = location !== null && !this.isDataFolderLocation(location.dir);
       const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
+      // Main address (decision 116): apps that need a secure browser context get an HTTPS one in LAN
+      // mode — HTTPS LAN, the tailnet or a domain. Refused here, before anything is pulled.
+      const mainEndpoint = endpoints.find((e) => e.id === pkg.manifest.ui.primaryEndpoint) ?? endpoints[0]!;
+      const mainWarnings: string[] = [];
+      let mainExposure: PlanProposal['exposure'];
+      if (req.main) {
+        const t = await this.exposureTarget(req.main.via, mainEndpoint, pkg, pkg.manifest.metadata.name, req.main.via === 'public' ? { hostname: req.main.hostname } : {}, mainWarnings);
+        if (repo.exposureByAddress(req.main.via, t.hostname, t.port)) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.main.via, hostname: t.hostname, port: t.port })} is already used by another app`);
+        mainExposure = { endpointId: mainEndpoint.id, via: req.main.via, hostname: t.hostname, port: t.port, protection: t.protection, makePrimary: true };
+      } else if (requiresHttps(pkg) && this.ctx.config.lan.enabled && !this.httpsEnabled()) {
+        throw new HarborError('INVALID_STATE', `${pkg.manifest.metadata.name} needs HTTPS: browsers block what it needs on a plain http:// address`, { nextAction: 'Turn on secure addresses in Settings → Network, or install it with Tailscale or one of your domains as its main address.' });
+      }
       const proposal: PlanProposal = {
         packageId: pkg.id,
         revision: pkg.revision,
@@ -1436,10 +1493,12 @@ export class ApplicationService {
             : []),
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
           ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
+          ...(mainExposure ? [`Publish it at ${exposureUrl(mainExposure)} and make that its main address`] : []),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
           ...Object.entries(pkg.release.builds ?? {}).map(([svc, b]) => `Build ${svc} from source at commit ${b.commit.slice(0, 12)} (${b.tag})`),
         ],
         warnings: [
+          ...mainWarnings,
           ...(Object.keys(pkg.release.builds ?? {}).length ? ['Parts of this app are built from source on this machine; their provenance is the git commit, not a registry digest.'] : []),
           ...(pkg.release.qualification.status !== 'passed' ? [pkg.origin === 'local' ? 'This is your own uploaded app; Harbor has not checked it on a real machine the way it checks the built-in catalog.' : `Package qualification is ${pkg.release.qualification.status}`] : []),
           ...(pkg.manifest.setup ? ['This app has its own onboarding after installation; Harbor does not create its accounts.'] : []),
@@ -1457,6 +1516,7 @@ export class ApplicationService {
             : []),
         ],
         releaseHashes: pkg.hashes,
+        ...(mainExposure ? { exposure: mainExposure } : {}),
       };
       await this.validateProspective(pkg, identity, endpoints);
       const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'install', instanceId, proposal, expectedGeneration: 0, createdAt: rfc3339(now), expiresAt };
@@ -1495,6 +1555,19 @@ export class ApplicationService {
           }
         }
         changes.push(`Verify release, retained volumes and secrets of "${inst.name}"`, `Start existing containers of project ${inst.project}`, 'Check readiness');
+        break;
+      }
+      case 'restart': {
+        // Decision 116: re-render with today's addresses (LAN HTTPS, rename) and recreate, then the hook.
+        if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `cannot restart an instance in state ${inst.installState}`);
+        if (inst.runtime !== 'running') throw new HarborError('INVALID_STATE', `${inst.name} is not running`, { nextAction: 'Start it instead.' });
+        const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+        changes.push(
+          `Re-render the private Compose file of "${inst.name}" with its current addresses`,
+          `Recreate the containers of project ${inst.project} (same volumes, secrets and ports)`,
+          'Check readiness',
+          ...(pkg.manifest.hooks?.afterStart ? [`Run ${pkgName}'s after-start step so it accepts every current address`] : []),
+        );
         break;
       }
       case 'stop':
@@ -1638,6 +1711,39 @@ export class ApplicationService {
     });
   }
 
+  // Where a tailnet / public exposure of `alloc` would live, after checking the provider is ready
+  // (shared by Publish and by install with a chosen main address, decision 116). Pushes plan warnings.
+  private async exposureTarget(via: ExposureVia, alloc: EndpointAllocation, pkg: LoadedPackage, pkgName: string, req: { hostname?: string; protection?: 'none' | 'basic' }, warnings: string[]): Promise<{ hostname: string; port: number; protection: 'none' | 'basic' }> {
+    const { repo } = this.ctx;
+    let hostname: string;
+    let port: number;
+    let protection: 'none' | 'basic';
+    if (via === 'tailnet') {
+      const st = await this.ctx.tailscale.status();
+      if (!st || st.backendState !== 'Running' || !st.dnsName) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Tailscale is not set up on this host', { nextAction: 'Re-run bootstrap with --with-tailscale and complete the login; see the Tailscale tool card.' });
+      if (!st.httpsEnabled) throw new HarborError('UNSUPPORTED_CAPABILITY', 'HTTPS certificates are not enabled for this tailnet', { nextAction: 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS settings), then retry.' });
+      if (req.hostname && req.hostname !== st.dnsName) throw new HarborError('INVALID_REQUEST', `tailnet exposures use the node name ${st.dnsName}; a custom hostname is not possible`);
+      hostname = st.dnsName;
+      port = alloc.hostPort; // same port number as loopback: "same port, three addresses"
+      protection = 'none'; // tailnet ACLs are the access control; serve has no auth layer
+      if (req.protection === 'basic') warnings.push('Basic-auth protection is not available on the tailnet path; access is governed by your tailnet ACLs.');
+    } else {
+      if (!(await this.ctx.caddy.available())) throw new HarborError('UNSUPPORTED_CAPABILITY', 'The public proxy (Caddy) is not set up on this host', { nextAction: 'Re-run bootstrap with --with-public-proxy; see the Public proxy tool card.' });
+      if (!req.hostname || !HOSTNAME_RE.test(req.hostname)) throw new HarborError('INVALID_REQUEST', 'public exposure needs a fully qualified hostname you control (e.g. n8n.example.com)');
+      hostname = req.hostname;
+      port = 443;
+      // packages with their own onboarding or a Harbor-provisioned admin manage their own accounts (n8n, Nextcloud)
+      const packageHasOwnAuth = pkg.manifest.setup !== undefined || pkg.manifest.provisionedCredentials !== undefined;
+      protection = req.protection ?? (packageHasOwnAuth ? 'none' : 'basic');
+      if (protection === 'none' && !packageHasOwnAuth) warnings.push(`${pkgName} has no login of its own; without basic-auth protection anyone who reaches ${hostname} can use it.`);
+      const known = repo.domain(hostname);
+      if (known?.dnsState === 'points_here') warnings.push(`${hostname} points at this machine (checked ${known.checkedAt ?? 'recently'}); the certificate is requested from Let's Encrypt automatically once published.`);
+      else if (known) warnings.push(`${hostname} does not point at this machine yet (${known.dnsState.replace('_', ' ')}${known.note ? `: ${known.note}` : ''}); the certificate cannot be issued until it does.`);
+      else warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued. Register the domain under Settings → Public addresses to have Harbor check it.`);
+    }
+    return { hostname, port, protection };
+  }
+
   private async exposurePlan(req: Extract<PlanRequest, { kind: 'expose' | 'unexpose' | 'reconfigure' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
     const { repo, ids } = this.ctx;
     if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `exposure changes require an installed instance; ${inst.name} is ${inst.installState}`);
@@ -1687,31 +1793,7 @@ export class ApplicationService {
     // expose
     if (existing.some((x) => x.endpointId === endpointId && x.via === req.via)) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already exposed via ${req.via}`, { nextAction: 'Unexpose it first to change hostname or protection.' });
     const endpoint = pkg.manifest.endpoints[endpointId]!;
-    let hostname: string;
-    let port: number;
-    let protection: 'none' | 'basic';
-    if (req.via === 'tailnet') {
-      const st = await this.ctx.tailscale.status();
-      if (!st || st.backendState !== 'Running' || !st.dnsName) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Tailscale is not set up on this host', { nextAction: 'Re-run bootstrap with --with-tailscale and complete the login; see the Tailscale tool card.' });
-      if (!st.httpsEnabled) throw new HarborError('UNSUPPORTED_CAPABILITY', 'HTTPS certificates are not enabled for this tailnet', { nextAction: 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS settings), then retry.' });
-      if (req.hostname && req.hostname !== st.dnsName) throw new HarborError('INVALID_REQUEST', `tailnet exposures use the node name ${st.dnsName}; a custom hostname is not possible`);
-      hostname = st.dnsName;
-      port = alloc.hostPort; // same port number as loopback: "same port, three addresses"
-      protection = 'none'; // tailnet ACLs are the access control; serve has no auth layer
-      if (req.protection === 'basic') base.warnings.push('Basic-auth protection is not available on the tailnet path; access is governed by your tailnet ACLs.');
-    } else {
-      if (!(await this.ctx.caddy.available())) throw new HarborError('UNSUPPORTED_CAPABILITY', 'The public proxy (Caddy) is not set up on this host', { nextAction: 'Re-run bootstrap with --with-public-proxy; see the Public proxy tool card.' });
-      if (!req.hostname || !HOSTNAME_RE.test(req.hostname)) throw new HarborError('INVALID_REQUEST', 'public exposure needs a fully qualified hostname you control (e.g. n8n.example.com)');
-      hostname = req.hostname;
-      port = 443;
-      const packageHasOwnAuth = pkg.manifest.setup !== undefined; // packages with their own onboarding manage their own accounts (n8n)
-      protection = req.protection ?? (packageHasOwnAuth ? 'none' : 'basic');
-      if (protection === 'none' && !packageHasOwnAuth) base.warnings.push(`${pkgName} has no login of its own; without basic-auth protection anyone who reaches ${hostname} can use it.`);
-      const known = repo.domain(hostname);
-      if (known?.dnsState === 'points_here') base.warnings.push(`${hostname} points at this machine (checked ${known.checkedAt ?? 'recently'}); the certificate is requested from Let's Encrypt automatically once published.`);
-      else if (known) base.warnings.push(`${hostname} does not point at this machine yet (${known.dnsState.replace('_', ' ')}${known.note ? `: ${known.note}` : ''}); the certificate cannot be issued until it does.`);
-      else base.warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued. Register the domain under Settings → Public addresses to have Harbor check it.`);
-    }
+    const { hostname, port, protection } = await this.exposureTarget(req.via, alloc, pkg, pkgName, req, base.warnings);
     const taken = repo.exposureByAddress(req.via, hostname, port);
     if (taken) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.via, hostname, port })} is already used by another exposure`);
     if (endpoint.browserContext === 'ordinary') base.warnings.push('This endpoint is declared for ordinary browser contexts; it will still be served over HTTPS.');
@@ -1855,4 +1937,10 @@ export class ApplicationService {
     if (result.created) this.wake();
     return result;
   }
+}
+
+// Decision 116: an app whose main endpoint does not work at all over plain http (n8n's secure-only
+// login cookie, Vaultwarden's WebCrypto vault). `browserContext: secure` alone only means "better on HTTPS".
+export function requiresHttps(pkg: LoadedPackage): boolean {
+  return pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.httpsRequired === true;
 }

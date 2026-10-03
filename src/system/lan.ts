@@ -47,6 +47,15 @@ export function lanHostAllowed(host: string, lanPort: number, managementPort: nu
   return addresses.includes(name);
 }
 
+// Every name a LAN device can use for this machine (decision 116): the mDNS names plus the private IPv4
+// addresses of real interfaces (Docker bridges and veths are not reachable from the LAN).
+export function lanNames(): string[] {
+  const ips = privateInterfaces()
+    .filter((i) => !/^(docker|br-|veth|virbr|tailscale|cni|flannel)/.test(i.name))
+    .map((i) => i.address);
+  return [...new Set([...lanHostnames(), ...ips])];
+}
+
 // The name app addresses use in LAN mode: <hostname>.local (the console swaps in the host it was opened with).
 export function lanAppHost(): string {
   return `${hostname().toLowerCase().replace(/\.local$/, '')}.local`;

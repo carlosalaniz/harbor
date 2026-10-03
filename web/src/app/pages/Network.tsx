@@ -42,6 +42,8 @@ export function Network({ c }: { c: Console }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [trust, setTrust] = useState<Trust>('unknown');
   const [sheet, setSheet] = useState(false);
+  const [confirmOff, setConfirmOff] = useState(false);
+  const [restartNote, setRestartNote] = useState<string | null>(null);
   const lanOn = c.data.system?.lan.enabled ?? false;
   const lanUrl = c.data.system?.lan.url ?? null;
 
@@ -85,6 +87,8 @@ export function Network({ c }: { c: Console }) {
     try {
       const next = await api.setNetworkHttps(on);
       setSt(next);
+      // Decision 116: apps that keep their own address pick up the change on Restart.
+      setRestartNote(next.restartToApply?.length ? `Restart ${next.restartToApply.join(', ')} so ${next.restartToApply.length === 1 ? 'it uses' : 'they use'} the new address (open the app, then Restart).` : null);
       await c.refresh();
     } catch (e) {
       setMsg(e instanceof ApiError ? `${e.message}. ${e.nextAction}` : String(e));
@@ -103,10 +107,32 @@ export function Network({ c }: { c: Console }) {
             <p className="muted small">Open Harbor and your apps over HTTPS on your home network, with no warning, after you trust one certificate per device. Nothing leaves your network; Harbor mints the certificate itself.</p>
           </div>
           <label className="row">
-            <input type="checkbox" checked={st?.enabled ?? false} disabled={busy || (!st?.enabled && !lanOn)} onChange={(e) => void toggle(e.target.checked)} aria-label="Secure addresses on the home network" />
+            <input type="checkbox" checked={st?.enabled ?? false} disabled={busy || (!st?.enabled && !lanOn)} onChange={(e) => (!e.target.checked && st?.breaksWhenOff?.length ? setConfirmOff(true) : void toggle(e.target.checked))} aria-label="Secure addresses on the home network" />
             <span className="small">{st?.enabled ? 'On' : 'Off'}</span>
           </label>
         </div>
+        {restartNote && <p className="warn small">{restartNote}</p>}
+        {confirmOff && (
+          <Dialog title="Turn off secure addresses?" onClose={() => setConfirmOff(false)}>
+            <p>
+              {st?.breaksWhenOff?.join(', ')} {st?.breaksWhenOff?.length === 1 ? 'needs' : 'need'} HTTPS and {st?.breaksWhenOff?.length === 1 ? 'has' : 'have'} no other secure address, so {st?.breaksWhenOff?.length === 1 ? 'it' : 'they'} will stop working on your network. Publishing on Tailscale or a domain keeps {st?.breaksWhenOff?.length === 1 ? 'it' : 'them'} working.
+            </p>
+            <div className="row end">
+              <button className="btn" onClick={() => setConfirmOff(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn danger"
+                onClick={() => {
+                  setConfirmOff(false);
+                  void toggle(false);
+                }}
+              >
+                Turn off anyway
+              </button>
+            </div>
+          </Dialog>
+        )}
         {!lanOn && !st?.enabled && <p className="warn small">LAN mode is off, so there are no network addresses to secure. Turn on LAN mode first (bootstrap --lan on the machine).</p>}
         {st?.enabled && st.url && (
           <dl className="kv">

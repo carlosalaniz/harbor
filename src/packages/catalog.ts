@@ -103,6 +103,7 @@ export interface CatalogItem {
   availability: 'available' | 'unavailable';
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
+  requiresHttps: boolean;
   presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; releaseNotes: string | null; hasWidget: boolean };
   defaultCredentials: { username: string; password: string; note: string | null } | null;
   setup: boolean;
@@ -127,6 +128,7 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         availability: 'available',
         reason: null,
         qualification: pkg.release.qualification.status,
+        requiresHttps: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.httpsRequired === true,
         presentation: presentationOf(pkg),
         defaultCredentials: defaultCredentialsOf(pkg.manifest),
         setup: Boolean(pkg.manifest.setup),
@@ -144,6 +146,7 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         availability: 'unavailable',
         reason: e instanceof HarborError ? e.message : 'invalid package',
         qualification: 'invalid',
+        requiresHttps: false,
         presentation: { tagline: null, category: 'other', icon: null, gallery: [], developer: null, website: null, releaseNotes: null, hasWidget: false },
         defaultCredentials: null,
         setup: false,

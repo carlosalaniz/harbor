@@ -15,9 +15,9 @@ import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
-import { exposureUrl, primaryUrlFor } from '../exposure/urls.js';
+import { appAuthorities, exposureUrl, primaryUrlFor } from '../exposure/urls.js';
 import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
-import { lanAppHost, lanHostnames, machineAddresses } from '../system/lan.js';
+import { lanAppHost, lanHostnames, lanNames, machineAddresses } from '../system/lan.js';
 import { HTTPS_SETTING, lanHttpsHosts, readTlsState } from '../system/lan-https.js';
 import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
 import bcrypt from 'bcryptjs';
@@ -117,6 +117,7 @@ export class OperationRunner {
         case 'reinstall': await this.reinstall(op, plan, inst, secretValues); break;
         case 'start': await this.start(op, plan, inst); break;
         case 'stop': await this.stop(op, inst, plan.actor); break;
+        case 'restart': await this.restart(op, inst, secretValues); break;
         case 'remove': await this.remove(op, inst); break;
         case 'purge': await this.purge(op, inst); break;
         case 'update': await this.update(op, plan, inst, secretValues); break;
@@ -334,11 +335,48 @@ export class OperationRunner {
     }
   }
 
-  // URLs handed to `configuration` bindings follow the instance's primary exposure (LAN address in LAN mode).
+  // URLs handed to `configuration` bindings follow the instance's primary exposure ("this network" =
+  // the secure LAN address when LAN HTTPS is on, else the LAN address in LAN mode; decisions 115/116).
   private endpointUrlsFor(inst: InstanceRow, primary: PrimaryExposure = inst.primaryExposure): Record<string, string> {
     const exposures = this.ctx.repo.exposures(inst.id);
     const lanHost = this.ctx.config.lan.enabled ? lanAppHost() : null;
-    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary, lanHost)]));
+    const secureHost = lanHost && this.lanHttpsOn() ? lanHost : null;
+    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary, lanHost, secureHost)]));
+  }
+
+  private lanHttpsOn(): boolean {
+    return this.ctx.config.lan.enabled && (this.ctx.repo.setting<boolean>(HTTPS_SETTING) ?? false);
+  }
+
+  // Package `afterStart` hook (decision 116): one command inside the named service with the app's
+  // current addresses, so the app's own admin tool (Nextcloud's occ) keeps its trusted hosts in step
+  // with LAN / LAN HTTPS / tailnet / public. A failing hook is reported, never fatal: the app runs.
+  private async runAfterStartHook(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow, containers?: ContainerInfo[]): Promise<void> {
+    const hook = pkg.manifest.hooks?.afterStart;
+    if (!hook) return;
+    const { repo, docker } = this.ctx;
+    const fresh = repo.instance(inst.id) ?? inst;
+    const id = containers?.find((c) => c.labels['com.docker.compose.service'] === hook.service)?.id ?? repo.resources(inst.id).find((r) => r.kind === 'container' && r.role === hook.service)?.dockerId ?? null;
+    if (!id) {
+      this.event(op, 'configuring', `after-start hook skipped: service ${hook.service} has no recorded container`);
+      return;
+    }
+    const exposures = repo.exposures(inst.id);
+    const lanHost = this.ctx.config.lan.enabled ? lanAppHost() : null;
+    const addresses = appAuthorities(fresh.endpoints, exposures, lanHost ? { names: lanNames(), secure: this.lanHttpsOn() } : null);
+    const net = await docker.inspectNetwork(defaultNetworkName(identityFor(this.ctx.installationId, inst.id)));
+    const main = fresh.endpoints.find((e) => e.id === pkg.manifest.ui.primaryEndpoint) ?? fresh.endpoints[0];
+    const url = main ? primaryUrlFor(main, exposures, fresh.primaryExposure, lanHost, lanHost && this.lanHttpsOn() ? lanHost : null) : '';
+    const env = { HARBOR_ADDRESSES: addresses.join(' '), HARBOR_PROXIES: (net?.gateways ?? []).join(' '), HARBOR_URL: url };
+    this.event(op, 'configuring', `running ${pkg.manifest.metadata.name}'s after-start hook in ${hook.service} (${addresses.length} addresses, main ${url})`);
+    try {
+      const r = await docker.exec(id, { cmd: hook.command, ...(hook.user ? { user: hook.user } : {}), env, timeoutMs: (hook.timeoutSeconds ?? 120) * 1000 });
+      if (r.timedOut) this.event(op, 'configuring', `after-start hook timed out after ${hook.timeoutSeconds ?? 120}s; ${pkg.manifest.metadata.name} runs, but some addresses may not work until the next restart`);
+      else if (r.exitCode !== 0) this.event(op, 'configuring', `after-start hook failed (exit ${r.exitCode}): ${r.output.trim().split('\n').slice(-3).join(' | ').slice(0, 300)}; ${pkg.manifest.metadata.name} runs, but some addresses may not work until the next restart`);
+      else this.event(op, 'configuring', 'after-start hook finished');
+    } catch (e) {
+      this.event(op, 'configuring', `after-start hook could not run: ${(e as Error).message}; ${pkg.manifest.metadata.name} runs, but some addresses may not work until the next restart`);
+    }
   }
 
   private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure, provisioned?: { username: string; password: string } | null): Promise<string> {
@@ -404,6 +442,7 @@ export class OperationRunner {
       throw new HarborError('READINESS_TIMEOUT', `readiness check did not pass within ${health.deadlineSeconds}s (last: ${result.last.status ?? result.last.error}); containers were kept for inspection`);
     }
     this.event(op, 'checking', `readiness passed after ${result.attempts} attempt(s) with status ${result.last.status}`);
+    await this.runAfterStartHook(op, pkg, inst, containers);
   }
 
   // ---------- exposure
@@ -477,8 +516,17 @@ export class OperationRunner {
       repo.updateExposure(exposureId, { state: 'degraded', observedAt: now, note: `not reachable yet: ${last.error ?? `HTTP ${last.status}`}. ${x.via === 'public' ? 'Check the DNS record and that ports 80/443 reach this host; Harbor keeps re-checking.' : 'Check tailnet HTTPS certificates; Harbor keeps re-checking.'}` });
       this.event(op, 'checking', `${url} not reachable yet (${last.error ?? `HTTP ${last.status}`}); exposure recorded as degraded and re-checked periodically`);
     }
+    await this.hookAfterAddressChange(op, inst);
     // Credentials appear once, in this operation's result; they are never in DTOs or logs afterwards.
     this.opResult = { exposureId, url, exposureState: last.ok ? 'active' : 'degraded', ...(credentials ? { credentials } : {}) };
+  }
+
+  // A new or withdrawn address reaches a running app's hook without a restart (decision 116).
+  private async hookAfterAddressChange(op: OperationRow, inst: InstanceRow): Promise<void> {
+    const fresh = this.ctx.repo.instance(inst.id);
+    if (!fresh || fresh.runtime !== 'running') return;
+    const pkg = loadReleaseSnapshot(this.dirs(fresh).release, fresh.packageId);
+    if (pkg.manifest.hooks?.afterStart) await this.runAfterStartHook(op, pkg, fresh);
   }
 
   private async unexpose(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
@@ -492,6 +540,7 @@ export class OperationRunner {
     await this.withdrawExposure(op, e);
     repo.deleteExposure(e.id);
     this.event(op, 'withdrawing', `${exposureUrl(e)} withdrawn; credentials (if any) retained as an instance secret`);
+    await this.hookAfterAddressChange(op, inst);
   }
 
   private async reconfigure(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
@@ -509,6 +558,7 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { primaryExposure: primary });
     if (!(pkg.manifest.configuration ?? []).length) {
       this.event(op, 'reconfiguring', `primary address is now ${primary}; ${pkg.manifest.metadata.name} does not embed its base URL, containers unchanged`);
+      await this.hookAfterAddressChange(op, inst);
       return;
     }
     await this.engineOrThrow();
@@ -567,6 +617,13 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
     // The provisioned admin credential appears once, in this operation's result (same UX as exposure basic-auth).
     if (provisioned) this.opResult = { ...(this.opResult ?? {}), credentials: provisioned, ...(pkg.manifest.provisionedCredentials?.note ? { credentialsNote: pkg.manifest.provisionedCredentials.note } : {}) };
+    // Main address chosen at install (decision 116): publish on the tailnet / a domain and make it primary,
+    // in the same operation. The provisioned admin login (if any) wins the one `credentials` slot.
+    if (plan.proposal.exposure) {
+      const prior = this.opResult ?? {};
+      await this.expose(op, plan, repo.instance(inst.id) ?? inst, sink);
+      this.opResult = { ...prior, ...(this.opResult ?? {}), ...(prior['credentials'] ? { credentials: prior['credentials'] } : {}) };
+    }
   }
 
   // Create the encrypted app home for an install-location install. Returns the
@@ -757,9 +814,27 @@ export class OperationRunner {
 
   // `compose up`, then record what exists under our labels. On failure, still record (best effort)
   // so that inspect/remove can see and clean up partially created resources.
-  private async upAndRecord(op: OperationRow, inv: { projectDir: string; projectName: string; file: string }, identity: InstanceIdentity, inst: InstanceRow): Promise<ContainerInfo[]> {
+  // Restart (decision 116): today's addresses into the Compose file, every container recreated (same
+  // volumes, secrets, ports), readiness, then the package's after-start hook (inside checkReadiness).
+  private async restart(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    const dirs = this.dirs(inst);
+    const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+    await this.engineOrThrow();
+    this.phase(op, 'applying', 'preparing', `re-rendering ${inst.name} with its current addresses`);
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    const values = this.readSecrets(pkg, dirs.secrets, sink);
+    const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values);
+    this.phase(op, 'applying', 'starting', 'recreating containers (same volumes, secrets and ports)');
+    repo.updateInstance(inst.id, { runtime: 'starting' });
+    const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, inst, { forceRecreate: true });
+    await this.checkReadiness(op, pkg, inst, containers);
+    repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+  }
+
+  private async upAndRecord(op: OperationRow, inv: { projectDir: string; projectName: string; file: string }, identity: InstanceIdentity, inst: InstanceRow, opts: { forceRecreate?: boolean } = {}): Promise<ContainerInfo[]> {
     try {
-      await this.ctx.compose.up(inv, this.ctx.config.startTimeoutMs);
+      await this.ctx.compose.up(inv, this.ctx.config.startTimeoutMs, opts);
     } catch (e) {
       try {
         await this.recordProjectResources(op, identity, inst);
@@ -989,6 +1064,14 @@ export class OperationRunner {
         refs.push({ id: sec.id, file: path.join('secrets', sec.id) });
         this.event(op, 'preparing', `generated retained secret ${sec.id}`);
       }
+      // A release that starts provisioning its admin (decision 116: Nextcloud revision 2) gets the
+      // retained credential too; an already set-up app ignores it and keeps the account it has.
+      const newlyProvisioned = Boolean(next.manifest.provisionedCredentials) && !refs.some((r) => r.id === PROVISIONED_SECRET);
+      if (newlyProvisioned) {
+        generateSecretOnce(dirs.secrets, PROVISIONED_SECRET, this.ctx.ids);
+        refs.push({ id: PROVISIONED_SECRET, file: path.join('secrets', PROVISIONED_SECRET) });
+        this.event(op, 'preparing', 'generated the admin credential this release provisions (an app that is already set up keeps its own accounts)');
+      }
       repo.updateInstance(inst.id, { secrets: refs });
       const values = this.readSecrets(next, dirs.secrets, sink);
       const file = await this.renderAndValidate(op, next, identity, updated, dirs.runtime, values);
@@ -1005,6 +1088,11 @@ export class OperationRunner {
       repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
       this.event(op, 'checking', `${inst.name} now runs revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`);
       this.opResult = { fromRevision: u.fromRevision, toRevision: u.toRevision, rolledBack: false };
+      // Shown once, like at install: it is the login if the app had not been set up yet.
+      if (newlyProvisioned) {
+        const pc = this.readProvisioned(next, dirs.secrets, sink);
+        if (pc) this.opResult = { ...this.opResult, credentials: pc, credentialsNote: `${next.manifest.provisionedCredentials?.note ?? ''} If you had already set ${next.manifest.metadata.name} up, keep using your own login.`.trim() };
+      }
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       this.event(op, 'rollback', `update to revision ${u.toRevision} failed: ${reason}; putting revision ${before.revision} back`);

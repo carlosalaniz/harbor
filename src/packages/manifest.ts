@@ -100,6 +100,9 @@ export function validateManifestReferences(manifest: Manifest, compose: ComposeS
     if (manifest.defaultCredentials) problems.push('defaultCredentials and provisionedCredentials are mutually exclusive');
   }
 
+  const hook = manifest.hooks?.afterStart;
+  if (hook && !(hook.service in manifest.deployment.services)) problems.push(`hooks.afterStart references unknown service ${hook.service}`);
+
   for (const text of [manifest.metadata.name, manifest.metadata.description, manifest.setup?.instructions ?? '']) {
     if (INTERPOLATION_RE.test(text)) problems.push('metadata/setup text must not contain interpolation expressions');
   }

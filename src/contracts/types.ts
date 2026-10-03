@@ -22,6 +22,16 @@ export interface Manifest {
   // password (and username unless fixed) is injected via env vars on `service`,
   // shown once in the operation result and retained as instance secrets.
   provisionedCredentials?: { service: string; passwordEnv: string; usernameEnv?: string; username?: string; note?: string };
+  // Decision 116: run inside `service` after every start/publish/unpublish with the app's current
+  // addresses (HARBOR_ADDRESSES, HARBOR_PROXIES, HARBOR_URL) in the environment.
+  hooks?: { afterStart?: AfterStartHook };
+}
+
+export interface AfterStartHook {
+  service: string;
+  user?: string;
+  command: string[];
+  timeoutSeconds?: number;
 }
 
 export type PackageCategory = 'productivity' | 'media' | 'files' | 'automation' | 'network' | 'developer' | 'ai' | 'security' | 'finance' | 'home' | 'other';
@@ -43,6 +53,7 @@ export interface ManifestEndpoint {
   scheme: 'http';
   exposure: 'direct';
   browserContext: 'secure' | 'ordinary';
+  httpsRequired?: boolean; // decision 116: unusable over plain http; needs an HTTPS main address in LAN mode
 }
 
 export interface StorageClaim {

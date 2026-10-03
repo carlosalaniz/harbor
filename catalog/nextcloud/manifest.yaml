@@ -5,7 +5,7 @@ metadata:
   name: "Nextcloud"
   description: "Files, calendar, contacts and office documents on your own machine. Sync clients for every platform; Nextcloud Office included via the recommended apps."
 release:
-  revision: "1"
+  revision: "2"
 deployment:
   compose: compose.yaml
   multiInstance: true
@@ -28,9 +28,41 @@ health:
   deadlineSeconds: 600
 ui:
   primaryEndpoint: web
-setup:
-  endpoint: web
-  instructions: "Open Nextcloud and create the admin account. The database is pre-configured. Keep Install recommended apps checked to get Nextcloud Office, Calendar, Contacts, Talk and Mail."
+provisionedCredentials:
+  service: app
+  usernameEnv: NEXTCLOUD_ADMIN_USER
+  passwordEnv: NEXTCLOUD_ADMIN_PASSWORD
+  username: admin
+  note: "Sign in to Nextcloud as admin with this password, then change it under Personal settings → Security. Office, Calendar and Contacts are added on the first start."
+# Decision 116: Nextcloud refuses hosts it does not trust and builds links from the request, so Harbor
+# hands it every address it answers on (LAN, HTTPS LAN, tailnet, domains) and the proxies allowed to
+# forward them, after every start, publish and unpublish. occ is Nextcloud's own admin tool.
+hooks:
+  afterStart:
+    service: app
+    user: www-data
+    timeoutSeconds: 900
+    command:
+      - sh
+      - -c
+      - |
+        cd /var/www/html || exit 1
+        if ! php occ status 2>/dev/null | grep -q "installed: true"; then echo "Nextcloud is not installed yet"; exit 1; fi
+        php occ config:system:delete trusted_domains >/dev/null
+        i=0
+        for d in $HARBOR_ADDRESSES; do php occ config:system:set trusted_domains "$i" --value="$d" >/dev/null || exit 1; i=$((i+1)); done
+        php occ config:system:delete trusted_proxies >/dev/null
+        i=0
+        for p in $HARBOR_PROXIES; do php occ config:system:set trusted_proxies "$i" --value="$p" >/dev/null || exit 1; i=$((i+1)); done
+        php occ config:system:delete overwritehost >/dev/null
+        php occ config:system:delete overwriteprotocol >/dev/null
+        if [ -n "$HARBOR_URL" ]; then php occ config:system:set overwrite.cli.url --value="${HARBOR_URL%/}" >/dev/null; fi
+        if [ "$(php occ config:app:get harbor recommended 2>/dev/null)" != "done" ]; then
+          ok=1
+          for a in calendar contacts richdocuments richdocumentscode; do php occ app:install "$a" >/dev/null 2>&1 || php occ app:enable "$a" >/dev/null 2>&1 || ok=0; done
+          if [ "$ok" = 1 ]; then php occ config:app:set harbor recommended --value=done >/dev/null; else echo "some recommended apps could not be installed yet; retried on the next start"; fi
+        fi
+        echo "trusted $i proxies, $(echo $HARBOR_ADDRESSES | wc -w) addresses"
 storage:
   - id: html
     composeVolume: html
@@ -53,15 +85,10 @@ secrets:
     bindings:
       - {service: db, environment: POSTGRES_PASSWORD}
       - {service: app, environment: POSTGRES_PASSWORD}
-configuration:
-  - {service: app, environment: NEXTCLOUD_TRUSTED_DOMAINS, endpoint: web, format: authority}
-  - {service: app, environment: OVERWRITEHOST, endpoint: web, format: authority}
-  - {service: app, environment: OVERWRITEPROTOCOL, endpoint: web, format: scheme}
-  - {service: app, environment: OVERWRITECLIURL, endpoint: web, format: origin}
 presentation:
   tagline: "Your files, calendar, contacts and office, at home"
   category: files
   icon: icon.svg
   developer: "Nextcloud GmbH and contributors"
   website: https://nextcloud.com
-  releaseNotes: "Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis. Nextcloud Office uses the built-in CODE server from the recommended apps."
+  releaseNotes: "Revision 2: works on every address at once (LAN, secure LAN, Tailscale, your domains); Harbor creates the admin login. Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis; Nextcloud Office uses the built-in CODE server."

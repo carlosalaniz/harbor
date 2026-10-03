@@ -100,8 +100,9 @@ endpoint's primary URL a variable receives, and it is re-rendered when the prima
 | `host` | `cloud.example.com` |
 | `scheme` | `https` |
 
-Nextcloud uses all of `authority` (`NEXTCLOUD_TRUSTED_DOMAINS`, `OVERWRITEHOST`), `scheme`
-(`OVERWRITEPROTOCOL`) and `origin` (`OVERWRITECLIURL`); Forgejo uses `url` and `host`; Vaultwarden,
+Nextcloud revision 1 used `authority` (`NEXTCLOUD_TRUSTED_DOMAINS`, `OVERWRITEHOST`), `scheme`
+(`OVERWRITEPROTOCOL`) and `origin` (`OVERWRITECLIURL`); revision 2 drops them for an `afterStart`
+hook that hands it every address at once (decision 116). Forgejo uses `url` and `host`; Vaultwarden,
 Mealie, Open WebUI and Jellyfin use `origin`. Environment variable names may now be mixed case
 (`JELLYFIN_PublishedServerUrl`, `FORGEJO__server__ROOT_URL`), which the previous upper-case-only
 pattern forbade.

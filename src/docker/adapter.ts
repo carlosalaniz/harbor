@@ -31,6 +31,16 @@ export interface NetworkInfo {
   name: string;
   labels: Record<string, string>;
   containerIds: string[];
+  // IPAM gateways: where a published port's loopback traffic (Caddy, tailscale serve, the LAN HTTPS proxy)
+  // appears to come from inside the app network — what an app's trusted-proxy list must name.
+  gateways: string[];
+}
+
+// One command run inside a running container (package `afterStart` hooks, decision 116).
+export interface ExecResult {
+  exitCode: number | null;
+  output: string; // stdout+stderr, tail-capped
+  timedOut: boolean;
 }
 
 export interface EngineInfo {
@@ -77,6 +87,8 @@ export interface DockerAdapter {
   containerStats(id: string): Promise<ContainerStats | null>;
   // Volume sizes (docker system df). Expensive; callers cache (observer never calls this).
   diskUsage(): Promise<DockerDiskUsage>;
+  // Run a command inside a running container; never through a shell on the host.
+  exec(id: string, opts: { cmd: string[]; user?: string; env?: Record<string, string>; timeoutMs: number }): Promise<ExecResult>;
 }
 
 export interface ComposeInvocation {
@@ -96,7 +108,8 @@ export interface ComposeRunner {
   // Non-mutating canonical validation. Returns the canonical YAML.
   config(inv: ComposeInvocation, timeoutMs: number): Promise<string>;
   pull(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
-  up(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
+  // forceRecreate: Restart (decision 116) recreates every container so new configuration applies.
+  up(inv: ComposeInvocation, timeoutMs: number, opts?: { forceRecreate?: boolean }): Promise<ComposeResult>;
   start(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
   // docker build for git-sourced services (decision 80). onLog receives progress lines.
   build(opts: { contextDir: string; dockerfile: string; tag: string; timeoutMs: number; onLog?: (line: string) => void }): Promise<void>;

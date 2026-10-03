@@ -244,7 +244,7 @@ program
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
-  if (!['start', 'stop', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
@@ -466,7 +466,7 @@ program
     if (opts.wait !== false && inst.operationId) await waitOperation(api, inst.operationId, true);
   });
 
-for (const kind of ['start', 'stop', 'remove', 'reinstall'] as const) {
+for (const kind of ['start', 'stop', 'restart', 'remove', 'reinstall'] as const) {
   program
     .command(`${kind} <instance>`)
     .description(
@@ -474,7 +474,9 @@ for (const kind of ['start', 'stop', 'remove', 'reinstall'] as const) {
         ? 'stop and delete containers; retain data volumes, secrets, name and ports'
         : kind === 'reinstall'
           ? 'reinstall the exact stored release into a removed (retained) instance'
-          : `${kind} an installed instance`,
+          : kind === 'restart'
+            ? 'recreate a running app with its current addresses (after changing network settings); data, secrets and ports stay'
+            : `${kind} an installed instance`,
     )
     .option('--yes', 'approve without prompting', false)
     .option('--no-wait', 'return after submission')

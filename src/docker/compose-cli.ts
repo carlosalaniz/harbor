@@ -100,10 +100,10 @@ export class ComposeCli implements ComposeRunner {
     return this.compose(inv, ['pull', '--quiet', '--policy', 'missing'], timeoutMs);
   }
 
-  up(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult> {
-    // No --remove-orphans, no --renew-anon-volumes, no --force-recreate: nothing outside this
-    // project is touched, and existing data is never discarded.
-    return this.compose(inv, ['up', '--detach', '--no-build', '--pull', 'never', '--quiet-pull', '--wait', '--wait-timeout', String(Math.max(1, Math.floor(timeoutMs / 1000) - 5))], timeoutMs);
+  up(inv: ComposeInvocation, timeoutMs: number, opts: { forceRecreate?: boolean } = {}): Promise<ComposeResult> {
+    // No --remove-orphans, no --renew-anon-volumes: nothing outside this project is touched, and
+    // existing data is never discarded. --force-recreate only for Restart (same volumes, new containers).
+    return this.compose(inv, ['up', '--detach', '--no-build', '--pull', 'never', '--quiet-pull', ...(opts.forceRecreate ? ['--force-recreate'] : []), '--wait', '--wait-timeout', String(Math.max(1, Math.floor(timeoutMs / 1000) - 5))], timeoutMs);
   }
 
   start(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult> {

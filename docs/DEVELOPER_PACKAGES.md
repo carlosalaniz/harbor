@@ -47,7 +47,10 @@ endpoints:
     containerPort: 80
     scheme: http
     exposure: direct
-    browserContext: ordinary     # secure if the app needs https-only browser features
+    browserContext: ordinary     # secure if the app is better on HTTPS (clipboard, camera, PWA)
+    httpsRequired: false         # true only if it does NOT work over plain http at all (secure-only login
+                                 # cookie, WebCrypto vault): in LAN mode it then needs an HTTPS main address
+                                 # (secure LAN, Tailscale or a domain) and the store says so before install
 health:
   endpoint: web
   path: /
@@ -74,11 +77,25 @@ secrets:                         # optional: Harbor generates and keeps these
     bindings:
       - service: web
         environment: APP_SECRET
-configuration:                   # optional: hand the app its own address
+configuration:                   # optional: hand the app its main address (links it sends out)
   - service: web
     environment: PUBLIC_URL
     endpoint: web
     format: origin               # url | origin | authority | host | scheme
+                                 # The main address is the one picked at install: this network (secure
+                                 # LAN when on, else LAN, else localhost), Tailscale or a domain. Written
+                                 # at install/update/Restart — not at a plain Start.
+hooks:                           # optional: apps that check the Host they are reached by (Nextcloud)
+  afterStart:                    # runs INSIDE `service` after every start, Restart, publish and unpublish
+    service: web
+    user: www-data               # optional; the image's default user otherwise
+    timeoutSeconds: 120          # 10–1800; a failing or slow hook is reported, the app still runs
+    command: [sh, -c, 'for a in $HARBOR_ADDRESSES; do my-admin-tool trust "$a"; done']
+                                 # Environment: HARBOR_ADDRESSES (every host[:port] it answers on, space
+                                 # separated: localhost, LAN names/IPs on the http and secure ports, tailnet,
+                                 # domains), HARBOR_PROXIES (where Harbor's proxies connect from — trust
+                                 # forwarded headers only from these), HARBOR_URL (the main address).
+                                 # Must be idempotent: it runs again on every address change.
 setup:                           # optional: tell people what to do on first open
   endpoint: web
   instructions: Create the first account; it becomes the administrator.

@@ -33,6 +33,26 @@ export const MANIFEST_SCHEMA = {
       required: ['username', 'password'],
       properties: { username: plainText(64), password: plainText(128), note: plainText(200) },
     },
+    // A command Harbor runs inside one service after every start, publish and unpublish (decision 116),
+    // with the app's current addresses in HARBOR_ADDRESSES / HARBOR_PROXIES / HARBOR_URL. Runs inside the
+    // container only (never on the host); the app's own admin tool keeps it in step with how it is reached.
+    hooks: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        afterStart: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['service', 'command'],
+          properties: {
+            service: idString,
+            user: { type: 'string', pattern: '^[a-z_][a-z0-9_-]{0,31}$' },
+            command: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string', minLength: 1, maxLength: 8192, pattern: '^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]*$' } },
+            timeoutSeconds: { type: 'integer', minimum: 10, maximum: 1800 },
+          },
+        },
+      },
+    },
     // apps whose admin account Harbor provisions at first install through environment variables
     // (decision 79): the generated credential is shown once and retained as instance secrets.
     provisionedCredentials: {
@@ -85,6 +105,9 @@ export const MANIFEST_SCHEMA = {
           scheme: { const: 'http' },
           exposure: { const: 'direct' },
           browserContext: { enum: ['secure', 'ordinary'] },
+          // Decision 116: does not work at all over plain http (secure-only login cookie, WebCrypto vault).
+          // Stricter than browserContext: secure ("better on HTTPS"); gates install in LAN mode.
+          httpsRequired: { type: 'boolean' },
         },
       },
     },

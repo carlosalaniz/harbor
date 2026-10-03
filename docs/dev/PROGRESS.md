@@ -293,14 +293,22 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: unit `exposure.test.ts` (LAN fallback, published primary still wins); integration `lan-https.test.ts` (LAN-mode install renders `PUBLIC_URL` = `urls.lan`); e2e memos drawer (setup link and Open button agree); unit 189, integration 142 + 3 skipped, e2e 27
 - [x] Docs: decision 115, OPERATOR_GUIDE LAN-mode paragraph (incl. `harbor primary <app> loopback` repair for older installs), Nextcloud package README
 
+## Phase 39 — every address at once (2026-10-03, 0.17.7) ✅
+- [x] Prototype first (decision 116): nextcloud:34-apache in Docker Desktop with `occ`-set trusted_domains + trusted_proxies and no overwritehost — correct links per path (secure LAN / tailnet / domain via proxy, LAN direct), forged forwarded headers from a LAN device ignored, unknown Host refused
+- [x] Engine: Docker `exec` + network gateways; manifest `hooks.afterStart` (schema, validation) run after readiness and after publish/unpublish/main-address change; "this network" main address = secure LAN when on; plan kind `restart` (`compose up --force-recreate`); install `main` (tailnet/public published as primary in one operation); `httpsRequired` gate; `GET /v1/network/addresses`; HTTPS switch `restartToApply` / `breaksWhenOff`; update provisions a newly required admin credential
+- [x] Console/CLI: install-wizard "Main address" (only available choices; HTTPS-only apps blocked with the fix named), drawer **Restart**, Network-card restart note + turn-off confirm; `harbor restart <app>`
+- [x] Packages: Nextcloud revision 2 (provisioned admin, occ hook, no OVERWRITE*/TRUSTED_* env; qualification pending); n8n and Vaultwarden `httpsRequired: true` (hash refresh only)
+- [x] Tests: unit `exposure` (secure main URL, appAuthorities), `manifest` (hooks, httpsRequired); integration `addresses.test.ts` (hook env, failing hook, publish re-runs hook, HTTPS gate + catalog flag, install with tailnet main, LAN HTTPS + Restart re-render, restart refused when stopped); e2e main-address picker + Restart; unit 194, integration 149 + 3 skipped, e2e 27
+- [x] Docs: decision 116, OPERATOR_GUIDE "Every address at once" / Restart, DEVELOPER_PACKAGES hooks + httpsRequired, CATALOG design note, Nextcloud README
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 189 passed |
-| `pnpm test:integration` (fake adapter) | 142 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 194 passed |
+| `pnpm test:integration` (fake adapter) | 149 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 27 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

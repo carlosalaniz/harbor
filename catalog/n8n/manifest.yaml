@@ -19,6 +19,7 @@ endpoints:
     scheme: http
     exposure: direct
     browserContext: secure
+    httpsRequired: true
 health:
   endpoint: web
   path: /healthz/readiness

@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "package": {
     "id": "nextcloud",
-    "revision": "1"
+    "revision": "2"
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "c365b2dbebada2453ef2126d9cca83350085f05a1fb9eeb4f8e7c87e8b5136e7"
+      "sha256": "75d5f9ac3f7e1f8302e3109f9b984565a5daecdcb942b42717783640607774d2"
     },
     "compose.yaml": {
-      "sha256": "6e75749f77cd57873421dbc48eeba68167ae57971dafd796562e4d292d1bf8f4"
+      "sha256": "00aecb49aecd7e0c6fef589a2548b135b489cb02ed722ce208c609d8620a1deb"
     },
     "README.md": {
-      "sha256": "57272104421ae3d9c5c4720019db2da823d0e2f1b7b2bdbfcae72438bacfcd59"
+      "sha256": "34d3b300fdd3d2cda6be201d63708907da5a6896cd7565fdd2916cf2b21a8706"
     }
   },
   "images": {
@@ -48,22 +48,10 @@
     }
   },
   "qualification": {
-    "status": "passed",
-    "date": "2026-09-15",
-    "node": "v24.12.0",
-    "dockerEngine": "29.8.0",
-    "dockerCompose": "5.5.1",
-    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
-    "appVersions": {
-      "db": "17.11",
-      "redis": "8.10.1-alpine",
-      "app": "34.0.4-apache"
-    },
+    "status": "pending",
+    "date": "2026-10-03",
     "notes": [
-      "Digest of db resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; postgres:17.11); image config: ExposedPorts 5432/tcp, Volumes /var/lib/postgresql/data, User root.",
-      "Digest of redis resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; redis:8.10.1-alpine); image config: ExposedPorts 6379/tcp, Volumes none, User root.",
-      "Digest of app resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; nextcloud:34.0.4-apache); image config: ExposedPorts 80/tcp, Volumes /var/www/html, User root.",
-      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 65s; page title \"Nextcloud\"; health 200)"
+      "Revision 2 (decision 116: multi-address hook, Harbor-provisioned admin) awaits a live qualification run; revision 1 passed in catalog-2026-09-15T00-13-13."
     ]
   },
   "assets": {

@@ -1,4 +1,4 @@
-import type { ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
+import type { AddressOptionsDto, ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto } from '../../src/contracts/api';
 import { isMockUi, mockApi } from './mock/api';
 
 export class ApiError extends Error {
@@ -167,6 +167,7 @@ const realApi = {
   tailscaleLogout: () => call<void>('POST', '/v1/platform-tools/tailscale/logout', {}),
   // LAN HTTPS (decision 109): local CA + secure addresses, off by default.
   networkHttps: () => call<NetworkHttpsDto>('GET', '/v1/network/https'),
+  addressOptions: () => call<AddressOptionsDto>('GET', '/v1/network/addresses'),
   setNetworkHttps: (enabled: boolean) => call<NetworkHttpsDto>('PUT', '/v1/network/https', { enabled }),
   // The trust probe: fetch the secure console address and report whether THIS
   // browser already trusts the Harbor CA. A trusted browser gets 200 through

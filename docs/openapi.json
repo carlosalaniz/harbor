@@ -2234,6 +2234,44 @@
                             "maxLength": 256
                           }
                         }
+                      },
+                      "main": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "via"
+                            ],
+                            "properties": {
+                              "via": {
+                                "enum": [
+                                  "tailnet"
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "via",
+                              "hostname"
+                            ],
+                            "properties": {
+                              "via": {
+                                "enum": [
+                                  "public"
+                                ]
+                              },
+                              "hostname": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253
+                              }
+                            }
+                          }
+                        ]
                       }
                     }
                   },
@@ -2249,6 +2287,7 @@
                         "enum": [
                           "start",
                           "stop",
+                          "restart",
                           "remove",
                           "reinstall",
                           "purge"
@@ -2511,6 +2550,16 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
+    "/v1/network/addresses": {
+      "get": {
+        "description": "Main-address choices available right now (decision 116): this network (HTTPS LAN, LAN or loopback), the tailnet when Tailscale has HTTPS certificates, and registered domains that point here.",
         "responses": {
           "200": {
             "description": "Default Response"

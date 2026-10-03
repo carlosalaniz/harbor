@@ -1,5 +1,5 @@
 import Docker from 'dockerode';
-import type { ContainerInfo, ContainerStats, DockerAdapter, DockerDiskUsage, EngineInfo, NetworkInfo, VolumeInfo } from './adapter.js';
+import type { ContainerInfo, ContainerStats, DockerAdapter, DockerDiskUsage, EngineInfo, ExecResult, NetworkInfo, VolumeInfo } from './adapter.js';
 import { demuxDockerLogs } from '../system/logs.js';
 
 type InspectInfo = Docker.ContainerInspectInfo;
@@ -131,7 +131,7 @@ export class DockerodeAdapter implements DockerAdapter {
   async inspectNetwork(idOrName: string): Promise<NetworkInfo | null> {
     try {
       const n = await this.docker.getNetwork(idOrName).inspect();
-      return { id: n.Id, name: n.Name, labels: n.Labels ?? {}, containerIds: Object.keys(n.Containers ?? {}) };
+      return { id: n.Id, name: n.Name, labels: n.Labels ?? {}, containerIds: Object.keys(n.Containers ?? {}), gateways: gatewaysOf(n) };
     } catch (e) {
       if (isNotFound(e)) return null;
       throw e;
@@ -142,7 +142,7 @@ export class DockerodeAdapter implements DockerAdapter {
     const filters: Record<string, string[]> = {};
     if (labels) filters['label'] = Object.entries(labels).map(([k, v]) => `${k}=${v}`);
     const list = await this.docker.listNetworks({ filters: JSON.stringify(filters) });
-    return list.map((n) => ({ id: n.Id, name: n.Name, labels: (n.Labels ?? {}) as Record<string, string>, containerIds: Object.keys((n as { Containers?: Record<string, unknown> }).Containers ?? {}) }));
+    return list.map((n) => ({ id: n.Id, name: n.Name, labels: (n.Labels ?? {}) as Record<string, string>, containerIds: Object.keys((n as { Containers?: Record<string, unknown> }).Containers ?? {}), gateways: gatewaysOf(n) }));
   }
 
   async removeNetwork(id: string): Promise<void> {
@@ -152,6 +152,35 @@ export class DockerodeAdapter implements DockerAdapter {
       if (isNotFound(e)) return;
       throw e;
     }
+  }
+
+  async exec(id: string, opts: { cmd: string[]; user?: string; env?: Record<string, string>; timeoutMs: number }): Promise<ExecResult> {
+    const ex = await this.docker.getContainer(id).exec({
+      Cmd: opts.cmd,
+      ...(opts.user ? { User: opts.user } : {}),
+      Env: Object.entries(opts.env ?? {}).map(([k, v]) => `${k}=${v}`),
+      AttachStdout: true,
+      AttachStderr: true,
+    });
+    const stream = await ex.start({ hijack: true, stdin: false });
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const done = new Promise<void>((resolve) => {
+      stream.on('data', (b: Buffer) => {
+        if (size < 1 << 20) chunks.push(b);
+        size += b.length;
+      });
+      stream.on('end', () => resolve());
+      stream.on('close', () => resolve());
+      stream.on('error', () => resolve());
+    });
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = await Promise.race([done.then(() => false), new Promise<boolean>((r) => (timer = setTimeout(() => r(true), opts.timeoutMs)))]);
+    clearTimeout(timer);
+    if (timedOut) (stream as unknown as { destroy?: () => void }).destroy?.();
+    const output = demuxDockerLogs(Buffer.concat(chunks));
+    const info = timedOut ? null : await ex.inspect();
+    return { exitCode: info?.ExitCode ?? null, output: output.slice(-4000), timedOut };
   }
 
   async containerLogs(id: string, tail: number): Promise<string> {
@@ -208,4 +237,9 @@ export class DockerodeAdapter implements DockerAdapter {
       volumes: (df.Volumes ?? []).map((v) => ({ name: v.Name, sizeBytes: v.UsageData?.Size && v.UsageData.Size > 0 ? v.UsageData.Size : 0 })),
     };
   }
+}
+
+function gatewaysOf(n: unknown): string[] {
+  const cfg = (n as { IPAM?: { Config?: { Gateway?: string }[] } }).IPAM?.Config ?? [];
+  return cfg.map((c) => c.Gateway).filter((g): g is string => typeof g === 'string' && g.length > 0);
 }

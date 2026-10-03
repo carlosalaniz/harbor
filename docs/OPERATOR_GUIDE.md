@@ -54,10 +54,20 @@ is typed on the terminal.
 like Umbrel. Protect the console with a strong password and two-factor login (Settings → Account); apps
 without their own login are open to the LAN. It is chosen at install time (`bootstrap --lan`); apps
 installed before it was turned on keep answering on the machine only until they are updated.
-Apps that need to know their own address (Nextcloud, Forgejo, n8n, Vaultwarden, Mealie, Open WebUI,
-Jellyfin) are given `http://<hostname>.local:<port>` in LAN mode; Nextcloud builds every link with it, so
-opening it by IP takes you to the `.local` name. An app installed before Harbor 0.17.6 may still send you
-to `localhost`: run `harbor primary <app> loopback --yes` once to re-render it (data and settings stay).
+
+**Every address at once.** An app opens on all the addresses you have set up: LAN (`http://<hostname>.local:<port>`
+or the IP), secure LAN, Tailscale and your domains. Its **main address**, picked at install, is only the one it
+puts in links it sends out (emails, share links, webhooks). The install page offers only what is set up:
+*this network* (secure when secure addresses are on), Tailscale, or a domain that points here; picking
+Tailscale or a domain publishes the app in the same step. Apps that do not work at all over plain `http://`
+(n8n, Vaultwarden) need an HTTPS main address in LAN mode — the store says so before you install.
+
+**Restart after network changes.** Turning secure addresses on or off, or renaming the machine, changes the
+addresses apps know about. Open the app and press **Restart** (CLI: `harbor restart <app>`): Harbor rewrites its
+settings with today's addresses and recreates its containers — data, secrets and ports stay. The Network card
+lists which apps want a restart, and warns before turning secure addresses off if an app would stop working.
+Publishing or withdrawing a Tailscale or domain address needs no restart. Nextcloud keeps its list of trusted
+addresses itself after every start (decision 116).
 
 **Secure addresses** (Settings → Network, needs LAN mode) turn those same addresses into HTTPS:
 Harbor mints its own certificate on the machine (nothing leaves your network, nothing phones home)
@@ -496,7 +506,7 @@ reboot, and come back on their own once it happened — see §4a2 above.
 
 ## 6a. Publishing apps beyond localhost (exposure)
 
-Everything stays bound to 127.0.0.1. Publishing adds an HTTPS address in front of the same port:
+Without LAN mode everything stays bound to 127.0.0.1. Publishing adds an HTTPS address in front of the same port (the app keeps answering on its other addresses; see "Every address at once" above):
 
 | Path | Address | Provider | Set up with |
 |---|---|---|---|
@@ -510,7 +520,8 @@ harbor expose n8n --via public --host n8n.example.com --primary
 harbor expose bentopdf --via public --host pdf.example.com          # basic auth by default (credentials shown once)
 harbor expose bentopdf --via public --host pdf.example.com --protect none
 harbor exposures                                    # all published addresses with state
-harbor primary n8n loopback                         # which address the app treats as its base URL
+harbor primary n8n loopback                         # main address back to "this network" (secure LAN when on)
+harbor restart nextcloud                            # after turning secure addresses on/off: pick up today's addresses
 harbor unexpose n8n --via public
 harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
 ```

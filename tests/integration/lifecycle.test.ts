@@ -78,7 +78,7 @@ describe('two apps coexist through one generic path', () => {
     // Sentinel: not owned by Harbor (no ownership labels), occupies a project-like name and a volume.
     await h.fake.createVolume('unrelated_data', { owner: 'someone-else' });
     const netId = 'n' + 'f'.repeat(63);
-    h.fake.networks.set(netId, { id: netId, name: 'unrelated_default', labels: {}, containerIds: [] });
+    h.fake.networks.set(netId, { id: netId, name: 'unrelated_default', labels: {}, containerIds: [], gateways: [] });
     const cid = 'c' + 'e'.repeat(63);
     h.fake.containers.set(cid, { id: cid, name: 'unrelated-web-1', image: 'nginx@' + DIGEST_A, state: 'running', labels: { 'com.docker.compose.project': 'unrelated' }, createdAt: '2026-01-01T00:00:00Z', startedAt: '2026-01-01T00:00:00Z', health: 'none', ports: [], networkIds: [netId], project: 'unrelated', service: 'web' });
     sentinel = { id: cid, volume: 'unrelated_data', network: netId };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderCaddyConfig } from '../../src/exposure/caddy.js';
-import { endpointUrls, exposureUrl, HOSTNAME_RE, primaryUrlFor } from '../../src/exposure/urls.js';
+import { appAuthorities, endpointUrls, exposureUrl, HOSTNAME_RE, primaryUrlFor } from '../../src/exposure/urls.js';
 import type { ExposureRow } from '../../src/state/repo.js';
 
 const alloc = { id: 'web', service: 'web', containerPort: 80, hostPort: 18080 };
@@ -23,6 +23,17 @@ describe('exposure URLs', () => {
     expect(primaryUrlFor(alloc, [], 'loopback', 'harbor.local')).toBe('http://harbor.local:18080/');
     expect(primaryUrlFor(alloc, [pub], 'public', 'harbor.local')).toBe('https://app.example.com/'); // a published primary still wins
     expect(primaryUrlFor(alloc, [], 'public', 'harbor.local')).toBe('http://harbor.local:18080/'); // fallback is LAN, not loopback
+  });
+  it('"this network" is the secure LAN address when LAN HTTPS is on (decision 116)', () => {
+    expect(primaryUrlFor(alloc, [], 'loopback', 'harbor.local', 'harbor.local')).toBe('https://harbor.local:38080/');
+    expect(primaryUrlFor(alloc, [row({})], 'public', 'harbor.local', 'harbor.local')).toBe('https://app.example.com/');
+  });
+  it('lists every host an app answers on: loopback, LAN names on both ports, tailnet and public', () => {
+    const tail = row({ id: 't', via: 'tailnet', hostname: 'node.tail1.ts.net', port: 18080 });
+    const all = appAuthorities([alloc], [tail, row({})], { names: ['harbor.local', '192.168.0.146'], secure: true });
+    expect(all).toEqual(['127.0.0.1:18080', '192.168.0.146:18080', '192.168.0.146:38080', 'app.example.com', 'harbor.local:18080', 'harbor.local:38080', 'localhost:18080', 'node.tail1.ts.net:18080']);
+    expect(appAuthorities([alloc], [], null)).toEqual(['127.0.0.1:18080', 'localhost:18080']);
+    expect(appAuthorities([{ ...alloc, hostPort: 50000 }], [], { names: ['harbor.local'], secure: true })).toEqual(['127.0.0.1:50000', 'harbor.local:50000', 'localhost:50000']); // offset overflow: no secure port
   });
   it('validates hostnames', () => {
     for (const ok of ['n8n.apein.space', 'a.b.example.com', 'x1-y.example.io']) expect(HOSTNAME_RE.test(ok), ok).toBe(true);

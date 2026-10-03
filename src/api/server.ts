@@ -812,9 +812,16 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 // Omitted for the Harbor data folder (default-encrypt: Harbor's
                 // own key, silent unlock); required for removable drives.
                 location: { type: 'object', additionalProperties: false, required: ['dir'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
+                // main address chosen at install (decision 116); omitted = this network
+                main: {
+                  oneOf: [
+                    { type: 'object', additionalProperties: false, required: ['via'], properties: { via: { const: 'tailnet' } } },
+                    { type: 'object', additionalProperties: false, required: ['via', 'hostname'], properties: { via: { const: 'public' }, hostname: { type: 'string', minLength: 1, maxLength: 253 } } },
+                  ],
+                },
               },
             },
-            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'restart', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
             {
               type: 'object',
               additionalProperties: false,
@@ -892,6 +899,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   // is public key material (trusting it is the point); the key never leaves
   // <stateDir>/tls. Enabling mints the certs and starts the 443 console
   // listener + one proxy per app endpoint; disabling closes them.
+  app.get('/v1/network/addresses', { preHandler: requireAuth, schema: { description: 'Main-address choices available right now (decision 116): this network (HTTPS LAN, LAN or loopback), the tailnet when Tailscale has HTTPS certificates, and registered domains that point here.' } }, async () => service.addressOptions());
   app.get('/v1/network/https', { preHandler: requireAuth, schema: { description: 'LAN HTTPS state: whether https://harbor.local/ answers, the CA fingerprint to compare on the device, and the names the server cert covers.' } }, async () => service.networkHttps());
   app.put(
     '/v1/network/https',

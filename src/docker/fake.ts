@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
-import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type NetworkInfo, type VolumeInfo } from './adapter.js';
+import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type ExecResult, type NetworkInfo, type VolumeInfo } from './adapter.js';
 import type { Clock } from '../util.js';
 import { rfc3339 } from '../util.js';
 
@@ -25,6 +25,7 @@ export interface FakeBehaviour {
   failUp?: string | null;
   failUpImage?: string | null; // fail `up` only when a service image contains this text (update rollback tests)
   failBuild?: string | null; // fail docker build (git-source tests)
+  failExec?: string | null; // afterStart hook exits 1 with this output
   engineDown?: boolean;
   // Usage a running container reports (defaults below); keyed by container name, fallback '*'.
   stats?: Record<string, ContainerStats>;
@@ -125,11 +126,11 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
   async inspectNetwork(idOrName: string): Promise<NetworkInfo | null> {
     this.assertUp();
     const n = this.networks.get(idOrName) ?? [...this.networks.values()].find((x) => x.name === idOrName);
-    return n ? { ...n, labels: { ...n.labels }, containerIds: [...n.containerIds] } : null;
+    return n ? { ...n, labels: { ...n.labels }, containerIds: [...n.containerIds], gateways: [...n.gateways] } : null;
   }
   async listNetworks(labels?: Record<string, string>): Promise<NetworkInfo[]> {
     this.assertUp();
-    return [...this.networks.values()].filter((n) => matches(n.labels, labels)).map((n) => ({ ...n, labels: { ...n.labels }, containerIds: [...n.containerIds] }));
+    return [...this.networks.values()].filter((n) => matches(n.labels, labels)).map((n) => ({ ...n, labels: { ...n.labels }, containerIds: [...n.containerIds], gateways: [...n.gateways] }));
   }
   async removeNetwork(id: string): Promise<void> {
     this.assertUp();
@@ -186,7 +187,7 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     this.log.push(`pull ${inv.projectName}`);
     return { stdout: '', stderr: '' };
   }
-  async up(inv: ComposeInvocation, _timeoutMs: number): Promise<ComposeResult> {
+  async up(inv: ComposeInvocation, _timeoutMs: number, opts: { forceRecreate?: boolean } = {}): Promise<ComposeResult> {
     this.assertUp();
     if (this.behaviour.failUp) throw new ComposeError(`docker compose up failed: ${this.behaviour.failUp}`, { command: ['up'], exitCode: 1, stderrTail: this.behaviour.failUp, timedOut: false });
     const text = readFileSync(inv.file, 'utf8').replace(/\$\$/g, '$');
@@ -206,7 +207,7 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const netName = doc.networks?.['default']?.name ?? `${inv.projectName}_default`;
     let net = [...this.networks.values()].find((n) => n.name === netName);
     if (!net) {
-      net = { id: this.id('n'), name: netName, labels: { ...(doc.networks?.['default']?.labels ?? {}), 'com.docker.compose.project': inv.projectName, 'com.docker.compose.network': 'default' }, containerIds: [] };
+      net = { id: this.id('n'), name: netName, labels: { ...(doc.networks?.['default']?.labels ?? {}), 'com.docker.compose.project': inv.projectName, 'com.docker.compose.network': 'default' }, containerIds: [], gateways: [`172.30.${this.networks.size % 250}.1`] };
       this.networks.set(net.id, net);
     }
     for (const [service, def] of Object.entries(doc.services)) {
@@ -236,7 +237,10 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
         await this.listen(c);
       }
     }
-    this.log.push(`up ${inv.projectName}`);
+    if (opts.forceRecreate) {
+      for (const c of this.containers.values()) if (c.project === inv.projectName) c.startedAt = rfc3339(this.clock.now());
+    }
+    this.log.push(`up ${inv.projectName}${opts.forceRecreate ? ' --force-recreate' : ''}`);
     return { stdout: '', stderr: '' };
   }
   async start(inv: ComposeInvocation, _timeoutMs: number): Promise<ComposeResult> {
@@ -255,6 +259,18 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     this.builtTags.push(opts.tag);
     opts.onLog?.(`#1 building ${opts.tag} (fake)`);
     this.log.push(`build ${opts.tag}`);
+  }
+
+  // exec (afterStart hooks): recorded for assertions; behaviour.failExec simulates a failing hook.
+  readonly execs: { id: string; cmd: string[]; user?: string; env: Record<string, string> }[] = [];
+  async exec(id: string, opts: { cmd: string[]; user?: string; env?: Record<string, string>; timeoutMs: number }): Promise<ExecResult> {
+    this.assertUp();
+    const c = this.containers.get(id);
+    if (!c || c.state !== 'running') throw Object.assign(new Error(`container ${id} is not running`), { statusCode: 409 });
+    this.execs.push({ id, cmd: [...opts.cmd], ...(opts.user ? { user: opts.user } : {}), env: { ...(opts.env ?? {}) } });
+    this.log.push(`exec ${c.name} ${opts.cmd[0] ?? ''}`);
+    if (this.behaviour.failExec) return { exitCode: 1, output: this.behaviour.failExec, timedOut: false };
+    return { exitCode: 0, output: '', timedOut: false };
   }
 
   // --- fake app listeners

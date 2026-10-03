@@ -34,6 +34,7 @@ export function mockCatalog(): CatalogItemDto[] {
     availability: 'available',
     reason: null,
     qualification: 'passed',
+    requiresHttps: false,
     presentation: {
       tagline: description,
       category: 'productivity',

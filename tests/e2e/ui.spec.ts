@@ -21,7 +21,7 @@ async function approve(page: Page, label: string | RegExp) {
   await dlg.getByRole('button', { name: label }).click();
 }
 // Tray titles are human sentences; map the operation kind to the wording that proves success.
-const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/ };
+const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/, Restart: /restarted$/ };
 const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
 // A finished install may show recovery cards: the Harbor recovery key the
@@ -128,6 +128,10 @@ test('store app page, install with plan review, progress tray, Open link; duplic
   await expect(about.getByRole('radio', { name: /Local/ })).toBeChecked();
   await expect(about.locator('code.path')).toContainText('excalidraw/excalidraw');
   await expect(about).toContainText("sealed here with the kernel's own encryption");
+  // Main address (decision 116): only what is set up — this machine, plus the (fake) tailnet; this machine is the default.
+  await expect(about.getByRole('group', { name: 'Main address' })).toBeVisible();
+  await expect(about.getByRole('radio', { name: /This machine \(localhost\)/ })).toBeChecked();
+  await expect(about.getByRole('radio', { name: /Tailscale \(https:\/\// })).toBeEnabled();
   await about.getByRole('button', { name: 'Install Excalidraw now' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Review install');
@@ -198,6 +202,14 @@ test('app drawer: stop, start, remove (data kept wording) and reinstall', async 
   await page.getByRole('dialog').getByRole('button', { name: 'Start excalidraw' }).click();
   await approve(page, 'Start');
   await trayDone(page, 'Start');
+  await expect(page.getByRole('link', { name: 'Open excalidraw' })).toBeVisible();
+
+  // Restart (decision 116): re-render with current addresses and recreate; data stays.
+  await openDrawer();
+  await page.getByRole('dialog').getByRole('button', { name: 'Restart excalidraw' }).click();
+  await expect(page.getByRole('dialog')).toContainText('with its current addresses');
+  await approve(page, 'Restart');
+  await trayDone(page, 'Restart');
   await expect(page.getByRole('link', { name: 'Open excalidraw' })).toBeVisible();
 
   await openDrawer();
