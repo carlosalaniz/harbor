@@ -326,14 +326,10 @@ test('notifications screen: nav destination renders, empty state, bell links to 
   // The nav has a Notifications destination that opens the full screen.
   await page.getByRole('link', { name: 'Notifications', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
-  // Fresh daemon: either the empty state or whatever rows the suite already produced.
-  const rows = page.locator('.notif-page-list li');
-  if ((await rows.count()) === 0) {
-    await expect(page.getByText('Nothing yet')).toBeVisible();
-  } else {
-    // Every row has a body button and a separate dismiss × with an accessible name.
-    await expect(rows.first().getByRole('button', { name: /Dismiss notification:/ })).toBeVisible();
-  }
+  // Fresh daemon: either the empty state or whatever rows the suite already produced. Rows come and go
+  // with the poll (a resolved condition deletes its row), so assert "one of the two" in a single retrying
+  // expectation; every row has a separate dismiss × with an accessible name.
+  await expect(page.getByText('Nothing yet').or(page.getByRole('button', { name: /Dismiss notification:/ }).first())).toBeVisible();
   // The bell's "All notifications" navigates to the same screen.
   await page.getByRole('button', { name: /^Notifications/ }).first().click(); // bell toggle
   const viewAll = page.getByRole('button', { name: /All notifications/ });
