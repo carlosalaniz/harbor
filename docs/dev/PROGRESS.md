@@ -286,16 +286,23 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: integration `notifications.test.ts` (dismiss one deletes row + drops unread + idempotent; dismiss-all clears + zeroes + idempotent); openapi route pin (`/v1/notifications/{id}`); unit 187, integration 141 + 3 skipped
 - [x] Docs: decision 114, OPERATOR_GUIDE "The notification bell" section, openapi regenerated (80 paths)
 
+## Phase 38 — LAN apps know their LAN address (2026-10-03, 0.17.6) ✅
+- [x] Found live on the home server: Nextcloud over LAN never loaded — the setup hint's Open link was `http://localhost:18080` (DTO `setup.browserUrl`), and the rendered `OVERWRITEHOST`/`OVERWRITECLIURL` were `localhost:18080`, so even a hand-typed IP would bounce to `localhost` after the web installer
+- [x] Engine (decision 115): `primaryUrlFor(..., lanHost)` falls back to the LAN address before loopback; the runner passes `lanAppHost()` (`<hostname>.local`, shared with the DTO's `urls.lan`) when LAN mode is on
+- [x] Console (decision 115): the "Finish setup inside the app → Open" link goes through `openUrl()` like the Open button
+- [x] Tests: unit `exposure.test.ts` (LAN fallback, published primary still wins); integration `lan-https.test.ts` (LAN-mode install renders `PUBLIC_URL` = `urls.lan`); e2e memos drawer (setup link and Open button agree); unit 189, integration 142 + 3 skipped, e2e 27
+- [x] Docs: decision 115, OPERATOR_GUIDE LAN-mode paragraph (incl. `harbor primary <app> loopback` repair for older installs), Nextcloud package README
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 187 passed |
-| `pnpm test:integration` (fake adapter) | 141 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 189 passed |
+| `pnpm test:integration` (fake adapter) | 142 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 26 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 27 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

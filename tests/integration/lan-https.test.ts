@@ -2,11 +2,13 @@
 // mints the local CA on enable (openssl), serves the cert openly, reports
 // the secure address + fingerprint, and adds lanSecure to app endpoints.
 import { execFileSync } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import type { InstanceSummary, NetworkHttpsDto, SystemDto } from '../../src/contracts/api.js';
 import { startHarness, type Harness } from './harness.js';
+import { DIGEST_A, MINIMAL_MANIFEST, writePackage } from '../unit/helpers.js';
 
 function hasOpenssl(): boolean {
   try {
@@ -24,6 +26,12 @@ describe('LAN HTTPS (local CA + secure addresses)', () => {
     // App ports stay low so hostPort + the 20000 secure offset never
     // overflows 65535 (the harness otherwise picks random ephemeral ports).
     h = await startHarness({ portRange: { from: 18100, to: 18140 }, config: { lan: { enabled: true, port: 18998 } } });
+    // A package that embeds its own address (like Nextcloud's OVERWRITEHOST).
+    writePackage(h.catalogDir, 'urlapp', {
+      manifest: MINIMAL_MANIFEST.replace('id: demo', 'id: urlapp') + 'configuration:\n  - {service: web, environment: PUBLIC_URL, endpoint: web}\n',
+      compose: `services:\n  web:\n    image: example/urlapp@${DIGEST_A}\n`,
+      images: { web: `example/urlapp@${DIGEST_A}` },
+    });
   });
   afterAll(async () => h.close());
 
@@ -37,6 +45,15 @@ describe('LAN HTTPS (local CA + secure addresses)', () => {
     const inst = (await h.api.instances()).find((i) => i.packageId === 'excalidraw') as InstanceSummary;
     expect(inst.endpoints[0]!.urls.lan).toMatch(/^http:\/\//);
     expect(inst.endpoints[0]!.urls.lanSecure).toBeUndefined();
+  });
+
+  it('in LAN mode an app that embeds its address gets the LAN address, not localhost', async () => {
+    const r = await h.api.run({ kind: 'install', packageId: 'urlapp' });
+    expect(r.op.state).toBe('succeeded');
+    const inst = (await h.api.instances()).find((i) => i.packageId === 'urlapp') as InstanceSummary;
+    const env = parseYaml(readFileSync(path.join(h.stateDir, 'instances', inst.id, 'runtime', 'compose.yaml'), 'utf8')).services.web.environment as Record<string, string>;
+    expect(inst.endpoints[0]!.urls.lan).toMatch(/^http:\/\/[a-z0-9-]+\.local:\d+\/$/);
+    expect(env['PUBLIC_URL']).toBe(inst.endpoints[0]!.urls.lan);
   });
 
   it('refuses to enable when LAN mode is off', async () => {

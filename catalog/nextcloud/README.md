@@ -6,7 +6,7 @@ Files, calendar, contacts and office documents on your own machine. Sync clients
 
 - Runs Nextcloud, PostgreSQL and Redis on a private network; only Nextcloud is published on 127.0.0.1.
 - Generates the database password once; the web installer finds the database pre-configured.
-- Keeps trusted domain and overwrite settings in step with the address you publish (loopback, tailnet or public).
+- Keeps trusted domain and overwrite settings in step with the address you use: loopback, the LAN address in LAN mode (`http://<hostname>.local:<port>`), tailnet or public. Nextcloud builds every link with that one address, so opening it by IP takes you to the `.local` name.
 
 ## Storage
 

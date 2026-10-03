@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, stat
 import path from 'node:path';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, NetworkHttpsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
-import { lanUrl } from '../system/lan.js';
+import { lanAppHost, lanUrl } from '../system/lan.js';
 import { caPem, ensureTlsCerts, lanHttpsHosts, readTlsState, reconcileLanHttps } from '../system/lan-https.js';
 import { hostname } from 'node:os';
 import { defaultCredentialsOf } from '../packages/catalog.js';
@@ -553,7 +553,7 @@ export class ApplicationService {
   }
   // http://<hostname>.local for app addresses in LAN mode (the console swaps in the host it was opened with)
   private lanHost(): string | null {
-    return this.ctx.config.lan.enabled ? `${hostname().toLowerCase().replace(/\.local$/, '')}.local` : null;
+    return this.ctx.config.lan.enabled ? lanAppHost() : null;
   }
   // https://<hostname>.local for app addresses when LAN HTTPS is on (same swap as lanHost)
   private lanSecureHost(): string | null {

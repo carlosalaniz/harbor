@@ -17,7 +17,7 @@ import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapsho
 import { waitReady } from './readiness.js';
 import { exposureUrl, primaryUrlFor } from '../exposure/urls.js';
 import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
-import { lanHostnames, machineAddresses } from '../system/lan.js';
+import { lanAppHost, lanHostnames, machineAddresses } from '../system/lan.js';
 import { HTTPS_SETTING, lanHttpsHosts, readTlsState } from '../system/lan-https.js';
 import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
 import bcrypt from 'bcryptjs';
@@ -334,10 +334,11 @@ export class OperationRunner {
     }
   }
 
-  // URLs handed to `configuration` bindings follow the instance's primary exposure.
+  // URLs handed to `configuration` bindings follow the instance's primary exposure (LAN address in LAN mode).
   private endpointUrlsFor(inst: InstanceRow, primary: PrimaryExposure = inst.primaryExposure): Record<string, string> {
     const exposures = this.ctx.repo.exposures(inst.id);
-    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary)]));
+    const lanHost = this.ctx.config.lan.enabled ? lanAppHost() : null;
+    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary, lanHost)]));
   }
 
   private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure, provisioned?: { username: string; password: string } | null): Promise<string> {

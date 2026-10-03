@@ -28,12 +28,12 @@ export function endpointUrls(alloc: EndpointAllocation, exposures: ExposureRow[]
 }
 
 // The URL handed to a package's `configuration` bindings: the instance's primary exposure, falling
-// back to loopback when that exposure does not (yet) exist for the endpoint.
-export function primaryUrlFor(alloc: EndpointAllocation, exposures: ExposureRow[], primary: PrimaryExposure): string {
-  const urls = endpointUrls(alloc, exposures);
+// back to the LAN address in LAN mode (decision 115: a LAN browser cannot reach `localhost`), else loopback.
+export function primaryUrlFor(alloc: EndpointAllocation, exposures: ExposureRow[], primary: PrimaryExposure, lanHost: string | null = null): string {
+  const urls = endpointUrls(alloc, exposures, lanHost);
   if (primary === 'tailnet' && urls.tailnet) return urls.tailnet;
   if (primary === 'public' && urls.public) return urls.public;
-  return urls.loopback;
+  return urls.lan ?? urls.loopback;
 }
 
 export const HOSTNAME_RE = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;

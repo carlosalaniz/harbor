@@ -1108,7 +1108,8 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           {detail.setup && (
             <p className="setup">
               <strong>Finish setup inside the app:</strong> {detail.setup.instructions}{' '}
-              <a href={detail.setup.browserUrl} target="_blank" rel="noopener noreferrer">
+              {/* Same address rule as the Open button: the server's browserUrl is loopback, unreachable from a LAN browser. */}
+              <a href={openUrl(inst, inst.endpoints.find((e) => e.id === detail.setup!.endpointId)) ?? detail.setup.browserUrl} target="_blank" rel="noopener noreferrer">
                 Open {inst.name}
               </a>
               <br />

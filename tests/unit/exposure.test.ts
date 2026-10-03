@@ -18,6 +18,12 @@ describe('exposure URLs', () => {
     expect(primaryUrlFor(alloc, [tail], 'public')).toBe('http://localhost:18080/'); // falls back when that exposure is absent
     expect(primaryUrlFor(alloc, [], 'loopback')).toBe('http://localhost:18080/');
   });
+  it('hands configuration the LAN address in LAN mode, never localhost (a LAN browser cannot reach it)', () => {
+    const pub = row({});
+    expect(primaryUrlFor(alloc, [], 'loopback', 'harbor.local')).toBe('http://harbor.local:18080/');
+    expect(primaryUrlFor(alloc, [pub], 'public', 'harbor.local')).toBe('https://app.example.com/'); // a published primary still wins
+    expect(primaryUrlFor(alloc, [], 'public', 'harbor.local')).toBe('http://harbor.local:18080/'); // fallback is LAN, not loopback
+  });
   it('validates hostnames', () => {
     for (const ok of ['n8n.apein.space', 'a.b.example.com', 'x1-y.example.io']) expect(HOSTNAME_RE.test(ok), ok).toBe(true);
     for (const bad of ['localhost', 'example', 'Upper.Case.com', '-bad.example.com', 'a b.example.com', 'http://x.example.com', 'x.example.com/']) expect(HOSTNAME_RE.test(bad), bad).toBe(false);

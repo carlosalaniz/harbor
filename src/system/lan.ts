@@ -47,6 +47,11 @@ export function lanHostAllowed(host: string, lanPort: number, managementPort: nu
   return addresses.includes(name);
 }
 
+// The name app addresses use in LAN mode: <hostname>.local (the console swaps in the host it was opened with).
+export function lanAppHost(): string {
+  return `${hostname().toLowerCase().replace(/\.local$/, '')}.local`;
+}
+
 export function lanUrl(port: number): string {
   const h = hostname().toLowerCase().replace(/\.local$/, '');
   return port === 80 ? `http://${h}.local/` : `http://${h}.local:${port}/`;

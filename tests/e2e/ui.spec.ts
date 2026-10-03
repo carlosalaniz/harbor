@@ -550,6 +550,11 @@ test('full uninstall: typed confirmation, data deleted, name free again', async 
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of memos' }).click();
   const d = page.getByRole('dialog');
+  // The setup hint opens the app at the same address as the Open button (decision 115).
+  await expect(d.getByText('Finish setup inside the app:')).toBeVisible();
+  const opens = await d.getByRole('link', { name: 'Open memos', exact: true }).evaluateAll((els) => els.map((e) => (e as { href: string }).href));
+  expect(opens).toHaveLength(2);
+  expect(new Set(opens).size).toBe(1);
   await d.getByText('Uninstall completely…').click();
   const del = d.getByRole('button', { name: 'Uninstall memos completely' });
   await expect(del).toBeDisabled();

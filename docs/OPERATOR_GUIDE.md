@@ -54,6 +54,10 @@ is typed on the terminal.
 like Umbrel. Protect the console with a strong password and two-factor login (Settings → Account); apps
 without their own login are open to the LAN. It is chosen at install time (`bootstrap --lan`); apps
 installed before it was turned on keep answering on the machine only until they are updated.
+Apps that need to know their own address (Nextcloud, Forgejo, n8n, Vaultwarden, Mealie, Open WebUI,
+Jellyfin) are given `http://<hostname>.local:<port>` in LAN mode; Nextcloud builds every link with it, so
+opening it by IP takes you to the `.local` name. An app installed before Harbor 0.17.6 may still send you
+to `localhost`: run `harbor primary <app> loopback --yes` once to re-render it (data and settings stay).
 
 **Secure addresses** (Settings → Network, needs LAN mode) turn those same addresses into HTTPS:
 Harbor mints its own certificate on the machine (nothing leaves your network, nothing phones home)
