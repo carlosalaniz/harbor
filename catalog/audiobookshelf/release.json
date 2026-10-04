@@ -29,17 +29,17 @@
   },
   "qualification": {
     "status": "passed",
-    "date": "2026-09-15",
+    "date": "2026-10-04",
     "node": "v24.12.0",
-    "dockerEngine": "29.8.0",
-    "dockerCompose": "5.5.1",
-    "hostOs": "Ubuntu 24.04.4 LTS x86_64",
+    "dockerEngine": "29.8.2",
+    "dockerCompose": "5.6.0",
+    "hostOs": "Ubuntu 24.04.5 LTS x86_64",
     "appVersions": {
       "web": "2.36.0"
     },
     "notes": [
       "Digest of web resolved 2026-09-14 via registry API (scripts/catalog-pin.mjs; ghcr.io/advplyr/audiobookshelf:2.36.0); image config: ExposedPorts 80/tcp, Volumes none, User root.",
-      "Live catalog run catalog-2026-09-15T00-13-13: passed (healthy after 31s; page title \"Audiobookshelf\"; health 200)"
+      "Live catalog run catalog-2026-10-04T03-29-24: passed (healthy after 41s; page title \"Audiobookshelf\"; health 200)"
     ]
   },
   "assets": {

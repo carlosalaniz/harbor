@@ -81,6 +81,22 @@ Docker-bypass output).
 | A09 reboot | after `reboot`, BEFORE any login: `sealed-demo` reads `home.state=locked`, `ls <home>/volumes` shows the ciphertext name; after `harbor login`: `unlocked`, `running/healthy` (lock-guard auto-start); excalidraw-2 stayed stopped, sentinel untouched |
 | Suites | unit 149, integration 129 (+3 live-Docker skipped), e2e 25, `catalog:verify` 17 ok, `openapi --check` current |
 
+## 3e. Fresh-machine beta check (2026-10-04, Harbor 0.18.1 → 0.18.3, new droplets)
+
+- **Public one-liner on a brand-new Ubuntu 24.04.5 droplet:** 0.18.0 failed at `apt-get update`
+  (Docker's Debian repo chosen for Ubuntu — decision 119); **0.18.1 installed cleanly** (Docker, Caddy,
+  Tailscale awaiting login, setup code printed).
+- **Acceptance suite** `pnpm test:vm -- --fresh --exposure`, run `vm-2026-10-04T01-32-52` on 0.18.2:
+  **24 checks — 23 pass, 0 fail, 1 blocked** (B02/B03 tailnet: no auth key). The 0.18.1 run before it
+  (`vm-2026-10-04T00-56-30`, not kept) found decision 120 (sealing without the machine key) and two
+  runner bugs.
+- **Catalog qualification**, full pass on 0.18.2 (stopped before the last three packages, not kept): every
+  plain install passed (15/15, Nextcloud revision 3 included); every bring-your-own-folder variant failed —
+  decision 121. **Small-app pass on 0.18.3**, run `catalog-2026-10-04T03-29-24` on a new droplet:
+  Audiobookshelf + Navidrome (plain and own folder), Excalidraw, Memos — **6/6 pass in under 7 minutes**
+  including droplet creation. Large packages (Immich, Open WebUI, Nextcloud with its own folder) still need
+  a re-run on 0.18.3.
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

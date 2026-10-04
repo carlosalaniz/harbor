@@ -1,0 +1,41 @@
+[bootstrap] host: Ubuntu 24.04.5 LTS x64, systemd yes
+
+Install Docker Engine and Compose from Docker's apt repository?
+  - Download Docker's apt signing key over HTTPS to /etc/apt/keyrings/docker.asc and verify it is an OpenPGP public key
+  - Add /etc/apt/sources.list.d/docker.list: deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable
+  - apt-get update && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  - systemctl enable --now docker
+  (approved with --yes)
+[bootstrap] downloading Docker apt signing key
+[bootstrap] apt repository: download.docker.com/linux/ubuntu noble
+[bootstrap] apt-get update
+[bootstrap] apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+[bootstrap] Docker Engine 29.8.2 is running
+
+Apply the Harbor installation steps above?
+  - Install release 0.18.2 to /opt/harbor
+  - Create system user harbor (nologin) and add it to the docker group (root-equivalent authority)
+  - Ensure /etc/harbor (root:harbor 0750), /var/lib/harbor (harbor 0700) and the data folder /srv/harbor (harbor 0755)
+  - Write /etc/harbor/harbor.json (listen 127.0.0.1:18000, app ports 18080-18999, socket /var/run/docker.sock)
+  - Initialize fresh state in /var/lib/harbor
+  - Enroll the local administrator (admin)
+  - Install systemd unit harbor.service and (re)start it
+  (approved with --yes)
+[bootstrap] installed release 0.18.2 to /opt/harbor
+[bootstrap] created system user harbor
+[bootstrap] wrote /etc/harbor/harbor.json
+[bootstrap] installing fscrypt (per-app encryption on ext4 drives)
+[bootstrap] enabling the ext4 encrypt feature on /dev/vda1 (/)
+[bootstrap] writing /etc/fscrypt.conf (fscrypt setup)
+[bootstrap] per-app encryption ready on / (ext4, /dev/vda1)
+[bootstrap] initialized state (installation 28954506-fd01-4f6c-a0e7-49f436e48d7e)
+[bootstrap] enrolled administrator admin
+[bootstrap] daemon healthy at http://localhost:18000
+Harbor 0.18.2 installed (node v24.12.0, docker 29.8.2, compose 5.6.0).
+Installation 28954506-fd01-4f6c-a0e7-49f436e48d7e; administrator enrolled.
+
+Web UI (on this machine): http://localhost:18000/
+From another machine, forward the same port numbers over SSH (management, app ports, tools):
+  ssh -L 18000:127.0.0.1:18000 -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 -L 18082:127.0.0.1:18082 <user>@<this-host>
+If a local port is busy on your machine, free it or choose a different local port and open http://localhost:<that-port>/ — the remote ports never change.
+CLI: /opt/harbor/bin/harbor login   (then: catalog, install <package>, list, tools)

@@ -1,0 +1,378 @@
+{
+  "runId": "catalog-2026-10-04T03-29-24",
+  "target": "digitalocean droplet 605947960",
+  "versions": {
+    "node": "v24.12.0",
+    "docker": "29.8.2",
+    "compose": "5.6.0",
+    "ubuntu": "Ubuntu 24.04.5 LTS",
+    "arch": "x86_64"
+  },
+  "results": {
+    "audiobookshelf": "passed",
+    "excalidraw": "passed",
+    "memos": "passed",
+    "navidrome": "passed"
+  },
+  "results_detail": [
+    {
+      "id": "HOST",
+      "title": "Host prepared: Harbor bootstrapped from the release archive",
+      "status": "pass",
+      "at": "2026-10-04T03:30:47.932Z",
+      "details": {
+        "versions": {
+          "node": "v24.12.0",
+          "docker": "29.8.2",
+          "compose": "5.6.0",
+          "ubuntu": "Ubuntu 24.04.5 LTS",
+          "arch": "x86_64"
+        },
+        "installationId": "18550837-2074-4770-a093-d32c7a3c4a0b",
+        "fresh": true,
+        "rebuilt": false
+      },
+      "notes": [
+        "Docker 29.8.2, Compose 5.6.0, Node v24.12.0, Ubuntu 24.04.5 LTS x86_64"
+      ]
+    },
+    {
+      "id": "audiobookshelf",
+      "title": "Install, readiness, browser check and remove of audiobookshelf",
+      "status": "pass",
+      "at": "2026-10-04T03:31:29.653Z",
+      "details": {
+        "name": "audiobookshelf-q0329",
+        "instanceId": "8b722bcf-f7a1-43a7-b88c-604736c14109",
+        "url": "http://localhost:18080/",
+        "title": "Audiobookshelf",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_8b722bcff7a143a7b88c604736c14109-web-1 Up 18 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_8b722bcff7a143a7b88c604736c14109_audiobooks/_data->/audiobooks volume:/var/lib/docker/volumes/hb_8b722bcff7a143a7b88c604736c14109_config/_data->/config volume:/var/lib/docker/volumes/hb_8b722bcff7a143a7b88c604736c14109_metadata/_data->/metadata volume:/var/lib/docker/volumes/hb_8b722bcff7a143a7b88c604736c14109_podcasts/_data->/podcasts"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_8b722bcff7a143a7b88c604736c14109-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_8b722bcff7a143a7b88c604736c14109_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "audiobooks",
+            "name": "hb_8b722bcff7a143a7b88c604736c14109_audiobooks",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_8b722bcff7a143a7b88c604736c14109_config",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "metadata",
+            "name": "hb_8b722bcff7a143a7b88c604736c14109_metadata",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "podcasts",
+            "name": "hb_8b722bcff7a143a7b88c604736c14109_podcasts",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 41,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 41s; page title \"Audiobookshelf\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "audiobookshelf (external storage)",
+      "title": "Install, readiness, browser check and remove of audiobookshelf (external storage)",
+      "status": "pass",
+      "at": "2026-10-04T03:31:58.298Z",
+      "details": {
+        "name": "audiobookshelf-q0329x",
+        "instanceId": "422fe402-756e-423a-970e-1492af5b3abc",
+        "url": "http://localhost:18081/",
+        "title": "Audiobookshelf",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_422fe402756e423a970e1492af5b3abc-web-1 Up 17 seconds"
+        ],
+        "mounts": [
+          "bind:/mnt/harbor-test-storage/audiobookshelf-audiobooks-q0329->/audiobooks volume:/var/lib/docker/volumes/hb_422fe402756e423a970e1492af5b3abc_config/_data->/config volume:/var/lib/docker/volumes/hb_422fe402756e423a970e1492af5b3abc_metadata/_data->/metadata bind:/mnt/harbor-test-storage/audiobookshelf-podcasts-q0329->/podcasts"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "audiobooks",
+            "name": "/mnt/harbor-test-storage/audiobookshelf-audiobooks-q0329",
+            "present": true
+          },
+          {
+            "kind": "bind",
+            "role": "podcasts",
+            "name": "/mnt/harbor-test-storage/audiobookshelf-podcasts-q0329",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_422fe402756e423a970e1492af5b3abc-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_422fe402756e423a970e1492af5b3abc_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "config",
+            "name": "hb_422fe402756e423a970e1492af5b3abc_config",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "metadata",
+            "name": "hb_422fe402756e423a970e1492af5b3abc_metadata",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 27,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 27s; page title \"Audiobookshelf\"; health 200",
+        "external storage: --storage audiobooks=/mnt/harbor-test-storage/audiobookshelf-audiobooks-q0329 --storage podcasts=/mnt/harbor-test-storage/audiobookshelf-podcasts-q0329 mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "excalidraw",
+      "title": "Install, readiness, browser check and remove of excalidraw",
+      "status": "pass",
+      "at": "2026-10-04T03:32:56.788Z",
+      "details": {
+        "name": "excalidraw-q0329",
+        "instanceId": "b0ec8722-0be6-46b8-8601-24860c515b6e",
+        "url": "http://localhost:18082/",
+        "title": "Excalidraw Whiteboard",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_b0ec87220be646b8860124860c515b6e-web-1 Up 44 seconds (healthy)"
+        ],
+        "mounts": [
+          ""
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_b0ec87220be646b8860124860c515b6e-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_b0ec87220be646b8860124860c515b6e_default",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 58,
+        "consoleErrors": []
+      },
+      "notes": [
+        "healthy after 58s; page title \"Excalidraw Whiteboard\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "memos",
+      "title": "Install, readiness, browser check and remove of memos",
+      "status": "pass",
+      "at": "2026-10-04T03:33:20.812Z",
+      "details": {
+        "name": "memos-q0329",
+        "instanceId": "5186b2f7-a721-4077-94c5-0efdd0c98d8b",
+        "url": "http://localhost:18083/",
+        "title": "Memos",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_5186b2f7a721407794c50efdd0c98d8b-web-1 Up 11 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_5186b2f7a721407794c50efdd0c98d8b_data/_data->/var/opt/memos"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_5186b2f7a721407794c50efdd0c98d8b-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_5186b2f7a721407794c50efdd0c98d8b_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_5186b2f7a721407794c50efdd0c98d8b_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 24,
+        "consoleErrors": [
+          "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+        ]
+      },
+      "notes": [
+        "healthy after 24s; page title \"Memos\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "navidrome",
+      "title": "Install, readiness, browser check and remove of navidrome",
+      "status": "pass",
+      "at": "2026-10-04T03:33:54.036Z",
+      "details": {
+        "name": "navidrome-q0329",
+        "instanceId": "d2f99e4e-b725-48e3-863b-eb7d7a8cf30d",
+        "url": "http://localhost:18084/",
+        "title": "Navidrome",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_d2f99e4eb72548e3863beb7d7a8cf30d-web-1 Up 14 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_d2f99e4eb72548e3863beb7d7a8cf30d_data/_data->/data volume:/var/lib/docker/volumes/hb_d2f99e4eb72548e3863beb7d7a8cf30d_music/_data->/music"
+        ],
+        "resources": [
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_d2f99e4eb72548e3863beb7d7a8cf30d-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_d2f99e4eb72548e3863beb7d7a8cf30d_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_d2f99e4eb72548e3863beb7d7a8cf30d_data",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "music",
+            "name": "hb_d2f99e4eb72548e3863beb7d7a8cf30d_music",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 33,
+        "consoleErrors": [
+          "undefined"
+        ]
+      },
+      "notes": [
+        "healthy after 33s; page title \"Navidrome\"; health 200",
+        "removed after the check; volumes and folders retained"
+      ]
+    },
+    {
+      "id": "navidrome (external storage)",
+      "title": "Install, readiness, browser check and remove of navidrome (external storage)",
+      "status": "pass",
+      "at": "2026-10-04T03:34:19.714Z",
+      "details": {
+        "name": "navidrome-q0329x",
+        "instanceId": "92181d14-cb30-4793-b1f8-5f9f9b331668",
+        "url": "http://localhost:18085/",
+        "title": "Navidrome",
+        "healthStatus": 200,
+        "probeHistory": [
+          200
+        ],
+        "containers": [
+          "hb_92181d14cb304793b1f85f9f9b331668-web-1 Up 15 seconds"
+        ],
+        "mounts": [
+          "volume:/var/lib/docker/volumes/hb_92181d14cb304793b1f85f9f9b331668_data/_data->/data bind:/mnt/harbor-test-storage/navidrome-music-q0329->/music"
+        ],
+        "resources": [
+          {
+            "kind": "bind",
+            "role": "music",
+            "name": "/mnt/harbor-test-storage/navidrome-music-q0329",
+            "present": true
+          },
+          {
+            "kind": "container",
+            "role": "web",
+            "name": "hb_92181d14cb304793b1f85f9f9b331668-web-1",
+            "present": true
+          },
+          {
+            "kind": "network",
+            "role": "default",
+            "name": "hb_92181d14cb304793b1f85f9f9b331668_default",
+            "present": true
+          },
+          {
+            "kind": "volume",
+            "role": "data",
+            "name": "hb_92181d14cb304793b1f85f9f9b331668_data",
+            "present": true
+          }
+        ],
+        "secondsToHealthy": 25,
+        "consoleErrors": [
+          "undefined"
+        ]
+      },
+      "notes": [
+        "healthy after 25s; page title \"Navidrome\"; health 200",
+        "external storage: --storage music=/mnt/harbor-test-storage/navidrome-music-q0329 mounted as bind",
+        "removed after the check; volumes and folders retained"
+      ]
+    }
+  ]
+}

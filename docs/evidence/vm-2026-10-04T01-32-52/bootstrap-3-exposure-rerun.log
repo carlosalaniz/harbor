@@ -1,0 +1,59 @@
+[bootstrap] host: Ubuntu 24.04.5 LTS x64, systemd yes
+[bootstrap] Docker Engine 29.8.2, Compose 5.6.0 found; not modified
+
+Apply the Harbor installation steps above?
+  - Replace release files in /opt/harbor (current 0.18.2 -> 0.18.2)
+  - Keep service account harbor
+  - Ensure /etc/harbor (root:harbor 0750), /var/lib/harbor (harbor 0700) and the data folder /srv/harbor (harbor 0755)
+  - Keep /etc/harbor/harbor.json
+  - Keep existing state in /var/lib/harbor (apps, keys, administrator untouched)
+  - Keep the existing administrator
+  - Rewrite systemd unit harbor.service and (re)start it
+  (approved with --yes)
+[bootstrap] stopping running daemon for the release update
+[bootstrap] installed release 0.18.2 to /opt/harbor
+[bootstrap] per-app encryption ready on / (ext4, /dev/vda1)
+[bootstrap] existing state found (installation 28954506-fd01-4f6c-a0e7-49f436e48d7e); apps, keys and administrator preserved
+[bootstrap] keeping administrator admin
+
+Set up Cockpit?
+  - Cockpit is already installed: keep its current listener and settings, record its address (bind without taking ownership)
+  (approved with --yes)
+[bootstrap] Cockpit already installed (listener port 9090); not reconfigured
+
+Set up Portainer?
+  - Portainer platform project already exists: keep it and record its address
+  (approved with --yes)
+[bootstrap] starting hb_platform_portainer
+
+Set up Tailscale (private-cloud access path)?
+  - Tailscale already installed: keep it
+  - Run `tailscale up` and print its login URL for you to approve in a browser
+  - Allow the harbor service account to manage serve entries: tailscale set --operator=harbor
+  - Record the node name; Harbor only publishes apps you explicitly expose (tailscale serve, HTTPS with tailnet certificates)
+  (approved with --yes)
+[bootstrap] tailscale login required: open https://login.tailscale.com/a/950cb8e019ce5 in a browser, then re-run bootstrap --with-tailscale (or run: sudo tailscale up)
+
+Set up the public proxy (Caddy, HTTPS with Let's Encrypt)?
+  - Caddy already installed: keep the package
+  - Keep the Harbor-owned /etc/caddy/harbor.json
+  - Ports 80/443 stay closed until you expose an app; then DNS for each hostname must point at this host
+  (approved with --yes)
+[bootstrap] caddy running with the Harbor-owned config; admin API on 127.0.0.1:2019
+[bootstrap] daemon healthy at http://localhost:18000
+Harbor 0.18.2 installed (node v24.12.0, docker 29.8.2, compose 5.6.0).
+Installation 28954506-fd01-4f6c-a0e7-49f436e48d7e; administrator kept.
+cockpit: external installed https://localhost:9090/
+    Existing Cockpit installation bound without changes. Listener on port 9090 as configured by the host. Log in with an OS account.
+portainer: managed setup_required https://localhost:9443/
+    Portainer CE 2.39.7 with Docker socket access (root-equivalent). First run: create the admin in Portainer's own form within 5 minutes of start; it asks for the one-time setup token printed in the container log (sudo docker logs hb_platform_portainer-portainer-1 2>&1 | grep setup_token). If the window expired, run: sudo docker restart hb_platform_portainer-portainer-1 (prints a new token). Self-signed certificate.
+tailscale: external setup_required 
+    Installed; log in with `sudo tailscale up` (approve the printed URL), then Harbor can publish apps on your tailnet.
+proxy: external installed 
+    Caddy serves only the routes Harbor publishes (harbor expose --via public --host <fqdn>). Certificates come from Let's Encrypt; DNS must point at this host and ports 80/443 must be reachable.
+
+Web UI (on this machine): http://localhost:18000/
+From another machine, forward the same port numbers over SSH (management, app ports, tools):
+  ssh -L 18000:127.0.0.1:18000 -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 -L 18082:127.0.0.1:18082 -L 9090:127.0.0.1:9090 -L 9443:127.0.0.1:9443 <user>@<this-host>
+If a local port is busy on your machine, free it or choose a different local port and open http://localhost:<that-port>/ — the remote ports never change.
+CLI: /opt/harbor/bin/harbor login   (then: catalog, install <package>, list, tools)
