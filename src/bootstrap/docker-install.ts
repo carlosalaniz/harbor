@@ -16,11 +16,11 @@ const PACKAGES = ['docker-ce', 'docker-ce-cli', 'containerd.io', 'docker-compose
 // family's release codename — a derivative must use its BASE's codename (Linux Mint 22 -> noble),
 // not its own (xia), which has no Docker suite. Read from /etc/os-release; parseable in tests.
 export function dockerAptRepo(osRelease: Record<string, string>): { family: string; codename: string; keyUrl: string } {
-  // Family comes from ID first (real Debian has an EMPTY ID_LIKE), then ID_LIKE for derivatives.
-  // Default is ubuntu only because the reference host is Ubuntu; anything Debian-flavoured -> debian.
+  // Family comes from ID first: real Debian has an EMPTY ID_LIKE, and real Ubuntu says ID_LIKE=debian
+  // (both live-found). Only derivatives fall back to ID_LIKE, where ubuntu wins over debian (Mint, Pop!_OS).
   const id = (osRelease['ID'] ?? '').toLowerCase();
   const like = (osRelease['ID_LIKE'] ?? '').toLowerCase().split(/\s+/);
-  const debianFlavoured = id === 'debian' || id === 'raspbian' || (like.includes('debian') && !like.includes('ubuntu'));
+  const debianFlavoured = id === 'ubuntu' ? false : id === 'debian' || id === 'raspbian' || (like.includes('debian') && !like.includes('ubuntu'));
   const family = debianFlavoured ? 'debian' : 'ubuntu';
   const codename = osRelease['UBUNTU_CODENAME'] ?? osRelease['VERSION_CODENAME'] ?? (family === 'debian' ? 'bookworm' : 'noble');
   return { family, codename, keyUrl: KEYRINGS[family]! };

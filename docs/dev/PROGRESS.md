@@ -309,6 +309,9 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Tests: migration v8 (proxy row, CHECK), integration proxy path (validation, warning with the forward target, hook env, urls.proxy, unexpose)
 - [x] DNS: `nextcloud.apein.space` A → the home IP (DigitalOcean)
 
+## Phase 42 — fresh Ubuntu installs Docker again (2026-10-04, 0.18.1) ✅
+- [x] Decision 119: fresh-droplet one-liner (0.18.0) failed at `apt-get update` — Ubuntu's `ID_LIKE=debian` picked Docker's Debian repo. `ID=ubuntu` now wins; single `dockerAptRepo`; unit test with the real Ubuntu os-release. Regression window 0.17.5–0.18.0 (only machines without Docker)
+
 ## Test results (latest local run)
 
 | Command | Result |

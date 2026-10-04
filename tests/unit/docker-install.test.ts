@@ -16,6 +16,14 @@ describe('dockerAptRepo', () => {
     expect(repo.keyUrl).toBe('https://download.docker.com/linux/debian/gpg');
   });
 
+  it('uses the ubuntu repo on REAL Ubuntu 24.04, whose ID_LIKE is "debian" (live-found bug, fresh droplet)', () => {
+    // DigitalOcean ubuntu-24-04-x64: ID=ubuntu, ID_LIKE=debian, VERSION_CODENAME=noble, UBUNTU_CODENAME=noble.
+    // 0.17.5–0.18.0 read ID_LIKE=debian as Debian and wrote linux/debian noble (no Release file).
+    const repo = dockerAptRepo({ ID: 'ubuntu', VERSION_ID: '24.04', ID_LIKE: 'debian', VERSION_CODENAME: 'noble', UBUNTU_CODENAME: 'noble' });
+    expect(repo.family).toBe('ubuntu');
+    expect(repo.codename).toBe('noble');
+    expect(repo.keyUrl).toBe('https://download.docker.com/linux/ubuntu/gpg');
+  });
   it('uses the debian repo on REAL Debian 13, where ID_LIKE is empty (live-found bug)', () => {
     // DigitalOcean debian-13-x64: ID=debian, VERSION_ID=13, ID_LIKE unset, VERSION_CODENAME=trixie.
     // The old ID_LIKE-only check fell through to ubuntu+trixie, which has no Docker Release file.
