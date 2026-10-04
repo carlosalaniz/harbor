@@ -585,6 +585,9 @@ export class OperationRunner {
     const { repo, config } = this.ctx;
     this.phase(op, 'applying', 'preparing', 'revalidating package and plan');
     await this.engineOrThrow();
+    // Decision 120: refuse before anything is created when a default-key home could not get this
+    // machine's wrapping (the daemon restarted between plan and apply, and nobody logged in since).
+    if (plan.proposal.location?.defaultKey && !this.ctx.machineKey.unlocked) throw new HarborError('INVALID_STATE', 'Harbor restarted since your last login: log in again before installing an encrypted app', { nextAction: 'Log out and log in with your password once (it unlocks this machine\'s key), then install again.' });
     const pkg = this.ctx.packages.load(inst.packageId, inst.revision);
     for (const [f, h] of Object.entries(plan.proposal.releaseHashes)) {
       if (pkg.hashes[f as keyof typeof pkg.hashes] !== h) throw new HarborError('STATE_CHANGED', `package ${f} changed since the plan was created`);
@@ -694,6 +697,9 @@ export class OperationRunner {
         // wrapping: it unlocks at login here, and still travels by passphrase.
         const loginKey = !defaultKey && (await this.ctx.service.matchesAdminPassword(passphrase));
         const machineKey = defaultKey || loginKey ? this.ctx.machineKey.take() : null;
+        // Decision 120: never seal a default-key home this machine cannot reopen at login (the plan
+        // refuses this too; the daemon may have restarted between plan and apply).
+        if (defaultKey && !machineKey) throw new HarborError('INVALID_STATE', 'Harbor restarted since your last login: log in again before installing an encrypted app', { nextAction: 'Log out and log in with your password once (it unlocks this machine\'s key), then install again.' });
         let wrapped: MachineWrappedKey | null = null;
         if (machineKey) {
           try {

@@ -67,7 +67,9 @@ export interface Harness {
   baseUrl: string;
   token: string;
   api: Api;
-  restart(): Promise<void>;
+  // login: false keeps the old bearer token (sessions survive a restart) but leaves the machine key
+  // sealed (BFU) — what a remembered browser session sees after Harbor restarts or self-updates.
+  restart(opts?: { login?: boolean }): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -210,10 +212,11 @@ export async function startHarness(opts: { catalogDir?: string; overrides?: Daem
     baseUrl,
     token,
     api,
-    async restart() {
+    async restart(opts: { login?: boolean } = {}) {
       await daemon.close();
       daemon = await start();
       h.daemon = daemon;
+      if (opts.login === false) return;
       const s = await api.login();
       api.token = s.token;
       h.token = s.token;

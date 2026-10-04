@@ -312,6 +312,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 ## Phase 42 — fresh Ubuntu installs Docker again (2026-10-04, 0.18.1) ✅
 - [x] Decision 119: fresh-droplet one-liner (0.18.0) failed at `apt-get update` — Ubuntu's `ID_LIKE=debian` picked Docker's Debian repo. `ID=ubuntu` now wins; single `dockerAptRepo`; unit test with the real Ubuntu os-release. Regression window 0.17.5–0.18.0 (only machines without Docker)
 
+## Phase 43 — fresh-droplet acceptance findings (2026-10-04, 0.18.2) ✅
+- [x] Fresh droplet, public one-liner: 0.18.0 failed (decision 119, fixed in 0.18.1); 0.18.1 installed cleanly
+- [x] `pnpm test:vm -- --fresh --exposure` on 0.18.1 (run vm-2026-10-04T00-56-30): 18 passed, 5 failed, 1 blocked (B02/B03: no tailnet key). C01/A09 = real bug (decision 120: BFU default-key seal, fixed); B09 = runner bug (B05 cleanup withdrew n8n, fixed); B05 = one-off (merge reproduced fine over the public basic-auth address)
+- [x] Integration test: remembered session after restart cannot seal (app-homes.test.ts)
+
 ## Test results (latest local run)
 
 | Command | Result |

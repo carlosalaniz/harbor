@@ -752,6 +752,10 @@ const C01 = step('C01', 'Per-app kernel sealing: Local install is fscrypt-sealed
   const leftover = byName('sealed-demo');
   if (leftover) cliOk(target, ['purge', leftover.id, '--yes'], { timeoutMs: 600_000 });
   sshTry('rm -rf /srv/harbor/harbor-apps/memos/sealed-demo');
+  // Earlier steps restart the daemon; a password login unlocks the machine key (decision 120 refuses
+  // to seal a default-key home without it), exactly as an operator logs in after a restart.
+  const relogin = cli(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
+  if (relogin.code !== 0) throw new Error(`CLI login before sealing failed: ${relogin.stderr}`);
   const fsBefore = ssh('fscrypt status / 2>&1; tune2fs -l $(findmnt -n -o SOURCE /) | grep -i features').trim();
   const op = cliOk(target, ['install', 'memos', '--name', 'sealed-demo', '--location', '/srv/harbor/harbor-apps/memos', '--yes'], { timeoutMs: 1800_000 });
   if (op.state !== 'succeeded') throw new Error(`sealed-demo install ${op.state}: ${JSON.stringify(op.error)}`);
@@ -936,9 +940,9 @@ const B04 = step('B04', 'Public exposure of n8n as primary: HTTPS via Let\'s Enc
 const B05 = step('B05', 'Public exposure of BentoPDF with basic protection: 401 without credentials, merge works with them', async () => {
   const b = byName('bentopdf');
   if (!b) throw new Error('bentopdf instance missing');
-  // Reruns (--only) may leave a stale public exposure from a partial run;
-  // withdraw it so the fresh hostname below is the only public route.
-  for (const x of cliOk(target, ['exposures']).items.filter((x) => x.via === 'public')) {
+  // Reruns (--only) may leave a stale public exposure of BentoPDF from a partial run; withdraw only
+  // that one (B04's n8n address must survive until B09 withdraws it).
+  for (const x of cliOk(target, ['exposures']).items.filter((x) => x.via === 'public' && x.instanceName === 'bentopdf')) {
     try {
       cliOk(target, ['unexpose', x.instanceName, '--via', 'public', '--yes'], { timeoutMs: 300_000 });
     } catch {

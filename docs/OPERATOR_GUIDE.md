@@ -564,6 +564,7 @@ Notes:
 | `PLAN_EXPIRED` (410) | Plans live 15 minutes. Create a new one. |
 | `IDEMPOTENCY_CONFLICT` | The key was used for another request, or the plan was already submitted; poll the returned operation id. |
 | `READINESS_TIMEOUT` | App did not answer within its manifest deadline. `harbor inspect`, `docker logs <container>`. Resources kept; `remove` to clean up. |
+| "Harbor restarted since your last login: log in again before installing an encrypted app" | After Harbor restarts (an update, a reboot) your remembered browser session still works, but the key that lets this machine reopen encrypted apps at login is loaded only by a password login. Log out, log in with your password, and install again. Harbor refuses rather than sealing an app that only your recovery key could reopen. |
 | `DATA_MISSING` / `SECRET_MISSING` | Retained volume or key gone/replaced. Restore from your backup; Harbor will not create replacements. For an app folder on a removable drive, see §4a1 (re-insert, restore with marker, or adopt the replacement). |
 | `OWNERSHIP_CONFLICT` | A same-named resource exists that Harbor did not create for this instance. Inspect manually. |
 | `DOCKER_UNAVAILABLE` (503) | `systemctl status docker`. |

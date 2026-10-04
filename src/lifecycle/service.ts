@@ -1450,6 +1450,10 @@ export class ApplicationService {
         const dir = this.resolveInstallLocation(req.location.dir, instances, pkg.id);
         const pass = req.location.passphrase;
         if (pass === undefined || pass === '') {
+          // Decision 120: a default-key home must get this machine's wrapping or it would open only with
+          // the recovery key after its next lock. The key is in memory only after a password login since
+          // the daemon started; a remembered session after a restart/self-update does not unseal it.
+          if (!this.ctx.machineKey.unlocked) throw new HarborError('INVALID_STATE', 'Harbor restarted since your last login: log in again before installing an encrypted app', { nextAction: 'Log out and log in with your password once (it unlocks this machine\'s key), then install again.' });
           location = { dir, defaultKey: true };
         } else {
           if (typeof pass !== 'string' || pass.length < 8) throw new HarborError('INVALID_REQUEST', 'the app encryption passphrase must be at least 8 characters', { nextAction: 'Choose a passphrase (or a generated recovery key) of 8+ characters, or install without one and rely on your Harbor recovery key.' });

@@ -70,6 +70,20 @@ describe('install to an encrypted app home', () => {
     expect(existsSync(appsDir)).toBe(true);
   });
 
+  it('after a restart, a remembered session cannot seal a new app until the password unlocks the machine key (decision 120)', async () => {
+    // Live-found (fresh-droplet C01): a still-valid token after a daemon restart installed a default-key
+    // home with no machine wrapping, so after Lock only the Harbor recovery key could open it.
+    await h.restart({ login: false });
+    try {
+      const appsDir = path.join(h.userDataDir, 'harbor-apps');
+      const err = await h.api.expectError(409, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'install', packageId: 'excalidraw', name: 'bfu-seal', location: { dir: path.join(appsDir, 'excalidraw') } });
+      expect(err.error.message).toMatch(/log in again/i);
+      expect(err.error.nextAction).toMatch(/password/i);
+    } finally {
+      await h.restart(); // logs in: AFU again
+    }
+  });
+
   it('the data-folder plan needs no passphrase at submit; the home unlocks silently', async () => {
     const appsDir = path.join(h.userDataDir, 'harbor-apps');
     const p = await h.api.plan({ kind: 'install', packageId: 'excalidraw', name: 'defaultkey', location: { dir: path.join(appsDir, 'excalidraw') } });
