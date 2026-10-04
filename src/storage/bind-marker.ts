@@ -5,7 +5,7 @@
 // copies the folder, marker included); a replacement or stranger's drive at the
 // same path fails the check, so Harbor refuses to start the app against the
 // wrong data instead of writing into a stranger's disk.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { HarborError } from '../errors.js';
@@ -25,20 +25,40 @@ export function bindMarkerFile(dir: string): string {
   return path.join(dir, BIND_MARKER);
 }
 
-// Best effort: a read-only claim cannot carry a marker, and a folder Harbor
-// cannot write to is still usable — the marker only guards what it can.
 // Returns the drive id now authoritative for this folder: the existing one
 // when the folder already carries this app's marker (restore keeps identity),
 // a fresh random id otherwise (new folder, replacement drive, first claim).
-export function writeBindMarker(dir: string, instanceId: string, storageId: string): string {
+// `required` (install, adopt): the drive guard refuses a folder without this
+// app's marker, so a write that fails must fail the operation (decision 121);
+// legacy backfills stay best effort.
+export function writeBindMarker(dir: string, instanceId: string, storageId: string, opts: { required?: boolean } = {}): string {
   const keep = readDriveId(dir, instanceId, storageId);
   const driveId = keep ?? randomUUID();
   try {
     writeFileSync(bindMarkerFile(dir), JSON.stringify({ instanceId, storageId, driveId, writtenAt: new Date().toISOString() }), { mode: 0o600 });
-  } catch {
-    /* read-only or unwritable folders simply go unmarked */
+  } catch (e) {
+    if (opts.required) throw unwritableFolder(dir, e);
   }
   return driveId;
+}
+
+// Decision 121: can Harbor write its identity marker here? Checked at plan time so an unwritable
+// folder (outside the service's writable paths, a read-only mount) is refused before anything runs.
+export function assertMarkerWritable(dir: string): void {
+  const probe = path.join(dir, `.harbor-write-probe-${randomUUID().slice(0, 8)}`);
+  try {
+    writeFileSync(probe, '', { mode: 0o600 });
+    unlinkSync(probe);
+  } catch (e) {
+    throw unwritableFolder(dir, e);
+  }
+}
+
+function unwritableFolder(dir: string, e: unknown): HarborError {
+  const code = (e as NodeJS.ErrnoException)?.code ?? 'EACCES';
+  return new HarborError('INVALID_REQUEST', `Harbor cannot write in ${dir} (${code}): it keeps a small identity file there so a swapped or missing drive is never mistaken for this app's data`, {
+    nextAction: 'Choose a folder under /srv/harbor, /mnt or /media (where Harbor may write), or make this one writable for the harbor service user.',
+  });
 }
 
 // The drive id this folder claims for this app, or null when the folder

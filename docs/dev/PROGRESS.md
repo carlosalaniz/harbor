@@ -317,6 +317,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] `pnpm test:vm -- --fresh --exposure` on 0.18.1 (run vm-2026-10-04T00-56-30): 18 passed, 5 failed, 1 blocked (B02/B03: no tailnet key). C01/A09 = real bug (decision 120: BFU default-key seal, fixed); B09 = runner bug (B05 cleanup withdrew n8n, fixed); B05 = one-off (merge reproduced fine over the public basic-auth address)
 - [x] Integration test: remembered session after restart cannot seal (app-homes.test.ts)
 
+## Phase 44 — bring-your-own folders must take the marker (2026-10-04, 0.18.3) ✅
+- [x] Decision 121: fresh-droplet qualification — every "external storage" variant was stopped by the drive guard right after install (marker write silently failed outside `ReadWritePaths`). Plan probes writability; install/adopt write the marker or fail; qualifier folders under `/mnt`
+- [x] Qualify script: log in before polling `doctor` on a fresh host (it hung 30 min on `system: null`)
+- [x] Nextcloud data folder: its hint promised "takes ownership on first start"; with Harbor's automatic setup (revision 2+) Nextcloud instead refuses a world-readable or root-owned folder (503). Hint + README now give `sudo chown 33:33 … && sudo chmod 0770 …` (Harbor never chowns); the qualifier prepares the folder that way
+- [x] Integration: unwritable folder refused at plan (storage.test.ts)
+
 ## Test results (latest local run)
 
 | Command | Result |

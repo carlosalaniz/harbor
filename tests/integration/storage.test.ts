@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -75,6 +75,18 @@ describe('external storage', () => {
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'mediaapp', storage: { library: { hostPath: path.join(root, 'missing') } } });
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'mediaapp', storage: { library: { hostPath: '/etc' } } });
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'mediaapp', storage: { library: { hostPath: 'relative/path' } } });
+    // Decision 121: a folder Harbor cannot write its identity marker into is refused up front (the drive
+    // guard would otherwise stop the app seconds after install — live-found on the fresh droplet).
+    const locked = path.join(root, 'not-writable');
+    mkdirSync(locked);
+    chmodSync(locked, 0o555);
+    try {
+      const nw = await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'mediaapp', storage: { library: { hostPath: locked } } });
+      expect(nw.error.message).toMatch(/cannot write/);
+      expect(nw.error.nextAction).toMatch(/\/srv\/harbor, \/mnt or \/media/);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
     const e = await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'needsfolder' });
     expect(e.error.nextAction).toMatch(/--storage media=/);
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'mediaapp', storage: { library: { hostPath: path.join(root, 'nested') }, music: { hostPath: path.join(root, 'nested', 'inner') } } });

@@ -33,7 +33,7 @@ for (const id of Object.keys(index.packages).sort()) {
 
 const section = `### Live catalog qualification (\`node scripts/vm/qualify-catalog.mjs --fresh\`)
 
-Every bundled package is installed with the CLI on the designated droplet (fresh Ubuntu 24.04.4 x86-64; Docker ${versions?.docker}, Compose ${versions?.compose}, Node ${versions?.node}), waited for until Harbor reports it healthy, opened in headless Chromium (title, screenshot, health probe through the SSH tunnel), inspected (containers, mounts, resources) and removed. Packages with external storage claims are installed a second time with host folders under \`/srv/harbor-test-storage\` and the bind mounts are verified. ${passed} of ${latest.size} steps passed; reports and screenshots: ${dirs.map((d) => `\`${d}/\``).join(', ')}.
+Every bundled package is installed with the CLI on the designated droplet (fresh Ubuntu 24.04.4 x86-64; Docker ${versions?.docker}, Compose ${versions?.compose}, Node ${versions?.node}), waited for until Harbor reports it healthy, opened in headless Chromium (title, screenshot, health probe through the SSH tunnel), inspected (containers, mounts, resources) and removed. Packages with external storage claims are installed a second time with host folders under \`/mnt/harbor-test-storage\` and the bind mounts are verified. ${passed} of ${latest.size} steps passed; reports and screenshots: ${dirs.map((d) => `\`${d}/\``).join(', ')}.
 
 ${table.join('\n')}
 `;

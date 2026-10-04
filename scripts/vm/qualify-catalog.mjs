@@ -25,7 +25,7 @@ const ADMIN = { username: 'admin', password: 'harbor-test-Admin-Passw0rd' };
 // retained instances keep their ports, so a full catalog pass needs more than the acceptance suite's 20
 const PORTS = [18000, ...Array.from({ length: 60 }, (_, i) => 18080 + i)];
 const UI = 'http://localhost:18000';
-const EXT_ROOT = '/srv/harbor-test-storage';
+const EXT_ROOT = '/mnt/harbor-test-storage'; // inside harbor.service's writable paths, like a real drive (decision 121)
 // instance names carry a per-run suffix: retained instances from earlier passes keep their names and ports
 const SUFFIX = 'q' + new Date().toISOString().slice(11, 16).replace(':', '');
 
@@ -73,10 +73,11 @@ async function prepareHost() {
   ev.file('bootstrap.log', b.stdout + b.stderr);
   if (b.code !== 0) throw new Error(`bootstrap failed (exit ${b.code}); see bootstrap.log`);
   await openTunnels();
-  // wait for any operation a previous (interrupted) pass left running before touching state
-  await waitFor(() => (cliOk(target, ['doctor']).system.busyOperationId ? null : true), { timeoutMs: 1800_000, intervalMs: 10_000, what: 'no operation in flight' });
+  // Log in first: on a fresh host the CLI has no token and `doctor` reports system: null.
   const login = cli(target, ['login', '--username', ADMIN.username, '--password-stdin'], { input: ADMIN.password + '\n' });
   if (login.code !== 0) throw new Error(`CLI login failed: ${login.stderr} ${login.stdout}`);
+  // wait for any operation a previous (interrupted) pass left running before touching state
+  await waitFor(() => (cliOk(target, ['doctor']).system?.busyOperationId ? null : true), { timeoutMs: 1800_000, intervalMs: 10_000, what: 'no operation in flight' });
   const doctor = cliOk(target, ['doctor']);
   const versions = {
     node: ssh('/opt/harbor/node/bin/node --version').trim(),
@@ -164,7 +165,9 @@ async function main() {
       if (variant) {
         for (const c of ext) {
           const dir = `${EXT_ROOT}/${id}-${c}-${SUFFIX}`; // retained instances keep their folders reserved, so each pass gets fresh ones
-          ssh(`mkdir -p ${dir} && chmod 777 ${dir} && touch ${dir}/.harbor-test-marker`);
+          // Prepared the way each package's hint says (Nextcloud: owned by uid 33, mode 0770).
+          const prep = id === 'nextcloud' ? `chown 33:33 ${dir} && chmod 0770 ${dir}` : `chmod 777 ${dir}`;
+          ssh(`mkdir -p ${dir} && touch ${dir}/.harbor-test-marker && ${prep}`);
           storageArgs.push('--storage', `${c}=${dir}`);
         }
       }

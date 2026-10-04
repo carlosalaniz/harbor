@@ -82,7 +82,7 @@ storage:
     composeVolume: data
     purpose: "User files"
     retention: retain
-    external: {hint: "A folder with room for everyone's files, for example /mnt/nextcloud-data. Nextcloud must own it; it takes ownership on first start."}
+    external: {hint: "Room for everyone's files, e.g. /mnt/nextcloud-data. Prepare it once: sudo chown 33:33 /mnt/nextcloud-data && sudo chmod 0770 /mnt/nextcloud-data (Nextcloud refuses a folder others can read)."}
 secrets:
   - id: database-password
     bytes: 32

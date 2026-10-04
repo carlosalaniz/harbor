@@ -261,6 +261,11 @@ folder on this machine* per claim.
 
 Rules and behaviour:
 
+- **Where:** under `/mnt`, `/media` or `/srv/harbor`. Harbor writes one small identity file
+  (`.harbor-bind.json`) into the folder so a swapped or missing drive is never mistaken for the app's
+  data, and its service may write only there. A folder elsewhere (or a read-only mount) is refused at
+  plan time with that reason (decision 121); `/home` is not visible to the service at all.
+
 - In the console you pick the folder in a browser: disks, the Harbor data folder (`/srv/harbor`) and
   subfolders; *Create folder here* works wherever the `harbor` account may write (the data folder
   always). Typing a path is still possible under *Type a path instead*.

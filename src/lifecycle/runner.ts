@@ -197,7 +197,7 @@ export class OperationRunner {
         // random id stamped into its marker; a restored folder keeps the id it carries, so a
         // dead drive recovered from backup keeps working. The id is stored on the resource
         // so later checks can tell "right drive, temporarily gone" from "wrong drive".
-        const driveId = writeBindMarker(hostPath, inst.id, claim.id);
+        const driveId = writeBindMarker(hostPath, inst.id, claim.id, { required: true });
         repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: claim.composeVolume, dockerId: null, name: hostPath, token: null, metadata: { storageId: claim.id, readOnly: choice.readOnly ?? false, driveId } });
         this.event(op, 'preparing', `using your folder ${hostPath} for ${claim.purpose}${choice.readOnly ? ' (read-only)' : ''}`);
         continue;

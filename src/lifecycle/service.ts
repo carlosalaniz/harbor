@@ -16,7 +16,7 @@ import { identityFor, ownedVolumeName, proposeName, type InstanceIdentity } from
 import { allocateEndpoints } from '../planner/ports.js';
 import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory, hostPathsOverlap, normalizeHostPath } from '../storage/host-path.js';
-import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
+import { assertMarkerWritable, verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { installCandidates } from '../storage/install-location.js';
 import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { verifyPassword } from '../auth/password.js';
@@ -1137,7 +1137,7 @@ export class ApplicationService {
     const bind = this.ctx.repo.resources(instanceId).find((x) => x.kind === 'bind' && ((x.metadata?.['storageId'] as string | undefined) ?? x.role) === storageId);
     if (!bind) throw new HarborError('NOT_FOUND', `no external folder for storage claim ${storageId} on ${inst.name}`);
     const { path: hostPath } = checkHostDirectory(bind.name);
-    const driveId = writeBindMarker(hostPath, inst.id, storageId);
+    const driveId = writeBindMarker(hostPath, inst.id, storageId, { required: true });
     this.ctx.repo.upsertResource({ instanceId: inst.id, kind: 'bind', role: bind.role, dockerId: bind.dockerId, name: hostPath, token: bind.token, metadata: { ...(bind.metadata ?? {}), storageId, driveId } });
     this.ctx.log.info('drive adopted', { instanceId, storageId, path: hostPath, actor });
     const meta = this.packageMeta(this.ctx.repo.instance(instanceId)!);
@@ -1707,6 +1707,7 @@ export class ApplicationService {
         return { id: claim.id, composeVolume: claim.composeVolume, volumeName: ownedVolumeName(identity, claim.composeVolume), purpose: claim.purpose };
       }
       const { path: hostPath } = checkHostDirectory(choice.hostPath);
+      assertMarkerWritable(hostPath); // decision 121: the drive guard needs this app's marker in it
       const clash = inUse.find((u) => hostPathsOverlap(u.path, hostPath));
       if (clash) throw new HarborError('OWNERSHIP_CONFLICT', `${hostPath} overlaps ${clash.path}, already used by instance ${clash.instance}`, { nextAction: 'Choose a different folder; two apps must not share or nest their storage.' });
       if (chosen.some((c) => hostPathsOverlap(c, hostPath))) throw new HarborError('INVALID_REQUEST', `folder ${hostPath} is used by two storage claims of the same install`);
