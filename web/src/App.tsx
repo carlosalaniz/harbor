@@ -513,6 +513,10 @@ function NotificationBell({ c, onOpenApp, onViewAll }: { c: ReturnType<typeof us
     if (item.instanceId) {
       onOpenApp(item.instanceId);
       setOpen(false);
+    } else if (item.link) {
+      // decision 122: e.g. a drive warning opens Settings → Storage, where it is fixed
+      location.hash = item.link;
+      setOpen(false);
     }
   };
   return (

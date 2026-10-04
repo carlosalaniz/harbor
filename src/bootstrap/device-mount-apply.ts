@@ -2,7 +2,7 @@
 // (run by harbor-device-mount@<escaped-device>.service). Reuses the same shape as
 // tools-install-apply: must run as root (started by the template unit), validates
 // the allowlist itself, and writes progress to <stateDir>/devices/<name>/mount-status.json.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, chownSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { PRODUCT } from '../naming.js';
@@ -57,14 +57,60 @@ export function isDriveBusyError(msg: string): boolean {
   return /resource temporarily unavailable|failed to write lock|device or resource busy|target is busy|resource busy/i.test(msg);
 }
 
-export function friendlyBusyMessage(action: 'mount' | 'unmount', raw: string): string {
+export function friendlyBusyMessage(action: 'mount' | 'unmount' | 'takeover', raw: string): string {
+  if (action === 'takeover') return `Something still has files open on the drive (your file manager, a terminal, a program). Close it, then try Let Harbor manage it again. (${raw})`;
   if (action === 'unmount') return `The drive is in use right now (a file or app still holds it). Close anything using it, wait a few seconds, then try Eject again. (${raw})`;
   return `The drive was busy just now, so the mount did not go through. Wait a few seconds and try Mount again. (${raw})`;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-export async function applyDeviceMount(device: string, action: 'mount' | 'unmount', log: (m: string) => void): Promise<void> {
+// Decision 122: tell udisks (the desktop automounter) to leave this filesystem alone from now on, so a
+// drive Harbor took over is not grabbed again at the next plug-in. Keyed by filesystem UUID.
+export function desktopIgnoreRule(uuid: string): { file: string; content: string } | null {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(uuid)) return null;
+  return { file: `/etc/udev/rules.d/90-harbor-drive-${uuid}.rules`, content: `# Written by Harbor (Let Harbor manage this drive): the desktop must not automount it.\nENV{ID_FS_UUID}=="${uuid}", ENV{UDISKS_AUTO}="0"\n` };
+}
+
+// Decision 122: Harbor's own identity files on a drive (.harbor-bind.json) become this machine's
+// harbor user's and world-readable, so a drive moved between machines (different harbor uids) still
+// verifies. Only those files: user data is never re-owned. Bounded walk, no symlinks, sealed homes skipped.
+export function reownMarkers(root: string, uid: number, gid: number, log: (m: string) => void): number {
+  let visited = 0;
+  let fixed = 0;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 6 || visited > 20_000) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      visited += 1;
+      const p = path.join(dir, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) {
+        if (e.name === 'harbor-apps' || e.name === 'lost+found') continue;
+        walk(p, depth + 1);
+      } else if (e.isFile() && e.name === '.harbor-bind.json') {
+        try {
+          if (!lstatSync(p).isFile()) continue;
+          chownSync(p, uid, gid);
+          chmodSync(p, 0o644);
+          fixed += 1;
+        } catch {
+          /* best effort per file */
+        }
+      }
+    }
+  };
+  walk(root, 0);
+  if (fixed) log(`re-owned ${fixed} Harbor identity file(s) for this machine`);
+  return fixed;
+}
+
+export async function applyDeviceMount(device: string, action: 'mount' | 'unmount' | 'takeover', log: (m: string) => void): Promise<void> {
   if (!validDeviceName(device)) throw new HarborError('INVALID_REQUEST', `not a device name: ${device}`);
   if (typeof process.getuid === 'function' && process.getuid() !== 0) throw new HarborError('INVALID_REQUEST', 'device-mount must run as root (it is started by harbor-device-mount@.service)');
   const config = loadConfig(`${PRODUCT.paths.etc}/harbor.json`);
@@ -72,7 +118,33 @@ export async function applyDeviceMount(device: string, action: 'mount' | 'unmoun
   const found = listDevices().find((d) => d.name === device);
   if (!found) throw new HarborError('NOT_FOUND', `device ${device} not found`, { nextAction: 'Re-insert the drive and retry.' });
   if (!found.removable) throw new HarborError('INVALID_REQUEST', `device ${device} is not removable media`, { nextAction: 'Harbor only mounts removable drives; system disks are never touched.' });
-  if (action === 'mount') {
+  if (action === 'takeover') {
+    // Decision 122: off the desktop's mountpoint (fails while files are open), then the normal mount.
+    if (found.mounted && found.mountpoint && found.mountpoint !== suggestedMountpoint(found)) {
+      writeStatus(stateDir, device, 'unmounting', `taking over: unmounting ${found.mountpoint}`, found.mountpoint);
+      log(`taking over: unmounting ${found.mountpoint}`);
+      try {
+        await execOk('/usr/bin/umount', [found.mountpoint], { timeoutMs: 60_000 });
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : String(e);
+        writeStatus(stateDir, device, 'failed', isDriveBusyError(raw) ? friendlyBusyMessage('takeover', raw) : raw, found.mountpoint);
+        throw e;
+      }
+      found.mounted = false;
+      found.mountpoint = null;
+    }
+    const rule = found.uuid ? desktopIgnoreRule(found.uuid) : null;
+    if (rule) {
+      try {
+        writeFileSync(rule.file, rule.content, { mode: 0o644 });
+        await exec('/usr/bin/udevadm', ['control', '--reload-rules'], { timeoutMs: 30_000 });
+        log(`the desktop will no longer automount this drive (${rule.file})`);
+      } catch (e) {
+        log(`could not write the desktop rule (${e instanceof Error ? e.message : String(e)}); the desktop may mount it again next time`);
+      }
+    }
+  }
+  if (action === 'mount' || action === 'takeover') {
     if (found.mounted && found.mountpoint) {
       writeStatus(stateDir, device, 'mounted', `already mounted at ${found.mountpoint}`, found.mountpoint);
       return;
@@ -111,6 +183,7 @@ export async function applyDeviceMount(device: string, action: 'mount' | 'unmoun
       if (lastErr) throw lastErr;
       if (!fat) {
         await execOk('/usr/bin/chown', [`${uid}:${gid}`, mp], { timeoutMs: 30_000 });
+        reownMarkers(mp, uid, gid, log); // decision 122: drives moved between machines keep verifying
       }
       writeStatus(stateDir, device, 'mounted', `mounted at ${mp}`, mp);
       log(`mounted at ${mp}`);

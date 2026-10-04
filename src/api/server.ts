@@ -72,6 +72,7 @@ const errorBodySchema = {
 
 export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   const { config, service, sessions, tools, devices, log, appearance, power, terminals, setup, tailscaleFacts } = deps;
+  const devices_ = devices; // the mount service, for routes that also list devices
   const origin = managementOrigin(config);
   const allowedOrigins = new Set([origin, `http://127.0.0.1:${config.listen.port}`]);
   const allowedHosts = new Set([`localhost:${config.listen.port}`, `127.0.0.1:${config.listen.port}`]);
@@ -521,10 +522,14 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       if (liveNodes.has(m.device)) return true;
       return !(m.mountpoint === '/mnt' || m.mountpoint.startsWith('/mnt/') || m.mountpoint === '/media' || m.mountpoint.startsWith('/media/'));
     });
+    const views = devices_.driveViews(devices);
     return {
       dataFolder: { path: config.userDataDir, exists: fsExists(config.userDataDir), writable: fsExists(config.userDataDir) && writable(config.userDataDir) },
       mounts,
-      devices,
+      devices: devices.map((d) => {
+        const v = views.get(d.name);
+        return { ...d, mountedBy: v?.mountedBy ?? null, attention: v?.attention ?? null, dismissed: v?.dismissed ?? false };
+      }),
       inUse: service.foldersInUse(),
       storagePolicy: service.storagePolicy(),
       installCandidates: service.installCandidates(),
@@ -553,6 +558,20 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     '/v1/host/devices/:name/unmount',
     { preHandler: requireAuth, schema: { description: 'Unmount a removable device (refused while an app uses a folder on it).', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
     async (req, reply) => reply.status(202).send(await devices.unmount((req.params as { name: string }).name, req.actor!)),
+  );
+  app.post(
+    '/v1/host/devices/:name/takeover',
+    { preHandler: requireAuth, schema: { description: 'Let Harbor manage a drive another program (a desktop automount) mounted where Harbor cannot write: unmount it, mount it the Harbor way, and stop the desktop from automounting it (decision 122). Refused while an app uses it or files are open.', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req, reply) => reply.status(202).send(await devices.takeover((req.params as { name: string }).name, req.actor!)),
+  );
+  app.post(
+    '/v1/host/devices/:name/dismiss',
+    { preHandler: requireAuth, schema: { description: 'Hide a drive\'s attention card and notification until its condition changes (decision 122).', params: { type: 'object', required: ['name'], properties: { name: { type: 'string', pattern: '^[a-z]+[0-9]+$', maxLength: 16 } } } } },
+    async (req) => {
+      const v = devices.dismiss((req.params as { name: string }).name);
+      service.resolveDriveNotification(v.key);
+      return v;
+    },
   );
   app.get(
     '/v1/host/devices/:name/status',

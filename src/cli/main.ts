@@ -1111,7 +1111,7 @@ program
   .command('device-dispatch <spec>')
   .description('ROOT, run by harbor-device-mount@.service: dispatch "<name>:mount", "<name>:unmount", "<name>:format" or "<name>:crypto-setup" to the right root step')
   .action(async (spec: string) => {
-    const m = /^([a-z]+[0-9]+):(mount|unmount|format|crypto-setup)$/.exec(spec);
+    const m = /^([a-z]+[0-9]+):(mount|unmount|takeover|format|crypto-setup)$/.exec(spec);
     if (!m) throw new HarborError('INVALID_REQUEST', `device-dispatch expects <name>:<mount|unmount|format|crypto-setup>, got ${spec}`);
     const name = m[1]!;
     const action = m[2]!;
@@ -1127,7 +1127,7 @@ program
       return;
     }
     const { applyDeviceMount } = await import('../bootstrap/device-mount-apply.js');
-    await applyDeviceMount(name, action as 'mount' | 'unmount', log);
+    await applyDeviceMount(name, action as 'mount' | 'unmount' | 'takeover', log);
   });
 
 program

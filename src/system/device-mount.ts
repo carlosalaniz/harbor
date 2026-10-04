@@ -3,12 +3,13 @@
 // under the mountpoint, starts the root oneshot (polkit-allowed), and reports
 // the root step's progress from <stateDir>/devices/<name>/{mount,format}-status.json.
 // In fake mode there is no systemd: refuse with the exact root command.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants as fsConstants, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { readDeviceMountStatus, type DeviceMountStatus } from '../bootstrap/device-mount-apply.js';
 import { readDeviceFormatStatus, type DeviceFormatStatus } from '../bootstrap/device-format-apply.js';
 import { readDeviceCryptoStatus, type DeviceCryptoStatus } from '../bootstrap/device-crypto-apply.js';
-import { listDevices } from '../system/host-storage.js';
+import { listDevices, type DeviceInfo } from '../system/host-storage.js';
+import { classifyDrive, driveKey, type DriveAttention, type DriveMountedBy } from './drive-attention.js';
 import type { Repo } from '../state/repo.js';
 import type { Clock } from '../util.js';
 import { rfc3339 } from '../util.js';
@@ -133,6 +134,73 @@ export class DeviceMountService {
     return [...names].join(', ');
   }
 
+  // Decision 122: who mounted each drive and whether it needs the operator. Dismissals live in the
+  // settings table keyed by filesystem UUID and hold until the condition clears.
+  driveViews(devices: DeviceInfo[] = listDevices()): Map<string, DriveView> {
+    const dismissed = this.repo.setting<Record<string, string>>(DISMISSED_SETTING) ?? {};
+    const out = new Map<string, DriveView>();
+    for (const d of devices) {
+      if (!d.removable) continue;
+      const st = this.status(d.name);
+      const fmt = this.formatStatus(d.name);
+      const harbor = st ? { state: st.state, mountpoint: st.mountpoint } : fmt?.state === 'formatted' ? { state: 'formatted', mountpoint: fmt.mountpoint } : null;
+      const { mountedBy, attention } = classifyDrive(d, harbor, d.mountpoint ? canWrite(d.mountpoint) : false);
+      const key = driveKey(d);
+      out.set(d.name, { key, mountedBy, attention, dismissed: attention !== null && dismissed[key] === attention });
+    }
+    return out;
+  }
+
+  // Hide a drive's card/notification until its condition changes (fixed, unplugged, or a different problem).
+  dismiss(name: string): DriveView {
+    const view = this.driveViews().get(name);
+    if (!view) throw new HarborError('NOT_FOUND', `device ${name} not found`);
+    if (view.attention) {
+      const dismissed = this.repo.setting<Record<string, string>>(DISMISSED_SETTING) ?? {};
+      this.repo.setSetting(DISMISSED_SETTING, { ...dismissed, [view.key]: view.attention });
+    }
+    return { ...view, dismissed: view.attention !== null };
+  }
+
+  // Forget dismissals whose drive no longer has that condition, so the next occurrence alerts again.
+  pruneDismissed(views: Map<string, DriveView>): void {
+    const dismissed = this.repo.setting<Record<string, string>>(DISMISSED_SETTING) ?? {};
+    const live = new Map([...views.values()].map((v) => [v.key, v.attention]));
+    const kept = Object.fromEntries(Object.entries(dismissed).filter(([k, a]) => live.get(k) === a));
+    if (Object.keys(kept).length !== Object.keys(dismissed).length) this.repo.setSetting(DISMISSED_SETTING, kept);
+  }
+
+  // Decision 122: a drive a desktop mounted (where Harbor cannot write) is unmounted and mounted again
+  // the Harbor way, and the desktop is told not to automount it. Refused while an app uses a folder at
+  // the current path; the root step refuses while anything has files open (umount: target is busy).
+  async takeover(name: string, actor: string): Promise<DeviceMountStatus> {
+    const dev = listDevices().find((d) => d.name === name);
+    if (!dev) throw new HarborError('NOT_FOUND', `device ${name} not found`, { nextAction: 'Re-insert the drive and retry.' });
+    if (!dev.removable) throw new HarborError('INVALID_REQUEST', `device ${name} is not removable media`, { nextAction: 'Harbor only manages removable drives.' });
+    if (!dev.mounted || !dev.mountpoint) return this.mount(name, actor);
+    const view = this.driveViews([dev]).get(name);
+    if (view?.mountedBy === 'harbor') return { device: name, state: 'mounted', message: `already managed by Harbor at ${dev.mountpoint}`, mountpoint: dev.mountpoint, at: rfc3339(this.clock.now()) };
+    const holders = this.driveHolders(dev.mountpoint);
+    if (holders) throw new HarborError('INVALID_STATE', `${dev.mountpoint} is in use by ${holders}`, { nextAction: 'Remove those apps first; Harbor never moves a drive out from under an app.' });
+    const st = this.status(name);
+    if (st && (st.state === 'requested' || st.state === 'mounting' || st.state === 'unmounting')) throw new HarborError('BUSY', `a mount operation for ${name} is already running (${st.message})`);
+    this.writeStatus(name, 'requested', `requested by ${actor}; taking the drive over from ${dev.mountpoint}`, null);
+    if (this.simulateRoot) {
+      const mp = `/mnt/${name}`;
+      setTimeout(() => this.writeStatus(name, 'mounted', `mounted at ${mp}`, mp), 1200).unref?.();
+      return { device: name, state: 'requested', message: 'takeover requested', mountpoint: null, at: rfc3339(this.clock.now()) };
+    }
+    if (!this.mountStarter) throw new HarborError('UNSUPPORTED_CAPABILITY', 'drive takeover is not available on this machine', { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor device-dispatch ${name}:takeover` });
+    try {
+      await this.mountStarter(`harbor-device-mount@${name}:takeover.service`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.writeStatus(name, 'failed', `could not start the takeover: ${msg}`, null);
+      throw new HarborError('OPERATION_FAILED', `Harbor could not start the takeover (${msg})`, { nextAction: `On the machine, run: sudo /opt/harbor/bin/harbor device-dispatch ${name}:takeover` });
+    }
+    return this.status(name) ?? { device: name, state: 'requested', message: 'takeover requested', mountpoint: null, at: rfc3339(this.clock.now()) };
+  }
+
   async mount(name: string, actor: string): Promise<DeviceMountStatus> {
     const dev = listDevices().find((d) => d.name === name);
     if (!dev) throw new HarborError('NOT_FOUND', `device ${name} not found`, { nextAction: 'Re-insert the drive and retry.' });
@@ -228,5 +296,23 @@ export class DeviceMountService {
     } catch {
       /* status is best effort */
     }
+  }
+}
+
+const DISMISSED_SETTING = 'storage.dismissedDrives';
+
+export interface DriveView {
+  key: string;
+  mountedBy: DriveMountedBy;
+  attention: DriveAttention;
+  dismissed: boolean;
+}
+
+function canWrite(dir: string): boolean {
+  try {
+    accessSync(dir, fsConstants.W_OK | fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -1538,6 +1538,19 @@ function Storage() {
       },
     );
   };
+  // Decision 122: a drive a desktop mounted where Harbor cannot write is taken over (remounted the Harbor way).
+  const takeover = (name: string) => {
+    setError(null);
+    if (busyDevice) return;
+    setBusyDevice(name);
+    api.takeoverDevice(name).then(
+      () => watchDevice(name),
+      (e: Error) => {
+        setBusyDevice(null);
+        setError(e.message);
+      },
+    );
+  };
   const unmount = (name: string) => {
     setError(null);
     if (busyDevice) return;
@@ -1646,7 +1659,21 @@ function Storage() {
                   )}
                 </span>
               </div>
+              {d.attention === 'foreign' && (
+                <p className="warn small">Mounted by your desktop at {d.mountpoint}, where Harbor cannot write, so apps cannot use it.</p>
+              )}
               <div className="row wrap">
+                {d.attention === 'foreign' && (
+                  <button className="btn small primary" disabled={busyDevice !== null} onClick={() => takeover(d.name)} aria-label={busyDevice === d.name ? `Taking over ${d.label ?? d.name}` : `Let Harbor manage ${d.label ?? d.name}`} aria-busy={busyDevice === d.name}>
+                    {busyDevice === d.name ? (
+                      <>
+                        <span className="spin" aria-hidden="true" /> Taking over…
+                      </>
+                    ) : (
+                      'Let Harbor manage it'
+                    )}
+                  </button>
+                )}
                 {d.mounted && d.mountpoint ? (
                   <button
                     className="btn small"

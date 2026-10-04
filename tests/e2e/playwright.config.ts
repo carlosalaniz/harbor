@@ -41,7 +41,11 @@ export default defineConfig({
         // Fake removable hardware: macOS/CI have no lsblk, so inject one
         // unmounted USB stick for the Mount/Eject click test below.
         HARBOR_DEVICES_JSON: JSON.stringify({
-          blockdevices: [{ name: 'sdb', size: '14.4G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdb1', size: '14.4G', type: 'part', mountpoint: null, fstype: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', rm: true, hotplug: true }] }],
+          blockdevices: [
+            { name: 'sdb', size: '14.4G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdb1', size: '14.4G', type: 'part', mountpoint: null, fstype: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', rm: true, hotplug: true }] },
+            // decision 122: a drive the desktop automounted where Harbor cannot write
+            { name: 'sdc', size: '931.5G', type: 'disk', rm: true, hotplug: true, children: [{ name: 'sdc1', size: '931.5G', type: 'part', mountpoint: '/media/e2e/PHOTOS', fstype: 'ext4', label: 'PHOTOS', uuid: 'e2e-photos-0001', rm: true, hotplug: true }] },
+          ],
         }),
       },
     },

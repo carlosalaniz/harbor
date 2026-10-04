@@ -455,8 +455,13 @@ export class ApplicationService {
   }
 
   // ---- notifications (decision 77)
+  // Decision 122: a dismissed drive's notification goes with its card.
+  resolveDriveNotification(key: string): void {
+    this.ctx.notifier.resolve(`drive-attention:${key}`);
+  }
+
   notifications(unreadOnly: boolean): NotificationsDto {
-    const items = this.ctx.repo.notifications({ unreadOnly }).map((n) => ({ id: n.id, createdAt: n.createdAt, kind: n.kind, severity: n.severity, title: n.title, body: n.body, instanceId: n.instanceId, read: n.readAt !== null }));
+    const items = this.ctx.repo.notifications({ unreadOnly }).map((n) => ({ id: n.id, createdAt: n.createdAt, kind: n.kind, severity: n.severity, title: n.title, body: n.body, instanceId: n.instanceId, read: n.readAt !== null, link: notificationLink(n.kind) }));
     return { items, unread: this.ctx.repo.unreadNotificationCount() };
   }
   markNotificationRead(id: string): NotificationsDto {
@@ -1968,4 +1973,10 @@ export function requiresHttps(pkg: LoadedPackage): boolean {
 export function isProxyAddress(s: string): boolean {
   if (/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(s)) return s.split('.').every((n) => Number(n) <= 255) && !s.startsWith('127.') && s !== '0.0.0.0';
   return /^[0-9a-f:]+$/i.test(s) && s.includes(':') && s !== '::1' && s !== '::';
+}
+
+// Decision 122: where a notification is fixed, by kind (no stored column: derived, so old rows link too).
+export function notificationLink(kind: string): string | null {
+  if (kind === 'drive-attention' || kind.startsWith('device-') || kind === 'storage-missing') return '#/settings/storage';
+  return null;
 }

@@ -35,7 +35,8 @@ export function writeBindMarker(dir: string, instanceId: string, storageId: stri
   const keep = readDriveId(dir, instanceId, storageId);
   const driveId = keep ?? randomUUID();
   try {
-    writeFileSync(bindMarkerFile(dir), JSON.stringify({ instanceId, storageId, driveId, writtenAt: new Date().toISOString() }), { mode: 0o600 });
+    // 0644: ids only, no secrets — any machine's harbor user (different uid) can read it (decision 122).
+    writeFileSync(bindMarkerFile(dir), JSON.stringify({ instanceId, storageId, driveId, writtenAt: new Date().toISOString() }), { mode: 0o644 });
   } catch (e) {
     if (opts.required) throw unwritableFolder(dir, e);
   }

@@ -10,7 +10,8 @@ import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyLanHttps, caddyRoutesFromState, caddySignature } from './runner.js';
 import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
-import { listDevices } from '../system/host-storage.js';
+import { listDevices, type DeviceInfo } from '../system/host-storage.js';
+import { driveAttentionText } from '../system/drive-attention.js';
 import { checkHostDirectory } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 
@@ -184,6 +185,41 @@ export class Observer {
       }
     }
     this.lastDevices = snapshot;
+    this.notifyDriveAttention(devices as DeviceInfo[]);
+  }
+
+  // Decision 122: a drive a desktop mounted where Harbor cannot write, or one plugged in but not
+  // mounted, raises one warning (linked to Settings → Storage) after a 60 s grace — auto-mount and
+  // desktop automounts settle first — and resolves when fixed, dismissed or unplugged.
+  private attentionSince = new Map<string, number>();
+  private notifyDriveAttention(devices: DeviceInfo[]): void {
+    const svc = this.ctx.devices;
+    if (!svc) return;
+    let views;
+    try {
+      views = svc.driveViews(devices);
+      svc.pruneDismissed(views);
+    } catch {
+      return;
+    }
+    const now = this.ctx.clock.now().getTime();
+    const wanted = new Set<string>();
+    for (const d of devices) {
+      const v = views.get(d.name);
+      if (!v?.attention || v.dismissed) continue;
+      const sinceKey = `${v.key}:${v.attention}`;
+      const since = this.attentionSince.get(sinceKey) ?? now;
+      this.attentionSince.set(sinceKey, since);
+      if (now - since < 60_000) continue;
+      const { title, body } = driveAttentionText(d.label ?? d.name, v.attention, d.mountpoint);
+      this.ctx.notifier.notify({ kind: 'drive-attention', severity: 'warning', title, body, dedupeKey: `drive-attention:${v.key}` });
+      wanted.add(`drive-attention:${v.key}`);
+    }
+    const active = new Set([...views.values()].filter((v) => v.attention && !v.dismissed).map((v) => `${v.key}:${v.attention}`));
+    for (const k of [...this.attentionSince.keys()]) if (!active.has(k)) this.attentionSince.delete(k);
+    for (const n of this.ctx.repo.notifications()) {
+      if (n.kind === 'drive-attention' && !wanted.has(n.dedupeKey) && !active.has(`${n.dedupeKey.slice('drive-attention:'.length)}:foreign`) && !active.has(`${n.dedupeKey.slice('drive-attention:'.length)}:unmounted`)) this.ctx.notifier.resolve(n.dedupeKey);
+    }
   }
 
   // Auto-mount a freshly inserted drive (policy on, device unmounted, mounter

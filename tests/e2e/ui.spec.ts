@@ -348,7 +348,7 @@ test('install page: a wrong-filesystem drive offers Format, not Mount or a passp
   await expect(page.locator('.disk', { hasText: 'USB20FD' })).toBeVisible();
   if (await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).count()) {
     await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
-    await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible({ timeout: 15_000 });
   }
   await page.getByRole('link', { name: 'App Store' }).click();
   await page.getByRole('button', { name: 'About BentoPDF' }).click();
@@ -487,12 +487,12 @@ test('storage: a wrong-filesystem drive offers Format first, then Eject once ext
   await expect(page.locator('.disk', { hasText: 'USB20FD' })).toBeVisible();
   if (await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).count()) {
     await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
-    await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible({ timeout: 15_000 });
   }
   // the fixture stick is vfat: the Disks row says it needs formatting and
   // leads with Format (Mount would only dead-end on the wrong filesystem)
   await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/needs formatting as ext4 before it can hold apps/)).toBeVisible();
-  const format = page.getByRole('button', { name: /Format .* as ext4/ });
+  const format = page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true });
   await expect(format).toBeVisible();
   await format.click();
   const dlg = page.getByRole('dialog');
@@ -509,7 +509,27 @@ test('storage: a wrong-filesystem drive offers Format first, then Eject once ext
   const eject = page.getByRole('button', { name: 'Eject USB20FD', exact: true });
   await eject.click();
   await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible({ timeout: 15_000 });
+});
+
+test('drives: a desktop-mounted drive shows a Home card (dismissable) and Settings → Storage takes it over (decision 122)', async ({ page }) => {
+  await login(page);
+  const card = page.getByRole('region', { name: /drive needs attention|drives need attention/ });
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card).toContainText('PHOTOS');
+  await expect(card).toContainText('mounted by your desktop at /media/e2e/PHOTOS');
+  await expect(card.getByRole('button', { name: 'Let Harbor manage PHOTOS', exact: true })).toBeVisible();
+  await expect(card.getByRole('link', { name: 'Manage drives' })).toHaveAttribute('href', '#/settings/storage');
+  await card.getByRole('button', { name: 'Dismiss the notice about PHOTOS', exact: true }).click();
+  await expect(card).toHaveCount(0);
+  // The dismissal hides the card only; Settings → Storage still offers the fix.
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /Storage Disks/ }).click();
+  const row = page.locator('.disk', { hasText: 'PHOTOS' });
+  await expect(row.getByText(/Mounted by your desktop at \/media\/e2e\/PHOTOS/)).toBeVisible();
+  await row.getByRole('button', { name: 'Let Harbor manage PHOTOS', exact: true }).click();
+  await expect(row.getByText(/Mounted by your desktop/)).toHaveCount(0, { timeout: 15_000 });
+  await expect(row).toContainText('/mnt/sdc1');
 });
 
 test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', async ({ page }) => {
@@ -523,11 +543,11 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
   await expect(page.locator('.disk', { hasText: 'USB20FD' })).toBeVisible();
   if (await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).count()) {
     await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
-    await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible({ timeout: 15_000 });
   }
   // the fixture stick is vfat: the Disks row says it needs formatting
   await expect(page.locator('.disk', { hasText: 'USB20FD' }).getByText(/needs formatting as ext4 before it can hold apps/)).toBeVisible();
-  const format = page.getByRole('button', { name: /Format .* as ext4/ });
+  const format = page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true });
   await expect(format).toBeVisible();
   await format.click();
   const dlg = page.getByRole('dialog');
@@ -546,7 +566,7 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
   // Eject returns it to unmounted; the row still leads with Format (still vfat-shaped in the fixture)
   await page.getByRole('button', { name: 'Eject USB20FD', exact: true }).click();
   await expect(page.getByRole('button', { name: /Ejecting/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Format .* as ext4/ })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Format USB20FD as ext4', exact: true })).toBeVisible({ timeout: 15_000 });
 });
 
 test('full uninstall: typed confirmation, data deleted, name free again', async ({ page }) => {

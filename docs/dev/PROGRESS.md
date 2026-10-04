@@ -323,6 +323,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Nextcloud data folder: its hint promised "takes ownership on first start"; with Harbor's automatic setup (revision 2+) Nextcloud instead refuses a world-readable or root-owned folder (503). Hint + README now give `sudo chown 33:harbor … && sudo chmod 0770 …` (uid 33 for Nextcloud, group harbor for the identity marker; Harbor never chowns); the qualifier prepares the folder that way. `33:33` was tried live first and refused by decision 121's probe — the harbor user could not write the marker
 - [x] Integration: unwritable folder refused at plan (storage.test.ts)
 
+## Phase 45 — drives that need you (2026-10-04, 0.19.0) ✅
+- [x] Decision 122: per-drive `mountedBy` / `attention` / `dismissed` on `GET /v1/host/storage`; `POST /v1/host/devices/:name/takeover` and `/dismiss` (openapi 83 paths); observer bell warning `drive-attention` after 60 s, resolved when fixed/dismissed/unplugged; `NotificationDto.link`
+- [x] Root oneshot `takeover` (umount → Harbor mount → udev `UDISKS_AUTO=0` rule); every native-fs mount re-owns Harbor's `.harbor-bind.json` files; markers written 0644
+- [x] Console: Home "A drive needs attention" card (Let Harbor manage it / Mount it, ×, Manage drives link); Settings → Storage warning + Let Harbor manage it; bell/notifications follow `link`
+- [x] Tests: unit `drive-attention`, `drive-takeover` (udev rule, marker re-own, 0644); integration `drives.test.ts` (classification, 60 s grace, dismiss, takeover, eject); e2e desktop-mounted PHOTOS card → dismiss → Storage takeover; unit 203, integration 156 + 3 skipped, e2e 28
+- [ ] Live: takeover needs a real desktop automount (the Kubuntu home box with a USB stick) — not run yet
+
 ## Test results (latest local run)
 
 | Command | Result |

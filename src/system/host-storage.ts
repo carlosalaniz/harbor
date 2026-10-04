@@ -190,6 +190,7 @@ export function listDevices(run: (args: string[]) => string = defaultLsblk, fixt
         if (fmt) return { ...d, fsType: 'ext4', mounted: true, mountpoint: fmt };
         const st = readSimulatedMountState(d.name);
         if (st?.state === 'mounted') return { ...d, mounted: true, mountpoint: st.mountpoint ?? `/mnt/${d.name}` };
+        if (st?.state === 'unmounted') return { ...d, mounted: false, mountpoint: null }; // a simulated eject of a fixture-mounted drive
         return d;
       });
     }

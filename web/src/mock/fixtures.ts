@@ -394,7 +394,7 @@ export function mockNotifications(): NotificationsDto {
         title: 'Immich 2 is available',
         body: 'Revision 1 → 2 (v1.2.0). Your data and addresses stay.',
         instanceId: 'inst-immich',
-        read: false,
+        read: false, link: null,
       },
       {
         id: 'ntf-2',
@@ -404,7 +404,7 @@ export function mockNotifications(): NotificationsDto {
         title: 'Photos disk is filling up',
         body: '/mnt/photos is 82% full. Consider freeing space.',
         instanceId: null,
-        read: false,
+        read: false, link: null,
       },
       {
         id: 'ntf-3',
@@ -414,7 +414,7 @@ export function mockNotifications(): NotificationsDto {
         title: 'n8n failed to start',
         body: 'The new revision did not answer health checks; the previous one was kept.',
         instanceId: 'inst-n8n',
-        read: true,
+        read: true, link: null,
       },
     ],
   };
@@ -432,7 +432,7 @@ export function mockStorage(): HostStorageDto {
       { mountpoint: '/mnt/photos', device: '/dev/sdb1', fsType: 'ext4', totalBytes: 500 * GiB, usedBytes: 410 * GiB, writable: true, label: 'Photos' },
     ],
     devices: [
-      { name: 'sdc1', device: '/dev/sdc1', size: '14.4G', fsType: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', removable: true, mounted: false, mountpoint: null },
+      { name: 'sdc1', device: '/dev/sdc1', size: '14.4G', fsType: 'vfat', label: 'USB20FD', uuid: 'ABCD-1234', removable: true, mounted: false, mountpoint: null, mountedBy: null, attention: null, dismissed: false },
     ],
     inUse: [{ path: '/mnt/photos', instanceId: 'inst-immich', instanceName: 'Immich', purpose: 'Photo library', readOnly: false }],
     storagePolicy: { autoMount: true, autoStart: true },

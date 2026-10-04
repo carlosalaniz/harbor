@@ -18,6 +18,7 @@ export function Notifications({ c, onOpenApp }: { c: Console; onOpenApp: (instan
   const openItem = (item: NotificationDto) => {
     if (!item.read) void markRead(item.id);
     if (item.instanceId) onOpenApp(item.instanceId);
+    else if (item.link) location.hash = item.link; // decision 122: where it is fixed
   };
   return (
     <section aria-labelledby="notif-h">

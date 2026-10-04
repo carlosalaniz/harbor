@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { CatalogItemDto, InstanceSummary, SystemMetricsDto, WidgetDto } from '../../../../src/contracts/api';
+import type { CatalogItemDto, HostStorageDto, InstanceSummary, SystemMetricsDto, WidgetDto } from '../../../../src/contracts/api';
 import { api } from '../../api';
 import { AppIcon, InstanceIcon, Pill, appLabel, openUrl } from '../components';
 import { ArrowUpIcon, EllipsisIcon } from '../icons';
@@ -92,6 +92,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
         </div>
       </header>
       <SystemStrip m={data.metrics} dockerAvailable={data.system?.docker.available ?? null} />
+      <DrivesCard />
       {updates.length > 0 && (
         <section className="card updates" aria-labelledby="upd-h">
           <div className="row between wrap">
@@ -359,5 +360,97 @@ export function Meter({ label, value, sub, pct }: { label: string; value: string
       </div>
       <div className="muted small">{sub}</div>
     </div>
+  );
+}
+
+// Decision 122: drives that need the operator — mounted by the desktop where Harbor cannot write, or
+// plugged in but not mounted. One quick fix per drive, a dismiss (until the condition changes) and a
+// link to Settings → Storage. Self-polling: the console store does not carry host storage.
+function DrivesCard() {
+  const [devices, setDevices] = useState<HostStorageDto['devices']>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => {
+    api.hostStorage().then(
+      (s) => setDevices(s.devices),
+      () => {},
+    );
+  }, []);
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 10_000);
+    return () => clearInterval(t);
+  }, [load]);
+  const shown = devices.filter((d) => d.attention && !d.dismissed);
+  if (!shown.length) return null;
+  const fix = (d: HostStorageDto['devices'][number]) => {
+    setBusy(d.name);
+    setError(null);
+    (d.attention === 'foreign' ? api.takeoverDevice(d.name) : api.mountDevice(d.name)).then(
+      () => {
+        let tries = 0;
+        const t = setInterval(() => {
+          tries += 1;
+          api.deviceStatus(d.name).then(
+            (st) => {
+              if (st.state === 'mounted' || st.state === 'failed' || tries >= 20) {
+                clearInterval(t);
+                setBusy(null);
+                if (st.state === 'failed') setError(st.message);
+                load();
+              }
+            },
+            () => {
+              clearInterval(t);
+              setBusy(null);
+            },
+          );
+        }, 1500);
+      },
+      (e: Error) => {
+        setBusy(null);
+        setError(e.message);
+      },
+    );
+  };
+  return (
+    <section className="card attention" aria-labelledby="drives-h">
+      <div className="row between wrap">
+        <h2 id="drives-h">{shown.length === 1 ? 'A drive needs attention' : `${shown.length} drives need attention`}</h2>
+        <a className="small" href="#/settings/storage">
+          Manage drives
+        </a>
+      </div>
+      <ul className="plain">
+        {shown.map((d) => {
+          const label = d.label ?? d.name;
+          return (
+            <li key={d.name} className="row between wrap">
+              <span>
+                <strong>{label}</strong> —{' '}
+                {d.attention === 'foreign' ? `mounted by your desktop at ${d.mountpoint}, where apps cannot use it` : 'plugged in but not mounted'}
+              </span>
+              <span className="row">
+                <button className="btn primary" disabled={busy !== null} onClick={() => fix(d)} aria-busy={busy === d.name} aria-label={d.attention === 'foreign' ? `Let Harbor manage ${label}` : `Mount ${label}`}>
+                  {busy === d.name ? (
+                    <>
+                      <span className="spin" aria-hidden="true" /> {d.attention === 'foreign' ? 'Taking over…' : 'Mounting…'}
+                    </>
+                  ) : d.attention === 'foreign' ? (
+                    'Let Harbor manage it'
+                  ) : (
+                    'Mount it'
+                  )}
+                </button>
+                <button className="btn ghost" disabled={busy !== null} onClick={() => void api.dismissDevice(d.name).then(load)} aria-label={`Dismiss the notice about ${label}`} title="Hide until this changes">
+                  ×
+                </button>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+      {error && <p className="error small">{error}</p>}
+    </section>
   );
 }

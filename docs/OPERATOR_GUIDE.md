@@ -310,6 +310,21 @@ are never touched.
   Harbor does not offer Mount there — only Format. Formatting is refused while an
   app uses the drive, and asks for the device name (e.g. `sdb1`) as typed
   confirmation. System disks are never offered.
+- **A drive that needs you** (decision 122) gets a card on Home and, after a minute, a bell warning
+  that opens Settings → Storage:
+  - *Mounted by your desktop* — a desktop (KDE, GNOME) grabbed it at `/media/<you>/<label>`, where
+    Harbor cannot write, so apps cannot use it. **Let Harbor manage it** unmounts it there (refused
+    while a program has files open on it — close it and retry), mounts it the Harbor way at
+    `/mnt/<label>`, and tells the desktop not to automount that drive again (a udev rule,
+    `/etc/udev/rules.d/90-harbor-drive-<uuid>.rules`; delete it to give the drive back for good).
+  - *Plugged in but not mounted* (a Linux filesystem that could hold apps) — **Mount it**. A drive you
+    ejected in Harbor never nags.
+  The × on the card hides it (and the bell row) until something changes — the drive is fixed,
+  unplugged, or has a different problem.
+- **Moving a drive between machines** (decision 122): Harbor's identity files (`.harbor-bind.json`)
+  are readable by any user, and every Harbor mount re-owns just those files to this machine's
+  `harbor` user (each machine's `harbor` has a different number), so a folder an app used on another
+  Harbor still verifies here. Your own files are never re-owned.
 ## 4a2. Install a whole app on a drive (encrypted, portable)
 
 Some apps keep everything in a database that cannot live in one of your own
