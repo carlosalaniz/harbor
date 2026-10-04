@@ -4,7 +4,7 @@ import { appAuthorities, endpointUrls, exposureUrl, HOSTNAME_RE, primaryUrlFor }
 import type { ExposureRow } from '../../src/state/repo.js';
 
 const alloc = { id: 'web', service: 'web', containerPort: 80, hostPort: 18080 };
-const row = (over: Partial<ExposureRow>): ExposureRow => ({ id: 'e1', instanceId: 'i1', endpointId: 'web', via: 'public', hostname: 'app.example.com', port: 443, protection: 'none', state: 'active', observedAt: null, note: null, createdAt: 't', ...over });
+const row = (over: Partial<ExposureRow>): ExposureRow => ({ id: 'e1', instanceId: 'i1', endpointId: 'web', via: 'public', hostname: 'app.example.com', port: 443, protection: 'none', state: 'active', observedAt: null, note: null, createdAt: 't', proxyFrom: null, ...over });
 
 describe('exposure URLs', () => {
   it('renders loopback, tailnet (same port) and public (443) addresses', () => {

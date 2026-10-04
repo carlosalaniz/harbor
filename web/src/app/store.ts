@@ -17,8 +17,8 @@ export interface Data {
 export type Action =
   | { kind: 'install'; packageId: string; name: string; storage?: Record<string, { hostPath: string }>; location?: { dir: string; passphrase?: string }; main?: InstallMainAddress }
   | { kind: 'start' | 'stop' | 'restart' | 'remove' | 'reinstall' | 'purge' | 'update'; instance: InstanceSummary }
-  | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean }
-  | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' }
+  | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string }
+  | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy' }
   | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public' };
 
 export function planRequestFor(a: Action): PlanRequest {
@@ -29,7 +29,7 @@ export function planRequestFor(a: Action): PlanRequest {
       // with the submission (see submitPassphraseFor).
       return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}), ...(a.storage && Object.keys(a.storage).length ? { storage: a.storage } : {}), ...(a.location ? { location: a.location } : {}), ...(a.main ? { main: a.main } : {}) };
     case 'expose':
-      return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), makePrimary: a.makePrimary };
+      return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), ...(a.via === 'proxy' ? { hostname: a.hostname, proxyFrom: a.proxyFrom ?? '' } : {}), makePrimary: a.makePrimary };
     case 'unexpose':
       return { kind: 'unexpose', instanceId: a.instance.id, via: a.via };
     case 'reconfigure':

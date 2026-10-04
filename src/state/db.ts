@@ -4,7 +4,7 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { rfc3339, type Clock, type Ids } from '../util.js';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 export const SCHEMA_SQL = `
 CREATE TABLE installation (
@@ -130,7 +130,7 @@ CREATE TABLE exposures (
   id TEXT PRIMARY KEY,
   instance_id TEXT NOT NULL REFERENCES instances(id),
   endpoint_id TEXT NOT NULL,
-  via TEXT NOT NULL CHECK (via IN ('tailnet','public')),
+  via TEXT NOT NULL CHECK (via IN ('tailnet','public','proxy')),
   hostname TEXT NOT NULL,
   port INTEGER NOT NULL,
   protection TEXT NOT NULL CHECK (protection IN ('none','basic')),
@@ -138,6 +138,7 @@ CREATE TABLE exposures (
   observed_at TEXT,
   note TEXT,
   created_at TEXT NOT NULL,
+  proxy_from TEXT,
   UNIQUE (instance_id, endpoint_id, via),
   UNIQUE (via, hostname, port)
 );
@@ -269,6 +270,10 @@ export function openState(stateDir: string, opts: { readonly?: boolean } = {}): 
           migrateV6toV7(db);
           version = 7;
         }
+        if (version === 7) {
+          migrateV7toV8(db);
+          version = 8;
+        }
       } finally {
         db.pragma('foreign_keys = ON');
       }
@@ -310,6 +315,36 @@ function migrateV6toV7(db: Db): void {
       ALTER TABLE sessions ADD COLUMN last_seen_at TEXT;
     `);
     db.pragma('user_version = 7');
+  })();
+}
+
+// v8: exposures published through the operator's own reverse proxy (decision 118): via 'proxy' and
+// the address that proxy connects from (the only source whose forwarded headers the app trusts).
+function migrateV7toV8(db: Db): void {
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE exposures_v8 (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id),
+        endpoint_id TEXT NOT NULL,
+        via TEXT NOT NULL CHECK (via IN ('tailnet','public','proxy')),
+        hostname TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        protection TEXT NOT NULL CHECK (protection IN ('none','basic')),
+        state TEXT NOT NULL CHECK (state IN ('pending','active','degraded','removing')),
+        observed_at TEXT,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        proxy_from TEXT,
+        UNIQUE (instance_id, endpoint_id, via),
+        UNIQUE (via, hostname, port)
+      );
+      INSERT INTO exposures_v8 (id, instance_id, endpoint_id, via, hostname, port, protection, state, observed_at, note, created_at)
+        SELECT id, instance_id, endpoint_id, via, hostname, port, protection, state, observed_at, note, created_at FROM exposures;
+      DROP TABLE exposures;
+      ALTER TABLE exposures_v8 RENAME TO exposures;
+    `);
+    db.pragma('user_version = 8');
   })();
 }
 

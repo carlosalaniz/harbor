@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–117 so far) | `docs/DECISIONS.md` — **next number is 118**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–118 so far) | `docs/DECISIONS.md` — **next number is 119**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -41,7 +41,7 @@ src/
   lifecycle/           service.ts (plans, catalog, instances, logs, self-update passthrough, adopt-drive, storage policy, needsDrive read model, installCandidates/foundApps/adoptApp + location secrets), runner.ts (serial operations incl. update+rollback, purge, expose; Caddy route builder; drive-guard stops keep desired running; app-home creation + volume rooting), observer.ts (readiness, exposure re-checks, tailnet serve reconcile, Caddy reconcile, drive-guard stop, auto-mount on insert, auto-start on return), dto.ts, instance-dir.ts
   packages/            restricted YAML, manifest/compose validators, catalog loader, store.ts (bundled + uploaded packages, zip import, digest pinning via registry.ts), zip.ts (dependency-free reader/writer)
   planner/             identity, port allocation, Compose rendering (bindHost 127.0.0.1 or 0.0.0.0)
-  state/               SQLite schema v7 (db.ts migrations v1→v7), repo.ts (settings table = small JSON docs: appearance, home order, device.name, security.totp, security.machineKey, storage.autoMount, storage.autoStart; resolved notifications delete regardless of read state)
+  state/               SQLite schema v8 (db.ts migrations v1→v8), repo.ts (settings table = small JSON docs: appearance, home order, device.name, security.totp, security.machineKey, storage.autoMount, storage.autoStart; resolved notifications delete regardless of read state)
   exposure/            tailscale.ts (CLI provider, operator self-heal, URL streaming), caddy.ts (admin API client + renderer incl. LAN console server), urls.ts
   appearance/          wallpaper rotation (fetcher.ts, sources.ts Reddit/Bing/Wikimedia, service.ts)
   system/              metrics, host-storage (lsblk devices, mounts, folders), device-mount.ts (mount/unmount service), net (public IP/DNS), power (systemctl via polkit), terminal (python pty bridge), logs (journal + ring buffer), lan.ts, selfupdate.ts (GitHub feed, unit starter)

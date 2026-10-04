@@ -2364,7 +2364,8 @@
                       "via": {
                         "enum": [
                           "tailnet",
-                          "public"
+                          "public",
+                          "proxy"
                         ]
                       },
                       "hostname": {
@@ -2380,6 +2381,11 @@
                       },
                       "makePrimary": {
                         "type": "boolean"
+                      },
+                      "proxyFrom": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 64
                       }
                     }
                   },
@@ -2408,7 +2414,8 @@
                       "via": {
                         "enum": [
                           "tailnet",
-                          "public"
+                          "public",
+                          "proxy"
                         ]
                       }
                     }

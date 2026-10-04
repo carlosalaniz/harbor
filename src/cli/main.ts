@@ -549,8 +549,9 @@ program
 
 program
   .command('expose [instance]')
-  .description('publish an instance endpoint: --via tailnet (same port on your tailnet) or --via public --host <fqdn> (Caddy, Let\'s Encrypt); --ui exposes the Harbor UI on the tailnet')
-  .requiredOption('--via <tailnet|public>')
+  .description('publish an instance endpoint: --via tailnet (same port on your tailnet), --via public --host <fqdn> (Caddy, Let\'s Encrypt) or --via proxy --host <fqdn> --proxy-from <ip> (your own reverse proxy); --ui exposes the Harbor UI on the tailnet')
+  .requiredOption('--via <tailnet|public|proxy>')
+  .option('--proxy-from <ip>', 'via proxy: the LAN address your reverse proxy connects from')
   .option('--endpoint <id>', 'endpoint id (default: the package primary endpoint)')
   .option('--host <fqdn>', 'public hostname (public only)')
   .option('--protect <none|basic>', 'basic-auth protection (public only; default basic for apps without their own login)')
@@ -558,7 +559,7 @@ program
   .option('--ui', 'expose the Harbor UI itself on the tailnet (never public)', false)
   .option('--yes', 'approve without prompting', false)
   .option('--no-wait', 'return after submission')
-  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; host?: string; protect?: string; primary: boolean; ui: boolean; yes: boolean; wait: boolean }) => {
+  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; host?: string; protect?: string; proxyFrom?: string; primary: boolean; ui: boolean; yes: boolean; wait: boolean }) => {
     const api = client();
     if (opts.ui) {
       if (opts.via !== 'tailnet') throw new HarborError('INVALID_REQUEST', 'the Harbor UI can only be exposed on the tailnet');
@@ -566,14 +567,14 @@ program
       out(ui, () => `Harbor UI exposed on the tailnet: ${ui.url}\nLog in from a device on your tailnet; tailnet ACLs govern access.`);
       return;
     }
-    const plan = await createPlan(api, 'expose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}), ...(opts.host ? { hostname: opts.host } : {}), ...(opts.protect ? { protection: opts.protect } : {}), ...(opts.primary ? { makePrimary: true } : {}) });
+    const plan = await createPlan(api, 'expose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}), ...(opts.host ? { hostname: opts.host } : {}), ...(opts.protect ? { protection: opts.protect } : {}), ...(opts.proxyFrom ? { proxyFrom: opts.proxyFrom } : {}), ...(opts.primary ? { makePrimary: true } : {}) });
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 
 program
   .command('unexpose [instance]')
   .description('withdraw a published address (--via tailnet|public); --ui withdraws the Harbor UI tailnet exposure')
-  .requiredOption('--via <tailnet|public>')
+  .requiredOption('--via <tailnet|public|proxy>')
   .option('--endpoint <id>')
   .option('--ui', 'withdraw the Harbor UI exposure', false)
   .option('--yes', 'approve without prompting', false)

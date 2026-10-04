@@ -51,6 +51,11 @@ describe('state migration v1 -> v2', () => {
     opened.prepare("INSERT INTO notifications (id, created_at, kind, severity, title, body, dedupe_key) VALUES ('66666666-6666-4666-8666-666666666666', 't', 'update', 'info', 'Update', 'b', 'update:x:2')").run();
     expect(() => opened.prepare("INSERT INTO notifications (id, created_at, kind, severity, title, body, dedupe_key) VALUES ('77777777-7777-4777-8777-777777777777', 't', 'update', 'info', 'Update', 'b', 'update:x:2')").run()).toThrow(/UNIQUE/);
     opened.prepare("INSERT INTO package_sources (id, kind, url, ref, package_id, created_at) VALUES ('88888888-8888-4888-8888-888888888888', 'git', 'https://github.com/x/y', 'main', 'myapp', 't')").run();
+    // v8: exposures through the operator's own proxy carry the proxy's address
+    opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, note, created_at, proxy_from) VALUES ('99999999-9999-4999-8999-999999999999', '22222222-2222-4222-8222-222222222222', 'web', 'proxy', 'cloud.example.com', 443, 'none', 'active', NULL, 't', '192.168.0.20')").run();
+    expect(opened.prepare('SELECT via, proxy_from FROM exposures').get()).toEqual({ via: 'proxy', proxy_from: '192.168.0.20' });
+    expect(() => opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '22222222-2222-4222-8222-222222222222', 'web', 'carrier-pigeon', 'x', 1, 'none', 'active', 't')").run()).toThrow(/CHECK/);
+    expect(opened.pragma('foreign_key_check')).toEqual([]);
     opened.close();
     // second open: no migration, still fine
     const again = openState(dir);

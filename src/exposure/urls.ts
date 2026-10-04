@@ -5,7 +5,7 @@ import { lanHttpsUrl } from '../system/lan-https.js';
 
 // The single place that turns allocations + exposures into the addresses users see.
 export function exposureUrl(e: Pick<ExposureRow, 'via' | 'hostname' | 'port'>): string {
-  if (e.via === 'public') return `https://${e.hostname}/`;
+  if (e.via === 'public' || e.via === 'proxy') return `https://${e.hostname}/`;
   return e.port === 443 ? `https://${e.hostname}/` : `https://${e.hostname}:${e.port}/`;
 }
 
@@ -23,6 +23,7 @@ export function endpointUrls(alloc: EndpointAllocation, exposures: ExposureRow[]
     if (e.endpointId !== alloc.id) continue;
     if (e.via === 'tailnet') urls.tailnet = exposureUrl(e);
     if (e.via === 'public') urls.public = exposureUrl(e);
+    if (e.via === 'proxy') urls.proxy = exposureUrl(e);
   }
   return urls;
 }

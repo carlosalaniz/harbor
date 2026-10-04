@@ -91,7 +91,7 @@ export function PlanDialog({ c }: { c: Console }) {
                   <a href={plan.exposure.url} target="_blank" rel="noopener noreferrer">
                     {plan.exposure.url}
                   </a>{' '}
-                  via {plan.exposure.via === 'tailnet' ? 'your tailnet' : 'the public internet'}
+                  via {plan.exposure.via === 'tailnet' ? 'your tailnet' : plan.exposure.via === 'proxy' ? 'your own proxy' : 'the public internet'}
                   {plan.exposure.protection === 'basic' ? ', behind a generated password' : ''}
                   {plan.exposure.makePrimary ? '; becomes the address the app uses for itself' : ''}
                 </span>
@@ -747,7 +747,8 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
 }
 
 export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { inst: InstanceSummary; exposures: ExposureDto[]; tools: PlatformToolDto[]; onClose: () => void; onStart: (a: Action) => void }) {
-  const [via, setVia] = useState<'tailnet' | 'public'>('tailnet');
+  const [via, setVia] = useState<'tailnet' | 'public' | 'proxy'>('tailnet');
+  const [proxyFrom, setProxyFrom] = useState('');
   const [hostname, setHostname] = useState('');
   const [domains, setDomains] = useState<DomainsDto | null>(null);
   const [customHost, setCustomHost] = useState(false);
@@ -760,8 +761,9 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
   const ts = tools.find((t) => t.id === 'tailscale');
   const px = tools.find((t) => t.id === 'proxy');
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
-  const has = (v: 'tailnet' | 'public') => exposures.some((e) => e.via === v);
-  const providerOk = via === 'tailnet' ? ts?.installationState === 'installed' : px?.installationState === 'installed';
+  const has = (v: 'tailnet' | 'public' | 'proxy') => exposures.some((e) => e.via === v);
+  // 'proxy' (decision 118): your own reverse proxy; Harbor runs nothing for it, so there is no provider to check.
+  const providerOk = via === 'proxy' ? true : via === 'tailnet' ? ts?.installationState === 'installed' : px?.installationState === 'installed';
   return (
     <Dialog title={`Publish ${inst.name}`} onClose={onClose}>
       <p className="muted small">The app keeps listening on 127.0.0.1. Publishing adds an HTTPS address in front of the same port.</p>
@@ -778,8 +780,8 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
               {e.note && <span className="muted small"> · {e.note}</span>}
             </span>
             <span className="row">
-              {!e.isPrimary && e.state === 'active' && (
-                <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: e.via })}>
+              {!e.isPrimary && e.state === 'active' && e.via !== 'proxy' && (
+                <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: e.via as 'tailnet' | 'public' })}>
                   Make primary
                 </button>
               )}
@@ -808,7 +810,26 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
         <label className="check">
           <input type="radio" name="via" checked={via === 'public'} onChange={() => setVia('public')} /> Public (Caddy, Let&apos;s Encrypt)
         </label>
+        <label className="check">
+          <input type="radio" name="via" checked={via === 'proxy'} onChange={() => setVia('proxy')} /> Your own proxy (Nginx Proxy Manager, Traefik…)
+        </label>
       </div>
+      {via === 'proxy' && (
+        <>
+          <label className="small">
+            Hostname your proxy serves
+            <input value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="cloud.example.com" aria-label="Hostname your proxy serves" />
+          </label>
+          <label className="small">
+            Your proxy&apos;s LAN address (the machine it runs on)
+            <input value={proxyFrom} onChange={(e) => setProxyFrom(e.target.value.trim())} placeholder="192.168.0.20" aria-label="Your proxy's LAN address" />
+          </label>
+          <p className="muted small">
+            Your proxy keeps the certificate and forwards to this machine on port {primary?.hostPort ?? '…'} (turn WebSockets on). Harbor tells the app about the hostname and trusts forwarded headers only from
+            that address.
+          </p>
+        </>
+      )}
       {!providerOk && <p className="warn">{via === 'tailnet' ? ts?.note ?? 'Tailscale is not set up.' : px?.note ?? 'The public proxy is not set up.'}</p>}
       {via === 'public' && (
         <>
@@ -844,14 +865,16 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
           </label>
         </>
       )}
-      <label className="check">
-        <input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} /> make it the primary address (apps that embed their URL are reconfigured)
-      </label>
+      {via !== 'proxy' && (
+        <label className="check">
+          <input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} /> make it the primary address (apps that embed their URL are reconfigured)
+        </label>
+      )}
       <div className="row end">
         <button className="btn" onClick={onClose}>
           Close
         </button>
-        <button className="btn primary" disabled={!providerOk || has(via) || (via === 'public' && !hostname)} onClick={() => onStart({ kind: 'expose', instance: inst, via, hostname, protection, makePrimary })}>
+        <button className="btn primary" disabled={!providerOk || has(via) || (via !== 'tailnet' && !hostname) || (via === 'proxy' && !proxyFrom)} onClick={() => onStart({ kind: 'expose', instance: inst, via, hostname, protection, makePrimary: via !== 'proxy' && makePrimary, proxyFrom })}>
           {has(via) ? `Already published via ${via}` : 'Publish'}
         </button>
       </div>

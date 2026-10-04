@@ -367,7 +367,9 @@ export class OperationRunner {
     const net = await docker.inspectNetwork(defaultNetworkName(identityFor(this.ctx.installationId, inst.id)));
     const main = fresh.endpoints.find((e) => e.id === pkg.manifest.ui.primaryEndpoint) ?? fresh.endpoints[0];
     const url = main ? primaryUrlFor(main, exposures, fresh.primaryExposure, lanHost, lanHost && this.lanHttpsOn() ? lanHost : null) : '';
-    const env = { HARBOR_ADDRESSES: addresses.join(' '), HARBOR_PROXIES: (net?.gateways ?? []).join(' '), HARBOR_URL: url };
+    // Harbor's proxies connect from the app network's gateway; your own proxy (decision 118) from its LAN address.
+    const proxies = [...new Set([...(net?.gateways ?? []), ...exposures.filter((e) => e.via === 'proxy' && e.proxyFrom).map((e) => e.proxyFrom!)])];
+    const env = { HARBOR_ADDRESSES: addresses.join(' '), HARBOR_PROXIES: proxies.join(' '), HARBOR_URL: url };
     this.event(op, 'configuring', `running ${pkg.manifest.metadata.name}'s after-start hook in ${hook.service} (${addresses.length} addresses, main ${url})`);
     try {
       const r = await docker.exec(id, { cmd: hook.command, ...(hook.user ? { user: hook.user } : {}), env, timeoutMs: (hook.timeoutSeconds ?? 120) * 1000 });
@@ -459,6 +461,7 @@ export class OperationRunner {
   }
 
   private async withdrawExposure(op: OperationRow, e: ExposureRow): Promise<void> {
+    if (e.via === 'proxy') return; // your proxy's own config is yours to remove
     if (e.via === 'tailnet') {
       const inst = this.ctx.repo.instance(e.instanceId);
       const alloc = inst?.endpoints.find((a) => a.id === e.endpointId);
@@ -488,15 +491,18 @@ export class OperationRunner {
       if (!inst.secrets.some((s) => s.id === this.basicSecretId(x.endpointId))) repo.updateInstance(inst.id, { secrets: [...inst.secrets, { id: this.basicSecretId(x.endpointId), file: path.join('secrets', this.basicSecretId(x.endpointId)) }] });
     }
     const exposureId = ids.uuid();
-    repo.insertExposure({ id: exposureId, instanceId: inst.id, endpointId: x.endpointId, via: x.via, hostname: x.hostname, port: x.port, protection: x.protection, state: 'pending', note: null });
+    repo.insertExposure({ id: exposureId, instanceId: inst.id, endpointId: x.endpointId, via: x.via, hostname: x.hostname, port: x.port, protection: x.protection, state: 'pending', note: null, proxyFrom: x.proxyFrom ?? null });
     const row = repo.exposure(exposureId)!;
-    if (x.via === 'tailnet') {
+    if (x.via === 'proxy') {
+      // Decision 118: the operator's proxy terminates TLS and forwards here; Harbor runs nothing for it.
+      this.event(op, 'publishing', `your proxy at ${x.proxyFrom} forwards https://${x.hostname}/ to this machine's port ${alloc.hostPort}`);
+    } else if (x.via === 'tailnet') {
       await this.ctx.tailscale.serve(x.port, `http://127.0.0.1:${alloc.hostPort}`);
       this.event(op, 'publishing', `tailscale serve --https=${x.port} -> 127.0.0.1:${alloc.hostPort}`);
     } else {
       await this.reconcileCaddy(op, sink);
     }
-    if (x.makePrimary) {
+    if (x.makePrimary && x.via !== 'proxy') {
       await this.applyPrimary(op, inst, x.via, sink);
     }
     this.ctx.repo.setOperationPhase(op.id, 'verifying', 'checking');
@@ -513,7 +519,7 @@ export class OperationRunner {
       repo.updateExposure(exposureId, { state: 'active', observedAt: now, note: `answered HTTP ${last.status}` });
       this.event(op, 'checking', `${url} answers (HTTP ${last.status})`);
     } else {
-      repo.updateExposure(exposureId, { state: 'degraded', observedAt: now, note: `not reachable yet: ${last.error ?? `HTTP ${last.status}`}. ${x.via === 'public' ? 'Check the DNS record and that ports 80/443 reach this host; Harbor keeps re-checking.' : 'Check tailnet HTTPS certificates; Harbor keeps re-checking.'}` });
+      repo.updateExposure(exposureId, { state: 'degraded', observedAt: now, note: `not reachable yet: ${last.error ?? `HTTP ${last.status}`}. ${x.via === 'proxy' ? 'Check your proxy forwards this hostname to this machine (from inside your network the domain may not loop back; try it from outside).' : x.via === 'public' ? 'Check the DNS record and that ports 80/443 reach this host; Harbor keeps re-checking.' : 'Check tailnet HTTPS certificates; Harbor keeps re-checking.'}` });
       this.event(op, 'checking', `${url} not reachable yet (${last.error ?? `HTTP ${last.status}`}); exposure recorded as degraded and re-checked periodically`);
     }
     await this.hookAfterAddressChange(op, inst);

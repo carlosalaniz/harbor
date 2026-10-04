@@ -304,6 +304,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 ## Phase 40 — Nextcloud sets itself up from the hook (2026-10-03, 0.17.8) ✅
 - [x] Found live (decision 117): a never-set-up revision-1 instance updated to revision 2 skipped the image's auto-install, the hook exited "not installed yet", the web setup page then kept the `localhost` pin. Revision 3's hook runs `occ maintenance:install` with the provisioned admin first; prototyped on nextcloud:34-apache + postgres:17
 
+## Phase 41 — publish through your own proxy (2026-10-03, 0.18.0) ✅
+- [x] Decision 118: `via: proxy` exposures (hostname + `proxyFrom`); schema v8 (exposures rebuild); hook gets the hostname and the proxy's IP as a trusted proxy; never primary; LAN mode required; Publish dialog "Your own proxy", `harbor expose --via proxy --host --proxy-from`
+- [x] Tests: migration v8 (proxy row, CHECK), integration proxy path (validation, warning with the forward target, hook env, urls.proxy, unexpose)
+- [x] DNS: `nextcloud.apein.space` A → the home IP (DigitalOcean)
+
 ## Test results (latest local run)
 
 | Command | Result |

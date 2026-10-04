@@ -511,6 +511,7 @@ Without LAN mode everything stays bound to 127.0.0.1. Publishing adds an HTTPS a
 | Path | Address | Provider | Set up with |
 |---|---|---|---|
 | tailnet (private) | `https://<node>.<tailnet>.ts.net:<same port>/` | Tailscale (`tailscale serve`) | `sudo ... bootstrap --with-tailscale`, then `sudo tailscale up` and approve the login URL; enable **MagicDNS + HTTPS certificates** in the Tailscale admin console (DNS settings) |
+| your own proxy | `https://<your hostname>/` | your reverse proxy (Nginx Proxy Manager, Traefik…) keeps the certificate | ports 80/443 already go to another machine: point the hostname's DNS at your home IP, forward it in your proxy to `http://<this machine's LAN IP>:<app port>` with WebSockets on, then **Publish… → Your own proxy** with the hostname and the proxy machine's LAN IP (`harbor expose <app> --via proxy --host <fqdn> --proxy-from <ip>`). Harbor only tells the app about the name and trusts forwarded headers from that IP |
 | public | `https://<your hostname>/` | Caddy (Let's Encrypt) | `sudo ... bootstrap --with-public-proxy`; create an A/AAAA record for each hostname pointing at this host; ports 80 and 443 must be reachable from the internet |
 
 ```sh

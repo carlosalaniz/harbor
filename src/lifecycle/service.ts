@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, stat
 import path from 'node:path';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
-import { lanAppHost, lanUrl } from '../system/lan.js';
+import { lanAppHost, lanNames, lanUrl } from '../system/lan.js';
 import { caPem, ensureTlsCerts, lanHttpsHosts, readTlsState, reconcileLanHttps } from '../system/lan-https.js';
 import { hostname } from 'node:os';
 import { defaultCredentialsOf } from '../packages/catalog.js';
@@ -1713,11 +1713,22 @@ export class ApplicationService {
 
   // Where a tailnet / public exposure of `alloc` would live, after checking the provider is ready
   // (shared by Publish and by install with a chosen main address, decision 116). Pushes plan warnings.
-  private async exposureTarget(via: ExposureVia, alloc: EndpointAllocation, pkg: LoadedPackage, pkgName: string, req: { hostname?: string; protection?: 'none' | 'basic' }, warnings: string[]): Promise<{ hostname: string; port: number; protection: 'none' | 'basic' }> {
+  private async exposureTarget(via: ExposureVia, alloc: EndpointAllocation, pkg: LoadedPackage, pkgName: string, req: { hostname?: string; protection?: 'none' | 'basic'; proxyFrom?: string }, warnings: string[]): Promise<{ hostname: string; port: number; protection: 'none' | 'basic' }> {
     const { repo } = this.ctx;
     let hostname: string;
     let port: number;
     let protection: 'none' | 'basic';
+    if (via === 'proxy') {
+      // Decision 118: your own reverse proxy (Nginx Proxy Manager, Traefik, …) terminates TLS and forwards to
+      // this machine's LAN port. Harbor only records the hostname and which address may forward headers.
+      if (!this.ctx.config.lan.enabled) throw new HarborError('INVALID_STATE', 'your proxy reaches apps over the LAN, and LAN mode is off', { nextAction: 'Turn on LAN mode (bootstrap --lan), or publish with Harbor\'s own public proxy.' });
+      if (!req.hostname || !HOSTNAME_RE.test(req.hostname)) throw new HarborError('INVALID_REQUEST', 'needs the fully qualified hostname your proxy serves (e.g. cloud.example.com)');
+      const from = (req as { proxyFrom?: string }).proxyFrom?.trim() ?? '';
+      if (!isProxyAddress(from)) throw new HarborError('INVALID_REQUEST', 'needs the LAN address your proxy connects from (an IPv4/IPv6 address, e.g. 192.168.0.20)', { nextAction: 'Use the IP of the machine running your proxy, not a hostname or 127.0.0.1.' });
+      const lanIp = lanNames().find((n) => /^\d+\.\d+\.\d+\.\d+$/.test(n)) ?? '<this machine>';
+      warnings.push(`In your proxy, forward https://${req.hostname}/ to http://${lanIp}:${alloc.hostPort} (WebSockets on). Harbor runs nothing for this address: the certificate and the DNS record are your proxy's.`);
+      return { hostname: req.hostname, port: 443, protection: 'none' };
+    }
     if (via === 'tailnet') {
       const st = await this.ctx.tailscale.status();
       if (!st || st.backendState !== 'Running' || !st.dnsName) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Tailscale is not set up on this host', { nextAction: 'Re-run bootstrap with --with-tailscale and complete the login; see the Tailscale tool card.' });
@@ -1780,7 +1791,7 @@ export class ApplicationService {
       const e = existing.find((x) => x.endpointId === endpointId && x.via === req.via);
       if (!e) throw new HarborError('NOT_FOUND', `${inst.name}/${endpointId} is not exposed via ${req.via}`);
       base.exposure = { endpointId, via: e.via, hostname: e.hostname, port: e.port, protection: e.protection, makePrimary: false };
-      base.changes.push(`Remove the ${req.via} address ${exposureUrl(e)} of "${inst.name}" (${req.via === 'public' ? 'Caddy route' : 'tailscale serve entry'})`);
+      base.changes.push(req.via === 'proxy' ? `Forget the address ${exposureUrl(e)} of "${inst.name}" (remove it from your proxy yourself)` : `Remove the ${req.via} address ${exposureUrl(e)} of "${inst.name}" (${req.via === 'public' ? 'Caddy route' : 'tailscale serve entry'})`);
       if (inst.primaryExposure === req.via) {
         base.primary = 'loopback';
         base.changes.push(hasBaseUrlBindings ? 'It is the primary address: switch back to loopback and recreate containers with the loopback base URL' : 'It is the primary address: switch back to loopback');
@@ -1797,10 +1808,13 @@ export class ApplicationService {
     const taken = repo.exposureByAddress(req.via, hostname, port);
     if (taken) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.via, hostname, port })} is already used by another exposure`);
     if (endpoint.browserContext === 'ordinary') base.warnings.push('This endpoint is declared for ordinary browser contexts; it will still be served over HTTPS.');
-    base.exposure = { endpointId, via: req.via, hostname, port, protection, makePrimary: req.makePrimary ?? false };
-    if (req.makePrimary) base.primary = req.via;
+    if (req.via === 'proxy' && req.makePrimary) throw new HarborError('INVALID_REQUEST', 'an address on your own proxy cannot be the main address (Harbor does not control its certificate)');
+    base.exposure = { endpointId, via: req.via, hostname, port, protection, makePrimary: req.makePrimary ?? false, ...(req.via === 'proxy' ? { proxyFrom: req.proxyFrom! } : {}) };
+    if (req.makePrimary && req.via !== 'proxy') base.primary = req.via;
     base.changes.push(
-      `Publish "${inst.name}" endpoint ${endpointId} at ${exposureUrl(base.exposure)} via ${req.via === 'public' ? 'Caddy (Let\'s Encrypt certificate)' : 'tailscale serve (tailnet certificate)'} -> 127.0.0.1:${alloc.hostPort}`,
+      req.via === 'proxy'
+        ? `Record https://${hostname}/ as an address of "${inst.name}" served by your proxy at ${req.proxyFrom}; trust forwarded headers from that address only`
+        : `Publish "${inst.name}" endpoint ${endpointId} at ${exposureUrl(base.exposure)} via ${req.via === 'public' ? 'Caddy (Let\'s Encrypt certificate)' : 'tailscale serve (tailnet certificate)'} -> 127.0.0.1:${alloc.hostPort}`,
       ...(protection === 'basic' ? ['Generate retained basic-auth credentials (shown once when the operation completes)'] : []),
       ...(req.makePrimary ? [hasBaseUrlBindings ? 'Make it the primary address and recreate containers with the new base URL' : 'Make it the primary address'] : []),
       'Verify the address answers over HTTPS before marking it active',
@@ -1943,4 +1957,10 @@ export class ApplicationService {
 // login cookie, Vaultwarden's WebCrypto vault). `browserContext: secure` alone only means "better on HTTPS".
 export function requiresHttps(pkg: LoadedPackage): boolean {
   return pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.httpsRequired === true;
+}
+
+// Decision 118: the address an operator's own proxy connects from — a literal IP that is not loopback.
+export function isProxyAddress(s: string): boolean {
+  if (/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(s)) return s.split('.').every((n) => Number(n) <= 255) && !s.startsWith('127.') && s !== '0.0.0.0';
+  return /^[0-9a-f:]+$/i.test(s) && s.includes(':') && s !== '::1' && s !== '::';
 }

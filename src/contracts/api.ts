@@ -7,11 +7,12 @@ export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unkn
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
 export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart';
-export type ExposureVia = 'tailnet' | 'public';
+// 'proxy' = published through the operator's own reverse proxy (decision 118); Harbor runs nothing for it.
+export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The address an app treats as its own, chosen at install (decision 116). Omitted = this network
 // (HTTPS LAN when on, else LAN, else loopback); tailnet/public publish it in the same operation.
 export type InstallMainAddress = { via: 'tailnet' } | { via: 'public'; hostname: string };
-export type PrimaryExposure = 'loopback' | ExposureVia;
+export type PrimaryExposure = 'loopback' | 'tailnet' | 'public';
 
 export interface EndpointDto {
   id: string;
@@ -20,7 +21,7 @@ export interface EndpointDto {
   browserUrl: string; // loopback URL (compatibility)
   // lan: present in LAN mode, http://<hostname>.local:<port> (the console swaps in the host it was opened with)
   // lanSecure: present when LAN HTTPS is on, https://<hostname>.local:<port+offset> (same swap)
-  urls: { loopback: string; lan?: string; lanSecure?: string; tailnet?: string; public?: string };
+  urls: { loopback: string; lan?: string; lanSecure?: string; tailnet?: string; public?: string; proxy?: string }; // proxy: your own reverse proxy (decision 118)
   primary: PrimaryExposure;
 }
 
@@ -353,7 +354,7 @@ export type PlanRequest =
   | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }>; location?: InstallLocationRequest; main?: InstallMainAddress }
   | { kind: 'start' | 'stop' | 'restart' | 'remove' | 'reinstall' | 'purge'; instanceId: string }
   | { kind: 'update'; instanceId: string; storage?: Record<string, { hostPath: string }> }
-  | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean }
+  | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean; proxyFrom?: string }
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
   | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };
 

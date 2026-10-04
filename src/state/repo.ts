@@ -9,8 +9,9 @@ export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unkn
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
 export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart';
-export type ExposureVia = 'tailnet' | 'public';
-export type PrimaryExposure = 'loopback' | ExposureVia;
+export type ExposureVia = 'tailnet' | 'public' | 'proxy';
+// The operator's own proxy (decision 118) is never the main address: Harbor does not own its TLS.
+export type PrimaryExposure = 'loopback' | 'tailnet' | 'public';
 
 export interface EndpointAllocation {
   id: string;
@@ -97,6 +98,7 @@ export interface ExposureRow {
   observedAt: string | null;
   note: string | null;
   createdAt: string;
+  proxyFrom: string | null; // via 'proxy': the address the operator's proxy connects from (decision 118)
 }
 
 export interface PlanRow {
@@ -140,7 +142,7 @@ export interface PlanProposal {
   warnings: string[];
   releaseHashes: Record<string, string>;
   // expose/unexpose/reconfigure payloads (absent for lifecycle kinds)
-  exposure?: { endpointId: string; via: ExposureVia; hostname: string; port: number; protection: 'none' | 'basic'; makePrimary: boolean };
+  exposure?: { endpointId: string; via: ExposureVia; hostname: string; port: number; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string };
   primary?: PrimaryExposure;
   // update plans: what changes between the installed release and the new one
   update?: { fromRevision: string; toRevision: string; fromVersion: string | null; toVersion: string | null; images: { service: string; from: string; to: string }[]; newSecrets: string[]; newStorage: string[]; newEndpoints: string[]; releaseNotes: string | null };
@@ -275,6 +277,7 @@ function exposureFrom(r: Raw): ExposureRow {
     observedAt: (r['observed_at'] as string | null) ?? null,
     note: (r['note'] as string | null) ?? null,
     createdAt: r['created_at'] as string,
+    proxyFrom: (r['proxy_from'] as string | null) ?? null,
   };
 }
 function planFrom(r: Raw): PlanRow {
@@ -712,10 +715,10 @@ export class Repo {
     const r = this.db.prepare('SELECT * FROM exposures WHERE via = ? AND hostname = ? AND port = ?').get(via, hostname, port) as Raw | undefined;
     return r ? exposureFrom(r) : null;
   }
-  insertExposure(e: Omit<ExposureRow, 'createdAt' | 'observedAt'>): void {
+  insertExposure(e: Omit<ExposureRow, 'createdAt' | 'observedAt' | 'proxyFrom'> & { proxyFrom?: string | null }): void {
     this.db
-      .prepare('INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, observed_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)')
-      .run(e.id, e.instanceId, e.endpointId, e.via, e.hostname, e.port, e.protection, e.state, e.note, this.now());
+      .prepare('INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, observed_at, note, created_at, proxy_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)')
+      .run(e.id, e.instanceId, e.endpointId, e.via, e.hostname, e.port, e.protection, e.state, e.note, this.now(), e.proxyFrom ?? null);
   }
   updateExposure(id: string, patch: Partial<Pick<ExposureRow, 'state' | 'note' | 'observedAt'>>): void {
     const sets: string[] = [];

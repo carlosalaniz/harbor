@@ -87,6 +87,26 @@ describe('app addresses: hook, restart, HTTPS main address', () => {
     expect(lastExec().env['HARBOR_ADDRESSES']).not.toContain('tail1234');
   });
 
+  it('your own proxy (decision 118): records the hostname, trusts only that proxy, runs nothing for it', async () => {
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'expose', instanceId: app.id, via: 'proxy', hostname: 'cloud.example.com', proxyFrom: '127.0.0.1' });
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'expose', instanceId: app.id, via: 'proxy', hostname: 'cloud.example.com', proxyFrom: '192.168.0.20', makePrimary: true });
+    const plan = await h.api.plan({ kind: 'expose', instanceId: app.id, via: 'proxy', hostname: 'cloud.example.com', proxyFrom: '192.168.0.20' });
+    expect(plan.warnings.some((w) => new RegExp(`forward https://cloud\\.example\\.com/ to http://.+:${app.endpoints[0]!.hostPort}`).test(w))).toBe(true);
+    const sub = await h.api.submit(plan.id);
+    const op = await h.api.waitOperation(sub.operationId);
+    expect(op.state).toBe('succeeded');
+    expect(h.tailscale.entries).toEqual([]); // nothing published by Harbor itself
+    const x = lastExec();
+    expect(x.env['HARBOR_ADDRESSES']!.split(' ')).toContain('cloud.example.com');
+    expect(x.env['HARBOR_PROXIES']!.split(' ')).toContain('192.168.0.20');
+    const fresh = (await h.api.instances()).find((i) => i.id === app.id)!;
+    expect(fresh.endpoints[0]!.urls.proxy).toBe('https://cloud.example.com/');
+    expect(fresh.endpoints[0]!.primary).toBe('loopback');
+    const un = await h.api.run({ kind: 'unexpose', instanceId: app.id, via: 'proxy' });
+    expect(un.op.state).toBe('succeeded');
+    expect(lastExec().env['HARBOR_PROXIES']).not.toContain('192.168.0.20');
+  });
+
   it('refuses an app that needs HTTPS on plain LAN, and the catalog says so first', async () => {
     const { items } = await h.api.expect<{ items: CatalogItemDto[] }>(200, 'GET', '/v1/catalog');
     expect(items.find((i) => i.id === 'secureapp')!.requiresHttps).toBe(true);
