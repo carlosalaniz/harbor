@@ -96,6 +96,12 @@ Docker-bypass output).
   Audiobookshelf + Navidrome (plain and own folder), Excalidraw, Memos — **6/6 pass in under 7 minutes**
   including droplet creation. Large packages (Immich, Open WebUI, Nextcloud with its own folder) still need
   a re-run on 0.18.3.
+- **Nextcloud with its own folder, by hand on the same droplet (0.18.3):** a folder outside the writable
+  paths (`/opt/…`) is refused at plan time with the fix named, nothing created; `/mnt/nextcloud-data`
+  prepared `33:33 0770` (the first hint) is refused too — the `harbor` user cannot write the identity file —
+  so the hint became `33:harbor 0770` (0.18.4); with it Nextcloud installed in about 2 minutes, the hook set
+  it up (`installed: true`, admin + data in the folder) and four minutes later it still ran healthy with
+  zero drive-guard stops.
 
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 

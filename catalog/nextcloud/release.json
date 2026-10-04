@@ -6,13 +6,13 @@
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "66ad5e152515d83850599ce656db02eba706aa128312ed98ded52b1e59a5adb4"
+      "sha256": "4bfe17b8ef59bc380ae7ffa415982e0b5befecff45be720700b3487a813b20d8"
     },
     "compose.yaml": {
       "sha256": "00aecb49aecd7e0c6fef589a2548b135b489cb02ed722ce208c609d8620a1deb"
     },
     "README.md": {
-      "sha256": "bbb5f0af3cec680ef1b1eb36437654a9aaa5b1fac9c0d1bae0aea468e3df3847"
+      "sha256": "823c8115c3e557ebad5a125859fae0b63b75c2c182f694481059cc7d4c33b6a9"
     }
   },
   "images": {

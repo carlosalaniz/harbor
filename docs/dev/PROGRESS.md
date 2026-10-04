@@ -320,7 +320,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 ## Phase 44 — bring-your-own folders must take the marker (2026-10-04, 0.18.3) ✅
 - [x] Decision 121: fresh-droplet qualification — every "external storage" variant was stopped by the drive guard right after install (marker write silently failed outside `ReadWritePaths`). Plan probes writability; install/adopt write the marker or fail; qualifier folders under `/mnt`
 - [x] Qualify script: log in before polling `doctor` on a fresh host (it hung 30 min on `system: null`)
-- [x] Nextcloud data folder: its hint promised "takes ownership on first start"; with Harbor's automatic setup (revision 2+) Nextcloud instead refuses a world-readable or root-owned folder (503). Hint + README now give `sudo chown 33:33 … && sudo chmod 0770 …` (Harbor never chowns); the qualifier prepares the folder that way
+- [x] Nextcloud data folder: its hint promised "takes ownership on first start"; with Harbor's automatic setup (revision 2+) Nextcloud instead refuses a world-readable or root-owned folder (503). Hint + README now give `sudo chown 33:harbor … && sudo chmod 0770 …` (uid 33 for Nextcloud, group harbor for the identity marker; Harbor never chowns); the qualifier prepares the folder that way. `33:33` was tried live first and refused by decision 121's probe — the harbor user could not write the marker
 - [x] Integration: unwritable folder refused at plan (storage.test.ts)
 
 ## Test results (latest local run)

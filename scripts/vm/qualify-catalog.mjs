@@ -165,8 +165,8 @@ async function main() {
       if (variant) {
         for (const c of ext) {
           const dir = `${EXT_ROOT}/${id}-${c}-${SUFFIX}`; // retained instances keep their folders reserved, so each pass gets fresh ones
-          // Prepared the way each package's hint says (Nextcloud: owned by uid 33, mode 0770).
-          const prep = id === 'nextcloud' ? `chown 33:33 ${dir} && chmod 0770 ${dir}` : `chmod 777 ${dir}`;
+          // Prepared the way each package's hint says (Nextcloud: uid 33, group harbor, mode 0770).
+          const prep = id === 'nextcloud' ? `chown 33:harbor ${dir} && chmod 0770 ${dir}` : `chmod 777 ${dir}`;
           ssh(`mkdir -p ${dir} && touch ${dir}/.harbor-test-marker && ${prep}`);
           storageArgs.push('--storage', `${c}=${dir}`);
         }

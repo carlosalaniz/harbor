@@ -13,10 +13,10 @@ Files, calendar, contacts and office documents on your own machine. Sync clients
 
 - `html`: Nextcloud application, config and apps.
 - `db`: PostgreSQL database.
-- `data`: User files. You may point this at a folder of your own at install time (optional), under `/mnt`, `/media` or `/srv/harbor`, for example `/mnt/nextcloud-data`. Prepare it once — Nextcloud runs as uid 33 and refuses a data folder other users can read, and Harbor never changes ownership of your folders:
+- `data`: User files. You may point this at a folder of your own at install time (optional), under `/mnt`, `/media` or `/srv/harbor`, for example `/mnt/nextcloud-data`. Prepare it once — Nextcloud runs as uid 33 and refuses a data folder other users can read; the `harbor` group lets Harbor keep its small identity file there; Harbor never changes ownership of your folders:
 
   ```sh
-  sudo mkdir -p /mnt/nextcloud-data && sudo chown 33:33 /mnt/nextcloud-data && sudo chmod 0770 /mnt/nextcloud-data
+  sudo mkdir -p /mnt/nextcloud-data && sudo chown 33:harbor /mnt/nextcloud-data && sudo chmod 0770 /mnt/nextcloud-data
   ```
 - Managed volumes and your folders are retained on remove; Harbor never deletes them.
 
