@@ -86,6 +86,8 @@ Docker-bypass output).
 - **Public one-liner on a brand-new Ubuntu 24.04.5 droplet:** 0.18.0 failed at `apt-get update`
   (Docker's Debian repo chosen for Ubuntu — decision 119); **0.18.1 installed cleanly** (Docker, Caddy,
   Tailscale awaiting login, setup code printed).
+- **Acceptance suite on 0.19.0** (the beta build), run `vm-2026-10-05T01-36-24`: **24 checks — 23 pass,
+  0 fail, 1 blocked** (tailnet, no auth key), after decisions 121–122.
 - **Acceptance suite** `pnpm test:vm -- --fresh --exposure`, run `vm-2026-10-04T01-32-52` on 0.18.2:
   **24 checks — 23 pass, 0 fail, 1 blocked** (B02/B03 tailnet: no auth key). The 0.18.1 run before it
   (`vm-2026-10-04T00-56-30`, not kept) found decision 120 (sealing without the machine key) and two
