@@ -114,6 +114,32 @@ Docker-bypass output).
   `/etc/udev/rules.d/90-harbor-drive-<uuid>.rules` (`UDISKS_AUTO=0`), and the warning resolved.
 - Re-plugged (came back as `sdd1`): KDE no longer automounted it; Harbor auto-mounted it at `/mnt/usb20fd`.
 
+
+## 3g. A real app moved into Harbor: custom ERPNext from a git source (2026-10-04, Harbor 0.20.0 → 0.20.1)
+
+Carlos's ERPNext (Compose stack on another home server: custom image, 10 services, site `erp2.local`)
+packaged as a public git source (`carlosalaniz/harbor-erpnext2`) using `command:` (decision 123).
+
+- Disposable droplet (0.20.0): the first install failed in 11 s — `Permission denied` on a file the
+  Dockerfile `COPY`s for `USER frappe` → **decision 124** (build contexts keep git's modes, 0.20.1).
+  Package fixes found the same way: the base image's `sites/` is a `VOLUME` (the classic builder drops
+  writes to it between steps), nginx must wait for both upstreams, and workers/websocket wait for the
+  backend's config instead of crash-looping (a restarted websocket came back on a new IP that nginx had
+  already resolved → socket.io 502).
+- Final commit on the droplet: fresh install **206 s** (build cached; first build ~4 min), Administrator
+  login with the provisioned password, scheduler active, socket.io 200, zero container restarts;
+  `harbor update` to a new commit 131 s with data kept.
+- Home server (LAN mode, Nextcloud with real data untouched): self-update 0.19.0 → 0.20.0 → 0.20.1,
+  git source added, install **204 s**, stopped; the old stack stopped for **2 min 41 s** while its four
+  volumes streamed in with numeric owners (`tar --numeric-owner` through `alpine`): mariadb 343 MB 49 s,
+  sites 100 MB 15 s, assets 410 MB 56 s, logs 2 MB 1 s; old stack started again (rollback intact).
+- Start on the copied data: **12 s**, readiness 200 on the third attempt, hook set `host_name` to the main
+  address, assets refreshed from the image, the existing site kept (no new site, theme left as the site
+  had it). Same counts on both: 237 Sales Invoices, 40 Customers, 37 Items, 768 Files (203 public +
+  428 private on disk), 8 enabled users, 35 Print Formats, same last invoice timestamp, website theme
+  `Standard`. LAN address and `harbor.local:<port>` answer; socket.io 200; 6 workers online; no restarts.
+- MariaDB root moved to Harbor's generated secret (`ALTER USER`, the old password piped box-to-box through
+  an environment variable, never printed).
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

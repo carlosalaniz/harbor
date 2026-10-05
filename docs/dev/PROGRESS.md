@@ -338,7 +338,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Decision 123: `command` in the Compose subset as a literal argument array (1–64 strings, string form refused); dollars escaped at render so only a shell inside the container expands them; `entrypoint` stays forbidden
 - [x] Tests: unit `manifest` (accept array + shell text, refuse string/empty/non-string, entrypoint still refused), `planner` (rendered with `$$`); integration `packages` (uploaded package with `command` installs, runtime Compose carries it); unit 205, integration 157 + 3 skipped, e2e 28
 - [x] Docs: DEVELOPER_PACKAGES §3, AGENTS.md subset, CATALOG.md criteria, release notes `docs/releases/v0.20.0.md`
-- [ ] First user: the custom ERPNext (git source `carlosalaniz/harbor-erpnext2`) — see VERIFICATION once it runs live
+- [x] First user: the custom ERPNext (git source `carlosalaniz/harbor-erpnext2`) installed on the droplet and the home server, data copied 1:1 — VERIFICATION §3g
 
 ## Phase 48 — git build contexts keep git's modes (2026-10-04, 0.20.1) ✅
 - [x] Decision 124: the import snapshots a build context with 0644/0755 instead of the daemon's 0077 umask (Docker `COPY` keeps modes; a non-root `USER` could not read copied files)
