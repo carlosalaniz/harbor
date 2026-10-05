@@ -79,6 +79,7 @@ export interface ComposeSourceService {
   // Harbor builds them locally and pins provenance by the commit SHA.
   image?: string;
   build?: { context: string; dockerfile?: string };
+  command?: string[];
   environment?: Record<string, string>;
   depends_on?: Record<string, { condition: 'service_started' | 'service_healthy' }>;
   healthcheck?: { test: string[]; interval?: string; timeout?: string; retries?: number; start_period?: string };

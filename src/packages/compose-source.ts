@@ -7,9 +7,11 @@ import { HarborError } from '../errors.js';
 // Keys that are explicitly unsupported get a clearer capability error than a generic schema failure.
 // `build` left this list in round 9 (decision 80): git-sourced packages may build from source;
 // zip uploads are still refused in the import pipeline before validation.
+// `command` left it in decision 123: an argument array run inside the container (same rights as the
+// image's own CMD); `entrypoint` stays out, so the image decides what runs first.
 const FORBIDDEN_SERVICE_KEYS = new Set([
   'container_name', 'ports', 'restart', 'env_file', 'configs', 'secrets', 'extends', 'include',
-  'command', 'entrypoint', 'network_mode', 'pid', 'ipc', 'uts', 'userns_mode', 'devices', 'cap_add', 'cap_drop',
+  'entrypoint', 'network_mode', 'pid', 'ipc', 'uts', 'userns_mode', 'devices', 'cap_add', 'cap_drop',
   'privileged', 'security_opt', 'sysctls', 'networks', 'volumes_from', 'user', 'labels', 'logging', 'deploy',
   'links', 'external_links', 'expose', 'dns', 'extra_hosts', 'tmpfs', 'ulimits', 'cgroup_parent', 'runtime',
   'platform', 'pull_policy', 'profiles', 'develop', 'stdin_open', 'tty', 'working_dir', 'hostname', 'domainname',

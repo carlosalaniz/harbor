@@ -14,7 +14,7 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **123**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **124**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -118,7 +118,7 @@ Key separations (do not blur them):
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **123**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **124**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant
@@ -140,9 +140,9 @@ The non-negotiable subset:
 - **Layout**: `manifest.yaml` + `compose.yaml` (+ optional `README.md`, `icon.svg` ≤ 256 KiB,
   screenshots ≤ 1 MiB) as a zip (`harbor packages add`) or a git repo with a `harbor/` folder
   (`harbor sources add`).
-- **Compose subset ONLY**: `image`, `environment` (literals), `depends_on`, `healthcheck`,
-  `volumes: type: volume`. NO `ports` (Harbor publishes endpoints itself), NO `command`,
-  `privileged`, `cap_add`, `devices`, host networking, bind mounts. (`build:` allowed for
+- **Compose subset ONLY**: `image`, `command` (argument array, decision 123), `environment`
+  (literals), `depends_on`, `healthcheck`, `volumes: type: volume`. NO `ports` (Harbor publishes
+  endpoints itself), NO `entrypoint`, `privileged`, `cap_add`, `devices`, host networking, bind mounts. (`build:` allowed for
   git sources only.)
 - **Identity**: `metadata.id` lowercase/dashes, must not collide with bundled ids;
   `release.revision` must rise on every upload (that is what triggers Updates).

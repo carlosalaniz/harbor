@@ -76,6 +76,12 @@ describe('render', () => {
     expect(r.yaml).toContain('5$$ each');
     expect(parseYaml(r.yaml).services.web.environment.PRICE).toBe('5$$ each');
   });
+  it('renders a package command as given, with dollars escaped so only the container shell expands them', () => {
+    const c = validateComposeSource(y(MINIMAL_COMPOSE + '    command: [sh, -c, \'echo "$HOME" $$\']\n'));
+    const doc = parseYaml(renderCompose({ manifest, compose: c, identity, endpoints, secretValues: null }).yaml);
+    expect(doc.services.web.command).toEqual(['sh', '-c', 'echo "$$HOME" $$$$']);
+    expect(parseYaml(renderCompose({ manifest, compose, identity, endpoints, secretValues: null }).yaml).services.web.command).toBeUndefined();
+  });
   it('renders secrets as placeholders in the prospective model and values in the final one, plus endpoint URLs and external volumes', () => {
     const m = validateManifestShape(
       y(

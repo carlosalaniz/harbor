@@ -141,7 +141,7 @@ describe('compose source subset', () => {
     expectCode(() => composeOf('services:\n  web:\n    image: ${IMAGE}\n'), 'INVALID_PACKAGE', /image/);
   });
   it('rejects forbidden service keys with UNSUPPORTED_CAPABILITY', () => {
-    for (const k of ['container_name: x', 'ports: ["80:80"]', 'restart: always', 'privileged: true', 'env_file: .env', 'command: sh', 'entrypoint: sh', 'network_mode: host', 'pid: host', 'cap_add: [SYS_ADMIN]', 'devices: [/dev/sda]', 'extends: {service: a}', 'user: root', 'networks: [foo]']) {
+    for (const k of ['container_name: x', 'ports: ["80:80"]', 'restart: always', 'privileged: true', 'env_file: .env', 'entrypoint: sh', 'network_mode: host', 'pid: host', 'cap_add: [SYS_ADMIN]', 'devices: [/dev/sda]', 'extends: {service: a}', 'user: root', 'networks: [foo]']) {
       expectCode(() => composeOf(MINIMAL_COMPOSE + '    ' + k + '\n'), 'UNSUPPORTED_CAPABILITY', /unsupported key/);
     }
     // `build` is schema-valid since round 9 (git sources, decision 80) but exclusive with image,
@@ -168,6 +168,19 @@ describe('compose source subset', () => {
     expect(composeOf(MINIMAL_COMPOSE + '    environment:\n      Mixed_case: x\n').services['web']?.environment?.['Mixed_case']).toBe('x');
     expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      1BAD: x\n'), 'INVALID_PACKAGE', /1BAD|propertyNames|pattern/);
     expectCode(() => composeOf(MINIMAL_COMPOSE + '    environment:\n      BAD-KEY: x\n'), 'INVALID_PACKAGE', /BAD-KEY|propertyNames|pattern/);
+  });
+  it('accepts command as a literal argument array (decision 123), shell text included', () => {
+    const c = composeOf(MINIMAL_COMPOSE + '    command: [bench, worker, --queue, short]\n');
+    expect(c.services['web']?.command).toEqual(['bench', 'worker', '--queue', 'short']);
+    const sh = composeOf(MINIMAL_COMPOSE + '    command:\n      - sh\n      - -c\n      - |\n        for a in frappe erpnext; do echo "$a"; done\n');
+    expect(sh.services['web']?.command?.[2]).toContain('"$a"');
+    // the string form would need Compose's own shell splitting: arrays only, non-empty, strings only
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    command: bench schedule\n'), 'INVALID_PACKAGE', /command/);
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    command: []\n'), 'INVALID_PACKAGE', /command/);
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    command: [run, 1]\n'), 'INVALID_PACKAGE', /command|string/);
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    command: [""]\n'), 'INVALID_PACKAGE', /command|fewer/);
+    // entrypoint stays forbidden: the image decides what runs first
+    expectCode(() => composeOf(MINIMAL_COMPOSE + '    entrypoint: [sh]\n'), 'UNSUPPORTED_CAPABILITY', /unsupported key/);
   });
   it('bounds healthcheck values and requires CMD arrays', () => {
     const hc = (body: string) => composeOf(MINIMAL_COMPOSE + '    healthcheck:\n' + body);

@@ -334,6 +334,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Acceptance on 0.19.0, run vm-2026-10-05T01-36-24: 23 pass, 0 fail, 1 blocked (tailnet)
 - [x] `docs/releases/v0.19.1.md`: beta notes for testers (what to expect, verified, what not to trust yet)
 
+## Phase 47 — packages may set `command:` (2026-10-04, 0.20.0) ✅
+- [x] Decision 123: `command` in the Compose subset as a literal argument array (1–64 strings, string form refused); dollars escaped at render so only a shell inside the container expands them; `entrypoint` stays forbidden
+- [x] Tests: unit `manifest` (accept array + shell text, refuse string/empty/non-string, entrypoint still refused), `planner` (rendered with `$$`); integration `packages` (uploaded package with `command` installs, runtime Compose carries it); unit 205, integration 157 + 3 skipped, e2e 28
+- [x] Docs: DEVELOPER_PACKAGES §3, AGENTS.md subset, CATALOG.md criteria, release notes `docs/releases/v0.20.0.md`
+- [ ] First user: the custom ERPNext (git source `carlosalaniz/harbor-erpnext2`) — see VERIFICATION once it runs live
+
 ## Test results (latest local run)
 
 | Command | Result |

@@ -32,6 +32,14 @@ export const COMPOSE_SOURCE_SCHEMA = {
               dockerfile: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}(/[A-Za-z0-9._-]{1,64}){0,8}$', maxLength: 220 },
             },
           },
+          // Decision 123: argument array only (no Compose string splitting); runs inside the container.
+          // Dollars are literal: the renderer escapes them, so only a shell in the command expands them.
+          command: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 64,
+            items: { type: 'string', minLength: 1, maxLength: 8192 },
+          },
           environment: {
             type: 'object',
             maxProperties: 64,

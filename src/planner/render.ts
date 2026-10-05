@@ -111,6 +111,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       labels: { ...labels, [LABELS.service]: service, [LABELS.kind]: manifest.deployment.services[service] ?? 'application' },
       networks: ['default'],
     };
+    if (src.command) def['command'] = src.command.map(escapeCompose);
     if (Object.keys(env).length) def['environment'] = env;
     if (ports.length) def['ports'] = ports;
     if (src.depends_on) def['depends_on'] = src.depends_on;

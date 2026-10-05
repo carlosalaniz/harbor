@@ -142,10 +142,18 @@ volumes:
   data: {}
 ```
 
-Allowed per service: `image`, `environment` (literal values), `depends_on` (with `condition`),
-`healthcheck`, `volumes` of `type: volume`. Not allowed, on purpose: `ports` (Harbor publishes the
-endpoints on 127.0.0.1 itself), `command`, `privileged`, `cap_add`, `devices`, host networking, bind mounts
-(operators choose folders through storage claims instead). Every named volume needs exactly one storage
+Allowed per service: `image`, `command` (an argument array, decision 123), `environment` (literal
+values), `depends_on` (with `condition`), `healthcheck`, `volumes` of `type: volume`. Not allowed, on
+purpose: `ports` (Harbor publishes the endpoints on 127.0.0.1 itself), `entrypoint`, `privileged`, `cap_add`, `devices`, host networking, bind mounts
+(operators choose folders through storage claims instead).
+
+`command` replaces the image's CMD (the image's ENTRYPOINT still runs first). Use the array form —
+`command: [bench, worker, --queue, short]` — or a shell when you need one:
+`command: [sh, -c, 'exec my-server --port 8080']`. Write it exactly as the container should receive it:
+`$` is literal (Harbor escapes it for Compose), so `$HOME` reaches the shell, not Compose. The string
+form (`command: my-server --port 8080`) is refused.
+
+Every named volume needs exactly one storage
 claim; every claim must be mounted. Secrets and configuration bindings must not be set literally in
 `environment` as well.
 

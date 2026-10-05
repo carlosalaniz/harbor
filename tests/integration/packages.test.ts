@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import type { CatalogItemDto, InstanceSummary, PackageImportResultDto, PlanDto } from '../../src/contracts/api.js';
 import { writeZip } from '../../src/packages/zip.js';
 import { startHarness, type Harness } from './harness.js';
@@ -188,5 +189,19 @@ describe('your own apps: upload, install, update, rollback, remove', () => {
     expect(plan.update?.images).toEqual([]); // same image, new package revision
     expect((await h.api.waitOperation((await h.api.submit(plan.id)).operationId)).state).toBe('succeeded');
     expect(((await byName('excalidraw')) as InstanceSummary).revision).toBe('2');
+  });
+});
+
+describe('package commands (decision 123)', () => {
+  it('an uploaded package may set command: the generated Compose carries it with dollars escaped', async () => {
+    const m = manifest('1').replace('id: hello', 'id: worker-demo').replace('name: Hello', 'name: Worker demo');
+    const c = `services:\n  web:\n    image: nginx:1.27-alpine\n    command: [sh, -c, 'echo "$HOSTNAME" && exec nginx -g "daemon off;"']\n`;
+    const r = await upload({ 'manifest.yaml': m, 'compose.yaml': c, 'icon.svg': ICON }, 'worker-demo.zip');
+    expect(r.item.id).toBe('worker-demo');
+    const plan = await h.api.plan({ kind: 'install', packageId: 'worker-demo' });
+    expect((await h.api.waitOperation((await h.api.submit(plan.id)).operationId)).state).toBe('succeeded');
+    const inst = (await byName('worker-demo'))!;
+    const runtime = readFileSync(path.join(h.stateDir, 'instances', inst.id, 'runtime', 'compose.yaml'), 'utf8');
+    expect(parseYaml(runtime).services.web.command).toEqual(['sh', '-c', 'echo "$$HOSTNAME" && exec nginx -g "daemon off;"']);
   });
 });

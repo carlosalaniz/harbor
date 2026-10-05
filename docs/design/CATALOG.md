@@ -15,7 +15,7 @@ There is still no per-app code path in the engine: a package is data.
 
 Selection rules for this catalog round:
 
-1. Fits the Compose subset without `command`, `cap_add`, `devices`, `privileged`, host networking or
+1. Fits the Compose subset (`command` is allowed since decision 123) without `cap_add`, `devices`, `privileged`, host networking or
    extra ports. Apps that need them are listed in section 5 instead of being bent into shape.
 2. First run finishes in the browser (its own account setup or no accounts at all). Apps whose only
    admin-creation path is a CLI command or a password in an environment variable are excluded for now
