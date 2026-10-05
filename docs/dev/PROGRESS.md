@@ -328,7 +328,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Root oneshot `takeover` (umount → Harbor mount → udev `UDISKS_AUTO=0` rule); every native-fs mount re-owns Harbor's `.harbor-bind.json` files; markers written 0644
 - [x] Console: Home "A drive needs attention" card (Let Harbor manage it / Mount it, ×, Manage drives link); Settings → Storage warning + Let Harbor manage it; bell/notifications follow `link`
 - [x] Tests: unit `drive-attention`, `drive-takeover` (udev rule, marker re-own, 0644); integration `drives.test.ts` (classification, 60 s grace, dismiss, takeover, eject); e2e desktop-mounted PHOTOS card → dismiss → Storage takeover; unit 203, integration 156 + 3 skipped, e2e 28
-- [ ] Live: takeover needs a real desktop automount (the Kubuntu home box with a USB stick) — not run yet
+- [x] Live on the Kubuntu home box (0.19.0, 2026-10-04): ext4 stick plugged in unmounted → "USB20FD is plugged in but not mounted" bell after the 60 s grace; KDE mounted it from Dolphin → Let Harbor manage it → mounted at /mnt/usb20fd (harbor-owned), udev rule `90-harbor-drive-<uuid>.rules` written, warning resolved; re-plugged as sdd1 → KDE left it alone, Harbor auto-mounted it at /mnt/usb20fd
 
 ## Test results (latest local run)
 

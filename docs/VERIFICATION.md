@@ -103,6 +103,15 @@ Docker-bypass output).
   it up (`installed: true`, admin + data in the folder) and four minutes later it still ran healthy with
   zero drive-guard stops.
 
+## 3f. Drives that need you on physical hardware (2026-10-04, Harbor 0.19.0, Kubuntu home box)
+
+- ext4 USB stick plugged in but not mounted: Home card + bell "USB20FD is plugged in but not mounted" after the
+  60 s grace.
+- KDE mounted it from Dolphin at `/media/carlos/USB20FD` → card turned into "mounted by your desktop";
+  **Let Harbor manage it** remounted it at `/mnt/usb20fd` (harbor:harbor), wrote
+  `/etc/udev/rules.d/90-harbor-drive-<uuid>.rules` (`UDISKS_AUTO=0`), and the warning resolved.
+- Re-plugged (came back as `sdd1`): KDE no longer automounted it; Harbor auto-mounted it at `/mnt/usb20fd`.
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed
