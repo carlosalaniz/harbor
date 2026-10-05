@@ -340,6 +340,10 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Docs: DEVELOPER_PACKAGES §3, AGENTS.md subset, CATALOG.md criteria, release notes `docs/releases/v0.20.0.md`
 - [ ] First user: the custom ERPNext (git source `carlosalaniz/harbor-erpnext2`) — see VERIFICATION once it runs live
 
+## Phase 48 — git build contexts keep git's modes (2026-10-04, 0.20.1) ✅
+- [x] Decision 124: the import snapshots a build context with 0644/0755 instead of the daemon's 0077 umask (Docker `COPY` keeps modes; a non-root `USER` could not read copied files)
+- [x] Tests: unit `packages-store` (normalisation), integration `git-sources` (fake git now writes owner-only like the daemon; snapshot and instance release are 0644/0755); unit 206, integration 157 + 3 skipped, e2e 28
+
 ## Test results (latest local run)
 
 | Command | Result |

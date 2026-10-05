@@ -1,9 +1,9 @@
-import { mkdtempSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { FakeRegistry, parseImageRef } from '../../src/packages/registry.js';
-import { PackageStore, compareRevisions } from '../../src/packages/store.js';
+import { PackageStore, compareRevisions, normalizeBuildContextModes } from '../../src/packages/store.js';
 import { readZip, writeZip } from '../../src/packages/zip.js';
 import { systemClock } from '../../src/util.js';
 import { DIGEST_A, DIGEST_B, REPO_CATALOG } from './helpers.js';
@@ -42,6 +42,19 @@ const COMPOSE = (image: string) => `services:
   web:
     image: ${image}
 `;
+
+describe('build context modes', () => {
+  it('turns owner-only files into git modes (0644, executables and folders 0755)', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-ctx-'));
+    mkdirSync(path.join(dir, 'startup'), { mode: 0o700 });
+    writeFileSync(path.join(dir, 'Dockerfile'), 'FROM scratch\n', { mode: 0o600 });
+    writeFileSync(path.join(dir, 'startup', 'run.sh'), '#!/bin/sh\n', { mode: 0o700 });
+    chmodSync(dir, 0o700);
+    normalizeBuildContextModes(dir);
+    const mode = (p: string) => statSync(path.join(dir, p)).mode & 0o777;
+    expect([mode('.'), mode('Dockerfile'), mode('startup'), mode('startup/run.sh')]).toEqual([0o755, 0o644, 0o755, 0o755]);
+  });
+});
 
 describe('zip reader', () => {
   it('reads stored entries, strips a single top folder, and rejects tricks', () => {

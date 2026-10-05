@@ -226,7 +226,8 @@ built services — registry digests still pin `image:` services), appends the co
 `release.revision` so every commit orders as a newer revision, snapshots the build contexts into
 the package, and runs the same validation as a zip. At install/update time Harbor runs
 `docker build` (15-minute cap, progress in the operation events) and tags the image
-`harbor-src/<app>-<service>:<shortsha>`. A failed build or a failed start rolls back exactly like
+`harbor-src/<app>-<service>:<shortsha>`. Files reach the build with git's modes (0644, 0755 for
+executables), so a `COPY` into an image that runs as a non-root user stays readable. A failed build or a failed start rolls back exactly like
 any other update.
 
 Redeploy on commit: Harbor polls the branch (`git ls-remote`, default every 15 minutes — no inbound

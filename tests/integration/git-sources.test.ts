@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AddSourceResult, InstanceSummary, PackageSourceDto } from '../../src/contracts/api.js';
@@ -97,6 +97,10 @@ describe('git app sources: add, build from source, redeploy on commit (decision 
     expect(events.map((e) => e.message).join('\n')).toMatch(/building web from commit aaaaaaaaaaaa/);
     // the build context was snapshotted into the instance release
     expect(readFileSync(path.join(h.stateDir, 'instances', inst.id, 'release', 'build', 'web', 'Dockerfile'), 'utf8')).toContain('v1');
+    // git's modes, not the daemon's umask: a Dockerfile COPY into a non-root USER must stay readable
+    expect(statSync(path.join(h.stateDir, 'packages', 'my-notes', 'build', 'web', 'server.js')).mode & 0o777).toBe(0o644);
+    expect(statSync(path.join(h.stateDir, 'packages', 'my-notes', 'build', 'web')).mode & 0o777).toBe(0o755);
+    expect(statSync(path.join(h.stateDir, 'instances', inst.id, 'release', 'build', 'web', 'server.js')).mode & 0o777).toBe(0o644);
   });
 
   it('a new commit is noticed by the poller and, without auto-redeploy, only notifies', async () => {

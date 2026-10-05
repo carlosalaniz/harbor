@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CatalogIndex, LoadedPackage, Manifest, ReleaseInventory } from '../contracts/types.js';
 import { HarborError } from '../errors.js';
@@ -244,6 +244,7 @@ export class PackageStore {
       const dst = path.join(staging, 'build', service);
       mkdirSync(path.dirname(dst), { recursive: true, mode: 0o700 });
       cpSync(src, dst, { recursive: true, verbatimSymlinks: false, filter: (p) => !p.includes(`${path.sep}.git`) });
+      normalizeBuildContextModes(dst);
     }
     try {
       loadPackageDir(staging, id, `upload:${id}`);
@@ -286,3 +287,17 @@ function replaceImage(text: string, from: string, to: string): string {
 }
 
 export type { Manifest };
+
+// A build context gets git's modes (0644, 0755 for executables and folders), not the daemon's umask
+// (0077): Docker's COPY keeps mode bits, so an owner-only file would be unreadable to an image that
+// runs as a non-root USER. The package folder itself stays 0700, so nothing becomes visible to others.
+export function normalizeBuildContextModes(dir: string): void {
+  chmodSync(dir, 0o755);
+  for (const name of readdirSync(dir)) {
+    const p = path.join(dir, name);
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) normalizeBuildContextModes(p);
+    else chmodSync(p, st.mode & 0o111 ? 0o755 : 0o644);
+  }
+}

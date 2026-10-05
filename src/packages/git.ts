@@ -121,8 +121,9 @@ export class FakeGit implements GitFetcher {
     const { mkdirSync, writeFileSync } = await import('node:fs');
     for (const [file, content] of Object.entries(c.files)) {
       const p = path.join(dir, file);
-      mkdirSync(path.dirname(p), { recursive: true });
-      writeFileSync(p, content);
+      // like the real daemon (UMask=0077): the clone is owner-only until the import normalises it
+      mkdirSync(path.dirname(p), { recursive: true, mode: 0o700 });
+      writeFileSync(p, content, { mode: 0o600 });
     }
     return { commit: c.commit, committerDateUnix: c.committerDateUnix, dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
   }
