@@ -5,7 +5,8 @@ import { instanceDir, loadReleaseSnapshot } from './instance-dir.js';
 import { probeOnce } from './readiness.js';
 import { LABELS } from '../naming.js';
 import type { Readiness, Runtime } from '../state/repo.js';
-import { exposureUrl } from '../exposure/urls.js';
+import { exposureCheck } from '../exposure/urls.js';
+import type { Manifest } from '../contracts/types.js';
 import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyLanHttps, caddyRoutesFromState, caddySignature } from './runner.js';
 import { compareRevisions } from '../packages/store.js';
@@ -413,13 +414,22 @@ export class Observer {
   private async verifyExposures(now: string): Promise<void> {
     await this.reconcileTailnet();
     await this.reconcileCaddy();
+    const health = new Map<string, Manifest['health'] | null>();
     for (const e of this.ctx.repo.exposures()) {
       if (e.state === 'removing') continue;
       const inst = this.ctx.repo.instance(e.instanceId);
       if (!inst || inst.activeOperationId) continue;
-      const r = await this.ctx.verify(exposureUrl(e));
+      if (!health.has(inst.id)) {
+        try {
+          health.set(inst.id, loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId).manifest.health);
+        } catch {
+          health.set(inst.id, null);
+        }
+      }
+      const check = exposureCheck(e, health.get(inst.id) ?? null);
+      const r = await this.ctx.verify(check.url, { expectStatus: check.expectStatus });
       const state = r.ok ? 'active' : 'degraded';
-      if (state === 'degraded') this.ctx.notifier.notify({ kind: 'exposure-degraded', severity: 'warning', title: `${inst.name} is not reachable at ${e.hostname}`, body: `${exposureUrl(e)} does not answer: ${r.error ?? `HTTP ${r.status}`}. Harbor keeps checking and recovers the address automatically when DNS/certificates settle.`, instanceId: e.instanceId, dedupeKey: `exposure-degraded:${e.id}` });
+      if (state === 'degraded') this.ctx.notifier.notify({ kind: 'exposure-degraded', severity: 'warning', title: `${inst.name} is not reachable at ${e.hostname}`, body: `${check.url} does not answer: ${r.error ?? `HTTP ${r.status}`}. Harbor keeps checking and recovers the address automatically when DNS/certificates settle.`, instanceId: e.instanceId, dedupeKey: `exposure-degraded:${e.id}` });
       else this.ctx.notifier.resolve(`exposure-degraded:${e.id}`);
       if (state !== e.state || r.ok) this.ctx.repo.updateExposure(e.id, { state, observedAt: now, note: r.ok ? `answered HTTP ${r.status}` : `not reachable: ${r.error ?? `HTTP ${r.status}`}` });
       else this.ctx.repo.updateExposure(e.id, { observedAt: now });

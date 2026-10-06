@@ -1,5 +1,6 @@
 import { request as httpsRequest } from 'node:https';
 import type { UrlVerifier } from '../lifecycle/context.js';
+import { REACHABLE_STATUS } from './urls.js';
 
 // GET a published HTTPS address with full certificate verification (system CAs; Let's Encrypt and
 // tailnet certificates chain to public roots). A 401 from basic-auth protection still proves the
@@ -13,8 +14,8 @@ export const httpsVerifier: UrlVerifier = (url, opts = {}) =>
       resolve({ ok: false, status: null, error: 'invalid url' });
       return;
     }
-    const expected = opts.expectStatus ?? [200, 301, 302, 303, 307, 308, 401];
-    const req = httpsRequest({ host: u.hostname, port: Number(u.port || 443), path: u.pathname || '/', method: 'GET', servername: u.hostname, timeout: opts.timeoutMs ?? 8000, headers: { host: u.host, 'user-agent': 'harbor-exposure-check/1' } }, (res) => {
+    const expected = opts.expectStatus ?? REACHABLE_STATUS;
+    const req = httpsRequest({ host: u.hostname, port: Number(u.port || 443), path: `${u.pathname || '/'}${u.search}`, method: 'GET', servername: u.hostname, timeout: opts.timeoutMs ?? 8000, headers: { host: u.host, 'user-agent': 'harbor-exposure-check/1' } }, (res) => {
       res.resume();
       resolve({ ok: expected.includes(res.statusCode ?? 0), status: res.statusCode ?? null, error: null });
     });
@@ -28,8 +29,10 @@ export class FakeVerifier {
   results = new Map<string, { ok: boolean; status: number | null; error: string | null }>();
   defaultOk = true;
   calls: string[] = [];
-  readonly fn: UrlVerifier = async (url) => {
+  opts: ({ expectStatus?: number[] } | undefined)[] = [];
+  readonly fn: UrlVerifier = async (url, opts) => {
     this.calls.push(url);
+    this.opts.push(opts);
     return this.results.get(url) ?? (this.defaultOk ? { ok: true, status: 200, error: null } : { ok: false, status: null, error: 'ECONNREFUSED (fake)' });
   };
 }

@@ -14,11 +14,11 @@ import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { createAppHome, unlockAppHome, unwrapMasterKeyForMachine, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { protectorFor } from '../storage/crypto-provider.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
-import type { LoadedPackage } from '../contracts/types.js';
+import type { LoadedPackage, Manifest } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/repo.js';
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readOperatorSecret, readSecret, removeSecret, secretExists, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
-import { appAuthorities, exposureUrl, primaryUrlFor } from '../exposure/urls.js';
+import { appAuthorities, exposureCheck, exposureUrl, primaryUrlFor } from '../exposure/urls.js';
 import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
 import { lanAppHost, lanHostnames, lanNames, machineAddresses } from '../system/lan.js';
 import { HTTPS_SETTING, lanHttpsHosts, readTlsState } from '../system/lan-https.js';
@@ -538,24 +538,34 @@ export class OperationRunner {
     }
     this.ctx.repo.setOperationPhase(op.id, 'verifying', 'checking');
     const url = exposureUrl(row);
-    this.event(op, 'checking', `verifying ${url} answers over HTTPS (certificate issuance may take a minute)`);
+    const check = exposureCheck(row, this.healthOf(inst));
+    this.event(op, 'checking', `verifying ${check.url} answers over HTTPS (certificate issuance may take a minute)`);
     const deadline = this.ctx.clock.now().getTime() + 120_000;
-    let last = await this.ctx.verify(url);
+    let last = await this.ctx.verify(check.url, { expectStatus: check.expectStatus });
     while (!last.ok && this.ctx.clock.now().getTime() < deadline && !this.stopping) {
       await new Promise((r) => setTimeout(r, 5000));
-      last = await this.ctx.verify(url);
+      last = await this.ctx.verify(check.url, { expectStatus: check.expectStatus });
     }
     const now = repo.now();
     if (last.ok) {
       repo.updateExposure(exposureId, { state: 'active', observedAt: now, note: `answered HTTP ${last.status}` });
-      this.event(op, 'checking', `${url} answers (HTTP ${last.status})`);
+      this.event(op, 'checking', `${check.url} answers (HTTP ${last.status})`);
     } else {
       repo.updateExposure(exposureId, { state: 'degraded', observedAt: now, note: `not reachable yet: ${last.error ?? `HTTP ${last.status}`}. ${x.via === 'proxy' ? 'Check your proxy forwards this hostname to this machine (from inside your network the domain may not loop back; try it from outside).' : x.via === 'public' ? 'Check the DNS record and that ports 80/443 reach this host; Harbor keeps re-checking.' : 'Check tailnet HTTPS certificates; Harbor keeps re-checking.'}` });
-      this.event(op, 'checking', `${url} not reachable yet (${last.error ?? `HTTP ${last.status}`}); exposure recorded as degraded and re-checked periodically`);
+      this.event(op, 'checking', `${check.url} not reachable yet (${last.error ?? `HTTP ${last.status}`}); exposure recorded as degraded and re-checked periodically`);
     }
     await this.hookAfterAddressChange(op, inst);
     // Credentials appear once, in this operation's result; they are never in DTOs or logs afterwards.
     this.opResult = { exposureId, url, exposureState: last.ok ? 'active' : 'degraded', ...(credentials ? { credentials } : {}) };
+  }
+
+  // The manifest's health target, for the reachability check (decision 128). A missing snapshot only means `/` is probed.
+  private healthOf(inst: InstanceRow): Manifest['health'] | null {
+    try {
+      return loadReleaseSnapshot(this.dirs(inst).release, inst.packageId).manifest.health;
+    } catch {
+      return null;
+    }
   }
 
   // A new or withdrawn address reaches a running app's hook without a restart (decision 116).

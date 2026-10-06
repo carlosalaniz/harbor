@@ -1,4 +1,5 @@
 import type { EndpointDto, PrimaryExposure } from '../contracts/api.js';
+import type { Manifest } from '../contracts/types.js';
 import type { EndpointAllocation, ExposureRow } from '../state/repo.js';
 import { browserUrlFor } from '../config.js';
 import { lanHttpsUrl } from '../system/lan-https.js';
@@ -7,6 +8,19 @@ import { lanHttpsUrl } from '../system/lan-https.js';
 export function exposureUrl(e: Pick<ExposureRow, 'via' | 'hostname' | 'port'>): string {
   if (e.via === 'public' || e.via === 'proxy') return `https://${e.hostname}/`;
   return e.port === 443 ? `https://${e.hostname}/` : `https://${e.hostname}:${e.port}/`;
+}
+
+// Statuses that prove a published route is served: success, redirects, and 401 from basic-auth protection.
+export const REACHABLE_STATUS: readonly number[] = [200, 301, 302, 303, 307, 308, 401];
+
+// Decision 128: what the reachability check asks for. An API-only app may answer 404 at `/` while its
+// declared health path works, so when the exposed endpoint is the one the manifest's `health` targets the
+// check probes that path (and also accepts the manifest's expected statuses). Other endpoints keep `/`.
+export function exposureCheck(e: Pick<ExposureRow, 'via' | 'hostname' | 'port' | 'endpointId'>, health: Manifest['health'] | null): { url: string; expectStatus: number[] } {
+  const base = exposureUrl(e);
+  if (!health || health.endpoint !== e.endpointId || !health.path.startsWith('/') || health.path === '/') return { url: base, expectStatus: [...REACHABLE_STATUS] };
+  const expectStatus = [...REACHABLE_STATUS, ...health.expectedStatus.filter((s) => !REACHABLE_STATUS.includes(s))];
+  return { url: base.replace(/\/$/, '') + health.path, expectStatus };
 }
 
 // Decision 127: an endpoint may carry several public hostnames. The main one is the instance's

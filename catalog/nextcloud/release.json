@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "package": {
     "id": "nextcloud",
-    "revision": "3"
+    "revision": "4"
   },
   "files": {
     "manifest.yaml": {
-      "sha256": "4bfe17b8ef59bc380ae7ffa415982e0b5befecff45be720700b3487a813b20d8"
+      "sha256": "0a2b20cdad85f2aa94425f3737a2e9947b7e8dc93cc3c07ba6b537ff87cb49ea"
     },
     "compose.yaml": {
       "sha256": "00aecb49aecd7e0c6fef589a2548b135b489cb02ed722ce208c609d8620a1deb"
     },
     "README.md": {
-      "sha256": "823c8115c3e557ebad5a125859fae0b63b75c2c182f694481059cc7d4c33b6a9"
+      "sha256": "db4570ec4613f20860f01a33d228e8039cf30bb7083a3a91e8f59580c2e07daf"
     }
   },
   "images": {
@@ -51,7 +51,7 @@
     "status": "pending",
     "date": "2026-10-03",
     "notes": [
-      "Revision 3 (decision 117: hook sets up a never-installed Nextcloud) awaits a live qualification run; revision 1 passed in catalog-2026-09-15T00-13-13."
+      "Revision 4 (hook re-activates Nextcloud Office for the current main address) and revision 3 (decision 117: hook sets up a never-installed Nextcloud) await a live qualification run; revision 1 passed in catalog-2026-09-15T00-13-13."
     ]
   },
   "assets": {

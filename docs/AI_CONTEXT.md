@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–127 so far) | `docs/DECISIONS.md` — **next number is 128**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–129 so far) | `docs/DECISIONS.md` — **next number is 130**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -184,6 +184,8 @@ validated live against Caddy v2.11.4.
 - Caddy (public proxy) owns ports 80 AND 443 → the LAN console is a Caddy route (`harbor_lan` server on :80) reconciled by the observer, and LAN HTTPS is served THROUGH Caddy too (the LAN hostnames are a route on the same :443 `harbor` server, pinned to the Harbor cert, decision 110); the daemon's direct :80/:443 listeners are fallbacks when Caddy is absent. Caddy's stock config used to squat :80 until the first exposure; the observer now reconciles at startup. Caddy runs as user `caddy`, which bootstrap adds to the `harbor` group so it can read the 0640 server cert/key under `<stateDir>/tls` (the CA key stays 0600); the state dir is 0710 (group-traverse) so Caddy can reach `tls/`.
 - Operator-provided secrets (decision 125) never go into a plan: they ride `POST /v1/operations` `secrets`, are checked in `submit()` and taken by the runner at the very start of `execute()` (`takeOperatorSecrets`). A daemon restart in between loses them on purpose. Link networks (decision 126) are created by the runner, not Compose (`external: true` in both projects); `renderAndValidate` re-creates a missing one and `upAndRecord` re-attaches the other side live — Compose only ever attaches its own side.
 - Several public rows per endpoint (decision 127, schema v10): never look an exposure up by `(instance, endpoint, via)` alone for `public` — pass the hostname (`repo.exposureFor(..., hostname)`), and get the main name through `mainPublicExposure(exposures, endpointId, inst.primaryHost)` (null = first published; `repo.exposures()` orders by `created_at, rowid` for that reason).
+- Exposure reachability (decision 128): never call `ctx.verify(exposureUrl(e))` directly — use `exposureCheck(e, manifest.health)` (`src/exposure/urls.ts`) so an API-only app is probed at its health path, not `/` (a 404 there is not "unreachable"). The stored/shown URL stays the root.
+- A pinned `host-name=` in `/etc/avahi/avahi-daemon.conf` outlives `hostnamectl` (decision 129): `bootstrap --hostname` comments it out; a manual rename needs the same.
 - Commander: an option named `--version` collides with the global version flag (that is why the root apply step uses `--to`).
 - `pnpm package | head` SIGPIPE leaves a stale archive; always `| tail`.
 - xterm.js needs `style-src 'unsafe-inline'`; the WebSocket terminal authenticates by first message, never URL.

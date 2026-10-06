@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avahiConfWithAllowInterfaces, defaultRouteInterfaces } from '../../src/bootstrap/mdns.js';
+import { avahiConfWithAllowInterfaces, avahiConfWithoutPinnedHostName, defaultRouteInterfaces } from '../../src/bootstrap/mdns.js';
 
 // Ubuntu 24.04's shipped file, comments and all (relevant excerpt).
 const STOCK = `# This file is part of avahi.
@@ -75,5 +75,26 @@ describe('avahi allow-interfaces rewrite (decision 107)', () => {
     const out = avahiConfWithAllowInterfaces(odd, ['wlp5s0']);
     expect(out).toContain('[reflector]\n#allow-interfaces=lo');
     expect(out).toContain('use-ipv6=yes\nallow-interfaces=wlp5s0\n');
+  });
+});
+
+describe('avahi pinned host-name on rename (bootstrap --hostname)', () => {
+  const pinned = STOCK.replace('#host-name=foo', 'host-name=oldbox');
+  it('comments out an uncommented host-name= in [server] so avahi follows the system hostname', () => {
+    const out = avahiConfWithoutPinnedHostName(pinned);
+    expect(out).toContain('[server]\n#host-name=oldbox\n');
+    expect(out).not.toMatch(/^host-name=/m);
+    expect(out.replace('#host-name=oldbox', '#host-name=foo')).toBe(STOCK); // nothing else changes
+  });
+  it('handles spacing around = and keeps idempotent / stock files untouched', () => {
+    expect(avahiConfWithoutPinnedHostName(STOCK)).toBe(STOCK);
+    const once = avahiConfWithoutPinnedHostName(pinned);
+    expect(avahiConfWithoutPinnedHostName(once)).toBe(once);
+    expect(avahiConfWithoutPinnedHostName('[server]\n  host-name = oldbox\nuse-ipv4=yes\n')).toBe('[server]\n#  host-name = oldbox\nuse-ipv4=yes\n');
+  });
+  it('leaves host-name lines in other sections alone and files without [server] unchanged', () => {
+    const odd = STOCK + '\n[reflector]\nhost-name=elsewhere\n';
+    expect(avahiConfWithoutPinnedHostName(odd)).toBe(odd);
+    expect(avahiConfWithoutPinnedHostName('host-name=x\n')).toBe('host-name=x\n');
   });
 });

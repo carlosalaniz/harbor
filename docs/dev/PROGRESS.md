@@ -354,14 +354,20 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Console: Publish… lists each public name with its own Withdraw / Make primary, **Add another domain**; the drawer lists every name
 - [x] Tests: unit `exposure` (main-name selection, urls, authorities, two Caddy routes to one upstream) + `migration` (v9 → v10 keeps rows and order, allows a second public row, keeps addresses unique), integration `multi-domain` (expose twice, both Caddy routes, hook env lists both, refusals, primary `--host`, withdraw one keeps the other, main hand-over, remove withdraws all), e2e publish wizard (Add another domain, withdraw one by name); unit 222, integration 172 + 3 skipped, e2e 29
 
+## Phase 51 — three fixes from a real host (2026-10-05, 0.22.1) ✅ (fake adapter; live run pending)
+- [x] Decision 128: the exposure reachability check (publish operation + observer re-check) probes the manifest's `health.path` when the published endpoint is `health.endpoint` (`exposureCheck` in `src/exposure/urls.ts`), accepting the usual statuses plus `health.expectedStatus`; other endpoints keep `/`. An API-only app (404 at `/`) is no longer `degraded`
+- [x] Decision 129: `bootstrap --hostname` comments out a pinned `host-name=` in avahi's `[server]` section (pure `avahiConfWithoutPinnedHostName`) and restarts avahi socket+service; runs also when the name already matches
+- [x] Nextcloud package revision 4: the after-start hook re-runs `occ richdocuments:activate-config` on every run when the built-in CODE server is in use (empty or `…/richdocumentscode/proxy.php` `wopi_url`), never for an external Collabora, never failing the hook
+- [x] Tests: unit `exposure` (check target: health path, tailnet port, fallback, statuses), `mdns` (pinned host-name rewrite), new `nextcloud-hook` (the real hook script against a stub `php occ`); integration `exposure` (API-only app: `/` answers 404 in the fake verifier, the publish and the re-check ask only `/healthz`, address `active`); unit 230, integration 173 + 3 skipped, e2e 29
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 222 passed (2026-10-05, 0.22.0) |
-| `pnpm test:integration` (fake adapter) | 172 passed (several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 230 passed (2026-10-05, 0.22.1) |
+| `pnpm test:integration` (fake adapter) | 173 passed (exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

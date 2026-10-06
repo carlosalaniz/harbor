@@ -53,7 +53,8 @@ endpoints:
                                  # (secure LAN, Tailscale or a domain) and the store says so before install
 health:
   endpoint: web
-  path: /
+  path: /                        # must answer before any account exists; a published address of this
+                                 # endpoint is checked at this path too (API-only app: e.g. /healthz)
   expectedStatus: [200]
   timeoutSeconds: 5
   deadlineSeconds: 90

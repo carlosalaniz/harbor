@@ -63,20 +63,71 @@ export function avahiConfWithAllowInterfaces(conf: string, ifaces: string[]): st
   return lines.join('\n');
 }
 
+// `bootstrap --hostname <name>` (decision 129): a `host-name=` pinned in the
+// [server] section makes avahi keep answering the OLD name after hostnamectl
+// renames the machine. Comment it out (the stock form) rather than rewriting
+// it: without a pin avahi publishes the system hostname, so this and every
+// later rename are followed and Harbor never holds a second copy of the name.
+// Pure and idempotent; other sections and a stock file are left untouched.
+export function avahiConfWithoutPinnedHostName(conf: string): string {
+  const lines = conf.split('\n');
+  const serverIdx = lines.findIndex((l) => /^\s*\[server\]\s*$/.test(l));
+  if (serverIdx === -1) return conf;
+  let changed = false;
+  for (let i = serverIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[[^\]]+\]\s*$/.test(lines[i]!)) break;
+    if (/^\s*host-name\s*=/.test(lines[i]!)) {
+      lines[i] = `#${lines[i]}`;
+      changed = true;
+    }
+  }
+  return changed ? lines.join('\n') : conf;
+}
+
+// Root step (bootstrap --hostname): drop a pinned avahi host-name. Returns
+// whether the file changed (the caller then restarts avahi). Never throws.
+export function unpinAvahiHostName(log: (m: string) => void): boolean {
+  if (!existsSync(AVAHI_CONF)) return false;
+  try {
+    const before = readFileSync(AVAHI_CONF, 'utf8');
+    const after = avahiConfWithoutPinnedHostName(before);
+    if (after === before) return false;
+    writeFileSync(AVAHI_CONF, after, { mode: 0o644 });
+    log(`mDNS: removed the pinned host-name from ${AVAHI_CONF}; avahi now answers as the system hostname`);
+    return true;
+  } catch (e) {
+    log(`mDNS: could not update ${AVAHI_CONF} (${e instanceof Error ? e.message : String(e)})`);
+    return false;
+  }
+}
+
+// Socket AND service, always: a service-only restart can leave avahi
+// answering legacy unicast queries but not standard mDNS ones. Never throws.
+export async function restartAvahi(log: (m: string) => void): Promise<void> {
+  try {
+    await execOk('/usr/bin/systemctl', ['enable', 'avahi-daemon.socket', 'avahi-daemon.service'], { timeoutMs: 60_000 });
+    await execOk('/usr/bin/systemctl', ['restart', 'avahi-daemon.socket', 'avahi-daemon.service'], { timeoutMs: 60_000 });
+  } catch (e) {
+    log(`mDNS: avahi restart failed (${e instanceof Error ? e.message : String(e)}); run: sudo systemctl restart avahi-daemon.socket avahi-daemon.service`);
+  }
+}
+
 // Root step (bootstrap, LAN mode): pin avahi to the default-route
 // interface(s) and restart it properly. Never throws: mDNS is a convenience,
 // and the daemon must come up regardless.
-export async function configureAvahiForLan(log: (m: string) => void): Promise<{ interfaces: string[]; changed: boolean }> {
+export async function configureAvahiForLan(log: (m: string) => void, opts: { restart?: boolean } = {}): Promise<{ interfaces: string[]; changed: boolean }> {
   let interfaces: string[] = [];
   try {
     const r = await exec('/usr/sbin/ip', ['-o', '-4', 'route', 'show', 'default'], { timeoutMs: 10_000 });
     interfaces = defaultRouteInterfaces(r.stdout);
   } catch (e) {
     log(`mDNS: could not read the default route (${e instanceof Error ? e.message : String(e)}); leaving avahi on all interfaces`);
+    if (opts.restart) await restartAvahi(log);
     return { interfaces, changed: false };
   }
   if (interfaces.length === 0) {
     log('mDNS: no IPv4 default route right now; leaving avahi on all interfaces');
+    if (opts.restart) await restartAvahi(log);
     return { interfaces, changed: false };
   }
   let changed = false;
@@ -93,13 +144,6 @@ export async function configureAvahiForLan(log: (m: string) => void): Promise<{ 
       log(`mDNS: could not update ${AVAHI_CONF} (${e instanceof Error ? e.message : String(e)})`);
     }
   }
-  try {
-    // Socket AND service, always: a service-only restart can leave avahi
-    // answering legacy unicast queries but not standard mDNS ones.
-    await execOk('/usr/bin/systemctl', ['enable', 'avahi-daemon.socket', 'avahi-daemon.service'], { timeoutMs: 60_000 });
-    await execOk('/usr/bin/systemctl', ['restart', 'avahi-daemon.socket', 'avahi-daemon.service'], { timeoutMs: 60_000 });
-  } catch (e) {
-    log(`mDNS: avahi restart failed (${e instanceof Error ? e.message : String(e)}); run: sudo systemctl restart avahi-daemon.socket avahi-daemon.service`);
-  }
+  await restartAvahi(log);
   return { interfaces, changed };
 }

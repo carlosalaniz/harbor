@@ -44,6 +44,9 @@ tell Home what to call you), pick a look. Nothing
 is typed on the terminal.
 
 - `HARBOR_HOSTNAME=mybox` changes the mDNS name (`http://mybox.local`); `HARBOR_HOSTNAME=` keeps the current one.
+  If avahi's config pinned an old name (`host-name=` in `/etc/avahi/avahi-daemon.conf`), Harbor
+  comments that line out so `<name>.local` follows the machine's hostname. Machine already renamed but
+  still answering the old `.local` name? `sudo /opt/harbor/bin/harbor bootstrap --yes --hostname <name>` fixes it.
 - `HARBOR_LAN=off` keeps LAN mode off (console and apps then answer only on the machine, over Tailscale, or via SSH forwarding). On a cloud server LAN mode stays off automatically: there, "every interface" would be the public internet.
 - `HARBOR_TOOLS=1` also sets up Cockpit and Portainer. `HARBOR_VERSION=<version>` pins a release (e.g. `HARBOR_VERSION=0.12.5`).
   The installer takes the newest release; pinning is for troubleshooting only. Releases older than 0.17.0 said
@@ -593,7 +596,9 @@ Notes:
   needs `--host` (Harbor never guesses which to withdraw); withdrawing the main domain makes the next
   remaining one main. Basic-auth domains of one app share its one generated password.
 - An address shows `degraded` until DNS resolves and the certificate is issued; Harbor keeps
-  re-checking and does not mark it `active` before it answers over HTTPS.
+  re-checking and does not mark it `active` before it answers over HTTPS. The check asks for the
+  app's own health page (e.g. `https://<host>/healthz` for an API-only app whose `/` answers 404)
+  when you publish the endpoint that page lives on, and `/` otherwise.
 - `remove <instance>` withdraws its addresses first. Tailscale and Caddy entries Harbor did not
   create are never touched.
 - The Harbor UI is loopback and tailnet only; the API refuses any public exposure of it.
@@ -669,7 +674,7 @@ per-app first-run notes in each `catalog/<id>/README.md`):
 | AnythingLLM | chat with documents, agents | onboarding wizard |
 | Jellyfin | media server | `media` folder claim |
 | Immich | photo backup | `library` folder claim; mobile app needs a published address |
-| Nextcloud | files, calendar, contacts, office | `data` folder claim; keep "Install recommended apps" checked for Nextcloud Office |
+| Nextcloud | files, calendar, contacts, office | `data` folder claim; keep "Install recommended apps" checked for Nextcloud Office (it follows the main address after you publish or change it; your own Collabora server is left alone) |
 | Vaultwarden | password manager server | Bitwarden apps need HTTPS: publish it |
 | Uptime Kuma | monitoring | – |
 | Forgejo | Git forge | HTTPS clone only; registration closed |

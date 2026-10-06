@@ -180,4 +180,34 @@ describe('exposure: tailnet and public paths on the generic engine', () => {
     const plans: PlanDto = await h.api.expect(200, 'GET', `/v1/plans/${p.id}`);
     expect(plans.exposure?.via).toBe('tailnet');
   });
+
+  it('an API-only app (404 at /) is checked at its declared health path, at publish and on re-check (decision 128)', async () => {
+    writePackage(h.catalogDir, 'apionly', {
+      manifest: MINIMAL_MANIFEST.replace('id: demo', 'id: apionly').replace('  path: /\n', '  path: /healthz\n').replace('expectedStatus: [200]', 'expectedStatus: [200, 204]'),
+      compose: `services:\n  web:\n    image: example/apionly@${DIGEST_A}\n`,
+      images: { web: `example/apionly@${DIGEST_A}` },
+    });
+    expect((await h.api.run({ kind: 'install', packageId: 'apionly' })).op.state).toBe('succeeded');
+    const api = await byName('apionly');
+    h.verifier.results.set('https://mcp.example.com/', { ok: false, status: 404, error: null });
+    const before = h.verifier.calls.length;
+    const op = await h.api.waitOperation((await h.api.submit((await h.api.plan({ kind: 'expose', instanceId: api.id, via: 'public', hostname: 'mcp.example.com', protection: 'none' })).id)).operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    expect(op.result?.['exposureState']).toBe('active');
+    expect(op.result?.['url']).toBe('https://mcp.example.com/'); // the address shown stays the root
+    const asked = h.verifier.calls.slice(before);
+    expect(asked).toContain('https://mcp.example.com/healthz');
+    expect(asked).not.toContain('https://mcp.example.com/');
+    const i = h.verifier.calls.indexOf('https://mcp.example.com/healthz', before);
+    expect(h.verifier.opts[i]?.expectStatus).toEqual(expect.arrayContaining([200, 204, 401]));
+    // the periodic re-check probes the same path
+    const mark = h.verifier.calls.length;
+    await new Promise((r) => setTimeout(r, 1500));
+    const later = h.verifier.calls.slice(mark).filter((u) => u.startsWith('https://mcp.example.com'));
+    expect(later.length).toBeGreaterThan(0);
+    expect(new Set(later)).toEqual(new Set(['https://mcp.example.com/healthz']));
+    expect((await exposures()).items.find((x) => x.hostname === 'mcp.example.com')?.state).toBe('active');
+    h.verifier.results.delete('https://mcp.example.com/');
+    expect((await h.api.run({ kind: 'remove', instanceId: api.id })).op.state).toBe('succeeded');
+  });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderCaddyConfig } from '../../src/exposure/caddy.js';
-import { appAuthorities, endpointUrls, exposureUrl, HOSTNAME_RE, mainPublicExposure, primaryUrlFor } from '../../src/exposure/urls.js';
+import { appAuthorities, endpointUrls, exposureCheck, exposureUrl, HOSTNAME_RE, REACHABLE_STATUS, mainPublicExposure, primaryUrlFor } from '../../src/exposure/urls.js';
 import type { ExposureRow } from '../../src/state/repo.js';
 
 const alloc = { id: 'web', service: 'web', containerPort: 80, hostPort: 18080 };
@@ -53,6 +53,20 @@ describe('exposure URLs', () => {
   it('validates hostnames', () => {
     for (const ok of ['n8n.apein.space', 'a.b.example.com', 'x1-y.example.io']) expect(HOSTNAME_RE.test(ok), ok).toBe(true);
     for (const bad of ['localhost', 'example', 'Upper.Case.com', '-bad.example.com', 'a b.example.com', 'http://x.example.com', 'x.example.com/']) expect(HOSTNAME_RE.test(bad), bad).toBe(false);
+  });
+});
+
+describe('exposure reachability check target (decision 128)', () => {
+  const health = { endpoint: 'web', path: '/healthz', expectedStatus: [200, 204], timeoutSeconds: 5, deadlineSeconds: 90 };
+  it('probes the declared health path when the exposed endpoint is the health endpoint', () => {
+    expect(exposureCheck(row({}), health)).toEqual({ url: 'https://app.example.com/healthz', expectStatus: [...REACHABLE_STATUS, 204] });
+    expect(exposureCheck(row({ via: 'tailnet', hostname: 'node.tail1.ts.net', port: 18080 }), health).url).toBe('https://node.tail1.ts.net:18080/healthz');
+    expect(exposureCheck(row({}), { ...health, path: '/api/health?full=1' }).url).toBe('https://app.example.com/api/health?full=1');
+  });
+  it('falls back to / for other endpoints or when no manifest is known; keeps the expected-status list', () => {
+    expect(exposureCheck(row({ endpointId: 'admin' }), health)).toEqual({ url: 'https://app.example.com/', expectStatus: REACHABLE_STATUS });
+    expect(exposureCheck(row({}), null)).toEqual({ url: 'https://app.example.com/', expectStatus: REACHABLE_STATUS });
+    expect(REACHABLE_STATUS).toContain(401); // basic-auth protection still proves the route is served
   });
 });
 

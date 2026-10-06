@@ -198,6 +198,28 @@ endpoint already public succeeded; `harbor exposures` listed both names `active`
 From the internet both answered `/api/method/ping` 200, each with its own Let's Encrypt certificate
 (CN = each name; issuers YE2 and YE1), and the other four apps' public names stayed 200.
 
+## 3j. Three fixes from a real host (2026-10-05, Harbor 0.22.1, decisions 128–129)
+
+Fake-adapter and unit evidence only (no live run of these fixes yet):
+
+- `pnpm test` 230 passed. `tests/unit/exposure.test.ts`: `exposureCheck` returns
+  `https://<host>/healthz` (tailnet keeps its port, a query string survives) when the exposed endpoint is
+  `health.endpoint`, `/` for any other endpoint or without a manifest, and the expected statuses are the
+  usual list (incl. 401) plus the manifest's. `tests/unit/mdns.test.ts`: an uncommented `host-name=` in
+  `[server]` is commented out (spacing kept), the stock file and other sections are untouched, the rewrite
+  is idempotent. `tests/unit/nextcloud-hook.test.ts`: the bundled Nextcloud hook, run by `sh` against a
+  stub `php occ`, calls `richdocuments:activate-config` after `overwrite.cli.url` when `wopi_url` is empty
+  or the CODE proxy, never for `https://office.example.com` or with CODE disabled, and exits 0 with one
+  line when activation fails.
+- `pnpm test:integration` 173 passed + 3 live-Docker skipped (`tests/integration/exposure.test.ts`: an
+  API-only package with health `/healthz`, the fake verifier answering 404 at `/`; publishing
+  `mcp.example.com` succeeds `active`, the operation result URL stays `https://mcp.example.com/`, the
+  verifier was asked only for `/healthz` with 200/204/401 accepted, and the observer's re-check asks the
+  same path).
+- `pnpm test:e2e` 29 passed (unchanged console).
+- `pnpm catalog:verify`: nextcloud revision 4 (hashes refreshed, qualification `pending` until a
+  droplet run).
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

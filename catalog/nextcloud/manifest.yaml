@@ -5,7 +5,7 @@ metadata:
   name: "Nextcloud"
   description: "Files, calendar, contacts and office documents on your own machine. Sync clients for every platform; Nextcloud Office included via the recommended apps."
 release:
-  revision: "3"
+  revision: "4"
 deployment:
   compose: compose.yaml
   multiInstance: true
@@ -68,6 +68,13 @@ hooks:
           for a in calendar contacts richdocuments richdocumentscode; do php occ app:install "$a" >/dev/null 2>&1 || php occ app:enable "$a" >/dev/null 2>&1 || ok=0; done
           if [ "$ok" = 1 ]; then php occ config:app:set harbor recommended --value=done >/dev/null; else echo "some recommended apps could not be installed yet; retried on the next start"; fi
         fi
+        # Nextcloud Office on the built-in CODE server remembers the address it was activated with; re-activate
+        # it on every run so it follows the main address. An external Collabora the operator set is left alone.
+        if [ "$(php occ config:app:get richdocuments enabled 2>/dev/null)" = "yes" ] && [ "$(php occ config:app:get richdocumentscode enabled 2>/dev/null)" = "yes" ]; then
+          case "$(php occ config:app:get richdocuments wopi_url 2>/dev/null)" in
+            ""|*/custom_apps/richdocumentscode/proxy.php*|*/apps/richdocumentscode/proxy.php*) php occ richdocuments:activate-config >/dev/null 2>&1 || echo "Nextcloud Office could not be pointed at the current address yet; retried on the next start" ;;
+          esac
+        fi
         echo "trusted $i proxies, $(echo $HARBOR_ADDRESSES | wc -w) addresses"
 storage:
   - id: html
@@ -97,4 +104,4 @@ presentation:
   icon: icon.svg
   developer: "Nextcloud GmbH and contributors"
   website: https://nextcloud.com
-  releaseNotes: "Revision 3: sets Nextcloud up itself if it was never set up (no more localhost redirect after the setup page). Revision 2: works on every address at once (LAN, secure LAN, Tailscale, your domains); Harbor creates the admin login. Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis; Nextcloud Office uses the built-in CODE server."
+  releaseNotes: "Revision 4: Nextcloud Office (built-in CODE server) follows the main address after you publish or change it. Revision 3: sets Nextcloud up itself if it was never set up (no more localhost redirect after the setup page). Revision 2: works on every address at once (LAN, secure LAN, Tailscale, your domains); Harbor creates the admin login. Nextcloud 34.0.4 (Apache image) with PostgreSQL 17 and Redis; Nextcloud Office uses the built-in CODE server."
