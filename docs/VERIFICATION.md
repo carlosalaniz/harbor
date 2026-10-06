@@ -143,7 +143,7 @@ packaged as a public git source (`carlosalaniz/harbor-erpnext2`) using `command:
 
 ## 3h. Operator-provided secrets and app links (2026-10-05, Harbor 0.21.0, decisions 125–126)
 
-Fake-adapter evidence only so far (it proves the contracts, not Docker's behaviour):
+Fake-adapter evidence (contracts), then a first real-Docker run (below):
 
 - `pnpm test` 219 passed (`tests/unit/links-secrets.test.ts`: manifest rules, rendered networks and
   aliases, submission checks that never echo a value; `migration.test.ts`: schema v9 `links`).
@@ -157,9 +157,18 @@ Fake-adapter evidence only so far (it proves the contracts, not Docker's behavio
 - `pnpm test:e2e` 29 passed (install wizard link picker, review-dialog password field gating Install,
   app page Links and *Values you provided*, Settings → Internal networks).
 
-Still to prove on a disposable droplet (`docker network create --internal`, `network connect --alias`
-against a running provider without a restart, name resolution `docs-link` from the consumer, no route
-from the consumer to the provider's database, `compose up` of both projects after the rewrite).
+**Real Docker, 2026-10-06** (a home-LAN host, Docker 29.3.1, self-updated 0.20.1 → 0.21.0; consumer
+`carlosalaniz/harbor-affine-mcp`, provider `carlosalaniz/harbor-affine` already running):
+`harbor install affine-mcp --link affine=affine --secret <3 ids>=@file` created
+`hb_<consumer>_link_affine` with `Internal=true` and the five Harbor labels (kind `link`, link id,
+provider, instance, installation); its only members were the provider's `affine` service and the
+consumer's `affine-mcp` service; the running provider got alias `affine-link` without a restart.
+From the consumer: `affine-link` resolved and port 3010 answered; the provider's `postgres`, `redis` and
+`affine` names did NOT resolve (`EAI_AGAIN`). The gateway's `/readyz` was 200 against the linked
+GraphQL, `/mcp` 401 without the operator-provided bearer token and 200 with it, and an MCP
+`list_workspaces` call signed in with the operator-provided account and returned the provider's
+workspaces. `harbor links` showed the link `active`. Stop of both apps succeeded. Not yet observed live:
+a `compose up` of both projects after the rewrite (next start), provider removal flagging the consumer.
 
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
