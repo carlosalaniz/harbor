@@ -15,6 +15,7 @@ export interface Manifest {
   storage?: StorageClaim[];
   secrets?: SecretClaim[];
   configuration?: ConfigurationBinding[];
+  links?: LinkClaim[];
   setup?: { endpoint: string; instructions: string };
   presentation?: PackagePresentation;
   defaultCredentials?: { username: string; password: string; note?: string };
@@ -66,10 +67,29 @@ export interface StorageClaim {
 }
 export interface SecretClaim {
   id: string;
-  bytes: 32;
-  encoding: 'hex';
+  // decision 125: 'operator' = the operator types the value at install (prompt shown); default 'generated'
+  source?: 'generated' | 'operator';
+  bytes?: 32; // generated only
+  encoding?: 'hex'; // generated only
+  prompt?: string; // operator only
+  optional?: boolean; // operator only: install may proceed without it (the variable is then not set)
+  minLength?: number; // operator only
+  maxLength?: number; // operator only (default 4096)
   retention: 'retain';
   bindings: { service: string; environment: string }[];
+}
+export function isOperatorSecret(s: SecretClaim): boolean {
+  return s.source === 'operator';
+}
+
+// Decision 126: a private link to another installed app (the provider), resolved at install.
+export type LinkFormat = 'url' | 'authority' | 'host' | 'port';
+export interface LinkClaim {
+  id: string;
+  purpose: string;
+  optional?: boolean;
+  provider?: { packages?: string[]; endpoint?: string };
+  bindings: { service: string; environment: string; format?: LinkFormat }[];
 }
 export type ConfigurationFormat = 'url' | 'origin' | 'authority' | 'host' | 'scheme';
 export interface ConfigurationBinding { service: string; environment: string; endpoint: string; format?: ConfigurationFormat }

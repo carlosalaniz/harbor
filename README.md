@@ -40,7 +40,9 @@ of yours instead of a Docker volume — on a removable drive if you like (Harbor
 notices when it leaves, stops the app to protect its data, and starts it again when it returns).
 
 **Plus your own apps** — upload a zip or point Harbor at a git repo; every push can redeploy
-automatically. See [Build your own app](docs/DEVELOPER_PACKAGES.md).
+automatically. Apps can ask you for a value at install (another service's token, an SMTP password)
+and talk privately to another app you pick, over a network only those two join. See
+[Build your own app](docs/DEVELOPER_PACKAGES.md).
 
 ![Harbor settings](docs/assets/screenshots/settings.png)
 

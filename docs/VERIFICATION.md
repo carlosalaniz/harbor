@@ -140,6 +140,27 @@ packaged as a public git source (`carlosalaniz/harbor-erpnext2`) using `command:
   `Standard`. LAN address and `harbor.local:<port>` answer; socket.io 200; 6 workers online; no restarts.
 - MariaDB root moved to Harbor's generated secret (`ALTER USER`, the old password piped box-to-box through
   an environment variable, never printed).
+
+## 3h. Operator-provided secrets and app links (2026-10-05, Harbor 0.21.0, decisions 125–126)
+
+Fake-adapter evidence only so far (it proves the contracts, not Docker's behaviour):
+
+- `pnpm test` 219 passed (`tests/unit/links-secrets.test.ts`: manifest rules, rendered networks and
+  aliases, submission checks that never echo a value; `migration.test.ts`: schema v9 `links`).
+- `pnpm test:integration` 167 passed + 3 live-Docker skipped (`tests/integration/links-secrets.test.ts`:
+  the typed-in value is bound into the runtime Compose file and the container env, its file is 0600,
+  and it appears in no plan, operation, instance, notification response nor in the SQLite file; a
+  link joins exactly the consumer's bound service and the provider's endpoint service on an internal,
+  Harbor-labelled network, the provider answers as `docs-link`, Restart re-creates a deleted network,
+  provider removal flags the consumer and `configure` relinks it, consumer remove/reinstall/purge,
+  an unlabelled network with the planned name is refused with `OWNERSHIP_CONFLICT`).
+- `pnpm test:e2e` 29 passed (install wizard link picker, review-dialog password field gating Install,
+  app page Links and *Values you provided*, Settings → Internal networks).
+
+Still to prove on a disposable droplet (`docker network create --internal`, `network connect --alias`
+against a running provider without a restart, name resolution `docs-link` from the consumer, no route
+from the consumer to the provider's database, `compose up` of both projects after the rewrite).
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

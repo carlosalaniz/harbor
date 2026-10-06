@@ -49,6 +49,8 @@ export function mockCatalog(): CatalogItemDto[] {
     setup: false,
     storage: 0,
     claims: [],
+    operatorSecrets: [],
+    links: [],
     ...extra,
   });
   return [
@@ -159,6 +161,9 @@ export function mockInstances(): InstanceSummary[] {
     autoUpdate: false,
     needsDrive: null,
     home: null,
+    links: [],
+    linkedBy: [],
+    operatorSecrets: [],
   };
   return [
     {

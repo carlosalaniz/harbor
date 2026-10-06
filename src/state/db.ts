@@ -4,7 +4,26 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { rfc3339, type Clock, type Ids } from '../util.js';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
+
+// Decision 126: one row per (consumer, link id). provider_instance_id NULL = needs a provider;
+// 'dormant' = the consumer is removed (retained) and Reinstall re-creates the link.
+const LINKS_SQL = `
+CREATE TABLE links (
+  consumer_instance_id TEXT NOT NULL REFERENCES instances(id),
+  link_id TEXT NOT NULL,
+  provider_instance_id TEXT REFERENCES instances(id),
+  provider_endpoint TEXT,
+  network_name TEXT NOT NULL,
+  network_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('active','needs_provider','dormant')),
+  note TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (consumer_instance_id, link_id)
+);
+CREATE INDEX links_provider ON links(provider_instance_id);
+`;
 
 export const SCHEMA_SQL = `
 CREATE TABLE installation (
@@ -180,6 +199,7 @@ CREATE TABLE package_sources (
   checked_at TEXT,
   note TEXT
 );
+${LINKS_SQL}
 `;
 
 export type Db = Database.Database;
@@ -274,6 +294,10 @@ export function openState(stateDir: string, opts: { readonly?: boolean } = {}): 
           migrateV7toV8(db);
           version = 8;
         }
+        if (version === 8) {
+          migrateV8toV9(db);
+          version = 9;
+        }
       } finally {
         db.pragma('foreign_keys = ON');
       }
@@ -345,6 +369,15 @@ function migrateV7toV8(db: Db): void {
       ALTER TABLE exposures_v8 RENAME TO exposures;
     `);
     db.pragma('user_version = 8');
+  })();
+}
+
+// v9: app links (decision 126). A link is a relation between two instances (consumer -> provider), so it
+// gets its own table instead of a resource row: both sides must find it, and it outlives the provider.
+function migrateV8toV9(db: Db): void {
+  db.transaction(() => {
+    db.exec(LINKS_SQL);
+    db.pragma('user_version = 9');
   })();
 }
 

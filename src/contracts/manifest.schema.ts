@@ -163,11 +163,18 @@ export const MANIFEST_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'bytes', 'encoding', 'retention', 'bindings'],
+        // Generated (default): bytes + encoding. Operator-provided (decision 125): source operator + prompt;
+        // the value is asked at install and never generated. The either/or rules live in validateManifestReferences.
+        required: ['id', 'retention', 'bindings'],
         properties: {
           id: idString,
+          source: { enum: ['generated', 'operator'] },
           bytes: { const: 32 },
           encoding: { const: 'hex' },
+          prompt: plainText(200),
+          optional: { type: 'boolean' },
+          minLength: { type: 'integer', minimum: 1, maximum: 4096 },
+          maxLength: { type: 'integer', minimum: 1, maximum: 4096 },
           retention: { const: 'retain' },
           bindings: {
             type: 'array',
@@ -178,6 +185,41 @@ export const MANIFEST_SCHEMA = {
               additionalProperties: false,
               required: ['service', 'environment'],
               properties: { service: idString, environment: envKey },
+            },
+          },
+        },
+      },
+    },
+    // Decision 126: private links to another installed app. Harbor creates one network per link joining
+    // only the bound consumer services and the provider's endpoint service (alias `<id>-link`).
+    links: {
+      type: 'array',
+      maxItems: 8,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'purpose', 'bindings'],
+        properties: {
+          id: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,29}$' },
+          purpose: plainText(120),
+          optional: { type: 'boolean' },
+          provider: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              packages: { type: 'array', minItems: 1, maxItems: 8, uniqueItems: true, items: idString },
+              endpoint: idString,
+            },
+          },
+          bindings: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 16,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['service', 'environment'],
+              properties: { service: idString, environment: envKey, format: { enum: ['url', 'authority', 'host', 'port'] } },
             },
           },
         },

@@ -1,4 +1,4 @@
-import { closeSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import type { LoadedPackage } from '../contracts/types.js';
 import { UUID_RE } from '../contracts/patterns.js';
@@ -102,6 +102,27 @@ export function readSecret(secretsDir: string, secretId: string): string {
   const value = readFileSync(file, 'utf8').trim();
   if (!/^[a-f0-9]{64}$/.test(value)) throw new HarborError('SECRET_MISSING', `secret ${secretId} is unreadable or corrupt`);
   return value;
+}
+
+// Decision 125: a value the operator typed. Same file, mode and directory as generated secrets; written
+// exclusively at install (replace: true only for a configure plan that changes it), never logged.
+export function writeOperatorSecret(secretsDir: string, secretId: string, value: string, opts: { replace: boolean }): void {
+  const file = secretFile(secretsDir, secretId);
+  if (!opts.replace && existsSync(file)) throw new HarborError('OWNERSHIP_CONFLICT', `secret ${secretId} already exists for a fresh instance`, { nextAction: 'Inspect the instance directory manually.' });
+  writeDurable(file, value, 0o600, !opts.replace);
+}
+
+export function readOperatorSecret(secretsDir: string, secretId: string): string {
+  const file = secretFile(secretsDir, secretId);
+  const st = statSync(file, { throwIfNoEntry: false });
+  if (!st?.isFile()) throw new HarborError('SECRET_MISSING', `secret ${secretId} is missing for this instance`, { nextAction: 'Set it again: app page → Settings → Change, or `harbor configure <app> --secret ' + secretId + '=@file`.' });
+  const value = readFileSync(file, 'utf8');
+  if (!value) throw new HarborError('SECRET_MISSING', `secret ${secretId} is empty for this instance`);
+  return value;
+}
+
+export function removeSecret(secretsDir: string, secretId: string): void {
+  rmSync(secretFile(secretsDir, secretId), { force: true });
 }
 
 export function secretExists(secretsDir: string, secretId: string): boolean {

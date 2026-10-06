@@ -17,6 +17,7 @@ import type {
   SystemHostDto,
   SystemMetricsDto,
   UiExposureDto,
+  LinkDto,
 } from '../../../src/contracts/api';
 import {
   mockAppearance,
@@ -131,6 +132,7 @@ const planFor = (kind: PlanDto['kind'], instanceId: string, packageId: string, n
   storage: [],
   location: null,
   secrets: [],
+  links: [],
   warnings: [],
 });
 
@@ -193,6 +195,7 @@ export const mockApi = {
     return { ...t, install: { state: 'succeeded', message: 'Mock install finished.', at: new Date().toISOString() } };
   },
   exposures: async (): Promise<{ items: ExposureDto[]; ui: UiExposureDto | null }> => mockExposures(),
+  links: async (): Promise<LinkDto[]> => [],
   exposeUi: async (): Promise<UiExposureDto> => mockExposures().ui!,
   unexposeUi: async (): Promise<void> => {
     await beat();

@@ -344,16 +344,21 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Decision 124: the import snapshots a build context with 0644/0755 instead of the daemon's 0077 umask (Docker `COPY` keeps modes; a non-root `USER` could not read copied files)
 - [x] Tests: unit `packages-store` (normalisation), integration `git-sources` (fake git now writes owner-only like the daemon; snapshot and instance release are 0644/0755); unit 206, integration 157 + 3 skipped, e2e 28
 
+## Phase 49 — operator-provided secrets + app links (2026-10-05, 0.21.0) ✅ (fake adapter; live run pending)
+- [x] Decision 125: `secrets[].source: operator` + `prompt` (`optional`, `minLength`, `maxLength`); plans list what they ask, values ride `POST /v1/operations` `secrets`, checked before the operation exists, held in memory per plan, taken first by the runner; stored/bound/retained like generated secrets; `configure` plan replaces them; CLI `--secret id=@file|id=-` (command-line values refused)
+- [x] Decision 126: `links[]` in the consumer manifest; per-link internal network `<project>_link_<id>` created by the runner with Harbor labels (ownership checked), joined only by bound consumer services + the provider's endpoint service (alias `<id>-link`); `links` table (schema v9); provider removal flags the consumer *needs a provider*, consumer removal → dormant → Reinstall revives, Restart re-creates; `configure` plan changes/clears providers; `GET /v1/links`; console picker, review fact, app-page Links, Settings → Internal networks; CLI `--link`, `configure`, `links`
+- [x] Tests: unit `links-secrets` (manifest rules, rendering of networks/aliases/env, submission checks, no echo) + `migration` (v9), integration `links-secrets` (value absent from every DTO, plan, event and the SQLite file; reinstall keeps it; configure replaces it; auto-picked provider; only the two services join; restart re-applies; provider removal flags + configure relinks; consumer remove/reinstall/purge; ownership conflict), e2e (link picker, password field, drawer, Internal networks); unit 219, integration 167 + 3 skipped, e2e 29
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 194 passed |
-| `pnpm test:integration` (fake adapter) | 149 passed (install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 219 passed (2026-10-05, 0.21.0) |
+| `pnpm test:integration` (fake adapter) | 167 passed (links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 27 passed (console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

@@ -14,7 +14,7 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **125**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **127**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -24,7 +24,7 @@ src/            daemon (TypeScript strict ESM, Node 24.12, pnpm 10.16)
   contracts/    JSON Schemas + DTO types — the API's source of truth
   packages/     restricted YAML parser, manifest/compose validators, catalog loader, zip import
   planner/      identity, port allocation, Compose rendering (PURE functions, no I/O)
-  state/        SQLite (better-sqlite3, SCHEMA_VERSION 8, migrations v1→v8), repositories
+  state/        SQLite (better-sqlite3, SCHEMA_VERSION 9, migrations v1→v9; v9 = `links`), repositories
   docker/       adapter interface, Dockerode adapter, Compose CLI runner, FAKE adapter, port probe
   lifecycle/    plans/operations service, serial runner, readiness, observer (drive-guard stop,
               auto-mount on insert, auto-start on return, lock-guard start once a sealed app's
@@ -111,14 +111,14 @@ Key separations (do not blur them):
 4. **Gate before commit** (ALL must pass — this is exactly what CI runs):
    ```sh
    pnpm lint && pnpm typecheck
-   pnpm test                    # unit (149)
-   pnpm test:integration        # 131 + 3 live-Docker skipped (~3.5 min)
-   pnpm build && pnpm test:e2e  # 25 Playwright (~1.5 min, ports 18500/18700)
+   pnpm test                    # unit (219)
+   pnpm test:integration        # 167 + 3 live-Docker skipped (~5 min)
+   pnpm build && pnpm test:e2e  # 29 Playwright (~2 min, ports 18500/18700)
    pnpm catalog:verify && pnpm openapi -- --check
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **125**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **127**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant
@@ -146,6 +146,9 @@ The non-negotiable subset:
   git sources only.)
 - **Identity**: `metadata.id` lowercase/dashes, must not collide with bundled ids;
   `release.revision` must rise on every upload (that is what triggers Updates).
+- **Secrets the operator types** (`source: operator` + `prompt`) and **links to another app**
+  (`links:`) are data like everything else (decisions 125–126): values never enter plans, DTOs or
+  logs; link networks join only the bound services and the provider's endpoint service.
 - **Endpoints + health**: every service declared, every named volume claimed by exactly one
   `storage[]` entry, a health path that answers **before** any account exists, first run
   finishable in the browser (no CLI-only admin creation).

@@ -6,7 +6,8 @@ export type InstallState = 'installing' | 'installed' | 'failed' | 'needs_action
 export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unknown';
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart';
+// configure (decisions 125/126): change an installed app's operator-provided secrets and/or link providers.
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure';
 // 'proxy' = published through the operator's own reverse proxy (decision 118); Harbor runs nothing for it.
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The address an app treats as its own, chosen at install (decision 116). Omitted = this network
@@ -74,6 +75,36 @@ export interface InstanceSummary {
   // install-location apps: the encrypted home on the drive (null = system disk).
   // state locked means this machine cannot read it yet (BFU or foreign drive).
   home: AppHomeDto | null;
+  // decision 126: this app's links to other apps (consumer side) and the apps linked to it (provider side)
+  links: AppLinkDto[];
+  linkedBy: { instanceId: string; name: string; linkId: string; state: AppLinkState }[];
+  // decision 125: secrets the operator typed (never their values); set = a value is stored
+  operatorSecrets: { id: string; prompt: string; optional: boolean; set: boolean }[];
+}
+
+// ---- app links (decision 126)
+// active: the link network exists and both sides are attached; needs_provider: no provider chosen (or it
+// was removed); dormant: this app is removed (data kept) and Reinstall brings the link back.
+export type AppLinkState = 'active' | 'needs_provider' | 'dormant';
+export interface AppLinkDto {
+  id: string;
+  purpose: string;
+  optional: boolean;
+  state: AppLinkState;
+  provider: { instanceId: string; name: string; endpointId: string } | null;
+  alias: string; // <id>-link: the name the provider answers to on the link network
+  network: string; // Docker network name (Harbor-owned)
+  url: string | null; // what the app's variable receives in url format (http://<alias>:<port>); null without a provider
+  note: string | null;
+}
+// Settings → Internal networks: every link on this machine.
+export interface LinkDto extends AppLinkDto {
+  consumer: { instanceId: string; name: string };
+}
+// A provider for one link, chosen at install / configure / update (CLI: --link <id>=<instance>[/<endpoint>]).
+export interface LinkChoice {
+  instanceId: string;
+  endpointId?: string;
 }
 
 // Volume disk usage grouped per app (GET /v1/system/storage/usage; docker system df, cached).
@@ -233,7 +264,10 @@ export interface PlanDto {
   storage: StorageDto[];
   // install-location plans: where the whole app will live (null = system disk)
   location: { dir: string; encrypted: true } | null;
-  secrets: { id: string; state: 'new' | 'existing' }[];
+  // decision 125: source operator = the submission carries the value (ask: required/optional); never a value here
+  secrets: { id: string; state: 'new' | 'existing'; source: 'generated' | 'operator'; prompt: string | null; optional: boolean; minLength: number | null; maxLength: number | null; ask: 'required' | 'optional' | null }[];
+  // decision 126: links this plan sets up or changes
+  links: { id: string; purpose: string; optional: boolean; provider: { instanceId: string; name: string; endpointId: string; url: string } | null; alias: string; network: string; change: 'set' | 'keep' | 'clear' }[];
   warnings: string[];
   // update plans: what changes between the installed release and the new one
   update?: { fromRevision: string; toRevision: string; fromVersion: string | null; toVersion: string | null; images: { service: string; from: string; to: string }[]; newSecrets: string[]; newStorage: string[]; newEndpoints: string[]; releaseNotes: string | null };
@@ -272,6 +306,10 @@ export interface CatalogItemDto {
   setup: boolean;
   storage: number;
   claims: StorageClaimDto[];
+  // decision 125: values the install asks the operator for
+  operatorSecrets: { id: string; prompt: string; optional: boolean; minLength: number | null; maxLength: number | null }[];
+  // decision 126: other apps this one talks to privately (the install picks a provider for each)
+  links: { id: string; purpose: string; optional: boolean; packages: string[] | null; endpoint: string | null }[];
 }
 
 export interface SystemMetricsDto {
@@ -352,9 +390,12 @@ export interface InstallLocationRequest {
   passphrase?: string;
 }
 export type PlanRequest =
-  | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }>; location?: InstallLocationRequest; main?: InstallMainAddress }
+  | { kind: 'install'; packageId: string; name?: string; storage?: Record<string, { hostPath: string }>; location?: InstallLocationRequest; main?: InstallMainAddress; links?: Record<string, LinkChoice> }
   | { kind: 'start' | 'stop' | 'restart' | 'remove' | 'reinstall' | 'purge'; instanceId: string }
-  | { kind: 'update'; instanceId: string; storage?: Record<string, { hostPath: string }> }
+  | { kind: 'update'; instanceId: string; storage?: Record<string, { hostPath: string }>; links?: Record<string, LinkChoice> }
+  // decisions 125/126: secrets listed in `secrets` are replaced by the values the submission carries;
+  // links: a provider per link id, or null to unlink an optional one
+  | { kind: 'configure'; instanceId: string; secrets?: string[]; links?: Record<string, LinkChoice | null> }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean; proxyFrom?: string }
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
   | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };

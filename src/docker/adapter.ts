@@ -79,6 +79,11 @@ export interface DockerAdapter {
   listNetworks(labels?: Record<string, string>): Promise<NetworkInfo[]>;
   inspectNetwork(idOrName: string): Promise<NetworkInfo | null>;
   removeNetwork(id: string): Promise<void>;
+  // App links (decision 126): Harbor creates the link network itself (internal: no route out, no published
+  // ports), attaches the other side live (so the provider is not restarted), and detaches before removal.
+  createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean }): Promise<NetworkInfo>;
+  connectNetwork(networkId: string, containerId: string, aliases: string[]): Promise<void>;
+  disconnectNetwork(networkId: string, containerId: string): Promise<void>;
   // Host ports published by any container on this engine (for allocation conflict checks).
   publishedHostPorts(): Promise<number[]>;
   // Last N log lines of one container (stdout+stderr, timestamps), for the Troubleshoot page.

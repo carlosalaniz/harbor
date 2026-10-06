@@ -5,7 +5,10 @@ import { HarborError, type ErrorCode } from '../errors.js';
 import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
 import { LABELS } from '../naming.js';
 import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type InstanceIdentity } from '../planner/identity.js';
-import { renderCompose } from '../planner/render.js';
+import { renderCompose, type ConsumerLink, type ProviderLink } from '../planner/render.js';
+import { linkAlias, linkNetworkLabels, linkValue } from '../planner/links.js';
+import type { NetworkInfo } from '../docker/adapter.js';
+import type { LinkRow, PlannedLink } from '../state/repo.js';
 import { checkHostDirectory } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { createAppHome, unlockAppHome, unwrapMasterKeyForMachine, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
@@ -13,7 +16,7 @@ import { protectorFor } from '../storage/crypto-provider.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import type { LoadedPackage } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/repo.js';
-import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
+import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readOperatorSecret, readSecret, removeSecret, secretExists, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
 import { appAuthorities, exposureUrl, primaryUrlFor } from '../exposure/urls.js';
 import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
@@ -40,6 +43,8 @@ export class OperationRunner {
   private stopping = false;
   private idle: Promise<void> = Promise.resolve();
   private opResult: Record<string, unknown> | null = null; // set by an operation to enrich the success result
+  // Decision 125: operator-typed secret values handed over with this operation's submission (memory only).
+  private supplied: { store: Record<string, string>; clear: string[] } = { store: {}, clear: [] };
 
   constructor(private readonly ctx: Ctx) {}
 
@@ -110,6 +115,9 @@ export class OperationRunner {
     }
     const secretValues: string[] = [];
     this.opResult = null;
+    // Taken first, whatever happens next: values never outlive their operation.
+    this.supplied = this.ctx.service.takeOperatorSecrets(op.planId);
+    secretValues.push(...Object.values(this.supplied.store));
     try {
       if (this.stopping) throw new InterruptedError();
       switch (op.kind) {
@@ -118,12 +126,13 @@ export class OperationRunner {
         case 'start': await this.start(op, plan, inst); break;
         case 'stop': await this.stop(op, inst, plan.actor); break;
         case 'restart': await this.restart(op, inst, secretValues); break;
-        case 'remove': await this.remove(op, inst); break;
-        case 'purge': await this.purge(op, inst); break;
+        case 'remove': await this.remove(op, inst, secretValues); break;
+        case 'purge': await this.purge(op, inst, secretValues); break;
         case 'update': await this.update(op, plan, inst, secretValues); break;
         case 'expose': await this.expose(op, plan, inst, secretValues); break;
         case 'unexpose': await this.unexpose(op, plan, inst, secretValues); break;
         case 'reconfigure': await this.reconfigure(op, plan, inst, secretValues); break;
+        case 'configure': await this.configure(op, plan, inst, secretValues); break;
       }
       const result = { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) };
       this.opResult = null;
@@ -282,6 +291,21 @@ export class OperationRunner {
   private generateSecrets(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow, secretsDir: string): void {
     const refs = [...inst.secrets];
     for (const s of pkg.manifest.secrets ?? []) {
+      if (s.source === 'operator') {
+        // Decision 125: the value the operator typed, from the submission; stored exactly like a generated one.
+        const v = this.supplied.store[s.id];
+        if (v === undefined) {
+          if (s.optional) {
+            this.event(op, 'preparing', `optional secret ${s.id} was left empty; its variable stays unset`);
+            continue;
+          }
+          throw new HarborError('SECRET_MISSING', `the value you provided for ${s.id} is gone (Harbor restarted after you submitted)`, { nextAction: 'Remove this failed install, then install again and type the value in the review dialog.' });
+        }
+        writeOperatorSecret(secretsDir, s.id, v, { replace: false });
+        if (!refs.some((r) => r.id === s.id)) refs.push({ id: s.id, file: path.join('secrets', s.id) });
+        this.event(op, 'preparing', `stored the value you provided for ${s.id} as a retained secret`);
+        continue;
+      }
       const created = generateSecretOnce(secretsDir, s.id, this.ctx.ids);
       if (!created) throw new HarborError('OWNERSHIP_CONFLICT', `secret ${s.id} already exists for a fresh instance`, { nextAction: 'Inspect the instance directory manually.' });
       if (!refs.some((r) => r.id === s.id)) refs.push({ id: s.id, file: path.join('secrets', s.id) });
@@ -299,7 +323,10 @@ export class OperationRunner {
   private readSecrets(pkg: LoadedPackage, secretsDir: string, sink: string[]): Record<string, string> {
     const values: Record<string, string> = {};
     for (const s of pkg.manifest.secrets ?? []) {
-      values[s.id] = readSecret(secretsDir, s.id);
+      if (s.source === 'operator') {
+        if (s.optional && !secretExists(secretsDir, s.id)) continue; // left empty: the variable stays unset
+        values[s.id] = readOperatorSecret(secretsDir, s.id);
+      } else values[s.id] = readSecret(secretsDir, s.id);
       sink.push(values[s.id]!);
     }
     return values;
@@ -384,7 +411,10 @@ export class OperationRunner {
   private async renderAndValidate(op: OperationRow, pkg: LoadedPackage, identity: InstanceIdentity, inst: InstanceRow, runtimeDir: string, secretValues: Record<string, string>, primary?: PrimaryExposure, provisioned?: { username: string; password: string } | null): Promise<string> {
     const externalStorage = Object.fromEntries(this.ctx.repo.resources(inst.id).filter((r) => r.kind === 'bind').map((r) => [r.role, { hostPath: r.name, readOnly: Boolean(r.metadata?.['readOnly']) }]));
     const builtImages = Object.fromEntries(Object.entries(pkg.release.builds ?? {}).map(([svc, b]) => [svc, b.tag]));
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1', provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages });
+    // Decision 126: every active link network must exist before Compose attaches to it (Restart re-applies).
+    await this.ensureLinkNetworks(op, inst);
+    const { consumerLinks, providerLinks } = this.linkRenderInputs(inst, pkg);
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: this.ctx.config.lan.enabled ? '0.0.0.0' : '127.0.0.1', provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages, consumerLinks, providerLinks });
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
       await this.ctx.compose.config({ projectDir: runtimeDir, projectName: identity.project, file }, 60_000);
@@ -579,6 +609,274 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
   }
 
+  // ---------- app links (decision 126)
+
+  // Ownership of a link network: this installation, the consumer instance, kind link, this link id.
+  private ownsLinkNetwork(net: NetworkInfo, l: LinkRow): boolean {
+    return net.labels[LABELS.installation] === this.ctx.installationId && net.labels[LABELS.instance] === l.consumerInstanceId && net.labels[LABELS.kind] === 'link' && net.labels[LABELS.link] === l.linkId;
+  }
+
+  // Render inputs: active links where `inst` is the consumer (bound services join, variables get the
+  // address) and where it is the provider (its endpoint service joins with the alias).
+  private linkRenderInputs(inst: InstanceRow, pkg: LoadedPackage): { consumerLinks: ConsumerLink[]; providerLinks: ProviderLink[] } {
+    const { repo } = this.ctx;
+    const consumerLinks: ConsumerLink[] = [];
+    for (const l of repo.linksOfConsumer(inst.id)) {
+      if (l.state !== 'active' || !l.providerInstanceId || !(pkg.manifest.links ?? []).some((c) => c.id === l.linkId)) continue;
+      const alloc = repo.instance(l.providerInstanceId)?.endpoints.find((e) => e.id === l.providerEndpoint);
+      if (alloc) consumerLinks.push({ id: l.linkId, network: l.networkName, alias: linkAlias(l.linkId), containerPort: alloc.containerPort });
+    }
+    const providerLinks: ProviderLink[] = [];
+    for (const l of repo.linksOfProvider(inst.id)) {
+      if (l.state !== 'active') continue;
+      const alloc = inst.endpoints.find((e) => e.id === l.providerEndpoint);
+      if (alloc) providerLinks.push({ network: l.networkName, service: alloc.service, alias: linkAlias(l.linkId) });
+    }
+    return { consumerLinks, providerLinks };
+  }
+
+  // Create (or verify) the network of one active link. Never adopts a network Harbor did not label.
+  private async ensureLinkNetwork(op: OperationRow, l: LinkRow): Promise<NetworkInfo> {
+    const { docker, repo } = this.ctx;
+    const existing = await docker.inspectNetwork(l.networkName);
+    if (existing) {
+      if (!this.ownsLinkNetwork(existing, l)) throw new HarborError('OWNERSHIP_CONFLICT', `network ${l.networkName} exists but is not the one Harbor created for link ${l.linkId}`, { nextAction: 'Inspect the network manually (docker network inspect); Harbor never uses or deletes a network it did not create.' });
+      if (existing.id !== l.networkId) repo.upsertLink({ ...l, networkId: existing.id });
+      return existing;
+    }
+    const created = await docker.createNetwork(l.networkName, linkNetworkLabels(identityFor(this.ctx.installationId, l.consumerInstanceId), l.linkId, l.providerInstanceId ?? ''), { internal: true });
+    repo.upsertLink({ ...l, networkId: created.id });
+    this.event(op, 'preparing', `created the private link network ${l.networkName} (internal: no route out, nothing published)`);
+    return created;
+  }
+
+  private async ensureLinkNetworks(op: OperationRow, inst: InstanceRow): Promise<void> {
+    const { repo } = this.ctx;
+    for (const l of [...repo.linksOfConsumer(inst.id), ...repo.linksOfProvider(inst.id)]) if (l.state === 'active' && l.providerInstanceId) await this.ensureLinkNetwork(op, l);
+  }
+
+  // Containers that sit on a link network: the consumer's bound services, or the provider's endpoint service.
+  private linkMembers(l: LinkRow, side: 'consumer' | 'provider'): { id: string; aliases: string[] }[] {
+    const { repo } = this.ctx;
+    if (side === 'provider') {
+      const prov = l.providerInstanceId ? repo.instance(l.providerInstanceId) : null;
+      const svc = prov?.endpoints.find((e) => e.id === l.providerEndpoint)?.service;
+      if (!prov || !svc) return [];
+      return repo.resources(prov.id).filter((r) => r.kind === 'container' && r.role === svc && r.dockerId).map((r) => ({ id: r.dockerId!, aliases: [linkAlias(l.linkId)] }));
+    }
+    const consumer = repo.instance(l.consumerInstanceId);
+    if (!consumer) return [];
+    let services: string[] = [];
+    try {
+      const pkg = loadReleaseSnapshot(this.dirs(consumer).release, consumer.packageId);
+      services = (pkg.manifest.links ?? []).find((c) => c.id === l.linkId)?.bindings.map((b) => b.service) ?? [];
+    } catch {
+      return [];
+    }
+    return repo.resources(consumer.id).filter((r) => r.kind === 'container' && services.includes(r.role) && r.dockerId).map((r) => ({ id: r.dockerId!, aliases: [] }));
+  }
+
+  // After `inst` started: Compose attached its own side; attach the other side live (no restart for it).
+  private async attachLinkPeers(op: OperationRow, inst: InstanceRow): Promise<void> {
+    const { repo, docker } = this.ctx;
+    const work: { l: LinkRow; side: 'consumer' | 'provider' }[] = [
+      ...repo.linksOfConsumer(inst.id).map((l) => ({ l, side: 'provider' as const })),
+      ...repo.linksOfProvider(inst.id).map((l) => ({ l, side: 'consumer' as const })),
+    ];
+    for (const { l, side } of work) {
+      if (l.state !== 'active' || !l.providerInstanceId) continue;
+      const net = await docker.inspectNetwork(l.networkId ?? l.networkName);
+      if (!net || !this.ownsLinkNetwork(net, l)) continue;
+      for (const m of this.linkMembers(l, side)) {
+        if (net.containerIds.includes(m.id)) continue;
+        const c = await docker.inspectContainer(m.id);
+        if (!c) continue;
+        await docker.connectNetwork(net.id, m.id, m.aliases);
+        this.event(op, 'starting', `attached ${c.name} to link network ${l.networkName}${m.aliases.length ? ` as ${m.aliases.join(', ')}` : ''}`);
+      }
+    }
+  }
+
+  // Detach everything and delete a link network (ownership verified first). The row is updated by the caller.
+  private async dropLinkNetwork(op: OperationRow, l: LinkRow, phase: string): Promise<void> {
+    const { docker } = this.ctx;
+    const net = (l.networkId ? await docker.inspectNetwork(l.networkId) : null) ?? (await docker.inspectNetwork(l.networkName));
+    if (!net) return;
+    if (!this.ownsLinkNetwork(net, l)) {
+      this.event(op, phase, `network ${net.name} is not the one Harbor created for link ${l.linkId}; left untouched`);
+      return;
+    }
+    for (const cid of net.containerIds) await docker.disconnectNetwork(net.id, cid);
+    await docker.removeNetwork(net.id);
+    this.event(op, phase, `deleted the private link network ${net.name}`);
+  }
+
+  // Re-render another app's Compose file after its links changed (no restart: the live attach/detach
+  // already applied it; the file keeps every later `up` consistent).
+  private async rewriteCompose(op: OperationRow, other: InstanceRow, sink: string[], bestEffort: boolean): Promise<void> {
+    try {
+      const fresh = this.ctx.repo.instance(other.id);
+      if (!fresh || fresh.purgedAt) return;
+      const dirs = this.dirs(fresh);
+      if (!existsSync(path.join(dirs.release, 'manifest.yaml'))) return;
+      const pkg = loadReleaseSnapshot(dirs.release, fresh.packageId);
+      const identity = identityFor(this.ctx.installationId, fresh.id);
+      await this.renderAndValidate(op, pkg, identity, fresh, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink));
+      this.event(op, 'preparing', `updated the private Compose file of ${fresh.name} for its links`);
+    } catch (e) {
+      if (!bestEffort) throw e;
+      this.event(op, 'preparing', `could not update the Compose file of ${other.name} (${e instanceof Error ? e.message : String(e)}); its next Restart applies the change`);
+    }
+  }
+
+  private needsProviderNotice(consumer: InstanceRow, linkId: string, why: string): void {
+    this.ctx.notifier.notify({
+      kind: 'link-needs-provider',
+      severity: 'warning',
+      title: `${consumer.name} needs a provider for its link "${linkId}"`,
+      body: `${why} Pick another app on its page (Links → Change), or run: harbor configure ${consumer.name} --link ${linkId}=<app>`,
+      instanceId: consumer.id,
+      dedupeKey: `link-needs-provider:${consumer.id}:${linkId}`,
+    });
+  }
+
+  // Set up (or clear) the links a plan resolved. Provider side: attached live + its Compose file rewritten.
+  private async applyPlannedLinks(op: OperationRow, consumer: InstanceRow, planned: PlannedLink[], sink: string[]): Promise<void> {
+    const { repo, docker } = this.ctx;
+    for (const p of planned) {
+      if (p.change === 'keep') continue;
+      const old = repo.link(consumer.id, p.id);
+      // a different provider (or unlinking) starts from a clean network
+      if (old && old.networkId && (p.change === 'clear' || old.providerInstanceId !== p.provider?.instanceId || old.providerEndpoint !== p.provider?.endpointId)) {
+        await this.dropLinkNetwork(op, old, 'preparing');
+        const oldProv = old.providerInstanceId ? repo.instance(old.providerInstanceId) : null;
+        repo.upsertLink({ ...old, networkId: null, state: 'needs_provider', providerInstanceId: null, providerEndpoint: null, note: null });
+        if (oldProv) await this.rewriteCompose(op, oldProv, sink, true);
+      }
+      if (!p.provider) {
+        repo.upsertLink({ consumerInstanceId: consumer.id, linkId: p.id, providerInstanceId: null, providerEndpoint: null, networkName: p.network, networkId: null, state: 'needs_provider', note: p.change === 'clear' ? 'unlinked' : null });
+        this.event(op, 'preparing', p.change === 'clear' ? `unlinked ${p.id}` : `optional link ${p.id} has no provider yet`);
+        continue;
+      }
+      const prov = repo.instance(p.provider.instanceId);
+      const alloc = prov?.endpoints.find((e) => e.id === p.provider!.endpointId);
+      if (!prov || prov.purgedAt || prov.installState !== 'installed' || !alloc) throw new HarborError('STATE_CHANGED', `${p.provider.name}, the provider chosen for link ${p.id}, is no longer installed with endpoint ${p.provider.endpointId}`, { nextAction: 'Create a new plan and pick another provider.' });
+      repo.upsertLink({ consumerInstanceId: consumer.id, linkId: p.id, providerInstanceId: prov.id, providerEndpoint: alloc.id, networkName: p.network, networkId: null, state: 'active', note: null });
+      const row = repo.link(consumer.id, p.id)!;
+      const net = await this.ensureLinkNetwork(op, row);
+      for (const m of this.linkMembers(row, 'provider')) {
+        if (net.containerIds.includes(m.id) || !(await docker.inspectContainer(m.id))) continue;
+        await docker.connectNetwork(net.id, m.id, m.aliases);
+      }
+      await this.rewriteCompose(op, prov, sink, false);
+      this.ctx.notifier.resolve(`link-needs-provider:${consumer.id}:${p.id}`);
+      this.event(op, 'preparing', `linked ${p.id}: ${consumer.name} reaches ${prov.name} (${alloc.service}) at ${linkValue(linkAlias(p.id), alloc.containerPort)} on ${p.network}; nothing else joins that network`);
+    }
+  }
+
+  // Remove/purge of either side drops the link networks (consumer side: dormant, Reinstall brings them back;
+  // provider side: the consumer needs a provider). Other apps' Compose files are rewritten, never restarted.
+  private async unlinkOnRemove(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    for (const l of repo.linksOfConsumer(inst.id)) {
+      if (l.state !== 'active') continue;
+      await this.dropLinkNetwork(op, l, 'removing');
+      repo.upsertLink({ ...l, networkId: null, state: 'dormant' });
+      const prov = l.providerInstanceId ? repo.instance(l.providerInstanceId) : null;
+      if (prov) await this.rewriteCompose(op, prov, sink, true);
+    }
+    for (const l of repo.linksOfProvider(inst.id)) {
+      if (l.state === 'active') await this.dropLinkNetwork(op, l, 'removing');
+      repo.upsertLink({ ...l, networkId: null, state: 'needs_provider', providerInstanceId: null, providerEndpoint: null, note: `${inst.name} was removed` });
+      const consumer = repo.instance(l.consumerInstanceId);
+      if (!consumer) continue;
+      if (l.state === 'active') await this.rewriteCompose(op, consumer, sink, true);
+      this.event(op, 'removing', `${consumer.name} lost its link ${l.linkId}; it needs a provider now`);
+      if (consumer.installState !== 'retained') this.needsProviderNotice(consumer, l.linkId, `${inst.name}, which it reached through this link, was removed.`);
+    }
+  }
+
+  // Reinstall: dormant links come back when their provider is still installed; otherwise they need one.
+  private async revive(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    for (const l of repo.linksOfConsumer(inst.id)) {
+      if (l.state !== 'dormant') continue;
+      const prov = l.providerInstanceId ? repo.instance(l.providerInstanceId) : null;
+      const alloc = prov?.endpoints.find((e) => e.id === l.providerEndpoint);
+      if (prov && alloc && prov.installState === 'installed' && !prov.purgedAt) {
+        await this.applyPlannedLinks(op, inst, [{ id: l.linkId, purpose: '', optional: false, provider: { instanceId: prov.id, name: prov.name, endpointId: alloc.id, service: alloc.service, containerPort: alloc.containerPort }, network: l.networkName, alias: linkAlias(l.linkId), change: 'set' }], sink);
+      } else {
+        repo.upsertLink({ ...l, state: 'needs_provider', providerInstanceId: null, providerEndpoint: null, note: 'its provider is gone' });
+        this.needsProviderNotice(inst, l.linkId, 'The app it was linked to is no longer installed.');
+      }
+    }
+  }
+
+  // Links whose id the release no longer declares are removed for good.
+  private async pruneLinks(op: OperationRow, inst: InstanceRow, pkg: LoadedPackage, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    for (const l of repo.linksOfConsumer(inst.id)) {
+      if ((pkg.manifest.links ?? []).some((c) => c.id === l.linkId)) continue;
+      if (l.state === 'active') await this.dropLinkNetwork(op, l, 'preparing');
+      repo.deleteLink(inst.id, l.linkId);
+      this.ctx.notifier.resolve(`link-needs-provider:${inst.id}:${l.linkId}`);
+      const prov = l.providerInstanceId ? repo.instance(l.providerInstanceId) : null;
+      if (prov && l.state === 'active') await this.rewriteCompose(op, prov, sink, true);
+      this.event(op, 'preparing', `removed link ${l.linkId} (not part of revision ${pkg.revision})`);
+    }
+  }
+
+  // A provider's update may drop or move the endpoint a consumer links to.
+  private async afterProviderEndpointsChanged(op: OperationRow, inst: InstanceRow, before: InstanceRow['endpoints'], sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    for (const l of repo.linksOfProvider(inst.id)) {
+      const consumer = repo.instance(l.consumerInstanceId);
+      if (!consumer || l.state !== 'active') continue;
+      const now = inst.endpoints.find((e) => e.id === l.providerEndpoint);
+      if (!now) {
+        await this.dropLinkNetwork(op, l, 'checking');
+        repo.upsertLink({ ...l, networkId: null, state: 'needs_provider', providerInstanceId: null, providerEndpoint: null, note: `${inst.name} revision ${inst.revision} has no endpoint ${l.providerEndpoint}` });
+        await this.rewriteCompose(op, consumer, sink, true);
+        this.needsProviderNotice(consumer, l.linkId, `${inst.name} no longer offers the endpoint it linked to.`);
+        continue;
+      }
+      const was = before.find((e) => e.id === l.providerEndpoint);
+      if (was && was.containerPort !== now.containerPort) {
+        await this.rewriteCompose(op, consumer, sink, true);
+        this.event(op, 'checking', `${inst.name} now answers its link on port ${now.containerPort}; Restart ${consumer.name} to pick up the new address`);
+      }
+    }
+  }
+
+  // Configure (decisions 125/126): new operator-secret values and/or link providers, then re-render + recreate.
+  private async configure(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    this.phase(op, 'applying', 'preparing', `applying new settings to ${inst.name}`);
+    await this.engineOrThrow();
+    const dirs = this.dirs(inst);
+    const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+    const refs = [...inst.secrets];
+    for (const [id, value] of Object.entries(this.supplied.store)) {
+      writeOperatorSecret(dirs.secrets, id, value, { replace: true });
+      if (!refs.some((r) => r.id === id)) refs.push({ id, file: path.join('secrets', id) });
+      this.event(op, 'preparing', `stored the new value of ${id}`);
+    }
+    for (const id of this.supplied.clear) {
+      removeSecret(dirs.secrets, id);
+      this.event(op, 'preparing', `cleared the optional secret ${id}; its variable is no longer set`);
+    }
+    repo.updateInstance(inst.id, { secrets: refs.filter((r) => !this.supplied.clear.includes(r.id)) });
+    await this.applyPlannedLinks(op, inst, plan.proposal.links ?? [], sink);
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    const fresh = repo.instance(inst.id) ?? inst;
+    const file = await this.renderAndValidate(op, pkg, identity, fresh, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink));
+    this.phase(op, 'applying', 'starting', 'recreating the containers whose configuration changed (same volumes and ports)');
+    repo.updateInstance(inst.id, { runtime: 'starting', desired: 'running' });
+    const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, fresh);
+    await this.checkReadiness(op, pkg, fresh, containers);
+    repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+  }
+
   // ---------- operations
 
   private async install(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
@@ -608,6 +906,7 @@ export class OperationRunner {
     }
     await this.createOwnedVolumes(op, pkg, identity, inst, plan.proposal.storage, homeDir);
     this.generateSecrets(op, pkg, inst, dirs.secrets);
+    await this.applyPlannedLinks(op, inst, plan.proposal.links ?? [], sink);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     const provisioned = this.readProvisioned(pkg, dirs.secrets, sink);
     const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values, undefined, provisioned);
@@ -855,7 +1154,9 @@ export class OperationRunner {
       }
       throw e;
     }
-    return this.recordProjectResources(op, identity, inst);
+    const containers = await this.recordProjectResources(op, identity, inst);
+    await this.attachLinkPeers(op, inst);
+    return containers;
   }
 
   private async reinstall(op: OperationRow, _plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
@@ -871,6 +1172,7 @@ export class OperationRunner {
     await this.verifyOwnedVolumes(op, pkg, identity, inst);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     this.event(op, 'preparing', `verified ${Object.keys(values).length} retained secret(s)`);
+    await this.revive(op, inst, sink);
     const existing = await this.ctx.docker.listContainers({ all: true, labels: { 'com.docker.compose.project': identity.project } });
     for (const c of existing) {
       if (c.labels[LABELS.instance] !== inst.id) throw new HarborError('OWNERSHIP_CONFLICT', `container ${c.name} occupies project ${identity.project} but is not owned by this instance`);
@@ -926,7 +1228,7 @@ export class OperationRunner {
     const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
     const identity = identityFor(this.ctx.installationId, inst.id);
     await this.verifyOwnedVolumes(op, pkg, identity, inst);
-    for (const s of pkg.manifest.secrets ?? []) readSecret(dirs.secrets, s.id);
+    this.readSecrets(pkg, dirs.secrets, []);
     const recorded = repo.resources(inst.id).filter((r) => r.kind === 'container');
     if (!recorded.length) throw new HarborError('DATA_MISSING', 'no recorded containers for this instance; start cannot recreate them', { nextAction: 'Use remove and then reinstall if the instance was previously installed.' });
     for (const r of recorded) {
@@ -938,8 +1240,10 @@ export class OperationRunner {
     this.phase(op, 'applying', 'starting', 'starting existing containers');
     repo.updateInstance(inst.id, { runtime: 'starting' });
     const file = path.join(dirs.runtime, 'compose.yaml');
+    await this.ensureLinkNetworks(op, inst);
     await this.ctx.compose.start({ projectDir: dirs.runtime, projectName: identity.project, file }, config.startTimeoutMs);
     const containers = await this.recordProjectResources(op, identity, inst);
+    await this.attachLinkPeers(op, inst);
     await this.checkReadiness(op, pkg, inst, containers);
     repo.updateInstance(inst.id, { installState: 'installed', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
   }
@@ -977,9 +1281,10 @@ export class OperationRunner {
   // Full uninstall: remove (if needed), then delete every Docker volume this instance created (ownership
   // verified by labels first), its secrets and release snapshot, and leave every namespace (name, ports).
   // Folders of the operator's own ("bind" resources) are never touched.
-  private async purge(op: OperationRow, inst: InstanceRow): Promise<void> {
+  private async purge(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<void> {
     const { repo, docker } = this.ctx;
-    if (inst.installState !== 'retained') await this.remove(op, inst);
+    if (inst.installState !== 'retained') await this.remove(op, inst, sink);
+    else await this.unlinkOnRemove(op, inst, sink);
     this.phase(op, 'applying', 'purging', 'deleting retained data of this app (verified as Harbor-created first)');
     const resources = repo.resources(inst.id);
     for (const r of resources.filter((x) => x.kind === 'volume')) {
@@ -1072,6 +1377,17 @@ export class OperationRunner {
       const refs = [...inst.secrets];
       for (const sec of next.manifest.secrets ?? []) {
         if (refs.some((r) => r.id === sec.id)) continue;
+        if (sec.source === 'operator') {
+          const v = this.supplied.store[sec.id];
+          if (v === undefined) {
+            if (sec.optional) continue;
+            throw new HarborError('SECRET_MISSING', `revision ${u.toRevision} needs a value for ${sec.id} and none arrived with the update`, { nextAction: 'Update again and type the value in the review dialog (CLI: --secret).' });
+          }
+          writeOperatorSecret(dirs.secrets, sec.id, v, { replace: true });
+          refs.push({ id: sec.id, file: path.join('secrets', sec.id) });
+          this.event(op, 'preparing', `stored the value you provided for the new secret ${sec.id}`);
+          continue;
+        }
         generateSecretOnce(dirs.secrets, sec.id, this.ctx.ids);
         refs.push({ id: sec.id, file: path.join('secrets', sec.id) });
         this.event(op, 'preparing', `generated retained secret ${sec.id}`);
@@ -1085,6 +1401,9 @@ export class OperationRunner {
         this.event(op, 'preparing', 'generated the admin credential this release provisions (an app that is already set up keeps its own accounts)');
       }
       repo.updateInstance(inst.id, { secrets: refs });
+      // Decision 126: links this release adds get their provider; links it dropped are removed.
+      await this.pruneLinks(op, inst, next, sink);
+      await this.applyPlannedLinks(op, inst, (plan.proposal.links ?? []).filter((l) => l.change !== 'keep'), sink);
       const values = this.readSecrets(next, dirs.secrets, sink);
       const file = await this.renderAndValidate(op, next, identity, updated, dirs.runtime, values);
       const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
@@ -1099,6 +1418,7 @@ export class OperationRunner {
       await this.checkReadiness(op, next, updated, containers);
       repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
       this.event(op, 'checking', `${inst.name} now runs revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`);
+      await this.afterProviderEndpointsChanged(op, updated, before.endpoints, sink);
       this.opResult = { fromRevision: u.fromRevision, toRevision: u.toRevision, rolledBack: false };
       // Shown once, like at install: it is the login if the app had not been set up yet.
       if (newlyProvisioned) {
@@ -1115,6 +1435,7 @@ export class OperationRunner {
         cpSync(previousDir, dirs.release, { recursive: true });
         repo.updateInstanceRelease(inst.id, { revision: before.revision, releaseHashes: before.releaseHashes, endpoints: before.endpoints });
         const restored: InstanceRow = { ...inst, revision: before.revision, releaseHashes: before.releaseHashes, endpoints: before.endpoints };
+        await this.pruneLinks(op, restored, current, sink);
         const values = this.readSecrets(current, dirs.secrets, sink);
         const file = await this.renderAndValidate(op, current, identity, restored, dirs.runtime, values);
         const inv = { projectDir: dirs.runtime, projectName: identity.project, file };
@@ -1160,7 +1481,7 @@ export class OperationRunner {
     }
   }
 
-  private async remove(op: OperationRow, inst: InstanceRow): Promise<void> {
+  private async remove(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<void> {
     const { repo, docker } = this.ctx;
     this.phase(op, 'applying', 'removing', 'persisting removal intent (data and secrets are retained)');
     await this.engineOrThrow();
@@ -1185,7 +1506,8 @@ export class OperationRunner {
       repo.deleteResource(inst.id, 'container', r.role);
       this.event(op, 'removing', `removed container ${c.name}`);
     }
-    const netRec = resources.find((x) => x.kind === 'network');
+    await this.unlinkOnRemove(op, inst, sink);
+    const netRec = resources.find((x) => x.kind === 'network' && x.role === 'default');
     if (netRec) {
       const net = await docker.inspectNetwork(netRec.dockerId ?? netRec.name);
       if (!net) {

@@ -1023,6 +1023,16 @@
         }
       }
     },
+    "/v1/links": {
+      "get": {
+        "description": "App links (decision 126): every private link between two apps on this machine, with its network, alias and state (active, needs_provider, dormant).",
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/exposures": {
       "get": {
         "description": "Published addresses (tailnet/public) of all instances.",
@@ -2211,7 +2221,7 @@
     },
     "/v1/plans": {
       "post": {
-        "description": "Create an immutable plan. Install: {kind, packageId, name?, storage?, location?}. Others: {kind, instanceId}.",
+        "description": "Create an immutable plan. Install: {kind, packageId, name?, storage?, location?, main?, links?}. Configure: {kind, instanceId, secrets?, links?}. Others: {kind, instanceId}. Operator-provided secret values never go into a plan: they travel with POST /v1/operations.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2276,6 +2286,31 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 256
+                          }
+                        }
+                      },
+                      "links": {
+                        "type": "object",
+                        "maxProperties": 8,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,29}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "instanceId"
+                          ],
+                          "properties": {
+                            "instanceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "endpointId": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                            }
                           }
                         }
                       },
@@ -2379,6 +2414,91 @@
                               "maxLength": 4096
                             }
                           }
+                        }
+                      },
+                      "links": {
+                        "type": "object",
+                        "maxProperties": 8,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,29}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "instanceId"
+                          ],
+                          "properties": {
+                            "instanceId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "endpointId": {
+                              "type": "string",
+                              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "instanceId"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "configure"
+                        ]
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                      },
+                      "secrets": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        }
+                      },
+                      "links": {
+                        "type": "object",
+                        "maxProperties": 8,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,29}$"
+                        },
+                        "additionalProperties": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "instanceId"
+                              ],
+                              "properties": {
+                                "instanceId": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 64
+                                },
+                                "endpointId": {
+                                  "type": "string",
+                                  "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                                }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
@@ -2513,7 +2633,7 @@
     },
     "/v1/operations": {
       "post": {
-        "description": "Submit an exact plan ID. Requires Idempotency-Key. Install-location plans also need the encryption passphrase (never stored in the plan). Returns 202 with the (possibly existing) operation.",
+        "description": "Submit an exact plan ID. Requires Idempotency-Key. Install-location plans also need the encryption passphrase, and plans that ask for operator-provided secrets (decision 125) carry their values in `secrets` — neither is ever stored in the plan, an operation or a response. Returns 202 with the (possibly existing) operation.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2533,6 +2653,17 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 256
+                  },
+                  "secrets": {
+                    "type": "object",
+                    "maxProperties": 16,
+                    "propertyNames": {
+                      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 4096
+                    }
                   }
                 }
               }

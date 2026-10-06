@@ -77,6 +77,26 @@ secrets:                         # optional: Harbor generates and keeps these
     bindings:
       - service: web
         environment: APP_SECRET
+  - id: upstream-token           # …or asks the operator for one at install (decision 125, see §8)
+    source: operator
+    prompt: Access token of the documents app (its Settings → Access tokens)
+    minLength: 16                # optional limits (1–4096); one line, no control characters
+    optional: false              # true: install may leave it empty (the variable is then not set)
+    retention: retain
+    bindings:
+      - service: web
+        environment: UPSTREAM_TOKEN
+links:                           # optional: talk privately to another installed app (decision 126, see §8)
+  - id: docs                     # lowercase, ≤ 30 chars; the other app answers as `docs-link`
+    purpose: The documents app this gateway reads and writes
+    provider:
+      packages: [docsapp]        # optional: which packages can satisfy it (any app when omitted)
+      endpoint: web              # optional: the provider's endpoint (default: its main one)
+    optional: false              # true: install may go without a provider for now
+    bindings:
+      - service: web             # only bound services join the link network
+        environment: DOCS_BASE_URL
+        format: url              # url (http://docs-link:3010) | authority (docs-link:3010) | host | port
 configuration:                   # optional: hand the app its main address (links it sends out)
   - service: web
     environment: PUBLIC_URL
@@ -235,3 +255,34 @@ webhooks needed, which matters behind NAT). With the toggle on, a new commit is 
 update plan submitted automatically (actor `git-source`); off, you get a notification and update
 manually. A commit that does not validate is recorded on the source and skipped — the running app
 is never touched. `harbor sources add/check/redeploy/remove` mirror the console's Store section.
+
+## 8. Values from the operator, and links to other apps
+
+**Operator-provided secrets** (`source: operator`). Some apps need a value the operator already has —
+another service's API token, an SMTP password. Declare it with a `prompt` (what to type, where to find
+it); Harbor asks for it in the install review dialog (a password field) or takes it from the CLI
+(`harbor install my-app --secret upstream-token=@token.txt`, or `=-` for stdin; a value on the command
+line itself is refused). It is stored and bound exactly like a generated secret: a 0600 file in the
+instance's `secrets/`, kept across remove/reinstall/update, deleted by a full uninstall, never shown in
+the console, the API, plans, operation events or logs. An update asks only for operator secrets the new
+release adds. The operator can replace a value later (app page → *Values you provided → Change…*, or
+`harbor configure my-app --secret upstream-token=@new.txt`). `bytes`/`encoding` are for generated
+secrets only; `prompt`/`optional`/`minLength`/`maxLength` for operator ones only.
+
+**Links** (`links:`). Apps are isolated: each runs on its own private network. When your app needs
+another installed app (an MCP gateway that calls a documents app's API), declare a link instead of going
+out through the other app's public address. At install the operator picks which app provides it (the
+only candidate is picked automatically; CLI `--link docs=<app>[/<endpoint>]`). Harbor then creates one
+network for this link, joined by **only** your bound services and the provider's endpoint service (its
+database and other services never join), with no route to the internet. The provider answers on it as
+`<link-id>-link` on its container port, and your variables receive that address in the chosen `format`.
+
+- The provider is attached live; it is not restarted.
+- If the provider is removed or uninstalled, the link is dropped and your app is flagged *needs a
+  provider* (it keeps running without the variable after its next restart); the operator picks another
+  app on its page or with `harbor configure my-app --link docs=<app>`.
+- Restart re-creates the network if it went missing. Update keeps links, adds the ones a new release
+  declares, and removes the ones it no longer declares.
+- Use the address as a base URL (`url` has no trailing slash). Authenticate to the other app like any
+  client would (often with an operator-provided secret, above): a link is reachability, not trust.
+

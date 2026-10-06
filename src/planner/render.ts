@@ -4,6 +4,21 @@ import type { EndpointAllocation } from '../state/repo.js';
 import { LABELS } from '../naming.js';
 import { browserUrlFor } from '../config.js';
 import { defaultNetworkName, instanceLabels, ownedVolumeName, type InstanceIdentity } from './identity.js';
+import { linkValue } from './links.js';
+
+// Decision 126: an active link where this instance is the consumer (its bound services join `network`
+// and get the provider's address) or the provider (its endpoint `service` joins with `alias`).
+export interface ConsumerLink {
+  id: string;
+  network: string;
+  alias: string;
+  containerPort: number;
+}
+export interface ProviderLink {
+  network: string;
+  service: string;
+  alias: string;
+}
 
 export interface RenderInput {
   // LAN mode publishes app ports on every interface (0.0.0.0); default loopback only
@@ -22,6 +37,9 @@ export interface RenderInput {
   provisioned?: { username: string; password: string } | null;
   // decision 80: service -> locally built image tag (from release.json builds)
   builtImages?: Record<string, string>;
+  // decision 126: only links whose network exists (state active); others render nothing
+  consumerLinks?: ConsumerLink[];
+  providerLinks?: ProviderLink[];
 }
 
 export interface RenderedCompose {
@@ -64,6 +82,9 @@ export function renderCompose(input: RenderInput): RenderedCompose {
   const services: Record<string, unknown> = {};
 
   const endpointById = new Map(endpoints.map((e) => [e.id, e]));
+  const consumerLinks = input.consumerLinks ?? [];
+  const providerLinks = input.providerLinks ?? [];
+  const linkNetworks = new Set<string>();
 
   for (const service of Object.keys(compose.services).sort()) {
     const src = compose.services[service]!;
@@ -74,6 +95,8 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       for (const b of s.bindings) {
         if (b.service !== service) continue;
         const value = secretValues ? secretValues[s.id] : undefined;
+        // decision 125: an optional operator secret nobody provided leaves its variable unset
+        if (secretValues && value === undefined && s.source === 'operator' && s.optional) continue;
         if (secretValues && value === undefined) throw new Error(`missing value for secret ${s.id}`);
         env[b.environment] = escapeCompose(value ?? secretPlaceholder(s.id));
         generated.push(b.environment);
@@ -85,6 +108,15 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       if (!ep) throw new Error(`configuration references unallocated endpoint ${c.endpoint}`);
       env[c.environment] = escapeCompose(formatUrl(endpointUrls?.[c.endpoint] ?? browserUrlFor(ep.hostPort), c.format ?? 'url'));
       generated.push(c.environment);
+    }
+    for (const l of manifest.links ?? []) {
+      const active = consumerLinks.find((c) => c.id === l.id);
+      if (!active) continue; // needs a provider: no network, no variable
+      for (const b of l.bindings) {
+        if (b.service !== service) continue;
+        env[b.environment] = escapeCompose(linkValue(active.alias, active.containerPort, b.format ?? 'url'));
+        generated.push(b.environment);
+      }
     }
     const pc = manifest.provisionedCredentials;
     if (pc && pc.service === service) {
@@ -111,6 +143,17 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       labels: { ...labels, [LABELS.service]: service, [LABELS.kind]: manifest.deployment.services[service] ?? 'application' },
       networks: ['default'],
     };
+    // Link networks (decision 126): consumer services bound by an active link, the provider's endpoint service with its alias.
+    const joins: Record<string, Record<string, unknown>> = {};
+    for (const l of manifest.links ?? []) {
+      const active = consumerLinks.find((c) => c.id === l.id);
+      if (active && l.bindings.some((b) => b.service === service)) joins[active.network] = {};
+    }
+    for (const p of providerLinks) if (p.service === service) joins[p.network] = { aliases: [p.alias] };
+    if (Object.keys(joins).length) {
+      def['networks'] = { default: {}, ...Object.fromEntries(Object.keys(joins).sort().map((n) => [n, joins[n]])) };
+      for (const n of Object.keys(joins)) linkNetworks.add(n);
+    }
     if (src.command) def['command'] = src.command.map(escapeCompose);
     if (Object.keys(env).length) def['environment'] = env;
     if (ports.length) def['ports'] = ports;
@@ -140,6 +183,8 @@ export function renderCompose(input: RenderInput): RenderedCompose {
     services,
     networks: { default: { name: defaultNetworkName(identity), driver: 'bridge', labels: { ...labels, [LABELS.kind]: 'network' } } },
   };
+  // Harbor creates link networks itself (runner); Compose only attaches to them.
+  for (const n of [...linkNetworks].sort()) (model['networks'] as Record<string, unknown>)[n] = { name: n, external: true };
   if (Object.keys(volumes).length) model['volumes'] = volumes;
 
   const yaml = yamlStringify(model, { lineWidth: 0, defaultStringType: 'QUOTE_DOUBLE', defaultKeyType: 'PLAIN' });

@@ -1,5 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
+import type { LinkChoice, LinkDto } from '../contracts/api.js';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
@@ -60,13 +61,63 @@ async function resolveInstance(api: ApiClient, ref: string): Promise<InstanceSum
   throw new HarborError('NOT_FOUND', `no instance named ${ref}`, { nextAction: `Run \`${PRODUCT.cliName} list\`.` });
 }
 
+// Decision 125: operator-provided secrets come from a file (`id=@path`) or stdin (`id=-`), never from the
+// command line itself (shell history, `ps`). One trailing newline is dropped, like `--password-stdin`.
+async function readSecretFlags(flags: string[], stdinTaken = false): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  let usedStdin = stdinTaken;
+  for (const f of flags) {
+    const eq = f.indexOf('=');
+    if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--secret expects <id>=@<file> or <id>=-, got ${f.split('=')[0]}`);
+    const id = f.slice(0, eq);
+    const src = f.slice(eq + 1);
+    if (src === '-') {
+      if (usedStdin) throw new HarborError('INVALID_REQUEST', 'only one value can come from stdin', { nextAction: 'Put the other values in files: --secret <id>=@<file>.' });
+      usedStdin = true;
+      out[id] = await readStdinAll();
+    } else if (src.startsWith('@')) {
+      out[id] = readFileSync(src.slice(1), 'utf8').replace(/\r?\n$/, '');
+    } else {
+      throw new HarborError('INVALID_REQUEST', `--secret ${id}: pass the value from a file (${id}=@path) or stdin (${id}=-), never on the command line`, { nextAction: 'Command lines end up in shell history and process lists.' });
+    }
+  }
+  return out;
+}
+
+// Decision 126: --link <id>=<instance>[/<endpoint>] (instance by name or id).
+async function readLinkFlags(api: ApiClient, flags: string[]): Promise<Record<string, LinkChoice>> {
+  const out: Record<string, LinkChoice> = {};
+  for (const f of flags) {
+    const eq = f.indexOf('=');
+    if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--link expects <link>=<app>[/<endpoint>], got ${f}`);
+    const [ref, endpointId] = f.slice(eq + 1).split('/');
+    const inst = await resolveInstance(api, ref ?? '');
+    out[f.slice(0, eq)] = endpointId ? { instanceId: inst.id, endpointId } : { instanceId: inst.id };
+  }
+  return out;
+}
+
+// Values a plan still asks for: prompted without echo on a terminal, otherwise the daemon explains what is missing.
+async function askMissingSecrets(plan: PlanDto, given: Record<string, string>, yes: boolean): Promise<Record<string, string>> {
+  const out = { ...given };
+  for (const s of plan.secrets) {
+    if (!s.ask || s.id in out) continue;
+    if (!process.stdin.isTTY || globals().json) continue;
+    if (yes && s.ask === 'optional') continue;
+    const v = await promptHidden(`${s.prompt ?? s.id}${s.ask === 'optional' ? ' (optional, Enter to skip)' : ''}: `);
+    if (v || s.ask === 'required') out[s.id] = v;
+  }
+  return out;
+}
+
 function planSummary(p: PlanDto): string {
   const lines = [`Plan ${p.id} (${p.kind}) for "${p.name}" [${p.packageId} rev ${p.revision}] — expires ${p.expiresAt}`];
   for (const c of p.changes) lines.push(`  - ${c}`);
   if (p.location) lines.push(`  Lives on:  ${p.location.dir} (whole app, encrypted)`);
   if (p.endpoints.length) lines.push('  Endpoints: ' + p.endpoints.map((e) => `${e.id}=${e.browserUrl}`).join(', '));
   if (p.storage.length) lines.push('  Storage:   ' + p.storage.map((s) => `${s.volumeName} (${s.state})`).join(', '));
-  if (p.secrets.length) lines.push('  Secrets:   ' + p.secrets.map((s) => `${s.id} (${s.state})`).join(', '));
+  if (p.secrets.length) lines.push('  Secrets:   ' + p.secrets.map((s) => `${s.id} (${s.source === 'operator' ? (s.ask ? `you provide it${s.ask === 'optional' ? ', optional' : ''}` : 'kept') : s.state})`).join(', '));
+  for (const l of p.links ?? []) lines.push(`  Link:      ${l.id} -> ${l.provider ? `${l.provider.name}/${l.provider.endpointId} as ${l.provider.url}` : 'no provider'}${l.change === 'keep' ? ' (unchanged)' : l.change === 'clear' ? ' (unlink)' : ''}`);
   if (p.exposure) lines.push(`  Address:   ${p.exposure.url} via ${p.exposure.via}, protection ${p.exposure.protection}${p.exposure.makePrimary ? ', becomes primary' : ''}`);
   for (const w of p.warnings) lines.push(`  ! ${w}`);
   return lines.join('\n');
@@ -101,17 +152,18 @@ async function waitOperation(api: ApiClient, id: string, follow: boolean): Promi
   }
 }
 
-async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string; passphrase?: string | undefined }): Promise<void> {
+async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string; passphrase?: string | undefined; secrets?: Record<string, string> }): Promise<void> {
   if (!globals().json) process.stderr.write(planSummary(plan) + '\n');
   if (!opts.yes) {
     const ok = await confirm('Apply this plan?');
     if (!ok) throw new HarborError('INVALID_REQUEST', 'plan not approved', { nextAction: 'Re-run with --yes to approve non-interactively.' });
   }
   const key = opts.idempotencyKey ?? `cli-${randomUUID()}`;
+  const secrets = await askMissingSecrets(plan, opts.secrets ?? {}, Boolean(opts.yes));
   let submitted: { operationId: string; created: boolean } | null = null;
   for (let attempt = 0; attempt < 3 && !submitted; attempt++) {
     try {
-      submitted = await api.post<{ operationId: string; created: boolean }>('/v1/operations', opts.passphrase ? { planId: plan.id, passphrase: opts.passphrase } : { planId: plan.id }, { 'idempotency-key': key });
+      submitted = await api.post<{ operationId: string; created: boolean }>('/v1/operations', { planId: plan.id, ...(opts.passphrase ? { passphrase: opts.passphrase } : {}), ...(Object.keys(secrets).length ? { secrets } : {}) }, { 'idempotency-key': key });
     } catch (e) {
       // Transport failures retry with the same key; API errors do not.
       if (HarborError.is(e, 'STATE_UNAVAILABLE') && attempt < 2) continue;
@@ -256,11 +308,13 @@ program
   .option('--no-wait', 'return after submission')
   .option('--yes', 'approve without prompting', false)
   .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (for plans with an install location; not needed for default-key plans)', false)
-  .action(async (planId: string, opts: { idempotencyKey: string; wait: boolean; yes: boolean; passphraseStdin?: boolean }) => {
+  .option('--secret <id=@file|id=->', 'a value the plan asks for (decision 125), from a file or stdin (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .action(async (planId: string, opts: { idempotencyKey: string; wait: boolean; yes: boolean; passphraseStdin?: boolean; secret: string[] }) => {
     const api = client();
     const plan = await api.get<PlanDto>(`/v1/plans/${planId}`);
     const passphrase = plan.location && opts.passphraseStdin ? (await readStdinAll()).trim() || undefined : undefined;
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, idempotencyKey: opts.idempotencyKey, passphrase });
+    const secrets = await readSecretFlags(opts.secret, Boolean(opts.passphraseStdin));
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, idempotencyKey: opts.idempotencyKey, passphrase, secrets });
   });
 
 program
@@ -270,9 +324,11 @@ program
   .option('--storage <claim=/host/path>', 'use your own folder for a storage claim the package marks as external (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--location <dir>', 'install the whole app encrypted at <candidate>/<package> (omit the passphrase for the Harbor data folder)')
   .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
+  .option('--secret <id=@file|id=->', 'a value the app asks for (operator-provided secret), from a file or stdin; prompted on a terminal otherwise (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--link <id=app[/endpoint]>', 'which installed app satisfies a link of this app (repeatable; the only candidate is picked by itself)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return the operation ID instead of waiting')
-  .action(async (pkg: string, opts: { name?: string; storage: string[]; location?: string; passphraseStdin?: boolean; yes: boolean; wait: boolean }) => {
+  .action(async (pkg: string, opts: { name?: string; storage: string[]; location?: string; passphraseStdin?: boolean; secret: string[]; link: string[]; yes: boolean; wait: boolean }) => {
     const api = client();
     const storage: Record<string, { hostPath: string }> = {};
     for (const s of opts.storage) {
@@ -286,17 +342,22 @@ program
       passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() || undefined : undefined;
       extra['location'] = passphrase ? { dir: opts.location, passphrase } : { dir: opts.location };
     }
+    const secrets = await readSecretFlags(opts.secret, Boolean(opts.passphraseStdin));
+    const links = await readLinkFlags(api, opts.link);
+    if (Object.keys(links).length) extra['links'] = links;
     const plan = await createPlan(api, 'install', pkg, opts.name, extra);
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, passphrase });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, passphrase, secrets });
   });
 
 program
   .command('update <instance>')
   .description('update an installed app to the newest revision of its package (bundled after a Harbor upgrade, or uploaded); keeps data, ports and addresses; rolls back automatically if the new release does not start')
   .option('--storage <claim=/host/path>', 'folder for a storage claim the new release adds (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--secret <id=@file|id=->', 'a value for an operator-provided secret the new release adds (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--link <id=app[/endpoint]>', 'provider for a link the new release adds (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return after submission')
-  .action(async (ref: string, opts: { storage: string[]; yes: boolean; wait: boolean }) => {
+  .action(async (ref: string, opts: { storage: string[]; secret: string[]; link: string[]; yes: boolean; wait: boolean }) => {
     const api = client();
     const storage: Record<string, { hostPath: string }> = {};
     for (const s of opts.storage) {
@@ -304,8 +365,35 @@ program
       if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--storage expects <claim>=<path>, got ${s}`);
       storage[s.slice(0, eq)] = { hostPath: s.slice(eq + 1) };
     }
-    const plan = await createPlan(api, 'update', ref, undefined, Object.keys(storage).length ? { storage } : {});
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+    const links = await readLinkFlags(api, opts.link);
+    const secrets = await readSecretFlags(opts.secret);
+    const plan = await createPlan(api, 'update', ref, undefined, { ...(Object.keys(storage).length ? { storage } : {}), ...(Object.keys(links).length ? { links } : {}) });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, secrets });
+  });
+
+program
+  .command('configure <instance>')
+  .description('change what an installed app was given at install: a value you provided (operator secret) and/or which app a link points to; recreates only what changed')
+  .option('--secret <id=@file|id=->', 'new value for an operator-provided secret, from a file or stdin; an empty file clears an optional one (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--link <id=app[/endpoint]>', 'point a link at another installed app (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--unlink <id>', 'remove an optional link (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--yes', 'approve the shown plan non-interactively', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { secret: string[]; link: string[]; unlink: string[]; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const secrets = await readSecretFlags(opts.secret);
+    const links: Record<string, LinkChoice | null> = { ...(await readLinkFlags(api, opts.link)), ...Object.fromEntries(opts.unlink.map((id) => [id, null])) };
+    const plan = await api.post<PlanDto>('/v1/plans', { kind: 'configure', instanceId: inst.id, ...(Object.keys(secrets).length ? { secrets: Object.keys(secrets) } : {}), ...(Object.keys(links).length ? { links } : {}) });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, secrets });
+  });
+
+program
+  .command('links')
+  .description('private links between apps (decision 126): which app reaches which, on which Harbor-owned network')
+  .action(async () => {
+    const { items } = await client().get<{ items: LinkDto[] }>('/v1/links');
+    out(items, () => (items.length ? table([['APP', 'LINK', 'PROVIDER', 'ADDRESS', 'STATE', 'NETWORK'], ...items.map((l) => [l.consumer.name, l.id, l.provider ? `${l.provider.name}/${l.provider.endpointId}` : '-', l.url ?? '-', l.state.replace('_', ' '), l.network])]) : 'No app links.'));
   });
 
 const packagesCmd = program.command('packages').description('your own apps: list, add a package zip, remove one');

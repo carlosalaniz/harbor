@@ -154,6 +154,32 @@ export class DockerodeAdapter implements DockerAdapter {
     }
   }
 
+  async createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean }): Promise<NetworkInfo> {
+    const created = await this.docker.createNetwork({ Name: name, Driver: 'bridge', Internal: opts.internal, Labels: labels, CheckDuplicate: true });
+    const info = await this.inspectNetwork(created.id);
+    if (!info) throw new Error(`network ${name} vanished right after it was created`);
+    return info;
+  }
+
+  async connectNetwork(networkId: string, containerId: string, aliases: string[]): Promise<void> {
+    try {
+      await this.docker.getNetwork(networkId).connect({ Container: containerId, EndpointConfig: aliases.length ? { Aliases: aliases } : {} });
+    } catch (e) {
+      // 403 "endpoint ... already exists in network": already attached
+      if ((e as { statusCode?: number }).statusCode === 403 && /already exists/i.test((e as Error).message)) return;
+      throw e;
+    }
+  }
+
+  async disconnectNetwork(networkId: string, containerId: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(networkId).disconnect({ Container: containerId, Force: true });
+    } catch (e) {
+      if (isNotFound(e)) return;
+      throw e;
+    }
+  }
+
   async exec(id: string, opts: { cmd: string[]; user?: string; env?: Record<string, string>; timeoutMs: number }): Promise<ExecResult> {
     const ex = await this.docker.getContainer(id).exec({
       Cmd: opts.cmd,

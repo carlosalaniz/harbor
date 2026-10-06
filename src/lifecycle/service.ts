@@ -1,5 +1,10 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { AppLinkDto, LinkChoice, LinkDto } from '../contracts/api.js';
+import type { LinkClaim, Manifest, SecretClaim } from '../contracts/types.js';
+import { linkAlias, linkNetworkName, linkValue } from '../planner/links.js';
+import { checkSubmittedSecrets, plannedSecrets } from '../planner/secrets.js';
+import type { LinkRow, PlannedLink, PlannedSecret } from '../state/repo.js';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationChannelDto, NotificationsDto, OperationDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanAppHost, lanNames, lanUrl } from '../system/lan.js';
@@ -404,7 +409,7 @@ export class ApplicationService {
     this.ctx.repo.setAutoUpdate(row.id, enabled);
     const meta = this.packageMeta(row);
     const fresh = this.ctx.repo.instance(row.id)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.linkLook(fresh, meta) });
   }
   // One update plan per eligible instance, submitted through the normal queue ("Update all").
   // Failures roll back per instance and never stop the rest (the queue is serial anyway).
@@ -727,15 +732,15 @@ export class ApplicationService {
     return this.ctx.packages.list();
   }
 
-  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null } {
-    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null });
+  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; links: LinkClaim[] } {
+    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), links: pkg.manifest.links ?? [] });
     try {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
         return from(this.ctx.packages.load(i.packageId));
       } catch {
-        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null };
+        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], links: [] };
       }
     }
   }
@@ -750,11 +755,135 @@ export class ApplicationService {
     return { bytes, contentType };
   }
 
+  // ---- app links (decision 126) and operator secrets (decision 125): read models
+
+  private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets'] } {
+    const secretsDir = path.join(instanceDir(this.ctx.config.stateDir, i.id), 'secrets');
+    return {
+      links: this.appLinks(i, meta.links),
+      linkedBy: this.ctx.repo.linksOfProvider(i.id).map((l) => ({ instanceId: l.consumerInstanceId, name: this.ctx.repo.instance(l.consumerInstanceId)?.name ?? l.consumerInstanceId, linkId: l.linkId, state: l.state })),
+      operatorSecrets: meta.operatorSecrets.map((s) => ({ id: s.id, prompt: s.prompt ?? s.id, optional: s.optional ?? false, set: secretExists(secretsDir, s.id) })),
+    };
+  }
+
+  private appLinks(i: InstanceRow, claims: LinkClaim[]): AppLinkDto[] {
+    const rows = this.ctx.repo.linksOfConsumer(i.id);
+    const identity = identityFor(this.ctx.installationId, i.id);
+    return claims.map((c) => {
+      const row = rows.find((r) => r.linkId === c.id);
+      const prov = row?.providerInstanceId ? this.ctx.repo.instance(row.providerInstanceId) : null;
+      const alloc = prov && row?.providerEndpoint ? prov.endpoints.find((e) => e.id === row.providerEndpoint) : undefined;
+      const alias = linkAlias(c.id);
+      return {
+        id: c.id,
+        purpose: c.purpose,
+        optional: c.optional ?? false,
+        state: row?.state ?? 'needs_provider',
+        provider: prov && row?.providerEndpoint ? { instanceId: prov.id, name: prov.name, endpointId: row.providerEndpoint } : null,
+        alias,
+        network: row?.networkName ?? linkNetworkName(identity, c.id),
+        url: alloc ? linkValue(alias, alloc.containerPort) : null,
+        note: row?.note ?? null,
+      };
+    });
+  }
+
+  // Settings → Internal networks: every link of every app on this machine.
+  linksList(): LinkDto[] {
+    const out: LinkDto[] = [];
+    for (const i of this.ctx.repo.listInstances()) {
+      const meta = this.packageMeta(i);
+      for (const l of this.appLinks(i, meta.links)) out.push({ ...l, consumer: { instanceId: i.id, name: i.name } });
+    }
+    return out;
+  }
+
+  // Apps that can satisfy one link: installed, not the consumer itself, of an allowed package, with the endpoint.
+  private linkCandidates(claim: LinkClaim, selfId: string | null): { inst: InstanceRow; alloc: EndpointAllocation }[] {
+    const out: { inst: InstanceRow; alloc: EndpointAllocation }[] = [];
+    for (const i of this.ctx.repo.listInstances()) {
+      if (i.id === selfId || i.installState !== 'installed') continue;
+      if (claim.provider?.packages && !claim.provider.packages.includes(i.packageId)) continue;
+      const alloc = this.providerEndpointFor(i, claim.provider?.endpoint);
+      if (alloc) out.push({ inst: i, alloc });
+    }
+    return out;
+  }
+
+  private providerEndpointFor(i: InstanceRow, wanted?: string): EndpointAllocation | null {
+    if (wanted) return i.endpoints.find((e) => e.id === wanted) ?? null;
+    const primary = this.packageMeta(i).primaryEndpoint;
+    return i.endpoints.find((e) => e.id === primary) ?? i.endpoints[0] ?? null;
+  }
+
+  // Resolve every link of `manifest` for a plan: an explicit choice, the existing provider (update/configure),
+  // the only candidate there is (required links), or none (optional links). Refuses with a next action otherwise.
+  private resolveLinks(manifest: Manifest, consumer: InstanceIdentity, choices: Record<string, LinkChoice | null>, opts: { selfId: string | null; existing?: LinkRow[]; allowClear?: boolean; explicitOnly?: boolean }): PlannedLink[] {
+    const claims = manifest.links ?? [];
+    for (const id of Object.keys(choices)) if (!claims.some((c) => c.id === id)) throw new HarborError('INVALID_REQUEST', `${manifest.metadata.name} has no link ${id}`, { nextAction: claims.length ? `Its links: ${claims.map((c) => c.id).join(', ')}.` : 'This app does not link to other apps.' });
+    return claims.map((c): PlannedLink => {
+      const base = { id: c.id, purpose: c.purpose, optional: c.optional ?? false, network: linkNetworkName(consumer, c.id), alias: linkAlias(c.id) };
+      const toProvider = (inst: InstanceRow, alloc: EndpointAllocation) => ({ instanceId: inst.id, name: inst.name, endpointId: alloc.id, service: alloc.service, containerPort: alloc.containerPort });
+      if (c.id in choices) {
+        const choice = choices[c.id];
+        if (choice === null || choice === undefined) {
+          if (!opts.allowClear) throw new HarborError('INVALID_REQUEST', `link ${c.id} needs a provider`);
+          if (!c.optional) throw new HarborError('INVALID_REQUEST', `${manifest.metadata.name} cannot work without its link ${c.id} (${c.purpose})`, { nextAction: 'Pick another provider instead of unlinking.' });
+          return { ...base, provider: null, change: 'clear' };
+        }
+        const inst = this.instanceRow(choice.instanceId);
+        if (inst.id === opts.selfId) throw new HarborError('INVALID_REQUEST', 'an app cannot link to itself');
+        if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `${inst.name} is ${inst.installState}; only installed apps can be linked`, { nextAction: `Install or reinstall ${inst.name} first.` });
+        if (c.provider?.packages && !c.provider.packages.includes(inst.packageId)) throw new HarborError('INVALID_REQUEST', `link ${c.id} needs ${c.provider.packages.join(' or ')}, and ${inst.name} is ${inst.packageId}`, { nextAction: `Choose an app installed from ${c.provider.packages.join(' or ')}.` });
+        const alloc = this.providerEndpointFor(inst, choice.endpointId ?? c.provider?.endpoint);
+        if (!alloc) throw new HarborError('INVALID_REQUEST', `${inst.name} has no endpoint ${choice.endpointId ?? c.provider?.endpoint ?? ''}`.trim(), { nextAction: `Its endpoints: ${inst.endpoints.map((e) => e.id).join(', ') || 'none'}.` });
+        return { ...base, provider: toProvider(inst, alloc), change: 'set' };
+      }
+      const row = opts.existing?.find((r) => r.linkId === c.id);
+      if (row) {
+        const prov = row.providerInstanceId ? this.ctx.repo.instance(row.providerInstanceId) : null;
+        const alloc = prov && row.providerEndpoint ? prov.endpoints.find((e) => e.id === row.providerEndpoint) : undefined;
+        if (prov && alloc) return { ...base, provider: toProvider(prov, alloc), change: 'keep' };
+        if (opts.explicitOnly || c.optional) return { ...base, provider: null, change: 'keep' };
+      }
+      if (opts.explicitOnly) return { ...base, provider: null, change: 'keep' };
+      const candidates = this.linkCandidates(c, opts.selfId);
+      if (!c.optional && candidates.length === 1) return { ...base, provider: toProvider(candidates[0]!.inst, candidates[0]!.alloc), change: 'set' };
+      if (c.optional) return { ...base, provider: null, change: row ? 'keep' : 'set' };
+      throw new HarborError('INVALID_REQUEST', `${manifest.metadata.name} needs ${c.purpose} (link ${c.id})`, {
+        nextAction: candidates.length ? `Choose which app it uses: --link ${c.id}=<${candidates.map((x) => x.inst.name).join('|')}> (console: the picker in the install dialog).` : `Install ${c.provider?.packages ? c.provider.packages.join(' or ') : 'the app it talks to'} first, then this one.`,
+      });
+    });
+  }
+
+  private linkChanges(links: PlannedLink[], appName: string): string[] {
+    return links.flatMap((l) => {
+      if (l.change === 'keep') return [];
+      if (l.change === 'clear') return [`Unlink ${l.id}: delete its private network ${l.network}; ${appName} no longer gets the address`];
+      if (!l.provider) return [`Leave the optional link ${l.id} (${l.purpose}) without a provider for now`];
+      return [`Link ${l.id}: create the private network ${l.network} joining only ${appName}'s linked service(s) and ${l.provider.name}'s ${l.provider.service} service, which answers there as ${l.alias}; ${appName} gets ${linkValue(l.alias, l.provider.containerPort)}`];
+    });
+  }
+
+  // Remove/purge plans: what happens to links on either side.
+  private linkRemovalNotes(inst: InstanceRow): { changes: string[]; warnings: string[] } {
+    const changes: string[] = [];
+    const warnings: string[] = [];
+    for (const l of this.ctx.repo.linksOfConsumer(inst.id).filter((x) => x.state === 'active')) changes.push(`Delete the private link network ${l.networkName} (link ${l.linkId}); Reinstall re-creates it`);
+    for (const l of this.ctx.repo.linksOfProvider(inst.id)) {
+      const consumer = this.ctx.repo.instance(l.consumerInstanceId);
+      if (!consumer) continue;
+      changes.push(`Unlink ${consumer.name} (its link ${l.linkId} uses ${inst.name}) and delete the network ${l.networkName}`);
+      warnings.push(`${consumer.name} reaches ${inst.name} through its link "${l.linkId}"; afterwards it needs a provider (pick one on its page).`);
+    }
+    return { changes, warnings };
+  }
+
   instances(): InstanceSummary[] {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id) });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id), ...this.linkLook(i, meta) });
     });
   }
   // Install-location read model: the encrypted home on the drive (null =
@@ -1068,7 +1197,7 @@ export class ApplicationService {
   private summaryOf(instanceId: string): InstanceSummary {
     const fresh = this.ctx.repo.instance(instanceId)!;
     const meta = this.packageMeta(fresh);
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.linkLook(fresh, meta) });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
     try {
@@ -1147,7 +1276,7 @@ export class ApplicationService {
     this.ctx.log.info('drive adopted', { instanceId, storageId, path: hostPath, actor });
     const meta = this.packageMeta(this.ctx.repo.instance(instanceId)!);
     const fresh = this.ctx.repo.instance(instanceId)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.linkLook(fresh, meta) });
   }
 
   // ---- your own apps
@@ -1315,7 +1444,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id) });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id), ...this.linkLook(row, meta) });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
@@ -1468,6 +1597,7 @@ export class ApplicationService {
       }
       const locationOnDrive = location !== null && !this.isDataFolderLocation(location.dir);
       const storage = this.resolveStorage(pkg, identity, req.storage ?? {}, instances);
+      const links = this.resolveLinks(pkg.manifest, identity, req.links ?? {}, { selfId: null });
       // Main address (decision 116): apps that need a secure browser context get an HTTPS one in LAN
       // mode — HTTPS LAN, the tailnet or a domain. Refused here, before anything is pulled.
       const mainEndpoint = endpoints.find((e) => e.id === pkg.manifest.ui.primaryEndpoint) ?? endpoints[0]!;
@@ -1488,7 +1618,8 @@ export class ApplicationService {
         endpoints,
         storage,
         location,
-        secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
+        secrets: plannedSecrets(pkg.manifest),
+        links,
         changes: [
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
@@ -1501,7 +1632,8 @@ export class ApplicationService {
               ]
             : []),
           ...storage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}${s.readOnly ? ' (read-only)' : ''}; Harbor never deletes it` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
-          ...(pkg.manifest.secrets ?? []).map((s) => `Generate retained secret ${s.id} (${s.bytes} bytes)`),
+          ...(pkg.manifest.secrets ?? []).map((s) => (s.source === 'operator' ? `Store the value you provide for ${s.id} (${s.prompt ?? s.id}) as a retained secret${s.optional ? ' (optional)' : ''}` : `Generate retained secret ${s.id} (${s.bytes ?? 32} bytes)`)),
+          ...this.linkChanges(links, pkg.manifest.metadata.name),
           ...(mainExposure ? [`Publish it at ${exposureUrl(mainExposure)} and make that its main address`] : []),
           ...Object.values(pkg.release.images).map((i) => `Pull image ${i.reference} (${i.tag})`),
           ...Object.entries(pkg.release.builds ?? {}).map(([svc, b]) => `Build ${svc} from source at commit ${b.commit.slice(0, 12)} (${b.tag})`),
@@ -1538,6 +1670,7 @@ export class ApplicationService {
     const pkgName = this.packageMeta(inst).name;
     if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'update') return this.updatePlan(req, inst, pkgName, actor, now, expiresAt);
+    if (req.kind === 'configure') return this.configurePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
     switch (req.kind) {
       case 'start': {
@@ -1585,12 +1718,13 @@ export class ApplicationService {
         break;
       case 'remove':
         if (inst.installState === 'retained') throw new HarborError('INVALID_STATE', `instance ${inst.name} is already removed (retained)`);
-        changes.push(`Stop and delete the recorded containers of "${inst.name}"`, `Delete the private network ${inst.project}_default if unused`, 'Retain volumes, secrets, name and port allocations');
+        changes.push(`Stop and delete the recorded containers of "${inst.name}"`, `Delete the private network ${inst.project}_default if unused`, ...this.linkRemovalNotes(inst).changes, 'Retain volumes, secrets, name and port allocations');
         break;
       case 'purge':
         if (inst.installState === 'installing') throw new HarborError('INVALID_STATE', `cannot uninstall ${inst.name} while it is installing`);
         changes.push(
           ...(inst.installState !== 'retained' ? [`Stop and delete the containers of "${inst.name}" and its private network`] : []),
+          ...this.linkRemovalNotes(inst).changes,
           `Delete the data volume(s) Harbor created for "${inst.name}" (ownership verified first)`,
           'Delete its secrets and stored release',
           `Free the name "${inst.name}" and its ports`,
@@ -1599,7 +1733,7 @@ export class ApplicationService {
       case 'reinstall':
         if (inst.installState !== 'retained') throw new HarborError('INVALID_STATE', `reinstall requires a removed (retained) instance; ${inst.name} is ${inst.installState}`);
         if (!inst.everInstalled) throw new HarborError('INVALID_STATE', `instance ${inst.name} never completed an installation; manual investigation is required`, { nextAction: 'Inspect the instance and its resources manually. Automatic reinstall only applies to previously successful instances.' });
-        changes.push(`Reinstall ${pkgName} revision ${inst.revision} into "${inst.name}" using its stored release`, 'Verify retained volumes (ownership tokens) and secrets before starting', `Recreate containers and network for project ${inst.project}`, 'Check readiness');
+        changes.push(`Reinstall ${pkgName} revision ${inst.revision} into "${inst.name}" using its stored release`, 'Verify retained volumes (ownership tokens) and secrets before starting', `Recreate containers and network for project ${inst.project}`, ...this.ctx.repo.linksOfConsumer(inst.id).filter((l) => l.state === 'dormant').map((l) => `Re-create link ${l.linkId} (network ${l.networkName}) if its provider is still installed`), 'Check readiness');
         break;
     }
     const resources = this.ctx.repo.resources(inst.id);
@@ -1619,9 +1753,9 @@ export class ApplicationService {
       changes,
       warnings:
         req.kind === 'remove'
-          ? ['Data volumes and secrets are retained; nothing is deleted except containers and the private network.']
+          ? ['Data volumes and secrets are retained; nothing is deleted except containers and the private network.', ...this.linkRemovalNotes(inst).warnings]
           : req.kind === 'purge'
-            ? [`This deletes the app's data for good: ${resources.filter((r) => r.kind === 'volume').map((r) => r.name).join(', ') || 'no managed volumes'}. There is no undo.`, ...(resources.some((r) => r.kind === 'bind') ? [`Your own folder(s) are not touched: ${resources.filter((r) => r.kind === 'bind').map((r) => r.name).join(', ')}.`] : [])]
+            ? [`This deletes the app's data for good: ${resources.filter((r) => r.kind === 'volume').map((r) => r.name).join(', ') || 'no managed volumes'}. There is no undo.`, ...(resources.some((r) => r.kind === 'bind') ? [`Your own folder(s) are not touched: ${resources.filter((r) => r.kind === 'bind').map((r) => r.name).join(', ')}.`] : []), ...this.linkRemovalNotes(inst).warnings]
             : [],
       releaseHashes: inst.releaseHashes,
     };
@@ -1655,7 +1789,13 @@ export class ApplicationService {
     const missing = Object.keys(next.manifest.endpoints).filter((id) => !inst.endpoints.some((e) => e.id === id));
     const fresh = missing.length ? (await this.allocatePorts({ ...next, manifest: { ...next.manifest, endpoints: Object.fromEntries(missing.map((id) => [id, next.manifest.endpoints[id]!])) } }, new Set(kept.map((e) => e.hostPort)))) : [];
     const endpoints = [...kept, ...fresh];
-    const newSecrets = (next.manifest.secrets ?? []).filter((s) => !inst.secrets.some((r) => r.id === s.id)).map((s) => s.id);
+    // kept: every secret the instance has, plus optional operator secrets the current release already declared (left empty on purpose)
+    const keptSecrets = new Set([...inst.secrets.map((r) => r.id), ...(current.manifest.secrets ?? []).map((s) => s.id)]);
+    const newSecrets = (next.manifest.secrets ?? []).filter((s) => !keptSecrets.has(s.id)).map((s) => s.id);
+    // Decision 126: kept links keep their provider; links the new release adds are resolved like an install.
+    const existingLinks = repo.linksOfConsumer(inst.id);
+    const links = this.resolveLinks(next.manifest, identity, req.links ?? {}, { selfId: inst.id, existing: existingLinks });
+    const droppedLinks = existingLinks.filter((l) => !(next.manifest.links ?? []).some((c) => c.id === l.linkId));
     const images = [
       ...Object.keys(next.release.images).map((svc) => ({ service: svc, from: current.release.images[svc]?.reference ?? '(new service)', to: next.release.images[svc]!.reference })),
       ...Object.keys(next.release.builds ?? {}).map((svc) => ({ service: svc, from: current.release.builds?.[svc] ? `built from ${current.release.builds[svc]!.commit.slice(0, 12)}` : '(new service)', to: `built from ${next.release.builds![svc]!.commit.slice(0, 12)}` })),
@@ -1668,14 +1808,17 @@ export class ApplicationService {
       endpoints,
       storage: [...keptStorage, ...newStorage],
       location: null,
-      secrets: (next.manifest.secrets ?? []).map((s) => ({ id: s.id })),
+      secrets: plannedSecrets(next.manifest, keptSecrets),
+      links,
       changes: [
         `Update ${pkgName} "${inst.name}" from revision ${inst.revision}${current.manifest.release.version ? ` (${current.manifest.release.version})` : ''} to revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`,
         'Keep the name, addresses, ports, data volumes, your folders and secrets',
         'Stop and delete the current containers (the previous release is kept for an automatic rollback)',
         ...images.map((i) => `Image ${i.service}: ${i.from} -> ${i.to}`),
         ...newStorage.map((s) => (s.hostPath ? `Use your folder ${s.hostPath} for ${s.purpose}` : `Create retained volume ${s.volumeName} (${s.purpose})`)),
-        ...newSecrets.map((id) => `Generate retained secret ${id}`),
+        ...newSecrets.map((id) => ((next.manifest.secrets ?? []).find((s) => s.id === id)?.source === 'operator' ? `Store the value you provide for the new secret ${id}` : `Generate retained secret ${id}`)),
+        ...this.linkChanges(links, pkgName),
+        ...droppedLinks.map((l) => `Remove link ${l.linkId} (this release no longer uses it) and its network ${l.networkName}`),
         ...fresh.map((e) => `Publish new endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
         ...droppedVolumes.map((v) => `Volume ${v} is no longer used by this release; it is kept, not deleted`),
         'Pull the new images by digest, start the new containers, check readiness',
@@ -1690,6 +1833,46 @@ export class ApplicationService {
       update: { fromRevision: inst.revision, toRevision: next.revision, fromVersion: current.manifest.release.version ?? null, toVersion: next.manifest.release.version ?? null, images, newSecrets, newStorage: newStorage.map((s) => s.id), newEndpoints: fresh.map((e) => e.id), releaseNotes: next.manifest.presentation?.releaseNotes ?? null },
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'update', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Configure (decisions 125/126): replace operator-provided secrets (values arrive with the submission)
+  // and/or change link providers of an installed app; the runner re-renders and recreates what changed.
+  private async configurePlan(req: Extract<PlanRequest, { kind: 'configure' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `configure requires an installed app; ${inst.name} is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? 'Reinstall it first.' : 'Fix the app first (Details shows the last error).' });
+    const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+    const wanted = [...new Set(req.secrets ?? [])];
+    for (const id of wanted) {
+      const claim = (pkg.manifest.secrets ?? []).find((s) => s.id === id);
+      if (!claim) throw new HarborError('INVALID_REQUEST', `${pkgName} has no secret ${id}`);
+      if (claim.source !== 'operator') throw new HarborError('INVALID_REQUEST', `secret ${id} is generated by Harbor and cannot be typed in`, { nextAction: 'Only secrets the package asks you for (source: operator) can be changed.' });
+    }
+    if (!wanted.length && !Object.keys(req.links ?? {}).length) throw new HarborError('INVALID_REQUEST', 'nothing to change', { nextAction: 'Name a secret to replace (--secret id=@file) and/or a link provider (--link id=<app>).' });
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    const keep = new Set((pkg.manifest.secrets ?? []).filter((s) => !wanted.includes(s.id)).map((s) => s.id));
+    const secrets = plannedSecrets(pkg.manifest, keep);
+    const links = this.resolveLinks(pkg.manifest, identity, req.links ?? {}, { selfId: inst.id, existing: repo.linksOfConsumer(inst.id), allowClear: true, explicitOnly: true });
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: null,
+      secrets,
+      links,
+      changes: [
+        ...wanted.map((id) => `Replace the stored value of ${id} with the one you provide (kept as a retained secret, never shown)`),
+        ...this.linkChanges(links, pkgName),
+        `Re-render the private Compose file of "${inst.name}" and recreate the containers whose configuration changed (same volumes and ports), then check readiness`,
+      ],
+      warnings: [],
+      releaseHashes: inst.releaseHashes,
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'configure', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
   }
@@ -1893,8 +2076,20 @@ export class ApplicationService {
     return s;
   }
 
-  submit(planId: string, idempotencyKey: string, actor: string): SubmitResult {
+  // Operator-provided secret values (decision 125): like the location passphrase, never in the plan.
+  // Checked at submit (before the operation exists), held in memory keyed by plan id, consumed once by
+  // the runner at the start of the operation. A daemon restart loses them; the queued operation is then
+  // marked needs_action (no replay) and a new plan asks again.
+  private operatorValues = new Map<string, { store: Record<string, string>; clear: string[] }>();
+  takeOperatorSecrets(planId: string): { store: Record<string, string>; clear: string[] } {
+    const v = this.operatorValues.get(planId) ?? { store: {}, clear: [] };
+    this.operatorValues.delete(planId);
+    return v;
+  }
+
+  submit(planId: string, idempotencyKey: string, actor: string, opts: { secrets?: Record<string, string> } = {}): SubmitResult {
     const { repo, ids } = this.ctx;
+    let checked: { store: Record<string, string>; clear: string[] } | null = null;
     const result = repo.transaction((): SubmitResult => {
       const existing = repo.operationByIdempotencyKey(idempotencyKey);
       if (existing) {
@@ -1908,6 +2103,7 @@ export class ApplicationService {
         throw new HarborError('IDEMPOTENCY_CONFLICT', `plan ${planId} was already submitted`, { operationId: plan.consumedOperationId, nextAction: 'Poll the existing operation instead of submitting again.' });
       }
       if (new Date(plan.expiresAt).getTime() <= this.ctx.clock.now().getTime()) throw new HarborError('PLAN_EXPIRED', `plan ${planId} expired at ${plan.expiresAt}`);
+      checked = checkSubmittedSecrets((plan.proposal.secrets ?? []) as PlannedSecret[], opts.secrets);
 
       const operationId = ids.uuid();
       if (plan.kind === 'install') {
@@ -1958,6 +2154,7 @@ export class ApplicationService {
       repo.addEvent({ operationId, instanceId: plan.instanceId, phase: 'queued', message: `${plan.kind} accepted for instance ${plan.proposal.name}` });
       return { operation: repo.operation(operationId)!, created: true };
     });
+    if (result.created && checked) this.operatorValues.set(planId, checked);
     if (result.created) this.wake();
     return result;
   }

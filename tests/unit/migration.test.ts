@@ -55,6 +55,11 @@ describe('state migration v1 -> v2', () => {
     opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, note, created_at, proxy_from) VALUES ('99999999-9999-4999-8999-999999999999', '22222222-2222-4222-8222-222222222222', 'web', 'proxy', 'cloud.example.com', 443, 'none', 'active', NULL, 't', '192.168.0.20')").run();
     expect(opened.prepare('SELECT via, proxy_from FROM exposures').get()).toEqual({ via: 'proxy', proxy_from: '192.168.0.20' });
     expect(() => opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '22222222-2222-4222-8222-222222222222', 'web', 'carrier-pigeon', 'x', 1, 'none', 'active', 't')").run()).toThrow(/CHECK/);
+    // v9: app links (decision 126), one row per (consumer, link id); provider null = needs a provider
+    opened.prepare("INSERT INTO links (consumer_instance_id, link_id, provider_instance_id, provider_endpoint, network_name, state, created_at, updated_at) VALUES ('22222222-2222-4222-8222-222222222222', 'docs', NULL, NULL, 'hb_x_link_docs', 'needs_provider', 't', 't')").run();
+    expect(opened.prepare('SELECT link_id, state, network_id FROM links').get()).toEqual({ link_id: 'docs', state: 'needs_provider', network_id: null });
+    expect(() => opened.prepare("INSERT INTO links (consumer_instance_id, link_id, network_name, state, created_at, updated_at) VALUES ('22222222-2222-4222-8222-222222222222', 'docs', 'n', 'active', 't', 't')").run()).toThrow(/UNIQUE|PRIMARY/);
+    expect(() => opened.prepare("INSERT INTO links (consumer_instance_id, link_id, network_name, state, created_at, updated_at) VALUES ('22222222-2222-4222-8222-222222222222', 'other', 'n', 'sleeping', 't', 't')").run()).toThrow(/CHECK/);
     expect(opened.pragma('foreign_key_check')).toEqual([]);
     opened.close();
     // second open: no migration, still fine

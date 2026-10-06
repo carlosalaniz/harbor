@@ -109,6 +109,16 @@ export interface CatalogItem {
   setup: boolean;
   storage: number;
   claims: { id: string; purpose: string; external: { hint: string; required: boolean; readOnly: boolean } | null }[];
+  operatorSecrets: { id: string; prompt: string; optional: boolean; minLength: number | null; maxLength: number | null }[];
+  links: { id: string; purpose: string; optional: boolean; packages: string[] | null; endpoint: string | null }[];
+}
+
+// Decisions 125/126: what an install asks for besides storage.
+export function operatorSecretsOf(m: Manifest): CatalogItem['operatorSecrets'] {
+  return (m.secrets ?? []).filter((s) => s.source === 'operator').map((s) => ({ id: s.id, prompt: s.prompt ?? s.id, optional: s.optional ?? false, minLength: s.minLength ?? null, maxLength: s.maxLength ?? null }));
+}
+export function linksOf(m: Manifest): CatalogItem['links'] {
+  return (m.links ?? []).map((l) => ({ id: l.id, purpose: l.purpose, optional: l.optional ?? false, packages: l.provider?.packages ?? null, endpoint: l.provider?.endpoint ?? null }));
 }
 
 // Catalog listing never throws for one bad package: it reports it as unavailable with the reason.
@@ -134,6 +144,8 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         setup: Boolean(pkg.manifest.setup),
         storage: (pkg.manifest.storage ?? []).length,
         claims: (pkg.manifest.storage ?? []).map((s) => ({ id: s.id, purpose: s.purpose, external: s.external ? { hint: s.external.hint, required: s.external.required ?? false, readOnly: s.external.readOnly ?? false } : null })),
+        operatorSecrets: operatorSecretsOf(pkg.manifest),
+        links: linksOf(pkg.manifest),
       });
     } catch (e) {
       items.push({
@@ -152,6 +164,8 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         setup: false,
         storage: 0,
         claims: [],
+        operatorSecrets: [],
+        links: [],
       });
     }
   }

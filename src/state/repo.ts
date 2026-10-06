@@ -8,7 +8,7 @@ export type InstallState = 'installing' | 'installed' | 'failed' | 'needs_action
 export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unknown';
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure';
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The operator's own proxy (decision 118) is never the main address: Harbor does not own its TLS.
 export type PrimaryExposure = 'loopback' | 'tailnet' | 'public';
@@ -125,6 +125,58 @@ function domainFrom(r: Raw): DomainRow {
   return { hostname: r['hostname'] as string, createdAt: r['created_at'] as string, checkedAt: (r['checked_at'] as string | null) ?? null, dnsState: r['dns_state'] as DomainRow['dnsState'], addresses: pj(r['addresses_json'], [] as string[]), note: (r['note'] as string | null) ?? null };
 }
 
+// Decision 126: one link of a consumer instance. providerInstanceId null = needs a provider.
+export interface LinkRow {
+  consumerInstanceId: string;
+  linkId: string;
+  providerInstanceId: string | null;
+  providerEndpoint: string | null;
+  networkName: string;
+  networkId: string | null;
+  state: 'active' | 'needs_provider' | 'dormant';
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+function linkFrom(r: Raw): LinkRow {
+  return {
+    consumerInstanceId: r['consumer_instance_id'] as string,
+    linkId: r['link_id'] as string,
+    providerInstanceId: (r['provider_instance_id'] as string | null) ?? null,
+    providerEndpoint: (r['provider_endpoint'] as string | null) ?? null,
+    networkName: r['network_name'] as string,
+    networkId: (r['network_id'] as string | null) ?? null,
+    state: r['state'] as LinkRow['state'],
+    note: (r['note'] as string | null) ?? null,
+    createdAt: r['created_at'] as string,
+    updatedAt: r['updated_at'] as string,
+  };
+}
+
+// Decision 125: what a plan asks for (never a value). ask: the submission must (required) or may
+// (optional) carry a value for it; absent = generated or kept as it is.
+export interface PlannedSecret {
+  id: string;
+  source?: 'operator';
+  prompt?: string;
+  optional?: boolean;
+  minLength?: number;
+  maxLength?: number;
+  ask?: 'required' | 'optional';
+}
+
+// Decision 126: a link as the plan resolved it. provider null = left without a provider (optional link).
+export interface PlannedLink {
+  id: string;
+  purpose: string;
+  optional: boolean;
+  provider: { instanceId: string; name: string; endpointId: string; service: string; containerPort: number } | null;
+  network: string;
+  alias: string;
+  // configure plans: unchanged links are listed for review but not touched
+  change?: 'set' | 'keep' | 'clear';
+}
+
 export interface PlanProposal {
   packageId: string;
   revision: string;
@@ -137,7 +189,9 @@ export interface PlanProposal {
   // defaultKey: sealed with Harbor's own key (data folder, silent unlock) —
   // no custom passphrase, not portable. Absent = custom passphrase (portable).
   location: { dir: string; defaultKey?: boolean } | null;
-  secrets: { id: string }[];
+  secrets: PlannedSecret[];
+  // decision 126: links the plan sets up (install/update/reinstall/configure)
+  links?: PlannedLink[];
   changes: string[];
   warnings: string[];
   releaseHashes: Record<string, string>;
@@ -429,6 +483,7 @@ export class Repo {
       this.db.prepare('DELETE FROM port_claims WHERE instance_id = ?').run(id);
       this.db.prepare('DELETE FROM resources WHERE instance_id = ?').run(id);
       this.db.prepare('DELETE FROM exposures WHERE instance_id = ?').run(id);
+      this.db.prepare('DELETE FROM links WHERE consumer_instance_id = ?').run(id);
       this.db
         .prepare(`UPDATE instances SET purged_at = ?, name = ?, desired = 'retained', install_state = 'retained', runtime = 'stopped', readiness = 'unknown', endpoints_json = '[]', secrets_json = '[]', active_operation_id = NULL, display_name = NULL, icon_json = NULL, updated_at = ? WHERE id = ?`)
         .run(now, archivedName, now, id);
@@ -682,6 +737,33 @@ export class Repo {
   }
   deleteResource(instanceId: string, kind: ResourceRow['kind'], role: string): void {
     this.db.prepare('DELETE FROM resources WHERE instance_id = ? AND kind = ? AND role = ?').run(instanceId, kind, role);
+  }
+
+  // links (decision 126)
+  links(): LinkRow[] {
+    return (this.db.prepare('SELECT * FROM links ORDER BY consumer_instance_id, link_id').all() as Raw[]).map(linkFrom);
+  }
+  linksOfConsumer(instanceId: string): LinkRow[] {
+    return (this.db.prepare('SELECT * FROM links WHERE consumer_instance_id = ? ORDER BY link_id').all(instanceId) as Raw[]).map(linkFrom);
+  }
+  linksOfProvider(instanceId: string): LinkRow[] {
+    return (this.db.prepare('SELECT * FROM links WHERE provider_instance_id = ? ORDER BY consumer_instance_id, link_id').all(instanceId) as Raw[]).map(linkFrom);
+  }
+  link(consumerInstanceId: string, linkId: string): LinkRow | null {
+    const r = this.db.prepare('SELECT * FROM links WHERE consumer_instance_id = ? AND link_id = ?').get(consumerInstanceId, linkId) as Raw | undefined;
+    return r ? linkFrom(r) : null;
+  }
+  upsertLink(l: Omit<LinkRow, 'createdAt' | 'updatedAt'>): void {
+    const now = this.now();
+    this.db
+      .prepare(
+        `INSERT INTO links (consumer_instance_id, link_id, provider_instance_id, provider_endpoint, network_name, network_id, state, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(consumer_instance_id, link_id) DO UPDATE SET provider_instance_id = excluded.provider_instance_id, provider_endpoint = excluded.provider_endpoint, network_name = excluded.network_name, network_id = excluded.network_id, state = excluded.state, note = excluded.note, updated_at = excluded.updated_at`,
+      )
+      .run(l.consumerInstanceId, l.linkId, l.providerInstanceId, l.providerEndpoint, l.networkName, l.networkId, l.state, l.note, now, now);
+  }
+  deleteLink(consumerInstanceId: string, linkId: string): void {
+    this.db.prepare('DELETE FROM links WHERE consumer_instance_id = ? AND link_id = ?').run(consumerInstanceId, linkId);
   }
 
   // events

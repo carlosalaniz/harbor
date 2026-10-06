@@ -33,6 +33,9 @@ export const LABELS = {
   kind: `${PRODUCT.labelPrefix}/kind`,
   service: `${PRODUCT.labelPrefix}/service`,
   platformTool: `${PRODUCT.labelPrefix}/platform-tool`,
+  // decision 126: app-link networks carry the link id and the provider instance
+  link: `${PRODUCT.labelPrefix}/link`,
+  provider: `${PRODUCT.labelPrefix}/provider`,
 } as const;
 
 export function projectNameFor(instanceId: string): string {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import QRCode from 'qrcode';
 import { Terminal } from '../Terminal';
+import type { LinkDto } from '../../../../src/contracts/api';
 import type { AppearanceDto, DomainsDto, FoundAppDto, HostStorageDto, InstanceLogsDto, LogsDto, NotificationChannelDto, PlatformToolDto, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, StorageUsageDto, SystemHostDto, WallpaperSource } from '../../../../src/contracts/api';
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, RecoveryCard, appLabel } from '../components';
@@ -10,7 +11,7 @@ import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
 import { WALLPAPERS, applySurfacesOpacity, applyTheme, applyWallpaper, hasExplicitWallpaper, readSurfacesOpacity, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'overview' | 'account' | 'network' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
+type Section = 'overview' | 'account' | 'network' | 'links' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
 // One 16px stroke set for the settings rail: same weight, same box, no emoji.
 const SECTION_ICON: Record<Section, ReactNode> = {
   overview: (
@@ -23,6 +24,13 @@ const SECTION_ICON: Record<Section, ReactNode> = {
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
       <circle cx="8" cy="5.5" r="2.8" />
       <path d="M2.8 13.5c.8-2.6 2.8-3.8 5.2-3.8s4.4 1.2 5.2 3.8" />
+    </svg>
+  ),
+  links: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" aria-hidden="true">
+      <circle cx="4" cy="8" r="2" />
+      <circle cx="12" cy="8" r="2" />
+      <path d="M6 8h4" />
     </svg>
   ),
   remote: (
@@ -90,6 +98,7 @@ const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: 'overview', label: 'Overview', blurb: 'This machine at a glance' },
   { id: 'account', label: 'Account', blurb: 'Password, recovery key and sessions' },
   { id: 'network', label: 'Network', blurb: 'Secure addresses on your home network' },
+  { id: 'links', label: 'Internal networks', blurb: 'Which apps talk to each other privately' },
   { id: 'remote', label: 'Remote access', blurb: 'Reach Harbor from your other devices' },
   { id: 'public', label: 'Public addresses', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', blurb: 'Disks and folders your apps use' },
@@ -133,6 +142,7 @@ export function Settings({ c, initialSection, onSection }: { c: Console; initial
         {section === 'overview' && <Overview c={c} go={setSection} />}
         {section === 'account' && <Account />}
         {section === 'network' && <Network c={c} />}
+        {section === 'links' && <InternalNetworks />}
         {section === 'remote' && <RemoteAccess c={c} />}
         {section === 'public' && <PublicAddresses c={c} />}
         {section === 'storage' && <Storage />}
@@ -1139,6 +1149,48 @@ function StatusRow({ tool }: { tool: PlatformToolDto | undefined }) {
 }
 
 // Delivery channels for the bell's notifications: ntfy, webhook, email. Secrets are write-only.
+// Decision 126: every app link on this machine. Each link is its own Harbor-owned network joining only
+// the app that asked for it and the one service of the app it talks to; databases never join.
+function InternalNetworks() {
+  const [items, setItems] = useState<LinkDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api.links().then(setItems, (e: Error) => setError(e.message));
+  }, []);
+  return (
+    <section className="card" aria-labelledby="links-h">
+      <h2 id="links-h">Internal networks</h2>
+      <p className="muted small">
+        Apps are isolated from each other. When an app needs another one (an assistant that reads your documents app, say), Harbor gives the two a private network of their own: only the app that asked and the one
+        service it talks to join it, under a fixed name. Nothing else on this machine can use it, and it has no route to the internet.
+      </p>
+      {error && <p className="error">{error}</p>}
+      {items && items.length === 0 && <p className="muted">No app links yet. Apps that need another app ask for it when you install them.</p>}
+      {items && items.length > 0 && (
+        <ul className="addresses">
+          {items.map((l) => (
+            <li key={`${l.consumer.instanceId}-${l.id}`}>
+              <Pill tone={l.state === 'active' ? 'ok' : l.optional ? 'muted' : 'warn'}>{l.state === 'active' ? 'linked' : l.state === 'dormant' ? 'paused' : 'needs a provider'}</Pill> <strong>{l.consumer.name}</strong> →{' '}
+              {l.provider ? <strong>{l.provider.name}</strong> : <span className="muted">no provider</span>} <span className="muted small">· {l.purpose}</span>
+              <br />
+              <span className="muted small">
+                network <code>{l.network}</code>
+                {l.url ? (
+                  <>
+                    {' '}
+                    · reached as <code>{l.url}</code>
+                  </>
+                ) : null}
+                {l.note ? ` · ${l.note}` : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function Notifications() {
   const [channels, setChannels] = useState<NotificationChannelDto[]>([]);
   const [loaded, setLoaded] = useState(false);

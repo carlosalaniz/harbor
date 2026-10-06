@@ -15,6 +15,9 @@ import { rfc3339 } from '../util.js';
 interface FakeContainer extends ContainerInfo {
   project: string;
   service: string;
+  // network id -> aliases on it (decision 126 link networks)
+  aliases?: Record<string, string[]>;
+  env?: Record<string, string>;
 }
 
 export interface FakeBehaviour {
@@ -134,11 +137,54 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
   }
   async removeNetwork(id: string): Promise<void> {
     this.assertUp();
-    const n = this.networks.get(id);
+    const n = this.networks.get(id) ?? [...this.networks.values()].find((x) => x.name === id);
     if (!n) return;
     if (n.containerIds.length) throw Object.assign(new Error('network has active endpoints'), { statusCode: 403 });
-    this.networks.delete(id);
+    this.networks.delete(n.id);
+    this.internal.delete(n.id);
     this.log.push(`network rm ${n.name}`);
+  }
+  readonly internal = new Set<string>(); // network ids created with internal: true
+  async createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean }): Promise<NetworkInfo> {
+    this.assertUp();
+    if ([...this.networks.values()].some((n) => n.name === name)) throw Object.assign(new Error(`network with name ${name} already exists`), { statusCode: 409 });
+    const net: NetworkInfo = { id: this.id('n'), name, labels: { ...labels }, containerIds: [], gateways: [] };
+    this.networks.set(net.id, net);
+    if (opts.internal) this.internal.add(net.id);
+    this.log.push(`network create ${name}${opts.internal ? ' --internal' : ''}`);
+    return { ...net, labels: { ...net.labels }, containerIds: [], gateways: [] };
+  }
+  async connectNetwork(networkId: string, containerId: string, aliases: string[]): Promise<void> {
+    this.assertUp();
+    const n = this.networks.get(networkId);
+    const c = this.containers.get(containerId);
+    if (!n) throw Object.assign(new Error(`network ${networkId} not found`), { statusCode: 404 });
+    if (!c) throw Object.assign(new Error(`container ${containerId} not found`), { statusCode: 404 });
+    if (!n.containerIds.includes(c.id)) n.containerIds.push(c.id);
+    if (!c.networkIds.includes(n.id)) c.networkIds.push(n.id);
+    (c.aliases ??= {})[n.id] = [...aliases];
+    this.log.push(`network connect ${n.name} ${c.name}${aliases.length ? ` --alias ${aliases.join(',')}` : ''}`);
+  }
+  async disconnectNetwork(networkId: string, containerId: string): Promise<void> {
+    this.assertUp();
+    const n = this.networks.get(networkId);
+    const c = this.containers.get(containerId);
+    if (!n || !c) return;
+    n.containerIds = n.containerIds.filter((x) => x !== c.id);
+    c.networkIds = c.networkIds.filter((x) => x !== n.id);
+    if (c.aliases) delete c.aliases[n.id];
+    this.log.push(`network disconnect ${n.name} ${c.name}`);
+  }
+  // Test helper: the aliases a container answers to on a network (by network name).
+  aliasesOn(containerName: string, networkName: string): string[] | null {
+    const c = [...this.containers.values()].find((x) => x.name === containerName);
+    const n = [...this.networks.values()].find((x) => x.name === networkName);
+    if (!c || !n || !n.containerIds.includes(c.id)) return null;
+    return c.aliases?.[n.id] ?? [];
+  }
+  envOf(containerName: string): Record<string, string> | null {
+    const c = [...this.containers.values()].find((x) => x.name === containerName);
+    return c ? { ...(c.env ?? {}) } : null;
   }
   async containerLogs(id: string, tail: number): Promise<string> {
     this.assertUp();
@@ -192,10 +238,16 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     if (this.behaviour.failUp) throw new ComposeError(`docker compose up failed: ${this.behaviour.failUp}`, { command: ['up'], exitCode: 1, stderrTail: this.behaviour.failUp, timedOut: false });
     const text = readFileSync(inv.file, 'utf8').replace(/\$\$/g, '$');
     const doc = parseYaml(text) as {
-      services: Record<string, { image: string; labels?: Record<string, string>; ports?: { target: number; published: string; host_ip: string }[]; volumes?: { source: string }[] }>;
+      services: Record<string, { image: string; labels?: Record<string, string>; ports?: { target: number; published: string; host_ip: string }[]; volumes?: { source: string }[]; environment?: Record<string, string>; networks?: string[] | Record<string, { aliases?: string[] } | null> }>;
       volumes?: Record<string, { name?: string; external?: boolean }>;
-      networks?: Record<string, { name?: string; labels?: Record<string, string> }>;
+      networks?: Record<string, { name?: string; labels?: Record<string, string>; external?: boolean }>;
     };
+    // External networks (decision 126 link networks) must exist, exactly like Compose demands.
+    for (const [, n] of Object.entries(doc.networks ?? {})) {
+      if (n.external && n.name && ![...this.networks.values()].some((x) => x.name === n.name)) {
+        throw new ComposeError(`network ${n.name} declared as external, but could not be found`, { command: ['up'], exitCode: 1, stderrTail: `network ${n.name} declared as external, but could not be found`, timedOut: false });
+      }
+    }
     for (const [, v] of Object.entries(doc.volumes ?? {})) {
       if (v.external && v.name && !this.volumes.has(v.name)) {
         throw new ComposeError(`external volume "${v.name}" not found`, { command: ['up'], exitCode: 1, stderrTail: `external volume "${v.name}" not found`, timedOut: false });
@@ -227,10 +279,32 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
           networkIds: [net.id],
           project: inv.projectName,
           service,
+          aliases: {},
+          env: {},
         };
         this.containers.set(c.id, c);
         net.containerIds.push(c.id);
       }
+      // Compose recreates a container whose configuration changed; the fake syncs env and networks in place.
+      c.env = { ...(def.environment ?? {}) };
+      const wanted = new Map<string, string[]>([[net.id, []]]);
+      const svcNets = Array.isArray(def.networks) ? Object.fromEntries(def.networks.map((k) => [k, null])) : (def.networks ?? { default: null });
+      for (const [key, cfg] of Object.entries(svcNets)) {
+        if (key === 'default') continue;
+        const decl = doc.networks?.[key];
+        const target = [...this.networks.values()].find((x) => x.name === (decl?.name ?? key));
+        if (target) wanted.set(target.id, cfg?.aliases ?? []);
+      }
+      for (const n of this.networks.values()) {
+        const has = n.containerIds.includes(c.id);
+        const want = wanted.has(n.id);
+        if (want && !has) n.containerIds.push(c.id);
+        if (!want && has) n.containerIds = n.containerIds.filter((x) => x !== c.id);
+      }
+      c.networkIds = [...this.networks.values()].filter((n) => n.containerIds.includes(c.id)).map((n) => n.id);
+      c.aliases ??= {};
+      for (const id of Object.keys(c.aliases)) if (!c.networkIds.includes(id)) delete c.aliases[id];
+      for (const [id, al] of wanted) if (id !== net.id) c.aliases[id] = al;
       if (c.state !== 'running') {
         c.state = 'running';
         c.startedAt = rfc3339(this.clock.now());
@@ -323,5 +397,6 @@ function matches(labels: Record<string, string>, want?: Record<string, string>):
   return Object.entries(want).every(([k, v]) => labels[k] === v);
 }
 function clone(c: FakeContainer): ContainerInfo {
+
   return { id: c.id, name: c.name, image: c.image, state: c.state, labels: { ...c.labels }, createdAt: c.createdAt, startedAt: c.startedAt, health: c.health, ports: c.ports.map((p) => ({ ...p })), networkIds: [...c.networkIds] };
 }

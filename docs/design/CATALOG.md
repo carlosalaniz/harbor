@@ -147,3 +147,23 @@ Updates (decision 62): a `PackageStore` revision higher than an instance's revis
 update, offered on Home, in the drawer and by `harbor list`/`harbor update`. The `update` plan keeps the
 instance identity and swaps the release; the runner keeps `release-previous/` and rolls back automatically
 when the new release does not start or answer. Developer guide: docs/DEVELOPER_PACKAGES.md.
+
+## 8. Operator-provided secrets and app links (added 2026-10-05, v0.21.0, decisions 125–126)
+
+- **`secrets[].source: operator`**: the value comes from the operator, not from Harbor's generator.
+  Plan rows carry only `{id, source, prompt, optional, minLength, maxLength, ask}`; the value travels
+  with `POST /v1/operations` (`secrets: {id: value}`), is checked before the operation exists, held in
+  memory keyed by plan id and taken by the runner first thing (the install-location passphrase pattern).
+  Storage, binding, retention and redaction are those of generated secrets. `configure` plans replace
+  values later.
+- **`links[]`**: per-link Docker network `<consumer project>_link_<id>`, created by the runner
+  (`internal`, Harbor labels incl. `link` and `provider`, ownership checked before use and removal),
+  declared `external` in both rendered Compose files. Joined by the consumer's bound services and the
+  provider's endpoint service (alias `<id>-link`) only. The consumer's variables get
+  `http://<id>-link:<containerPort>` (`url`/`authority`/`host`/`port`). Relation state in the `links`
+  table (schema v9): `active`, `needs_provider` (provider removed or never chosen), `dormant` (consumer
+  removed; Reinstall revives). Render paths re-create a missing network; after every `up`/`start` the
+  other side is re-attached live.
+- Not in this round: links to platform tools, several providers per link, cross-machine links, and
+  automatic restarts of a consumer when a provider's container port changes (an event says to Restart).
+

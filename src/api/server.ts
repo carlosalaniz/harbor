@@ -26,6 +26,12 @@ import { PRODUCT } from '../naming.js';
 import { createFolder, listBlockDeviceNodes, listDevices, listFolders, listMounts } from '../system/host-storage.js';
 import { existsSync as fsExists, accessSync, constants as fsConstants, mkdirSync } from 'node:fs';
 
+
+// App links (decision 126): a provider choice per link id.
+const LINK_ID_PATTERN = '^[a-z][a-z0-9-]{0,29}$';
+const LINK_CHOICE = { type: 'object', additionalProperties: false, required: ['instanceId'], properties: { instanceId: { type: 'string', minLength: 1, maxLength: 64 }, endpointId: { type: 'string', pattern: ID_PATTERN } } } as const;
+const LINK_CHOICES = { type: 'object', maxProperties: 8, propertyNames: { pattern: LINK_ID_PATTERN }, additionalProperties: LINK_CHOICE } as const;
+
 export interface ApiDeps {
   config: DaemonConfig;
   service: ApplicationService;
@@ -369,6 +375,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.get('/v1/plans/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.plan((req.params as { id: string }).id));
   app.get('/v1/operations/:id', { preHandler: requireAuth, schema: { params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } }, async (req) => service.operation((req.params as { id: string }).id));
   app.get('/v1/platform-tools', { preHandler: requireAuth, schema: { description: 'Cockpit/Portainer/Tailscale/proxy state and real links.' } }, async () => ({ items: await tools.list() }));
+  app.get('/v1/links', { preHandler: requireAuth, schema: { description: 'App links (decision 126): every private link between two apps on this machine, with its network, alias and state (active, needs_provider, dormant).' } }, async () => ({ items: service.linksList() }));
   app.get('/v1/exposures', { preHandler: requireAuth, schema: { description: 'Published addresses (tailnet/public) of all instances.' } }, async () => ({ items: service.exposuresList(), ui: tools.uiExposure() }));
 
   // --- account
@@ -812,7 +819,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     {
       preHandler: requireAuth,
       schema: {
-        description: 'Create an immutable plan. Install: {kind, packageId, name?, storage?, location?}. Others: {kind, instanceId}.',
+        description: 'Create an immutable plan. Install: {kind, packageId, name?, storage?, location?, main?, links?}. Configure: {kind, instanceId, secrets?, links?}. Others: {kind, instanceId}. Operator-provided secret values never go into a plan: they travel with POST /v1/operations.',
         body: {
           oneOf: [
             {
@@ -831,6 +838,8 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 // Omitted for the Harbor data folder (default-encrypt: Harbor's
                 // own key, silent unlock); required for removable drives.
                 location: { type: 'object', additionalProperties: false, required: ['dir'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
+                // decision 126: a provider per link id ({instanceId, endpointId?}); a required link with exactly one candidate is picked automatically
+                links: LINK_CHOICES,
                 // main address chosen at install (decision 116); omitted = this network
                 main: {
                   oneOf: [
@@ -850,6 +859,21 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 instanceId: { type: 'string', pattern: UUID_PATTERN },
                 // folders for storage claims the new release adds (same shape as install)
                 storage: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, required: ['hostPath'], properties: { hostPath: { type: 'string', minLength: 1, maxLength: 4096 } } } },
+                // providers for links the new release adds (kept links keep theirs)
+                links: LINK_CHOICES,
+              },
+            },
+            {
+              type: 'object',
+              additionalProperties: false,
+              required: ['kind', 'instanceId'],
+              properties: {
+                kind: { const: 'configure' },
+                instanceId: { type: 'string', pattern: UUID_PATTERN },
+                // decision 125: operator-provided secrets to replace (values come with the submission)
+                secrets: { type: 'array', maxItems: 16, uniqueItems: true, items: { type: 'string', pattern: ID_PATTERN } },
+                // decision 126: a new provider per link id, or null to unlink an optional one
+                links: { type: 'object', maxProperties: 8, propertyNames: { pattern: LINK_ID_PATTERN }, additionalProperties: { oneOf: [{ type: 'null' }, LINK_CHOICE] } },
               },
             },
             {
@@ -885,16 +909,16 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     {
       preHandler: requireAuth,
       schema: {
-        description: 'Submit an exact plan ID. Requires Idempotency-Key. Install-location plans also need the encryption passphrase (never stored in the plan). Returns 202 with the (possibly existing) operation.',
+        description: 'Submit an exact plan ID. Requires Idempotency-Key. Install-location plans also need the encryption passphrase, and plans that ask for operator-provided secrets (decision 125) carry their values in `secrets` — neither is ever stored in the plan, an operation or a response. Returns 202 with the (possibly existing) operation.',
         headers: { type: 'object', properties: { 'idempotency-key': { type: 'string', pattern: IDEMPOTENCY_KEY_RE.source } }, required: ['idempotency-key'] },
-        body: { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 } } },
+        body: { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 }, secrets: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'string', maxLength: 4096 } } } },
       },
     },
     async (req, reply) => {
       const key = req.headers['idempotency-key'] as string;
-      const { planId, passphrase } = req.body as { planId: string; passphrase?: string };
+      const { planId, passphrase, secrets } = req.body as { planId: string; passphrase?: string; secrets?: Record<string, string> };
       if (typeof passphrase === 'string' && passphrase) service.submitInstallLocationSecret(planId, passphrase);
-      const result = service.submit(planId, key, req.actor!);
+      const result = service.submit(planId, key, req.actor!, secrets ? { secrets } : {});
       return reply.status(202).send({ operationId: result.operation.id, created: result.created, operation: service.operation(result.operation.id) });
     },
   );

@@ -835,6 +835,108 @@ ${notes ? `  releaseNotes: ${JSON.stringify(notes)}\n` : ''}`;
   await expect(tile.getByRole('link', { name: 'Open hello-e2e' })).toHaveAttribute('href', href!); // same address after the update
 });
 
+test('app links and typed-in secrets: the install picks the provider, the review asks for the value; the app page and Internal networks show the link (decisions 125/126)', async ({ page }) => {
+  const { writeZip } = await import('../../src/packages/zip.js');
+  const head = (id: string, name: string, services: string, port: number) => `apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: ${id}
+  name: ${name}
+  description: ${name} for the links test
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: true
+  services:
+${services}
+endpoints:
+  web:
+    service: web
+    containerPort: ${port}
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 30
+ui:
+  primaryEndpoint: web
+presentation:
+  tagline: ${name}
+  category: developer
+`;
+  const docs = head('docs-e2e', 'Docs E2E', '    web: application\n    db: infrastructure', 3010);
+  const gw = head('gateway-e2e', 'Gateway E2E', '    web: application', 8080) + `secrets:
+  - id: api-token
+    source: operator
+    prompt: Access token for Docs E2E
+    minLength: 8
+    retention: retain
+    bindings:
+      - {service: web, environment: DOCS_TOKEN}
+links:
+  - id: docs
+    purpose: The documents it reads
+    provider: {packages: [docs-e2e]}
+    bindings:
+      - {service: web, environment: DOCS_BASE_URL}
+`;
+  const zip = (m: string, services: string[]) => writeZip({ 'manifest.yaml': m, 'compose.yaml': `services:\n${services.map((x) => `  ${x}:\n    image: nginx:1.27-alpine\n`).join('')}` });
+  await login(page);
+  for (const [file, buf, name] of [['docs.zip', zip(docs, ['web', 'db']), 'Docs E2E'], ['gw.zip', zip(gw, ['web']), 'Gateway E2E']] as const) {
+    await page.getByRole('link', { name: 'App Store' }).click();
+    await page.getByRole('button', { name: 'Add your own app' }).click();
+    const dlg = page.getByRole('dialog', { name: 'Your own app' });
+    await dlg.getByLabel('Package zip file').setInputFiles({ name: file, mimeType: 'application/zip', buffer: buf });
+    await expect(dlg).toContainText(`${name} is in your App Store`);
+    await dlg.getByRole('button', { name: 'Done' }).click();
+  }
+  await page.getByRole('tab', { name: 'Your apps' }).click();
+  await page.locator('.tile.store').filter({ hasText: 'Docs E2E' }).getByRole('button', { name: 'Install Docs E2E', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Install Docs E2E now' }).click();
+  await approve(page, 'Install');
+  await trayDone(page, 'Install');
+  await dismissRecovery(page);
+  // the consumer: the wizard picks the only provider; the review asks for the token
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('tab', { name: 'Your apps' }).click();
+  await page.locator('.tile.store').filter({ hasText: 'Gateway E2E' }).getByRole('button', { name: 'Install Gateway E2E', exact: true }).click();
+  const wiz = page.getByRole('dialog');
+  await expect(wiz).toContainText('Talks privately to');
+  await expect(wiz.getByLabel('Provider for docs', { exact: true })).toHaveValue(/.+/);
+  await wiz.getByRole('button', { name: 'Install Gateway E2E now' }).click();
+  const review = page.getByRole('dialog');
+  await expect(review).toContainText('Review install');
+  await expect(review).toContainText('http://docs-link:3010');
+  const field = review.getByLabel('Value for api-token', { exact: true });
+  await expect(field).toHaveAttribute('type', 'password');
+  await expect(review.getByRole('button', { name: 'Install', exact: true })).toBeDisabled();
+  await field.fill('tok-FIXTURE-e2e-123');
+  await review.getByRole('button', { name: 'Install', exact: true }).click();
+  await trayDone(page, 'Install');
+  await dismissRecovery(page);
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of gateway-e2e' }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toContainText('Links');
+  await expect(drawer).toContainText('linked');
+  await expect(drawer).toContainText('http://docs-link:3010');
+  await expect(drawer).toContainText('set, never shown');
+  await expect(drawer).not.toContainText('tok-FIXTURE-e2e-123');
+  await expect(drawer.getByRole('button', { name: 'Change api-token' })).toBeVisible();
+  await drawer.getByRole('button', { name: 'Close' }).last().click();
+  await page.goto('/#/settings/links');
+  await expect(page.getByRole('heading', { name: 'Internal networks' })).toBeVisible();
+  const list = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Internal networks' }) });
+  await expect(list).toContainText('gateway-e2e');
+  await expect(list).toContainText('docs-e2e');
+  await expect(list).toContainText('_link_docs');
+});
+
 test('advanced access: the terminal runs a shell and echoes; troubleshoot shows Harbor and app logs; the machine can be renamed', async ({ page }) => {
   await login(page);
   await page.goto('/#/settings/access');

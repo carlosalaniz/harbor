@@ -405,6 +405,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
       {storeItem && !c.pending && (
         <InstallWizard
           item={storeItem}
+          instances={c.data.instances}
           busy={c.busy}
           installed={c.data.instances.filter((i) => i.packageId === storeItem.id).length}
           onRemovePackage={() => {
@@ -441,6 +442,8 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           }}
           onPublish={() => setPublishing(liveDrawer)}
           onCustomize={() => setCustomizing(liveDrawer)}
+          instances={c.data.instances}
+          catalog={c.data.catalog}
         />
       )}
       {customizing && (
@@ -587,8 +590,8 @@ function NotificationBell({ c, onOpenApp, onViewAll }: { c: ReturnType<typeof us
   );
 }
 
-const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', purge: 'Uninstalling', update: 'Updating', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of', restart: 'Restarting' };
-const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', purge: 'was uninstalled completely', update: 'is up to date', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched', restart: 'restarted' };
+const DOING: Record<string, string> = { install: 'Installing', start: 'Starting', stop: 'Stopping', remove: 'Removing', reinstall: 'Reinstalling', purge: 'Uninstalling', update: 'Updating', expose: 'Publishing', unexpose: 'Withdrawing the address of', reconfigure: 'Switching the address of', restart: 'Restarting', configure: 'Applying new settings to' };
+const DONE: Record<string, string> = { install: 'is ready', start: 'is running again', stop: 'is stopped', remove: 'was removed (data kept)', reinstall: 'is back', purge: 'was uninstalled completely', update: 'is up to date', expose: 'is published', unexpose: 'address withdrawn', reconfigure: 'address switched', restart: 'restarted', configure: 'settings applied' };
 const PHASE: Record<string, string> = { rollback: 'putting the previous version back', purging: 'deleting its data', queued: 'waiting for its turn', preparing: 'preparing', pulling: 'downloading the app', starting: 'starting containers', checking: 'waiting until it answers', stopping: 'stopping', removing: 'cleaning up', reconfiguring: 'applying the new address', verifying: 'checking the result', exposing: 'setting up the address', unexposing: 'removing the address' };
 
 // Bottom-right operation tray: progress while running, one-shot result (with credentials) when done.
@@ -616,7 +619,7 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
   const who = inst ? (inst.displayName ?? (inst.name === inst.packageId ? inst.packageName : `${inst.packageName} (${inst.name})`)) : 'the app';
   const title =
     op.state === 'succeeded'
-      ? op.kind === 'unexpose' || op.kind === 'reconfigure'
+      ? op.kind === 'unexpose' || op.kind === 'reconfigure' || op.kind === 'configure'
         ? `${who}: ${DONE[op.kind]}`
         : `${who} ${DONE[op.kind] ?? 'done'}`
       : op.state === 'failed'

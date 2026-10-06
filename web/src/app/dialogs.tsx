@@ -6,14 +6,59 @@ import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, Sta
 import { categoryLabel, fmtBytes, fmtTime } from './format';
 import type { Action, Console } from './store';
 
+// App links (decision 126): installed apps that can satisfy one link of a package.
+export function linkCandidates(link: { packages: string[] | null }, instances: InstanceSummary[], selfId?: string): InstanceSummary[] {
+  return instances.filter((i) => i.id !== selfId && i.installState === 'installed' && (!link.packages || link.packages.includes(i.packageId)));
+}
+
+// Operator-provided secrets (decision 125): one password-style field per value the plan asks for.
+function SecretFields({ plan, values, onChange }: { plan: PlanDto; values: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
+  const [shown, setShown] = useState<Record<string, boolean>>({});
+  const asked = plan.secrets.filter((s) => s.ask);
+  if (!asked.length) return null;
+  return (
+    <fieldset className="storage-choices">
+      <legend>{asked.length === 1 ? 'A value this app needs from you' : 'Values this app needs from you'}</legend>
+      {asked.map((s) => (
+        <label key={s.id} className="small">
+          <span>
+            {s.prompt ?? s.id}
+            {s.ask === 'optional' ? <span className="muted"> · optional</span> : null}
+            {s.minLength ? <span className="muted"> · at least {s.minLength} characters</span> : null}
+          </span>
+          <span className="row">
+            <input
+              type={shown[s.id] ? 'text' : 'password'}
+              value={values[s.id] ?? ''}
+              onChange={(e) => onChange({ ...values, [s.id]: e.target.value })}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={`Value for ${s.id}`}
+              maxLength={s.maxLength ?? 4096}
+            />
+            <button className="btn ghost" type="button" onClick={() => setShown({ ...shown, [s.id]: !shown[s.id] })} aria-label={shown[s.id] ? `Hide ${s.id}` : `Show ${s.id}`}>
+              {shown[s.id] ? 'Hide' : 'Show'}
+            </button>
+          </span>
+        </label>
+      ))}
+      <p className="muted small">Kept on this machine as a secret of the app (like the ones Harbor generates); never shown again, never in logs.</p>
+    </fieldset>
+  );
+}
+
 // Step 2 of every wizard: review the server-side plan, approve, then the tray takes over.
 export function PlanDialog({ c }: { c: Console }) {
   const { pending, plan, planError } = c;
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({});
+  useEffect(() => setSecretValues({}), [plan?.id]);
   if (!pending) return null;
+  const missingSecret = plan ? plan.secrets.some((s) => s.ask === 'required' && (secretValues[s.id] ?? '').length < Math.max(1, s.minLength ?? 1)) : false;
+  const typed = Object.fromEntries(Object.entries(secretValues).filter(([id, v]) => v !== '' || plan?.secrets.find((s) => s.id === id)?.ask === 'optional' && plan.kind === 'configure'));
   const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
-  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : capitalize(plan.kind);
+  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
       {planError && (
@@ -64,14 +109,32 @@ export function PlanDialog({ c }: { c: Console }) {
                 </span>
               </li>
             )}
-            {plan.secrets.length > 0 && (
+            {plan.secrets.some((s) => s.source === 'generated') && (
               <li>
                 <span className="fact-k">Secrets</span>
                 <span>
-                  {plan.secrets.length} generated for the app{plan.secrets.some((s) => s.state === 'existing') ? ' (existing ones kept)' : ''} <span className="muted small">· never shown</span>
+                  {plan.secrets.filter((s) => s.source === 'generated').length} generated for the app{plan.secrets.some((s) => s.state === 'existing') ? ' (existing ones kept)' : ''} <span className="muted small">· never shown</span>
                 </span>
               </li>
             )}
+            {plan.links.filter((l) => l.change !== 'keep').map((l) => (
+              <li key={l.id}>
+                <span className="fact-k">Link</span>
+                <span>
+                  {l.change === 'clear' ? (
+                    <>unlink {l.id}</>
+                  ) : l.provider ? (
+                    <>
+                      reaches <strong>{l.provider.name}</strong> privately at <code>{l.provider.url}</code> <span className="muted small">· {l.purpose} · a network only these two join</span>
+                    </>
+                  ) : (
+                    <>
+                      {l.id}: no provider yet <span className="muted small">· optional · {l.purpose}</span>
+                    </>
+                  )}
+                </span>
+              </li>
+            ))}
             {plan.update && (
               <li>
                 <span className="fact-k">Changes</span>
@@ -98,6 +161,7 @@ export function PlanDialog({ c }: { c: Console }) {
               </li>
             )}
           </ul>
+          <SecretFields plan={plan} values={secretValues} onChange={setSecretValues} />
           {plan.warnings.map((w, i) => (
             <p key={i} className="warn">
               {w}
@@ -121,7 +185,7 @@ export function PlanDialog({ c }: { c: Console }) {
         <button className="btn" onClick={c.cancel}>
           Cancel
         </button>
-        <button className="btn primary" onClick={() => void c.approve()} disabled={!plan || Boolean(planError)}>
+        <button className="btn primary" onClick={() => void c.approve(typed)} disabled={!plan || Boolean(planError) || missingSecret} title={missingSecret ? 'Fill in the value the app needs first' : undefined}>
           {approveLabel}
         </button>
       </div>
@@ -129,8 +193,13 @@ export function PlanDialog({ c }: { c: Console }) {
   );
 }
 
-export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onRemovePackage }: { item: CatalogItemDto; busy: boolean; installed?: number; onClose: () => void; onStart: (a: Action) => void; onRemovePackage?: () => void }) {
+export function InstallWizard({ item, instances = [], busy, installed = 0, onClose, onStart, onRemovePackage }: { item: CatalogItemDto; instances?: InstanceSummary[]; busy: boolean; installed?: number; onClose: () => void; onStart: (a: Action) => void; onRemovePackage?: () => void }) {
   const [name, setName] = useState('');
+  // Decision 126: which installed app satisfies each link ('' = none, optional links only).
+  const [linkPick, setLinkPick] = useState<Record<string, string>>({});
+  const linkSel = (l: CatalogItemDto['links'][number]) => linkPick[l.id] ?? (l.optional ? '' : (linkCandidates(l, instances)[0]?.id ?? ''));
+  const links = Object.fromEntries(item.links.filter((l) => linkSel(l)).map((l) => [l.id, { instanceId: linkSel(l) }]));
+  const missingLink = item.links.some((l) => !l.optional && !linkSel(l));
   const [gallery, setGallery] = useState(0);
   // storage claim id -> host folder ('' = managed volume)
   const [folders, setFolders] = useState<Record<string, string>>({});
@@ -673,6 +742,37 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
           </div>
         )}
       </fieldset>
+      {item.links.length > 0 && (
+        <fieldset className="storage-choices">
+          <legend>Talks privately to</legend>
+          <p className="muted small">Harbor joins only this app and the one you pick on a private network of their own; their databases and everything else stay out.</p>
+          {item.links.map((l) => {
+            const cands = linkCandidates(l, instances);
+            return (
+              <label key={l.id} className="small">
+                <span>
+                  {l.purpose}
+                  {l.optional ? <span className="muted"> · optional</span> : null}
+                </span>
+                {cands.length ? (
+                  <select value={linkSel(l)} onChange={(e) => setLinkPick({ ...linkPick, [l.id]: e.target.value })} aria-label={`Provider for ${l.id}`}>
+                    {l.optional && <option value="">None for now</option>}
+                    {cands.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {appLabel(i)} ({i.name})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className={l.optional ? 'muted small' : 'warn small'} role={l.optional ? undefined : 'alert'}>
+                    {l.optional ? 'Nothing to link to yet; you can link it later from the app page.' : `Install ${l.packages ? l.packages.join(' or ') : 'the app it talks to'} first.`}
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </fieldset>
+      )}
       <label className="small">
         Instance name (optional)
         <input value={name} onChange={(e) => setName(e.target.value)} pattern="[a-z][a-z0-9-]{0,62}" placeholder={item.id} aria-label={`Instance name for ${item.name}`} />
@@ -707,8 +807,8 @@ export function InstallWizard({ item, busy, installed = 0, onClose, onStart, onR
         </button>
         <button
           className="btn primary"
-          disabled={busy || item.availability !== 'available' || mainBlocked || missingRequired || locationMissingPass || locationBlocked || (place === 'local' && !locationDir) || (place === 'external' && !locationDir && !formattedDrive)}
-          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(main ? { main } : {}), ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
+          disabled={busy || item.availability !== 'available' || mainBlocked || missingRequired || missingLink || locationMissingPass || locationBlocked || (place === 'local' && !locationDir) || (place === 'external' && !locationDir && !formattedDrive)}
+          onClick={() => onStart({ kind: 'install', packageId: item.id, name: name.trim(), storage, ...(main ? { main } : {}), ...(Object.keys(links).length ? { links } : {}), ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
           aria-label={`Install ${item.name} now`}
           title={locationBlocked ? (locationNeedsFormat ? 'This drive needs formatting as ext4 first' : 'Mount the drive before installing') : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
         >
@@ -915,7 +1015,8 @@ export function UnlockForm({ inst, busy, onUnlocked, onError }: { inst: Instance
   );
 }
 
-export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void }) {
+export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize, instances = [], catalog = [] }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[] }) {
+  const [relink, setRelink] = useState<Record<string, string>>({});
   const upd = inst.updateAvailable;
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1145,6 +1246,70 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           </ul>
         </>
       )}
+      {!retained && (inst.links.length > 0 || inst.linkedBy.length > 0) && (
+        <>
+          <h4>Links</h4>
+          <ul className="addresses">
+            {inst.links.map((l) => {
+              const claim = catalog.find((x) => x.id === inst.packageId)?.links.find((x) => x.id === l.id);
+              const cands = linkCandidates({ packages: claim?.packages ?? null }, instances, inst.id);
+              const pick = relink[l.id] ?? l.provider?.instanceId ?? cands[0]?.id ?? '';
+              return (
+                <li key={l.id}>
+                  <Pill tone={l.state === 'active' ? 'ok' : l.optional ? 'muted' : 'warn'}>{l.state === 'active' ? 'linked' : l.state === 'dormant' ? 'paused' : 'needs a provider'}</Pill> {l.purpose}
+                  {l.provider ? (
+                    <>
+                      {' '}
+                      → <strong>{l.provider.name}</strong> at <code>{l.url}</code>
+                    </>
+                  ) : (
+                    <span className="muted small"> {l.note ? `(${l.note})` : ''}</span>
+                  )}
+                  {inst.installState === 'installed' && cands.length > 0 && (
+                    <span className="row">
+                      <select value={pick} onChange={(e) => setRelink({ ...relink, [l.id]: e.target.value })} aria-label={`New provider for ${l.id}`}>
+                        {cands.map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {appLabel(i)} ({i.name})
+                          </option>
+                        ))}
+                      </select>
+                      <button className="btn small" disabled={busy || !pick || (pick === l.provider?.instanceId && l.state === 'active')} onClick={() => onAction({ kind: 'configure', instance: inst, links: { [l.id]: { instanceId: pick } } })} aria-label={`Link ${l.id} to the chosen app`}>
+                        {l.provider ? 'Change' : 'Link'}
+                      </button>
+                      {l.optional && l.provider && (
+                        <button className="btn small ghost" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, links: { [l.id]: null } })} aria-label={`Unlink ${l.id}`}>
+                          Unlink
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+            {inst.linkedBy.map((b) => (
+              <li key={`${b.instanceId}-${b.linkId}`} className="muted small">
+                {b.name} reaches this app privately through its link “{b.linkId}”
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {!retained && inst.operatorSecrets.length > 0 && (
+        <>
+          <h4>Values you provided</h4>
+          <ul className="addresses">
+            {inst.operatorSecrets.map((s) => (
+              <li key={s.id}>
+                {s.prompt} <span className="muted small">· {s.set ? 'set, never shown' : 'not set'}</span>{' '}
+                <button className="btn small" disabled={busy || inst.installState !== 'installed'} onClick={() => onAction({ kind: 'configure', instance: inst, secrets: [s.id] })} aria-label={`Change ${s.id}`}>
+                  Change…
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {detail?.defaultCredentials && !retained && <DefaultLogin creds={detail.defaultCredentials} />}
       {retained && <p className="muted">Removed. Data volumes and secrets are retained; Reinstall restores the exact same release.</p>}
       {inst.installState !== 'installing' && (
@@ -1247,13 +1412,15 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
       return `Harbor will switch which address ${n} treats as its own, then restart it with the same data.`;
     case 'purge':
       return `Harbor will uninstall ${n} completely: containers, its data volumes, secrets and stored release. Folders of yours are left alone. This cannot be undone.`;
+    case 'configure':
+      return `Harbor will apply the new settings to ${n} and recreate only what changed. Data, ports and addresses stay.`;
     case 'update':
       return `Harbor will update ${n} to revision ${plan.update?.toRevision ?? plan.revision}${plan.update?.toVersion ? ` (${plan.update.toVersion})` : ''}. Data, ports and addresses stay; if the new release does not start, the previous one is put back automatically.`;
   }
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

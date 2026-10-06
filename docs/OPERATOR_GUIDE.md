@@ -472,6 +472,29 @@ Disconnecting from the tailnet (`tailscale logout`) used to wipe the permission 
 - **Update an app**: when a newer revision of its package exists (you uploaded one, or a Harbor upgrade shipped a newer built-in catalog), Home shows an *updates available* card and the app's tile gets a blue ↑. Press **Update**, review the plan (which images change, what is added), approve. Data, ports and addresses stay. If the new version fails to start, Harbor rolls back to the previous one automatically and tells you. CLI: `harbor list` (UPDATE column), `harbor update <name>`.
 - **Remove an uploaded package**: from its App Store page once no app installed from it exists (`harbor packages remove <id>`).
 
+### Values an app asks you for, and apps that talk to each other
+
+- **A value only you have** (decision 125): some apps need something you already own — another
+  service's access token, an SMTP password. The install review shows a password field for each; the
+  value is kept like the secrets Harbor generates (a private file of that app, kept when you remove and
+  reinstall it, deleted by *Uninstall completely*) and is never shown again — not in the console, the
+  API, plans, logs or the tray. Change it later on the app's page (*Values you provided → Change…*).
+  CLI: `harbor install <app> --secret <id>=@file` (or `<id>=-` to read stdin; on a terminal Harbor
+  asks without echo), `harbor configure <app> --secret <id>=@file`. A value typed on the command line
+  itself is refused (shell history).
+- **Apps that talk to each other** (decision 126): apps are isolated from each other. An app that
+  needs another one (an assistant that reads your documents app) declares a *link*; the install
+  wizard asks which installed app provides it (*Talks privately to*; picked for you when there is only
+  one). Harbor creates a private network for just these two — only the app that asked and the one
+  service of the other app join it, never its database — with no route to the internet, and hands the
+  app an address like `http://docs-link:3010`. The other app is not restarted. The app's page shows
+  its links (*Change*, *Link*, *Unlink* for optional ones) and, on the other app, who reaches it;
+  **Settings → Internal networks** lists every link on the machine. If you remove the providing app,
+  the link is dropped and the app that used it shows *needs a provider* (bell, Home, its page) until
+  you pick another one. Removing the app that asked drops the link too; Reinstall brings it back.
+  CLI: `harbor install <app> --link <id>=<other-app>`, `harbor configure <app> --link <id>=<other-app>`
+  (or `--unlink <id>`), `harbor links`.
+
 ## 4e. Updating Harbor itself
 
 Settings → Overview shows the installed version and, when GitHub has a newer release, an **Update to
