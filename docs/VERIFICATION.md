@@ -192,7 +192,11 @@ Fake-adapter evidence only (contracts; no live Caddy/Let's Encrypt run yet):
   the Publishing page and in the drawer, *Withdraw draw.example.com* keeps `draw.example.org`, then
   withdraw that one too).
 
-Not yet observed live: two real Let's Encrypt certificates on one Caddy for one app.
+**Real host, 2026-10-06** (home-LAN host, self-updated 0.21.0 → 0.22.0, schema v9 → v10 with the live
+state DB of five running apps): a second `harbor expose erpnext2 --via public --host <second domain>` on an
+endpoint already public succeeded; `harbor exposures` listed both names `active`, the first still main.
+From the internet both answered `/api/method/ping` 200, each with its own Let's Encrypt certificate
+(CN = each name; issuers YE2 and YE1), and the other four apps' public names stayed 200.
 
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
