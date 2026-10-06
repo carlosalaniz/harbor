@@ -50,7 +50,7 @@ catalog/<id>/   one package = manifest.yaml + compose.yaml + README.md + release
 tests/          unit/ integration/ (fake adapter) e2e/ (Playwright) vm/ (live suite, opt-in)
 scripts/        catalog-pin/hash/verify, openapi.ts, package.mjs, vm/ controllers
 docs/           OPERATOR_GUIDE.md (user manual), DEVELOPER_PACKAGES.md (package authoring),
-                VERIFICATION.md (evidence log), FUTURE.md (deliberately not built),
+                VERIFICATION.md (evidence log), FUTURE.md (deliberately not built), TODO.md (wanted, not built yet),
                 design/ (UI, CATALOG, EXPOSURE, ROUND9, APP_HOMES), openapi.json (GENERATED — never hand-edit)
 ```
 

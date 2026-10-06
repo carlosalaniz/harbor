@@ -27,6 +27,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | How to write a package | `docs/DEVELOPER_PACKAGES.md` |
 | Design addenda | `docs/design/UI.md`, `docs/design/CATALOG.md`, `docs/design/EXPOSURE.md`, `docs/design/ROUND9.md` |
 | Deliberately not built | `docs/FUTURE.md` |
+| Wanted, not built yet (found on real hosts) | `docs/TODO.md` |
 | Generated API description | `docs/openapi.json` (`pnpm openapi`; unit test asserts the exact route list — update `tests/unit/openapi.test.ts` when adding routes) |
 | Persistent memory (Claude Code auto-memory) | `~/.claude/projects/-Users-carlos-Documents-devshit-harbor/memory/` (`harbor-project-context.md`, `user-working-style.md`) |
 
