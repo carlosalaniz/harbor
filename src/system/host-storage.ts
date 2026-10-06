@@ -108,7 +108,16 @@ interface LsblkDevice {
   uuid?: string | null;
   rm?: boolean;
   hotplug?: boolean;
+  tran?: string | null;
   children?: LsblkDevice[];
+}
+
+// Decision 147: where the running system lives. A USB disk holding any of these (directly, or through
+// LVM/LUKS under its partitions) is the system disk, never "external".
+const SYSTEM_MOUNTS = ['/', '/boot', '/boot/efi', '/usr', '/var', '/var/lib/docker', '/home', '/srv', '/opt', '/etc', '[SWAP]'];
+function holdsSystem(d: LsblkDevice): boolean {
+  if (typeof d.mountpoint === 'string' && SYSTEM_MOUNTS.includes(d.mountpoint)) return true;
+  return (d.children ?? []).some(holdsSystem);
 }
 
 // Removable block devices (USB sticks, external drives), mounted or not. Partitions
@@ -139,13 +148,16 @@ export function parseDevices(lsblkJson: string, procMountsText?: string): Device
     // fall back to lsblk alone
   }
   const out: DeviceInfo[] = [];
-  const walk = (devs: LsblkDevice[] | undefined) => {
+  // usbDisk: the top-level disk is on the USB bus and holds nothing the system runs from. Big USB disks
+  // often report rm=false and hotplug=false, so the bus is the honest signal (decision 147).
+  const walk = (devs: LsblkDevice[] | undefined, usbDisk = false) => {
     for (const b of devs ?? []) {
       const kids = b.children ?? [];
       const isPart = b.type === 'part';
       const wholeWithParts = b.type === 'disk' && kids.length > 0;
+      const usb = b.type === 'disk' ? b.tran === 'usb' && !holdsSystem(b) : usbDisk;
       if ((isPart || !wholeWithParts) && b.type !== 'loop' && b.type !== 'rom') {
-        const removable = Boolean(b.rm || b.hotplug);
+        const removable = Boolean(b.rm || b.hotplug || usb);
         // Internal partitions are not removable media; whole disks without
         // partitions (e.g. a freshly inserted stick) are included when removable.
         if (removable || (b.type === 'disk' && kids.length === 0)) {
@@ -164,7 +176,7 @@ export function parseDevices(lsblkJson: string, procMountsText?: string): Device
           });
         }
       }
-      walk(kids);
+      walk(kids, usb);
     }
   };
   walk(root.blockdevices);
@@ -194,7 +206,7 @@ export function listDevices(run: (args: string[]) => string = defaultLsblk, fixt
         return d;
       });
     }
-    return parseDevices(run(['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG']), procMountsText);
+    return parseDevices(run(['--json', '-o', 'NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE,LABEL,UUID,RM,HOTPLUG,TRAN']), procMountsText);
   } catch {
     return [];
   }

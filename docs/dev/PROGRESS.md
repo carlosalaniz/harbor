@@ -381,13 +381,16 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Decision 146: unique fscrypt protector name per seal (found live: moving back clashed with the deleted home's protector)
 - [x] Tests: unit `fscrypt` (protector names); integration `seal.test.ts` move block (refusals, failed copy rolls back and deletes the target, move to a drive and back with the data, same id/port/key, new volume names); e2e *Move to…* panel; live run `docs/evidence/vm-2026-10-06-move/`; unit 242, integration 192 + 3 skipped, e2e 29
 
+## Phase 55 — USB disks without the removable flag (2026-10-06, 0.25.1) ✅ (fake adapter; real host check after release)
+- [x] Decision 147: `TRAN=usb` disks count as external unless they hold a system mount (LVM/LUKS included); unit `host-storage` (14 TB Seagate shape listed, USB boot disk and USB LVM root refused, internal SATA still out)
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 242 passed (2026-10-06, 0.24.0) |
+| `pnpm test` (unit) | 244 passed (2026-10-06, 0.25.1) |
 | `pnpm test:integration` (fake adapter) | 192 passed (0.25.0: move between locations; 0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |

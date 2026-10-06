@@ -103,3 +103,20 @@ describe('host storage', () => {
     expect(top.entries.map((e) => e.name)).not.toContain('etc');
   });
 });
+
+// Decision 147: big USB disks often report rm=false, hotplug=false (seen live: a 14 TB Seagate Expansion).
+describe('USB disks that do not say they are removable', () => {
+  const dev = (o: Record<string, unknown>) => JSON.stringify({ blockdevices: [o] });
+  it('counts a USB disk as external, partitions included', () => {
+    const out = parseDevices(dev({ name: 'sda', size: '14T', type: 'disk', rm: false, hotplug: false, tran: 'usb', children: [{ name: 'sda1', size: '14T', type: 'part', rm: false, hotplug: false, tran: null, fstype: 'ext4', label: 'ext14TDrive', mountpoint: null }] }), '');
+    expect(out).toEqual([expect.objectContaining({ name: 'sda1', removable: true, fsType: 'ext4', label: 'ext14TDrive', mounted: false })]);
+  });
+  it('never a USB disk the system runs from (root, boot, or LVM on it)', () => {
+    const bootUsb = dev({ name: 'sdb', type: 'disk', rm: false, hotplug: false, tran: 'usb', children: [{ name: 'sdb1', type: 'part', fstype: 'vfat', mountpoint: '/boot/efi' }, { name: 'sdb2', type: 'part', fstype: 'ext4', mountpoint: null }] });
+    expect(parseDevices(bootUsb, '')).toEqual([]);
+    const lvmUsb = dev({ name: 'sdc', type: 'disk', rm: false, hotplug: false, tran: 'usb', children: [{ name: 'sdc1', type: 'part', fstype: 'LVM2_member', mountpoint: null, children: [{ name: 'vg-root', type: 'lvm', fstype: 'ext4', mountpoint: '/' }] }] });
+    expect(parseDevices(lvmUsb, '')).toEqual([]);
+    // an internal SATA/NVMe disk stays out as before
+    expect(parseDevices(dev({ name: 'sdd', type: 'disk', rm: false, hotplug: false, tran: 'sata', children: [{ name: 'sdd1', type: 'part', fstype: 'ext4', mountpoint: null }] }), '')).toEqual([]);
+  });
+});
