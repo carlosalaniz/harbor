@@ -26,6 +26,32 @@ plaintext on disk.
       the drawer for unsealed apps. Integration tests with the fake adapter + a live run.
 - [ ] Doc: OPERATOR_GUIDE "Headless reboot" section must also say that unsealed apps restart on
       their own (and how to tell which are which).
+- [ ] **Change an app's encryption passphrase** (custom-passphrase apps, and switching an app between
+      "Harbor's own key" and "my own passphrase"): re-wrap the app key in the home's envelope
+      (old passphrase or recovery key + new passphrase), never re-encrypt the data; refresh the
+      machine wrapping; console drawer *Change passphrase…* + `harbor passphrase <app>` (values via
+      stdin/console only, never in plans or logs, like decision 125).
+
+## 3. Features wanted
+
+- [ ] **Hide apps from Home.** Helper apps without a page of their own (e.g. an MCP gateway, a
+      document server) clutter the launcher. Per-app *Hide from Home* (drawer + `harbor look <app>
+      --hide/--show`), a settings-table preference, no migration; hidden apps stay in the Store's
+      *installed* view, in Platform/app lists and in notifications; Home shows a quiet "N hidden"
+      link to reveal them. A package may suggest `presentation.hideFromHome: true` (API-only apps)
+      as the default.
+- [ ] **Picture of the day by default.** A fresh install starts with rotating wallpapers on
+      (Bing picture of the day, keyless, daily) instead of a static preset; existing installs keep
+      their choice; credit shown on Home as today. Must degrade quietly offline (keep the last
+      picture or the preset).
+- [ ] **Move an app between locations** (Local ↔ external drive, drive ↔ drive) keeping its
+      encryption: stop → copy the sealed home's ciphertext as-is (`cp -a` of the home, no decrypt)
+      to the target candidate → verify counts/bytes → switch the instance's home path and volume
+      definitions → start → delete the source only after success; same instance id, ports, links,
+      exposures, secrets. Passphrase rules follow the target (a removable drive requires a
+      passphrase or the Harbor-password wrapping, decision 94/112); refuse targets that cannot seal
+      (non-ext4). Console *Move to…* in the drawer + `harbor move <app> --location <dir>`.
+      Pairs with `harbor seal` (§1): plain → sealed first, then move.
 
 ## 2. Smaller bugs and rough edges
 
