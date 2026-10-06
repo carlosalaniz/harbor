@@ -397,8 +397,10 @@ export type PlanRequest =
   // links: a provider per link id, or null to unlink an optional one
   | { kind: 'configure'; instanceId: string; secrets?: string[]; links?: Record<string, LinkChoice | null> }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean; proxyFrom?: string }
-  | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia }
-  | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure };
+  // decision 127: hostname picks one of several public names (required when there are several)
+  | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string }
+  // decision 127: with primary public, hostname names the main public name (default: the first published)
+  | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure; hostname?: string };
 
 export interface DomainDto {
   hostname: string;

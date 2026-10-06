@@ -2581,6 +2581,11 @@
                           "public",
                           "proxy"
                         ]
+                      },
+                      "hostname": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253
                       }
                     }
                   },
@@ -2608,6 +2613,11 @@
                           "tailnet",
                           "public"
                         ]
+                      },
+                      "hostname": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253
                       }
                     }
                   }

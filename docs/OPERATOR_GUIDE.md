@@ -567,6 +567,10 @@ harbor exposures                                    # all published addresses wi
 harbor primary n8n loopback                         # main address back to "this network" (secure LAN when on)
 harbor restart nextcloud                            # after turning secure addresses on/off: pick up today's addresses
 harbor unexpose n8n --via public
+harbor expose erp --via public --host erp.example.com --primary
+harbor expose erp --via public --host customers.example.org        # a second domain for the same app
+harbor primary erp public --host customers.example.org              # which domain is the main address
+harbor unexpose erp --via public --host erp.example.com             # withdraw one domain, keep the other
 harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
 ```
 
@@ -580,6 +584,14 @@ Notes:
 - Apps without their own login (Excalidraw, BentoPDF) get **basic-auth** protection on public
   addresses unless you opt out; the credentials are shown once and retained as an instance secret
   (`/var/lib/harbor/instances/<uuid>/secrets/exposure-basic-<endpoint>`).
+- **One app, several domains** (decision 127): publish the same app again with another `--host`
+  (console: *Publish…* → **Add another domain**). Each domain gets its own Caddy route, its own
+  Let's Encrypt certificate and its own protection; a domain is used by one app only. The app's hook
+  (Nextcloud's trusted domains, `HARBOR_ADDRESSES`) gets all of them; the base URL apps embed is the
+  **main** one — the first domain published, or the one you pick with `harbor primary <app> public
+  --host <fqdn>` (console: *Make primary* on that row). With several domains, `harbor unexpose`
+  needs `--host` (Harbor never guesses which to withdraw); withdrawing the main domain makes the next
+  remaining one main. Basic-auth domains of one app share its one generated password.
 - An address shows `degraded` until DNS resolves and the certificate is issued; Harbor keeps
   re-checking and does not mark it `active` before it answers over HTTPS.
 - `remove <instance>` withdraws its addresses first. Tailscale and Caddy entries Harbor did not

@@ -368,7 +368,8 @@ export class OperationRunner {
     const exposures = this.ctx.repo.exposures(inst.id);
     const lanHost = this.ctx.config.lan.enabled ? lanAppHost() : null;
     const secureHost = lanHost && this.lanHttpsOn() ? lanHost : null;
-    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary, lanHost, secureHost)]));
+    const primaryHost = this.ctx.repo.instance(inst.id)?.primaryHost ?? inst.primaryHost; // decision 127
+    return Object.fromEntries(inst.endpoints.map((e) => [e.id, primaryUrlFor(e, exposures, primary, lanHost, secureHost, primaryHost)]));
   }
 
   private lanHttpsOn(): boolean {
@@ -393,7 +394,7 @@ export class OperationRunner {
     const addresses = appAuthorities(fresh.endpoints, exposures, lanHost ? { names: lanNames(), secure: this.lanHttpsOn() } : null);
     const net = await docker.inspectNetwork(defaultNetworkName(identityFor(this.ctx.installationId, inst.id)));
     const main = fresh.endpoints.find((e) => e.id === pkg.manifest.ui.primaryEndpoint) ?? fresh.endpoints[0];
-    const url = main ? primaryUrlFor(main, exposures, fresh.primaryExposure, lanHost, lanHost && this.lanHttpsOn() ? lanHost : null) : '';
+    const url = main ? primaryUrlFor(main, exposures, fresh.primaryExposure, lanHost, lanHost && this.lanHttpsOn() ? lanHost : null, fresh.primaryHost) : '';
     // Harbor's proxies connect from the app network's gateway; your own proxy (decision 118) from its LAN address.
     const proxies = [...new Set([...(net?.gateways ?? []), ...exposures.filter((e) => e.via === 'proxy' && e.proxyFrom).map((e) => e.proxyFrom!)])];
     const env = { HARBOR_ADDRESSES: addresses.join(' '), HARBOR_PROXIES: proxies.join(' '), HARBOR_URL: url };
@@ -533,7 +534,7 @@ export class OperationRunner {
       await this.reconcileCaddy(op, sink);
     }
     if (x.makePrimary && x.via !== 'proxy') {
-      await this.applyPrimary(op, inst, x.via, sink);
+      await this.applyPrimary(op, inst, x.via, sink, x.via === 'public' ? x.hostname : null);
     }
     this.ctx.repo.setOperationPhase(op.id, 'verifying', 'checking');
     const url = exposureUrl(row);
@@ -569,10 +570,12 @@ export class OperationRunner {
     const { repo } = this.ctx;
     const x = plan.proposal.exposure;
     if (!x) throw new HarborError('STATE_CHANGED', 'plan carries no exposure');
-    const e = repo.exposureFor(inst.id, x.endpointId, x.via);
-    if (!e) throw new HarborError('STATE_CHANGED', `${inst.name}/${x.endpointId} is no longer exposed via ${x.via}`);
+    const e = repo.exposureFor(inst.id, x.endpointId, x.via, x.hostname);
+    if (!e) throw new HarborError('STATE_CHANGED', `${inst.name}/${x.endpointId} is no longer exposed via ${x.via} at ${x.hostname}`);
     this.phase(op, 'applying', 'withdrawing', `withdrawing ${exposureUrl(e)}`);
     if (plan.proposal.primary === 'loopback' && inst.primaryExposure === x.via) await this.applyPrimary(op, inst, 'loopback', sink);
+    // Decision 127: the main public name goes but another stays — that one becomes the main address.
+    else if (plan.proposal.primary === 'public' && plan.proposal.primaryHost) await this.applyPrimary(op, inst, 'public', sink, plan.proposal.primaryHost);
     await this.withdrawExposure(op, e);
     repo.deleteExposure(e.id);
     this.event(op, 'withdrawing', `${exposureUrl(e)} withdrawn; credentials (if any) retained as an instance secret`);
@@ -582,18 +585,20 @@ export class OperationRunner {
   private async reconfigure(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
     const primary = plan.proposal.primary;
     if (!primary) throw new HarborError('STATE_CHANGED', 'plan carries no primary exposure');
-    this.phase(op, 'applying', 'reconfiguring', `switching the primary address of ${inst.name} to ${primary}`);
-    await this.applyPrimary(op, inst, primary, sink);
+    const host = primary === 'public' ? plan.proposal.primaryHost ?? null : null;
+    this.phase(op, 'applying', 'reconfiguring', `switching the primary address of ${inst.name} to ${host ? `https://${host}/` : primary}`);
+    await this.applyPrimary(op, inst, primary, sink, host);
   }
 
   // Re-render with the new base URL and recreate only if the package has configuration bindings.
-  private async applyPrimary(op: OperationRow, inst: InstanceRow, primary: PrimaryExposure, sink: string[]): Promise<void> {
+  // primaryHost (decision 127): with primary public, the hostname that is the main one (null = the first published).
+  private async applyPrimary(op: OperationRow, inst: InstanceRow, primary: PrimaryExposure, sink: string[], primaryHost: string | null = null): Promise<void> {
     const { repo } = this.ctx;
     const dirs = this.dirs(inst);
     const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
-    repo.updateInstance(inst.id, { primaryExposure: primary });
+    repo.updateInstance(inst.id, { primaryExposure: primary, primaryHost: primary === 'public' ? primaryHost : null });
     if (!(pkg.manifest.configuration ?? []).length) {
-      this.event(op, 'reconfiguring', `primary address is now ${primary}; ${pkg.manifest.metadata.name} does not embed its base URL, containers unchanged`);
+      this.event(op, 'reconfiguring', `primary address is now ${primary === 'public' && primaryHost ? `https://${primaryHost}/` : primary}; ${pkg.manifest.metadata.name} does not embed its base URL, containers unchanged`);
       await this.hookAfterAddressChange(op, inst);
       return;
     }
@@ -1491,7 +1496,7 @@ export class OperationRunner {
       repo.deleteExposure(e.id);
       this.event(op, 'removing', `withdrew ${e.via} address ${exposureUrl(e)}`);
     }
-    if (inst.primaryExposure !== 'loopback') repo.updateInstance(inst.id, { primaryExposure: 'loopback' });
+    if (inst.primaryExposure !== 'loopback' || inst.primaryHost) repo.updateInstance(inst.id, { primaryExposure: 'loopback', primaryHost: null });
     const resources = repo.resources(inst.id);
     for (const r of resources.filter((x) => x.kind === 'container')) {
       const c = await docker.inspectContainer(r.dockerId ?? r.name);

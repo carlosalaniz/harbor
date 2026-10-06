@@ -46,6 +46,8 @@ export interface InstanceRow {
   createdAt: string;
   updatedAt: string;
   primaryExposure: PrimaryExposure;
+  // decision 127: the main public hostname when primaryExposure is public (null = the first one published)
+  primaryHost: string | null;
   // set by a full uninstall; purged rows are hidden from listings, keep audit history and never reuse ports
   purgedAt: string | null;
   // how the operator wants this app to look on the launcher (null = the package's own name/icon)
@@ -198,6 +200,8 @@ export interface PlanProposal {
   // expose/unexpose/reconfigure payloads (absent for lifecycle kinds)
   exposure?: { endpointId: string; via: ExposureVia; hostname: string; port: number; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string };
   primary?: PrimaryExposure;
+  // decision 127: with primary public, the hostname that becomes the main one (null/absent = the first published)
+  primaryHost?: string | null;
   // update plans: what changes between the installed release and the new one
   update?: { fromRevision: string; toRevision: string; fromVersion: string | null; toVersion: string | null; images: { service: string; from: string; to: string }[]; newSecrets: string[]; newStorage: string[]; newEndpoints: string[]; releaseNotes: string | null };
 }
@@ -280,6 +284,7 @@ function instanceFrom(r: Raw): InstanceRow {
     createdAt: r['created_at'] as string,
     updatedAt: r['updated_at'] as string,
     primaryExposure: ((r['primary_exposure'] as string | undefined) ?? 'loopback') as PrimaryExposure,
+    primaryHost: (r['primary_host'] as string | null | undefined) ?? null,
     purgedAt: (r['purged_at'] as string | null) ?? null,
     displayName: (r['display_name'] as string | null) ?? null,
     icon: pj<InstanceIcon | null>(r['icon_json'], null),
@@ -497,7 +502,7 @@ export class Repo {
     const r = this.db.prepare('SELECT * FROM instances WHERE name = ? AND purged_at IS NULL').get(name) as Raw | undefined;
     return r ? instanceFrom(r) : null;
   }
-  insertInstance(i: Omit<InstanceRow, 'createdAt' | 'updatedAt' | 'observedAt' | 'lastOperationId' | 'primaryExposure' | 'purgedAt' | 'displayName' | 'icon' | 'autoUpdate'> & { autoUpdate?: boolean }): void {
+  insertInstance(i: Omit<InstanceRow, 'createdAt' | 'updatedAt' | 'observedAt' | 'lastOperationId' | 'primaryExposure' | 'primaryHost' | 'purgedAt' | 'displayName' | 'icon' | 'autoUpdate'> & { autoUpdate?: boolean }): void {
     const now = this.now();
     this.db
       .prepare(
@@ -510,13 +515,13 @@ export class Repo {
         i.everInstalled ? 1 : 0, i.releaseDir, j(i.releaseHashes), j(i.endpoints), j(i.secrets), i.activeOperationId, now, now, i.autoUpdate ? 1 : 0,
       );
   }
-  updateInstance(id: string, patch: Partial<Pick<InstanceRow, 'desired' | 'installState' | 'runtime' | 'readiness' | 'observedAt' | 'everInstalled' | 'activeOperationId' | 'lastOperationId' | 'secrets' | 'generation' | 'primaryExposure'>>): void {
+  updateInstance(id: string, patch: Partial<Pick<InstanceRow, 'desired' | 'installState' | 'runtime' | 'readiness' | 'observedAt' | 'everInstalled' | 'activeOperationId' | 'lastOperationId' | 'secrets' | 'generation' | 'primaryExposure' | 'primaryHost'>>): void {
     const sets: string[] = [];
     const vals: unknown[] = [];
     const map: Record<string, string> = {
       desired: 'desired', installState: 'install_state', runtime: 'runtime', readiness: 'readiness', observedAt: 'observed_at',
       everInstalled: 'ever_installed', activeOperationId: 'active_operation_id', lastOperationId: 'last_operation_id', secrets: 'secrets_json', generation: 'generation',
-      primaryExposure: 'primary_exposure',
+      primaryExposure: 'primary_exposure', primaryHost: 'primary_host',
     };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) continue;
@@ -781,16 +786,19 @@ export class Repo {
   // exposures
   exposures(instanceId?: string): ExposureRow[] {
     const rows = instanceId
-      ? (this.db.prepare('SELECT * FROM exposures WHERE instance_id = ? ORDER BY via, endpoint_id').all(instanceId) as Raw[])
-      : (this.db.prepare('SELECT * FROM exposures ORDER BY created_at').all() as Raw[]);
+      ? (this.db.prepare('SELECT * FROM exposures WHERE instance_id = ? ORDER BY via, endpoint_id, created_at, rowid').all(instanceId) as Raw[])
+      : (this.db.prepare('SELECT * FROM exposures ORDER BY created_at, rowid').all() as Raw[]);
     return rows.map(exposureFrom);
   }
   exposure(id: string): ExposureRow | null {
     const r = this.db.prepare('SELECT * FROM exposures WHERE id = ?').get(id) as Raw | undefined;
     return r ? exposureFrom(r) : null;
   }
-  exposureFor(instanceId: string, endpointId: string, via: ExposureVia): ExposureRow | null {
-    const r = this.db.prepare('SELECT * FROM exposures WHERE instance_id = ? AND endpoint_id = ? AND via = ?').get(instanceId, endpointId, via) as Raw | undefined;
+  // Several public hostnames may share an endpoint (decision 127): pass the hostname to pick one.
+  exposureFor(instanceId: string, endpointId: string, via: ExposureVia, hostname?: string): ExposureRow | null {
+    const r = (hostname === undefined
+      ? this.db.prepare('SELECT * FROM exposures WHERE instance_id = ? AND endpoint_id = ? AND via = ? ORDER BY created_at, rowid').get(instanceId, endpointId, via)
+      : this.db.prepare('SELECT * FROM exposures WHERE instance_id = ? AND endpoint_id = ? AND via = ? AND hostname = ?').get(instanceId, endpointId, via, hostname)) as Raw | undefined;
     return r ? exposureFrom(r) : null;
   }
   exposureByAddress(via: ExposureVia, hostname: string, port: number): ExposureRow | null {

@@ -21,8 +21,9 @@ export type Action =
   | { kind: 'configure'; instance: InstanceSummary; secrets?: string[]; links?: Record<string, LinkChoice | null> }
   | { kind: 'start' | 'stop' | 'restart' | 'remove' | 'reinstall' | 'purge' | 'update'; instance: InstanceSummary }
   | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string }
-  | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy' }
-  | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public' };
+  // decision 127: hostname names one of several public names (withdraw it / make it the main address)
+  | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname?: string }
+  | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public'; hostname?: string };
 
 export function planRequestFor(a: Action): PlanRequest {
   switch (a.kind) {
@@ -36,9 +37,9 @@ export function planRequestFor(a: Action): PlanRequest {
     case 'expose':
       return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), ...(a.via === 'proxy' ? { hostname: a.hostname, proxyFrom: a.proxyFrom ?? '' } : {}), makePrimary: a.makePrimary };
     case 'unexpose':
-      return { kind: 'unexpose', instanceId: a.instance.id, via: a.via };
+      return { kind: 'unexpose', instanceId: a.instance.id, via: a.via, ...(a.hostname ? { hostname: a.hostname } : {}) };
     case 'reconfigure':
-      return { kind: 'reconfigure', instanceId: a.instance.id, primary: a.primary };
+      return { kind: 'reconfigure', instanceId: a.instance.id, primary: a.primary, ...(a.hostname ? { hostname: a.hostname } : {}) };
     default:
       return { kind: a.kind, instanceId: a.instance.id };
   }

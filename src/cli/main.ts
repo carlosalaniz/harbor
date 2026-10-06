@@ -641,7 +641,7 @@ program
   .requiredOption('--via <tailnet|public|proxy>')
   .option('--proxy-from <ip>', 'via proxy: the LAN address your reverse proxy connects from')
   .option('--endpoint <id>', 'endpoint id (default: the package primary endpoint)')
-  .option('--host <fqdn>', 'public hostname (public only)')
+  .option('--host <fqdn>', 'public hostname (public/proxy); run again with another --host to add a second public name')
   .option('--protect <none|basic>', 'basic-auth protection (public only; default basic for apps without their own login)')
   .option('--primary', 'make this the primary address (re-renders apps that embed their base URL)', false)
   .option('--ui', 'expose the Harbor UI itself on the tailnet (never public)', false)
@@ -661,31 +661,33 @@ program
 
 program
   .command('unexpose [instance]')
-  .description('withdraw a published address (--via tailnet|public); --ui withdraws the Harbor UI tailnet exposure')
+  .description('withdraw a published address (--via tailnet|public|proxy; --host picks one of several public names); --ui withdraws the Harbor UI tailnet exposure')
   .requiredOption('--via <tailnet|public|proxy>')
   .option('--endpoint <id>')
+  .option('--host <fqdn>', 'the public hostname to withdraw (required when the app has several)')
   .option('--ui', 'withdraw the Harbor UI exposure', false)
   .option('--yes', 'approve without prompting', false)
   .option('--no-wait', 'return after submission')
-  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; ui: boolean; yes: boolean; wait: boolean }) => {
+  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; host?: string; ui: boolean; yes: boolean; wait: boolean }) => {
     const api = client();
     if (opts.ui) {
       await api.delete('/v1/ui-exposure');
       out({ uiExposed: false }, () => 'Harbor UI tailnet exposure withdrawn.');
       return;
     }
-    const plan = await createPlan(api, 'unexpose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}) });
+    const plan = await createPlan(api, 'unexpose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}), ...(opts.host ? { hostname: opts.host } : {}) });
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 
 program
   .command('primary <instance> <loopback|tailnet|public>')
-  .description('choose which address an app treats as its base URL (re-renders and recreates containers if the package embeds it)')
+  .description('choose which address an app treats as its base URL (re-renders and recreates containers if the package embeds it); public --host <fqdn> picks one of several public names')
+  .option('--host <fqdn>', 'public only: the public hostname to make the main one (default: the first published)')
   .option('--yes', 'approve without prompting', false)
   .option('--no-wait', 'return after submission')
-  .action(async (ref: string, primary: string, opts: { yes: boolean; wait: boolean }) => {
+  .action(async (ref: string, primary: string, opts: { host?: string; yes: boolean; wait: boolean }) => {
     const api = client();
-    const plan = await createPlan(api, 'reconfigure', ref, undefined, { primary });
+    const plan = await createPlan(api, 'reconfigure', ref, undefined, { primary, ...(opts.host ? { hostname: opts.host } : {}) });
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 

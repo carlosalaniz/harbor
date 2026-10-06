@@ -1,7 +1,7 @@
 import type { EventDto, InstanceSummary, OperationDto, PlanDto } from '../contracts/api.js';
 import { browserUrlFor } from '../config.js';
 import type { EventRow, ExposureRow, InstanceRow, OperationRow, PlanRow } from '../state/repo.js';
-import { endpointUrls, exposureUrl } from '../exposure/urls.js';
+import { endpointUrls, exposureUrl, mainPublicExposure } from '../exposure/urls.js';
 import { linkValue } from '../planner/links.js';
 import type { ExposureDto } from '../contracts/api.js';
 
@@ -23,7 +23,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     runtime: i.runtime,
     readiness: i.readiness,
     observedAt: i.observedAt,
-    endpoints: i.endpoints.map((e) => ({ id: e.id, containerPort: e.containerPort, hostPort: e.hostPort, browserUrl: browserUrlFor(e.hostPort), urls: endpointUrls(e, exposures, look.lanHost ?? null, look.lanSecureHost ? { host: look.lanSecureHost } : null), primary: i.primaryExposure })),
+    endpoints: i.endpoints.map((e) => ({ id: e.id, containerPort: e.containerPort, hostPort: e.hostPort, browserUrl: browserUrlFor(e.hostPort), urls: endpointUrls(e, exposures, look.lanHost ?? null, look.lanSecureHost ? { host: look.lanSecureHost } : null, i.primaryHost), primary: i.primaryExposure })),
     primaryEndpoint,
     operationId: i.activeOperationId ?? i.lastOperationId,
     hasRetainedData: i.everInstalled || i.secrets.length > 0,
@@ -64,8 +64,11 @@ export function planDto(p: PlanRow, storageStates: Record<string, 'new' | 'exist
   };
 }
 
-export function exposureDto(e: ExposureRow, instanceName: string, primary: InstanceRow['primaryExposure']): ExposureDto {
-  return { id: e.id, instanceId: e.instanceId, instanceName, endpointId: e.endpointId, via: e.via, url: exposureUrl(e), hostname: e.hostname, port: e.port, protection: e.protection, state: e.state, observedAt: e.observedAt, note: e.note, isPrimary: primary === e.via };
+// isPrimary: this row is the instance's main address. With several public hostnames only the main one
+// (primaryHost, else the first published) is (decision 127). `siblings` = the instance's exposures.
+export function exposureDto(e: ExposureRow, instanceName: string, primary: InstanceRow['primaryExposure'], primaryHost: string | null = null, siblings: ExposureRow[] = [e]): ExposureDto {
+  const isPrimary = primary === e.via && (e.via !== 'public' || mainPublicExposure(siblings, e.endpointId, primaryHost)?.id === e.id);
+  return { id: e.id, instanceId: e.instanceId, instanceName, endpointId: e.endpointId, via: e.via, url: exposureUrl(e), hostname: e.hostname, port: e.port, protection: e.protection, state: e.state, observedAt: e.observedAt, note: e.note, isPrimary };
 }
 
 export function operationDto(o: OperationRow, events: EventRow[]): OperationDto {

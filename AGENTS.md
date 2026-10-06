@@ -14,7 +14,7 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **127**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **128**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -24,7 +24,7 @@ src/            daemon (TypeScript strict ESM, Node 24.12, pnpm 10.16)
   contracts/    JSON Schemas + DTO types — the API's source of truth
   packages/     restricted YAML parser, manifest/compose validators, catalog loader, zip import
   planner/      identity, port allocation, Compose rendering (PURE functions, no I/O)
-  state/        SQLite (better-sqlite3, SCHEMA_VERSION 9, migrations v1→v9; v9 = `links`), repositories
+  state/        SQLite (better-sqlite3, SCHEMA_VERSION 10, migrations v1→v10; v9 = `links`, v10 = several public names per endpoint), repositories
   docker/       adapter interface, Dockerode adapter, Compose CLI runner, FAKE adapter, port probe
   lifecycle/    plans/operations service, serial runner, readiness, observer (drive-guard stop,
               auto-mount on insert, auto-start on return, lock-guard start once a sealed app's
@@ -118,7 +118,7 @@ Key separations (do not blur them):
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **127**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **128**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant

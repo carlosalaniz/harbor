@@ -68,3 +68,43 @@ describe('state migration v1 -> v2', () => {
     again.close();
   });
 });
+
+describe('state migration v9 -> v10 (decision 127)', () => {
+  it('keeps every exposure in publication order, allows several public names per endpoint, keeps addresses unique, adds primary_host', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-mig10-'));
+    const db = new Database(path.join(dir, 'harbor.db'));
+    db.exec(V1);
+    db.pragma('user_version = 1');
+    db.prepare("INSERT INTO installation VALUES ('11111111-1111-4111-8111-111111111111', 1, '2026-01-01T00:00:00Z', '{}')").run();
+    db.prepare(`INSERT INTO instances (id, name, project, package_id, revision, desired, install_state, runtime, readiness, release_dir, release_hashes_json, endpoints_json, secrets_json, created_at, updated_at)
+      VALUES ('22222222-2222-4222-8222-222222222222', 'erp', 'hb_e', 'erp', '1', 'running', 'installed', 'running', 'healthy', 'instances/e/release', '{}', '[]', '[]', 't', 't')`).run();
+    db.close();
+    // Bring it to the current schema, then rebuild the v9 shape of the two tables v10 touches.
+    openState(dir).close();
+    const v9 = new Database(path.join(dir, 'harbor.db'));
+    v9.pragma('foreign_keys = OFF');
+    v9.exec(`
+      DROP TABLE exposures;
+      CREATE TABLE exposures (id TEXT PRIMARY KEY, instance_id TEXT NOT NULL REFERENCES instances(id), endpoint_id TEXT NOT NULL, via TEXT NOT NULL CHECK (via IN ('tailnet','public','proxy')), hostname TEXT NOT NULL, port INTEGER NOT NULL, protection TEXT NOT NULL CHECK (protection IN ('none','basic')), state TEXT NOT NULL CHECK (state IN ('pending','active','degraded','removing')), observed_at TEXT, note TEXT, created_at TEXT NOT NULL, proxy_from TEXT, UNIQUE (instance_id, endpoint_id, via), UNIQUE (via, hostname, port));
+      ALTER TABLE instances DROP COLUMN primary_host;
+    `);
+    v9.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '22222222-2222-4222-8222-222222222222', 'web', 'public', 'erp.example.com', 443, 'basic', 'active', '2026-10-01T00:00:00Z')").run();
+    v9.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at, proxy_from) VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '22222222-2222-4222-8222-222222222222', 'web', 'proxy', 'lan.example.net', 443, 'none', 'active', '2026-09-01T00:00:00Z', '192.0.2.20')").run();
+    expect(() => v9.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', '22222222-2222-4222-8222-222222222222', 'web', 'public', 'customers.example.org', 443, 'none', 'active', 't')").run()).toThrow(/UNIQUE/);
+    v9.pragma('user_version = 9');
+    v9.close();
+
+    const opened = openState(dir);
+    expect(opened.pragma('user_version', { simple: true })).toBe(10);
+    expect(opened.prepare('SELECT id, via, hostname, protection, proxy_from FROM exposures ORDER BY rowid').all()).toEqual([
+      { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', via: 'proxy', hostname: 'lan.example.net', protection: 'none', proxy_from: '192.0.2.20' },
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', via: 'public', hostname: 'erp.example.com', protection: 'basic', proxy_from: null },
+    ]);
+    expect(opened.prepare('SELECT primary_host FROM instances').get()).toEqual({ primary_host: null });
+    // a second public name for the same endpoint is fine now; the same address twice still is not
+    opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', '22222222-2222-4222-8222-222222222222', 'web', 'public', 'customers.example.org', 443, 'none', 'active', 't')").run();
+    expect(() => opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', '22222222-2222-4222-8222-222222222222', 'web', 'public', 'erp.example.com', 443, 'none', 'active', 't')").run()).toThrow(/UNIQUE/);
+    expect(opened.pragma('foreign_key_check')).toEqual([]);
+    opened.close();
+  });
+});

@@ -38,7 +38,7 @@ import { ComposeError } from '../docker/adapter.js';
 import type { Ctx } from './context.js';
 import { exposureDto, instanceSummary, operationDto, planDto } from './dto.js';
 import type { ExposureDto, ExposureVia } from '../contracts/api.js';
-import { HOSTNAME_RE, exposureUrl } from '../exposure/urls.js';
+import { HOSTNAME_RE, exposureUrl, mainPublicExposure } from '../exposure/urls.js';
 import { instanceDir, loadReleaseSnapshot, secretExists } from './instance-dir.js';
 
 export interface SubmitResult {
@@ -1297,7 +1297,8 @@ export class ApplicationService {
 
   exposuresList(): ExposureDto[] {
     const names = new Map(this.ctx.repo.listInstances().map((i) => [i.id, i]));
-    return this.ctx.repo.exposures().map((e) => exposureDto(e, names.get(e.instanceId)?.name ?? e.instanceId, names.get(e.instanceId)?.primaryExposure ?? 'loopback'));
+    const all = this.ctx.repo.exposures();
+    return all.map((e) => exposureDto(e, names.get(e.instanceId)?.name ?? e.instanceId, names.get(e.instanceId)?.primaryExposure ?? 'loopback', names.get(e.instanceId)?.primaryHost ?? null, all.filter((x) => x.instanceId === e.instanceId)));
   }
 
   instanceRow(idOrName: string): InstanceRow {
@@ -1970,9 +1971,21 @@ export class ApplicationService {
     const hasBaseUrlBindings = (pkg.manifest.configuration ?? []).length > 0;
     if (req.kind === 'reconfigure') {
       if (req.primary !== 'loopback' && !existing.some((e) => e.via === req.primary)) throw new HarborError('INVALID_REQUEST', `instance ${inst.name} has no ${req.primary} exposure to make primary`);
-      if (req.primary === inst.primaryExposure) throw new HarborError('INVALID_STATE', `${req.primary} is already the primary address of ${inst.name}`);
+      // Decision 127: with several public hostnames, `hostname` names the main one (default: the first published).
+      let label: string = req.primary;
+      if (req.hostname !== undefined) {
+        if (req.primary !== 'public') throw new HarborError('INVALID_REQUEST', 'a hostname picks the main address only among public addresses');
+        if (!existing.some((e) => e.via === 'public' && e.endpointId === meta.primaryEndpoint && e.hostname === req.hostname)) throw new HarborError('INVALID_REQUEST', `${inst.name} is not published at ${req.hostname}`, { nextAction: `Publish it there first: harbor expose ${inst.name} --via public --host ${req.hostname}` });
+      }
+      if (req.primary === 'public') {
+        const current = inst.primaryExposure === 'public' ? mainPublicExposure(existing, meta.primaryEndpoint, inst.primaryHost) : null;
+        const target = req.hostname ?? (current ? current.hostname : mainPublicExposure(existing, meta.primaryEndpoint, null)?.hostname ?? null);
+        if (current && current.hostname === target) throw new HarborError('INVALID_STATE', `https://${target}/ is already the primary address of ${inst.name}`);
+        base.primaryHost = target;
+        if (target) label = `https://${target}/`;
+      } else if (req.primary === inst.primaryExposure) throw new HarborError('INVALID_STATE', `${req.primary} is already the primary address of ${inst.name}`);
       base.primary = req.primary;
-      base.changes.push(`Make ${req.primary} the primary address of "${inst.name}"`, hasBaseUrlBindings ? `Re-render the private Compose file with the new base URL and recreate ${pkgName}'s containers (same volumes, secrets and ports), then check readiness` : 'No package configuration depends on the base URL; only Harbor\'s records change');
+      base.changes.push(`Make ${label} the primary address of "${inst.name}"`, hasBaseUrlBindings ? `Re-render the private Compose file with the new base URL and recreate ${pkgName}'s containers (same volumes, secrets and ports), then check readiness` : 'No package configuration depends on the base URL; only Harbor\'s records change');
       const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'reconfigure', instanceId: inst.id, proposal: base, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
       repo.insertPlan(plan);
       return this.plan(plan.id);
@@ -1981,11 +1994,21 @@ export class ApplicationService {
     const alloc = inst.endpoints.find((e) => e.id === endpointId);
     if (!alloc) throw new HarborError('INVALID_REQUEST', `instance ${inst.name} has no endpoint ${endpointId}`);
     if (req.kind === 'unexpose') {
-      const e = existing.find((x) => x.endpointId === endpointId && x.via === req.via);
-      if (!e) throw new HarborError('NOT_FOUND', `${inst.name}/${endpointId} is not exposed via ${req.via}`);
+      const candidates = existing.filter((x) => x.endpointId === endpointId && x.via === req.via && (req.hostname === undefined || x.hostname === req.hostname));
+      if (!candidates.length) throw new HarborError('NOT_FOUND', req.hostname ? `${inst.name}/${endpointId} is not exposed via ${req.via} at ${req.hostname}` : `${inst.name}/${endpointId} is not exposed via ${req.via}`);
+      // Decision 127: several public hostnames — never guess which one to withdraw.
+      if (candidates.length > 1) throw new HarborError('INVALID_REQUEST', `${inst.name}/${endpointId} is published under ${candidates.length} ${req.via} hostnames (${candidates.map((x) => x.hostname).join(', ')})`, { nextAction: `Name the one to withdraw: harbor unexpose ${inst.name} --via ${req.via} --host <hostname>` });
+      const e = candidates[0]!;
       base.exposure = { endpointId, via: e.via, hostname: e.hostname, port: e.port, protection: e.protection, makePrimary: false };
-      base.changes.push(req.via === 'proxy' ? `Forget the address ${exposureUrl(e)} of "${inst.name}" (remove it from your proxy yourself)` : `Remove the ${req.via} address ${exposureUrl(e)} of "${inst.name}" (${req.via === 'public' ? 'Caddy route' : 'tailscale serve entry'})`);
-      if (inst.primaryExposure === req.via) {
+      base.changes.push(req.via === 'proxy' ? `Forget the address ${exposureUrl(e)} of "${inst.name}" (remove it from your proxy yourself)` : `Remove the ${req.via} address ${exposureUrl(e)} of "${inst.name}" (${req.via === 'public' ? 'Caddy route and its certificate' : 'tailscale serve entry'})`);
+      const isMain = inst.primaryExposure === req.via && (req.via !== 'public' || (endpointId === meta.primaryEndpoint && mainPublicExposure(existing, endpointId, inst.primaryHost)?.id === e.id));
+      const next = req.via === 'public' && isMain ? existing.find((x) => x.via === 'public' && x.endpointId === endpointId && x.id !== e.id) : undefined;
+      if (isMain && next) {
+        // Another public hostname stays: it becomes the main address instead of falling back to loopback.
+        base.primary = 'public';
+        base.primaryHost = next.hostname;
+        base.changes.push(hasBaseUrlBindings ? `It is the primary address: ${exposureUrl(next)} becomes the primary address and containers are recreated with that base URL` : `It is the primary address: ${exposureUrl(next)} becomes the primary address`);
+      } else if (isMain) {
         base.primary = 'loopback';
         base.changes.push(hasBaseUrlBindings ? 'It is the primary address: switch back to loopback and recreate containers with the loopback base URL' : 'It is the primary address: switch back to loopback');
       }
@@ -1995,7 +2018,13 @@ export class ApplicationService {
       return this.plan(plan.id);
     }
     // expose
-    if (existing.some((x) => x.endpointId === endpointId && x.via === req.via)) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already exposed via ${req.via}`, { nextAction: 'Unexpose it first to change hostname or protection.' });
+    // Decision 127: a public endpoint may carry several hostnames (one row, route and certificate each);
+    // the tailnet has one node name and your own proxy one record, so those stay one per endpoint.
+    const sameVia = existing.filter((x) => x.endpointId === endpointId && x.via === req.via);
+    if (req.via === 'public') {
+      if (req.hostname && sameVia.some((x) => x.hostname === req.hostname)) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already published at https://${req.hostname}/`, { nextAction: `To change its protection, withdraw it first: harbor unexpose ${inst.name} --via public --host ${req.hostname}` });
+    } else if (sameVia.length) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already exposed via ${req.via}`, { nextAction: 'Unexpose it first to change hostname or protection.' });
+    if (req.via === 'public' && req.hostname && repo.exposures().some((x) => x.via === 'proxy' && x.hostname === req.hostname)) throw new HarborError('NAME_CONFLICT', `https://${req.hostname}/ is already recorded as an address on your own proxy`);
     const endpoint = pkg.manifest.endpoints[endpointId]!;
     const { hostname, port, protection } = await this.exposureTarget(req.via, alloc, pkg, pkgName, req, base.warnings);
     const taken = repo.exposureByAddress(req.via, hostname, port);
@@ -2003,8 +2032,12 @@ export class ApplicationService {
     if (endpoint.browserContext === 'ordinary') base.warnings.push('This endpoint is declared for ordinary browser contexts; it will still be served over HTTPS.');
     if (req.via === 'proxy' && req.makePrimary) throw new HarborError('INVALID_REQUEST', 'an address on your own proxy cannot be the main address (Harbor does not control its certificate)');
     base.exposure = { endpointId, via: req.via, hostname, port, protection, makePrimary: req.makePrimary ?? false, ...(req.via === 'proxy' ? { proxyFrom: req.proxyFrom! } : {}) };
-    if (req.makePrimary && req.via !== 'proxy') base.primary = req.via;
+    if (req.makePrimary && req.via !== 'proxy') {
+      base.primary = req.via;
+      if (req.via === 'public') base.primaryHost = hostname;
+    }
     base.changes.push(
+      ...(req.via === 'public' && sameVia.length ? [`Keep ${sameVia.map((x) => exposureUrl(x)).join(', ')}; the new name gets its own Caddy route and certificate`] : []),
       req.via === 'proxy'
         ? `Record https://${hostname}/ as an address of "${inst.name}" served by your proxy at ${req.proxyFrom}; trust forwarded headers from that address only`
         : `Publish "${inst.name}" endpoint ${endpointId} at ${exposureUrl(base.exposure)} via ${req.via === 'public' ? 'Caddy (Let\'s Encrypt certificate)' : 'tailscale serve (tailnet certificate)'} -> 127.0.0.1:${alloc.hostPort}`,

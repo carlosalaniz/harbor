@@ -170,6 +170,30 @@ GraphQL, `/mcp` 401 without the operator-provided bearer token and 200 with it, 
 workspaces. `harbor links` showed the link `active`. Stop of both apps succeeded. Not yet observed live:
 a `compose up` of both projects after the rewrite (next start), provider removal flagging the consumer.
 
+## 3i. Several public hostnames per endpoint (2026-10-05, Harbor 0.22.0, decision 127)
+
+Fake-adapter evidence only (contracts; no live Caddy/Let's Encrypt run yet):
+
+- `pnpm test` 222 passed (`tests/unit/exposure.test.ts`: the main public name is `primaryHost`, else
+  the first published; a withdrawn main name falls back; `urls.public`, `primaryUrlFor` and
+  `appAuthorities` follow; two names of one endpoint render as two Caddy routes to the same upstream,
+  each with its own basic-auth handler or none. `migration.test.ts`: v9 → v10 keeps every exposure
+  in publication order, accepts a second public row for an endpoint, still refuses the same address twice).
+- `pnpm test:integration` 172 passed + 3 live-Docker skipped (`tests/integration/multi-domain.test.ts`:
+  expose `erp.example.com` (main) then `customers.example.org` (basic auth, credentials once) → two
+  rows, two Caddy routes to the same port, one authentication handler, the after-start hook's
+  `HARBOR_ADDRESSES` lists both and `HARBOR_URL`/`BASE_URL` stay on the main one; the same name twice
+  and another app's name are refused; a bare `unexpose` with two names is refused with both names and
+  the `--host` command; the tailnet stays one per endpoint; `reconfigure public --host
+  customers.example.org` moves the base URL, hook URL and `isPrimary`; withdrawing the main name hands
+  the main address to the remaining one; withdrawing a non-main name leaves the base URL alone;
+  `remove` withdraws every name).
+- `pnpm test:e2e` 29 passed (publish wizard: **Add another domain** with protection none, both names on
+  the Publishing page and in the drawer, *Withdraw draw.example.com* keeps `draw.example.org`, then
+  withdraw that one too).
+
+Not yet observed live: two real Let's Encrypt certificates on one Caddy for one app.
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

@@ -37,7 +37,9 @@ The Harbor UI/API itself may be exposed on the tailnet (so you can administer re
 
 ### 3.1 Exposure records
 
-New table `exposures` (instance FK, unique `(instance_id, endpoint_id, via)`):
+New table `exposures` (instance FK; unique `(via, hostname, port)`). Until schema v9 it was also unique
+per `(instance_id, endpoint_id, via)`; since v10 (decision 127) an endpoint may carry **several public
+rows, one per hostname** — tailnet and your-own-proxy stay one per endpoint, enforced at plan time:
 
 | Column | Meaning |
 |---|---|
@@ -62,10 +64,20 @@ recreates only the changed service), same volumes, same secrets, same ports, the
 reuses the reinstall path; the only new code is "which URL does `browserUrlFor` render for this
 instance". Packages without `configuration` bindings need no reconfigure.
 
+With several public hostnames (decision 127) the main one is explicit: `instances.primary_host`
+(`NULL` = the first one published, in `created_at, rowid` order). `primaryUrlFor` / `endpointUrls`
+pick it through `mainPublicExposure()`; `urls.public` is that main name and `ExposureDto.isPrimary`
+is true only on its row. Every name is in `appAuthorities` (`HARBOR_ADDRESSES`). Withdrawing the main
+name while others remain moves the main address to the next one (a `public` + `primaryHost` change
+in the same plan, so apps that embed it are re-rendered); withdrawing the last one falls back to
+loopback as before.
+
 ### 3.3 New plan kinds
 
 `expose {instanceId, endpointId, via, hostname?, protection?, makePrimary?}`,
-`unexpose {instanceId, endpointId, via}`, `reconfigure {instanceId, primary}`. Plans show the exact
+`unexpose {instanceId, endpointId, via, hostname?}`, `reconfigure {instanceId, primary, hostname?}`
+(`hostname`, decision 127: which public name to withdraw — required when there are several — or to
+make the main one). Plans show the exact
 public address, provider, protection, and DNS/firewall prerequisites as `changes`/`warnings`.
 
 ## 4. Providers (platform tools, like Cockpit/Portainer)
@@ -113,10 +125,13 @@ created by Harbor are never touched. Uninstalling a provider requires no active 
 - Bootstrap: `--with-tailscale`, `--with-public-proxy`, each previewed and separately approved;
   re-run idempotent; existing installations are bound, not reconfigured (same policy as Cockpit).
 - CLI: `harbor expose <instance> [--endpoint id] --via tailnet|public [--host fqdn] [--protect none|basic] [--primary]`,
-  `harbor unexpose ...`, `harbor exposures`, `harbor expose --ui --via tailnet`.
+  `harbor unexpose ... [--host fqdn]`, `harbor primary <instance> public [--host fqdn]`, `harbor exposures`,
+  `harbor expose --ui --via tailnet`. Running `expose --via public` again with another `--host` adds a
+  second public name (decision 127).
 - API: `POST /v1/plans` with the new kinds; `GET /v1/exposures`; tool cards for `tailscale` and `proxy`.
 - UI: each installed card shows its addresses with copy buttons and a "Publish…" dialog (choose
-  path, hostname, protection, make primary); tool cards show enrollment/certificate/DNS states with
+  path, hostname, protection, make primary; each public name has its own Withdraw and Make primary,
+  plus **Add another domain**); tool cards show enrollment/certificate/DNS states with
   the exact next action.
 
 ## 6. Security posture (stated plainly)

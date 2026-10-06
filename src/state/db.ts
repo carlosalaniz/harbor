@@ -4,7 +4,7 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { rfc3339, type Clock, type Ids } from '../util.js';
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 // Decision 126: one row per (consumer, link id). provider_instance_id NULL = needs a provider;
 // 'dormant' = the consumer is removed (retained) and Reinstall re-creates the link.
@@ -75,7 +75,8 @@ CREATE TABLE instances (
   purged_at TEXT,
   display_name TEXT,
   icon_json TEXT,
-  auto_update INTEGER NOT NULL DEFAULT 0
+  auto_update INTEGER NOT NULL DEFAULT 0,
+  primary_host TEXT
 );
 CREATE TABLE settings (
   key TEXT PRIMARY KEY,
@@ -158,9 +159,9 @@ CREATE TABLE exposures (
   note TEXT,
   created_at TEXT NOT NULL,
   proxy_from TEXT,
-  UNIQUE (instance_id, endpoint_id, via),
   UNIQUE (via, hostname, port)
 );
+CREATE INDEX exposures_instance ON exposures(instance_id, endpoint_id, via);
 CREATE TABLE platform_tools (
   id TEXT PRIMARY KEY,
   mode TEXT NOT NULL CHECK (mode IN ('managed','external','absent')),
@@ -298,6 +299,10 @@ export function openState(stateDir: string, opts: { readonly?: boolean } = {}): 
           migrateV8toV9(db);
           version = 9;
         }
+        if (version === 9) {
+          migrateV9toV10(db);
+          version = 10;
+        }
       } finally {
         db.pragma('foreign_keys = ON');
       }
@@ -378,6 +383,39 @@ function migrateV8toV9(db: Db): void {
   db.transaction(() => {
     db.exec(LINKS_SQL);
     db.pragma('user_version = 9');
+  })();
+}
+
+// v10: an endpoint may be published under several public hostnames (decision 127). The per-(instance,
+// endpoint, via) uniqueness goes (one row per hostname; tailnet/proxy stay one per endpoint, enforced at
+// plan time); each address stays unique installation-wide. instances.primary_host names the main public
+// hostname (NULL = the first one published). Rows are copied in publication order.
+function migrateV9toV10(db: Db): void {
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE exposures_v10 (
+        id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES instances(id),
+        endpoint_id TEXT NOT NULL,
+        via TEXT NOT NULL CHECK (via IN ('tailnet','public','proxy')),
+        hostname TEXT NOT NULL,
+        port INTEGER NOT NULL,
+        protection TEXT NOT NULL CHECK (protection IN ('none','basic')),
+        state TEXT NOT NULL CHECK (state IN ('pending','active','degraded','removing')),
+        observed_at TEXT,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        proxy_from TEXT,
+        UNIQUE (via, hostname, port)
+      );
+      INSERT INTO exposures_v10 (id, instance_id, endpoint_id, via, hostname, port, protection, state, observed_at, note, created_at, proxy_from)
+        SELECT id, instance_id, endpoint_id, via, hostname, port, protection, state, observed_at, note, created_at, proxy_from FROM exposures ORDER BY created_at, rowid;
+      DROP TABLE exposures;
+      ALTER TABLE exposures_v10 RENAME TO exposures;
+      CREATE INDEX exposures_instance ON exposures(instance_id, endpoint_id, via);
+      ALTER TABLE instances ADD COLUMN primary_host TEXT;
+    `);
+    db.pragma('user_version = 10');
   })();
 }
 

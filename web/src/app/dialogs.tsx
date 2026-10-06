@@ -861,7 +861,10 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
   const ts = tools.find((t) => t.id === 'tailscale');
   const px = tools.find((t) => t.id === 'proxy');
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
-  const has = (v: 'tailnet' | 'public' | 'proxy') => exposures.some((e) => e.via === v);
+  // decision 127: public may carry several hostnames; tailnet and your own proxy stay one each
+  const has = (v: 'tailnet' | 'public' | 'proxy') => v !== 'public' && exposures.some((e) => e.via === v);
+  const publicCount = exposures.filter((e) => e.via === 'public').length;
+  const hostInput = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
   // 'proxy' (decision 118): your own reverse proxy; Harbor runs nothing for it, so there is no provider to check.
   const providerOk = via === 'proxy' ? true : via === 'tailnet' ? ts?.installationState === 'installed' : px?.installationState === 'installed';
   return (
@@ -881,11 +884,11 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
             </span>
             <span className="row">
               {!e.isPrimary && e.state === 'active' && e.via !== 'proxy' && (
-                <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: e.via as 'tailnet' | 'public' })}>
+                <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: e.via as 'tailnet' | 'public', ...(e.via === 'public' ? { hostname: e.hostname } : {}) })} aria-label={e.via === 'public' ? `Make ${e.hostname} primary` : `Make ${e.via} primary`}>
                   Make primary
                 </button>
               )}
-              <button className="btn danger" onClick={() => onStart({ kind: 'unexpose', instance: inst, via: e.via })} aria-label={`Withdraw ${e.via} address`}>
+              <button className="btn danger" onClick={() => onStart({ kind: 'unexpose', instance: inst, via: e.via, ...(e.via === 'public' ? { hostname: e.hostname } : {}) })} aria-label={e.via === 'public' ? `Withdraw ${e.hostname}` : `Withdraw ${e.via} address`}>
                 Withdraw
               </button>
             </span>
@@ -898,6 +901,20 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
             </span>
             <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: 'loopback' })}>
               Make primary
+            </button>
+          </li>
+        )}
+        {publicCount > 0 && (
+          <li className="row end">
+            <button
+              className="btn ghost"
+              onClick={() => {
+                setVia('public');
+                setHostname('');
+                setTimeout(() => hostInput.current?.focus(), 0);
+              }}
+            >
+              Add another domain
             </button>
           </li>
         )}
@@ -936,7 +953,7 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
           {freeDomains.length > 0 && !customHost ? (
             <label className="small">
               Domain (registered under Settings → Public addresses)
-              <select value={hostname} onChange={(e) => (e.target.value === '__other' ? (setCustomHost(true), setHostname('')) : setHostname(e.target.value))} aria-label="Domain">
+              <select ref={(el) => void (hostInput.current = el)} value={hostname} onChange={(e) => (e.target.value === '__other' ? (setCustomHost(true), setHostname('')) : setHostname(e.target.value))} aria-label="Domain">
                 <option value="">Choose a domain…</option>
                 {freeDomains.map((d) => (
                   <option key={d.hostname} value={d.hostname}>
@@ -949,13 +966,16 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
           ) : (
             <label className="small">
               Hostname you control (its DNS record must point at this machine)
-              <input value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="app.example.com" />
+              <input ref={(el) => void (hostInput.current = el)} value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="app.example.com" />
               <span className="muted small">
                 Tip: register it under <a href="#/settings/public">Settings → Public addresses</a> first and Harbor checks the DNS for you.
               </span>
             </label>
           )}
-          <p className="muted small">The HTTPS certificate comes from Let's Encrypt automatically once the domain points here; nothing to upload.</p>
+          <p className="muted small">
+            The HTTPS certificate comes from Let's Encrypt automatically once the domain points here; nothing to upload.
+            {publicCount > 0 && ' This adds another domain: the current ones keep working, and each name gets its own certificate.'}
+          </p>
           <label className="small">
             Protection
             <select value={protection} onChange={(e) => setProtection(e.target.value as 'none' | 'basic')}>
@@ -1231,7 +1251,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
             {(['loopback', 'tailnet', 'public'] as const).map((via) => {
               const url = primary.urls[via];
               if (!url) return null;
-              const ex = exposures.find((e) => e.via === via);
+              const ex = exposures.find((e) => e.via === via && (via !== 'public' || e.url === url));
               return (
                 <li key={via}>
                   <Pill tone={via === 'loopback' ? 'muted' : ex?.state === 'active' ? 'ok' : ex?.state === 'degraded' ? 'warn' : 'busy'}>{via}</Pill>{' '}
@@ -1243,6 +1263,18 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
                 </li>
               );
             })}
+            {/* decision 127: the endpoint's other public names (urls.public is the main one) */}
+            {exposures
+              .filter((e) => e.via === 'public' && e.endpointId === primary.id && e.url !== primary.urls.public)
+              .map((e) => (
+                <li key={e.id}>
+                  <Pill tone={e.state === 'active' ? 'ok' : e.state === 'degraded' ? 'warn' : 'busy'}>public</Pill>{' '}
+                  <a href={e.url} target="_blank" rel="noopener noreferrer">
+                    {e.url}
+                  </a>
+                  <Copy text={e.url} />
+                </li>
+              ))}
           </ul>
         </>
       )}

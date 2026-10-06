@@ -284,16 +284,36 @@ test('publish wizard: tailnet address on the tile; public exposure shows one-tim
   await trayDone(page, 'Expose');
   await expect(page.getByText(/Basic-auth credentials, shown once/)).toBeVisible();
   await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toContainText('basic auth');
+  // decision 127: a second domain for the same app, with its own protection
+  await page.getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  const dlg3 = page.getByRole('dialog');
+  await dlg3.getByRole('button', { name: 'Add another domain', exact: true }).click();
+  await expect(dlg3.getByRole('radio', { name: /^Public/ })).toBeChecked();
+  await dlg3.getByPlaceholder('app.example.com').fill('draw.example.org');
+  await dlg3.getByLabel('Protection').selectOption('none');
+  await dlg3.getByRole('button', { name: 'Publish', exact: true }).click();
+  await approve(page, 'Publish');
+  await trayDone(page, 'Expose');
+  await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toHaveCount(1);
+  await expect(published.locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(1);
   // the tile on Home shows the same addresses in the drawer
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of excalidraw-2' }).click();
   await expect(page.getByRole('dialog').locator('.addresses')).toContainText('https://draw.example.com/');
+  await expect(page.getByRole('dialog').locator('.addresses')).toContainText('https://draw.example.org/');
   await page.getByRole('dialog').getByRole('button', { name: 'Publish excalidraw-2' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw public address' }).click();
+  // each public name has its own Withdraw; removing one keeps the other
+  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw draw.example.com', exact: true }).click();
   await approve(page, 'Withdraw');
   await trayDone(page, 'Unexpose');
   await page.getByRole('link', { name: 'Publishing' }).click();
   await expect(page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.com' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(1);
+  await page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.org' }).getByRole('button', { name: 'Manage' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw draw.example.org', exact: true }).click();
+  await approve(page, 'Withdraw');
+  await trayDone(page, 'Unexpose');
+  await expect(page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(0);
 });
 
 test('network: secure addresses card is off by default and explains LAN mode', async ({ page }) => {
