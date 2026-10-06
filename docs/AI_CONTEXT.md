@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–144 so far) | `docs/DECISIONS.md` — **next number is 142**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–146 so far) | `docs/DECISIONS.md` — **next number is 142**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -93,6 +93,7 @@ bootstrap adds the `caddy` user to the `harbor` group and makes the state dir gr
 validated live against Caddy v2.11.4.
 
 **Last three actions, most recent first:**
+1. **0.25.0 (decisions 145–146, 2026-10-06)**: move an encrypted app between locations (root `transfer` step; fscrypt cannot raw-copy ciphertext, so the copy goes through the kernel between two unlocked homes with the same key), unique protector names. docs/TODO.md is now fully done. Production box (.192) is still on 0.22.1 — Carlos updates it himself.
 1. **0.24.0 (decisions 142–144, 2026-10-06)**: `harbor seal` (root `import` step), passphrase change (re-wrap only), root `destroy` for app homes (purge of sealed apps used to fail with EACCES). Verified live on the droplet (now on 0.24.0).
 1. **0.23.0 (decisions 130–141, 2026-10-06)**: docs/TODO.md batch 1 — CLI installs sealed by default, own tailnet port, remove/reinstall keeps addresses, needs_action Repair, hide from Home, picture of the day, package-author items. Plan: 0.24.0 = `harbor seal` + passphrase change, 0.25.0 = move between locations; the production box stays on 0.22.1 until 0.25.0 (tests a multi-version jump).
 1. **Fixed `https://harbor.local` on home-server (decision 110)** (2026-09-24): Caddy owned :443

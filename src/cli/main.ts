@@ -337,7 +337,7 @@ program
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
-  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure', 'seal'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure', 'seal', 'move'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
@@ -629,6 +629,21 @@ program
     }
     const r = await api.post<{ instance: InstanceSummary; recoveryKey: string | null }>(`/v1/instances/${inst.id}/passphrase`, { ...(current ? { current } : {}), next });
     out({ instance: r.instance.name, recoveryKey: r.recoveryKey }, () => [`${r.instance.name}: ${next === null ? "opens with Harbor's own key now (unlocks when you log in)" : 'has its new passphrase'}.`, ...(r.recoveryKey ? [`  Its own recovery key (shown once — write down these 12 words): ${r.recoveryKey}`] : [])].join('\n'));
+  });
+
+// Decision 145: an encrypted app moves as a whole between places that can hold apps.
+program
+  .command('move <instance>')
+  .description('move an encrypted app to another place (the Harbor data folder or an ext4 drive): same app, same key; it is down during the copy')
+  .requiredOption('--location <dir>', 'where to: a place from `harbor storage` (e.g. /mnt/photos/harbor-apps), optionally with /<package>')
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { location: string; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const loc = opts.location.replace(/\/+$/, '');
+    const dir = loc.endsWith(`/${inst.packageId}`) ? loc : `${loc}/${inst.packageId}`;
+    await approveAndApply(api, await createPlan(api, 'move', ref, undefined, { location: { dir } }), { yes: opts.yes, wait: opts.wait });
   });
 
 // Decision 142: an app on plain Docker volumes moves into a sealed home in the Harbor data folder, in place.

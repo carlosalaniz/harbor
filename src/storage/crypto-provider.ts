@@ -20,7 +20,8 @@
 // seals, Start unlocks, Lock evicts, a restart returns to locked — is
 // exercised end to end without hardware.
 import { spawn } from 'node:child_process';
-import { closeSync, constants as fsConstants, mkdirSync, openSync, readFileSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { closeSync, cpSync, constants as fsConstants, mkdirSync, openSync, readFileSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
 import { HarborError } from '../errors.js';
 import { appCryptoFiles, appCryptoUnit, isEnokey, parseAppCryptoStatus, protectorNameFor, sealedDir, type AppCryptoAction, type AppCryptoRequest, type VolumeImport } from './fscrypt.js';
 
@@ -47,6 +48,9 @@ export interface CryptoProvider {
   // Decision 144: delete the whole home as root (purge, a failed seal). Files inside belong to the
   // containers' users, so the harbor user cannot remove them itself.
   destroyHome(ref: AppHomeRef): Promise<void>;
+  // Decision 145 (move): copy <home>/volumes into <target>/volumes, both sealed and unlocked under the
+  // same app key; verified; a failure empties the target. The source stays untouched.
+  transferHome(ref: AppHomeRef, target: string): Promise<void>;
   // Add the key to the kernel (idempotent when already unlocked).
   unlockApp(ref: AppHomeRef, masterKeyHex: string): Promise<void>;
   // Evict the key (refuses while files are open — stop the app first).
@@ -58,8 +62,11 @@ export interface CryptoProvider {
   kernelState(home: string): KernelState;
 }
 
+// Decision 146: every newly sealed folder gets its own protector name. fscrypt keeps a protector after the
+// folder it guarded is deleted (purge, a move, a rolled-back seal), so a stable name clashes the next time
+// the same app is sealed on that filesystem ("there is already a protector named …").
 export function protectorFor(instanceName: string, instanceId: string): string {
-  return protectorNameFor(instanceName, instanceId);
+  return `${protectorNameFor(instanceName, instanceId)}-${randomBytes(3).toString('hex')}`;
 }
 
 // Kernel truth without root: mkdir inside a locked fscrypt dir → ENOKEY.
@@ -122,6 +129,15 @@ export class FakeCryptoProvider implements CryptoProvider {
     this.fail();
     if (!this.sealed.has(ref.home) || !this.open.has(ref.home)) throw new HarborError('INVALID_STATE', `${ref.home}/volumes is not sealed and unlocked; refusing to copy data into it`);
     this.imports.push({ home: ref.home, imports: imports.map((i) => ({ ...i })) });
+  }
+  transfers: { from: string; to: string }[] = [];
+  async transferHome(ref: AppHomeRef, target: string): Promise<void> {
+    this.calls.push({ op: 'transferHome', home: ref.home });
+    this.fail();
+    for (const d of [ref.home, target]) if (!this.sealed.has(d) || !this.open.has(d)) throw new HarborError('INVALID_STATE', `${d}/volumes is not sealed and unlocked; refusing to copy`);
+    // the fake has no kernel: copy the plain test files so the target looks like the real result
+    cpSync(`${ref.home}/volumes`, `${target}/volumes`, { recursive: true });
+    this.transfers.push({ from: ref.home, to: target });
   }
   async destroyHome(ref: AppHomeRef): Promise<void> {
     this.calls.push({ op: 'destroyHome', home: ref.home });
@@ -201,6 +217,7 @@ const TIMEOUTS: Record<AppCryptoAction, number> = {
   migrate: 24 * 60 * 60_000,
   import: 24 * 60 * 60_000,
   destroy: 60 * 60_000,
+  transfer: 24 * 60 * 60_000,
 };
 
 export class RootCryptoProvider implements CryptoProvider {
@@ -209,12 +226,12 @@ export class RootCryptoProvider implements CryptoProvider {
     private readonly startUnit: UnitStarter = systemctlStartBlocking,
   ) {}
 
-  private async run(ref: AppHomeRef, action: AppCryptoAction, extra: { protectorName?: string; keyHex?: string; imports?: VolumeImport[] } = {}): Promise<{ encrypted: boolean; unlocked: boolean }> {
+  private async run(ref: AppHomeRef, action: AppCryptoAction, extra: { protectorName?: string; keyHex?: string; imports?: VolumeImport[]; target?: string } = {}): Promise<{ encrypted: boolean; unlocked: boolean }> {
     const files = appCryptoFiles(this.stateDir, ref.instanceId);
     mkdirSync(files.dir, { recursive: true, mode: 0o700 });
     rmSync(files.status, { force: true });
     rmSync(files.fifo, { force: true });
-    const request: AppCryptoRequest = { action, home: ref.home, ...(extra.protectorName ? { protectorName: extra.protectorName } : {}), ...(extra.imports ? { imports: extra.imports } : {}), requestedAt: new Date().toISOString() };
+    const request: AppCryptoRequest = { action, home: ref.home, ...(extra.protectorName ? { protectorName: extra.protectorName } : {}), ...(extra.imports ? { imports: extra.imports } : {}), ...(extra.target ? { target: extra.target } : {}), requestedAt: new Date().toISOString() };
     writeFileSync(files.request, JSON.stringify(request), { mode: 0o600 });
     const unit = appCryptoUnit(ref.instanceId, action);
     let unitError: string | null = null;
@@ -288,6 +305,9 @@ export class RootCryptoProvider implements CryptoProvider {
   }
   async destroyHome(ref: AppHomeRef): Promise<void> {
     await this.run(ref, 'destroy');
+  }
+  async transferHome(ref: AppHomeRef, target: string): Promise<void> {
+    await this.run(ref, 'transfer', { target });
   }
   async unlockApp(ref: AppHomeRef, masterKeyHex: string): Promise<void> {
     const r = await this.run(ref, 'unlock', { keyHex: masterKeyHex });

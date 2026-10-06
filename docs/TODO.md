@@ -44,7 +44,7 @@ plaintext on disk.
       (Bing picture of the day, keyless, daily) instead of a static preset; existing installs keep
       their choice; credit shown on Home as today. Must degrade quietly offline (keep the last
       picture or the preset).
-- [ ] **Move an app between locations** (Local ↔ external drive, drive ↔ drive) keeping its
+- [x] *(0.25.0, decisions 145–146, verified live; the copy goes through the kernel, see decision 145)* **Move an app between locations** (Local ↔ external drive, drive ↔ drive) keeping its
       encryption: stop → copy the sealed home's ciphertext as-is (`cp -a` of the home, no decrypt)
       to the target candidate → verify counts/bytes → switch the instance's home path and volume
       definitions → start → delete the source only after success; same instance id, ports, links,

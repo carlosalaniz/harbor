@@ -58,7 +58,7 @@ export function PlanDialog({ c }: { c: Console }) {
   const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
-  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : plan.kind === 'seal' ? 'Encrypt now' : capitalize(plan.kind);
+  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : plan.kind === 'seal' ? 'Encrypt now' : plan.kind === 'move' ? 'Move now' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
       {planError && (
@@ -1041,6 +1041,41 @@ export function UnlockForm({ inst, busy, onUnlocked, onError }: { inst: Instance
   );
 }
 
+// Decision 145: move an encrypted app to another place that can hold apps (data folder, an ext4 drive).
+function MovePanel({ inst, current, busy, onMove }: { inst: InstanceSummary; current: string; busy: boolean; onMove: (dir: string) => void }) {
+  const [cands, setCands] = useState<HostStorageDto['installCandidates'] | null>(null);
+  const [pick, setPick] = useState('');
+  const load = () => api.hostStorage().then((s) => setCands(s.installCandidates), () => setCands([]));
+  const options = (cands ?? []).filter((c) => c.eligible && !current.startsWith(`${c.dir}/`));
+  return (
+    <details className="danger-zone" onToggle={(e) => (e.target as HTMLDetailsElement).open && cands === null && void load()}>
+      <summary className="small">Move to…</summary>
+      <p className="small muted">
+        Lives at <code className="path">{current}</code>. Moving copies its data sealed (never as plaintext on a disk) and keeps its passphrase and recovery words. It is down during the copy.
+      </p>
+      {cands === null ? (
+        <p className="muted small">Checking places…</p>
+      ) : options.length === 0 ? (
+        <p className="muted small">No other place can hold it right now. Plug in an ext4 drive (Settings → Storage can format one).</p>
+      ) : (
+        <div className="row wrap">
+          <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={`New place for ${inst.name}`}>
+            <option value="">Choose a place…</option>
+            {options.map((c) => (
+              <option key={c.dir} value={c.dir}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+          <button className="btn" disabled={busy || !pick} onClick={() => onMove(`${pick}/${inst.packageId}`)} aria-label={`Move ${inst.name}`}>
+            Move
+          </button>
+        </div>
+      )}
+    </details>
+  );
+}
+
 // Decision 143: change how an encrypted app opens. Its data is not re-encrypted: the app key is wrapped anew.
 function PassphrasePanel({ inst, defaultKey: given, onChanged }: { inst: InstanceSummary; defaultKey: boolean; onChanged: ((i: InstanceSummary) => void) | undefined }) {
   // follows the server, and our own change at once (the drawer's detail poll lags a few seconds)
@@ -1455,6 +1490,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
         </>
       )}
       {home && !retained && !locked && <PassphrasePanel inst={inst} defaultKey={Boolean(home.defaultKey)} onChanged={onChanged} />}
+      {home && !retained && !locked && inst.installState === 'installed' && <MovePanel inst={inst} current={home.path} busy={busy} onMove={(dir) => onAction({ kind: 'move', instance: inst, dir })} />}
       {detail?.defaultCredentials && !retained && <DefaultLogin creds={detail.defaultCredentials} />}
       {retained && <p className="muted">Removed. Data volumes and secrets are retained; Reinstall restores the exact same release.</p>}
       {inst.installState !== 'installing' && (
@@ -1559,6 +1595,8 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
       return `Harbor will uninstall ${n} completely: containers, its data volumes, secrets and stored release. Folders of yours are left alone. This cannot be undone.`;
     case 'configure':
       return `Harbor will apply the new settings to ${n} and recreate only what changed. Data, ports and addresses stay.`;
+    case 'move':
+      return `Harbor will move ${n} to ${plan.location?.dir ?? 'its new place'}: it stops, its data is copied sealed (never as plaintext on a disk), and it starts from there. The old copy is deleted only after that works.`;
     case 'seal':
       return `Harbor will encrypt ${n} in place: it stops, its data is copied into a sealed home at ${plan.location?.dir ?? 'the Harbor data folder'}, and it starts again on the sealed copy. The plain copy is deleted only after that works.`;
     case 'update':
@@ -1567,7 +1605,7 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption', move: 'move' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

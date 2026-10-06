@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
@@ -131,7 +131,68 @@ describe('change an encrypted app\'s passphrase (decision 143)', () => {
     const home = (await byName('memos')).home!.path;
     expect((await h.api.run({ kind: 'purge', instanceId: app.id })).op.state).toBe('succeeded');
     expect(crypto.calls.filter((c) => c.op === 'destroyHome').map((c) => c.home)).toContain(home);
-    const { existsSync } = await import('node:fs');
     expect(existsSync(home)).toBe(false);
+  });
+});
+
+describe('move an encrypted app (decision 145)', () => {
+  let app: InstanceSummary;
+  let drive = '';
+
+  it('installs memos sealed in the data folder with some data', async () => {
+    const { tmpdir } = await import('node:os');
+    drive = mkdtempSync(path.join(tmpdir(), 'harbor-move-drive-'));
+    mkdirSync(path.join(drive, 'harbor-apps'));
+    const r = await h.api.run({ kind: 'install', packageId: 'memos', name: 'mover', location: { dir: path.join(h.userDataDir, 'harbor-apps', 'memos') } });
+    expect(r.op.state, JSON.stringify(r.op.error)).toBe('succeeded');
+    app = await byName('mover');
+    writeFileSync(path.join(app.home!.path, 'volumes', 'data', 'note.txt'), 'keep me');
+  });
+
+  it('refuses a plain app, the same place and a missing location', async () => {
+    const plain = (await h.api.run({ kind: 'install', packageId: 'excalidraw', name: 'plainone' })).op;
+    await h.api.expectError(409, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'move', instanceId: plain.instanceId, location: { dir: path.join(drive, 'harbor-apps', 'excalidraw') } });
+    await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'move', instanceId: app.id, location: { dir: path.join(h.userDataDir, 'harbor-apps', 'memos') } });
+  });
+
+  it('a failed copy puts it back where it was; the half-made target is deleted', async () => {
+    const orig = crypto.transferHome.bind(crypto);
+    crypto.transferHome = async () => {
+      throw new Error('the copy differs from the original');
+    };
+    const plan = await h.api.plan({ kind: 'move', instanceId: app.id, location: { dir: path.join(drive, 'harbor-apps', 'memos') } });
+    const op = await h.api.waitOperation((await h.api.submit(plan.id)).operationId);
+    crypto.transferHome = orig;
+    expect(op.state).toBe('failed');
+    expect(op.error?.nextAction).toMatch(/runs from .* as before/);
+    const back = await byName('mover');
+    expect(back).toMatchObject({ installState: 'installed', runtime: 'running' });
+    expect(back.home!.path).toBe(app.home!.path);
+    expect(existsSync(path.join(drive, 'harbor-apps', 'memos', 'mover'))).toBe(false);
+    expect(composeVolumes(back)).toEqual(volumesOf(back));
+  });
+
+  it('moves to the drive: same id, port and key; data there; old home and volumes gone', async () => {
+    const oldVolumes = volumesOf(app);
+    const plan = await h.api.plan({ kind: 'move', instanceId: app.id, location: { dir: path.join(drive, 'harbor-apps', 'memos') } });
+    expect(plan.changes[1]).toMatch(/same app key/);
+    const op = await h.api.waitOperation((await h.api.submit(plan.id)).operationId);
+    expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
+    const moved = await byName('mover');
+    const target = path.join(drive, 'harbor-apps', 'memos', 'mover');
+    expect(moved.id).toBe(app.id);
+    expect(moved.endpoints[0]!.hostPort).toBe(app.endpoints[0]!.hostPort);
+    expect(moved.home).toMatchObject({ path: target, state: 'unlocked', sealed: true, defaultKey: true });
+    expect(readFileSync(path.join(target, 'volumes', 'data', 'note.txt'), 'utf8')).toBe('keep me');
+    expect(JSON.parse(readFileSync(path.join(target, 'manifest.json'), 'utf8')).instanceId).toBe(app.id);
+    expect(existsSync(app.home!.path)).toBe(false);
+    const now = volumesOf(moved);
+    expect(now.some((v) => oldVolumes.includes(v))).toBe(false);
+    expect(composeVolumes(moved)).toEqual(now);
+    expect(crypto.transfers.at(-1)).toEqual({ from: app.home!.path, to: target });
+    // and back again, through the same path
+    const back = await h.api.run({ kind: 'move', instanceId: app.id, location: { dir: path.join(h.userDataDir, 'harbor-apps', 'memos') } });
+    expect(back.op.state, JSON.stringify(back.op.error)).toBe('succeeded');
+    expect(readFileSync(path.join((await byName('mover')).home!.path, 'volumes', 'data', 'note.txt'), 'utf8')).toBe('keep me');
   });
 });

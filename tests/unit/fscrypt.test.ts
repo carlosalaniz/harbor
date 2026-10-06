@@ -67,9 +67,15 @@ describe('fscrypt command builders (pure, no spawn)', () => {
     expect(tune2fsEnableEncryptArgs('/dev/vda1')).toEqual({ file: '/usr/sbin/tune2fs', args: ['-O', 'encrypt', '/dev/vda1'] });
   });
 
-  it('sealedDir is always <home>/volumes; protector names are stable slugs', () => {
+  it('sealedDir is always <home>/volumes; protector names are slugs plus a per-seal suffix', async () => {
     expect(sealedDir('/mnt/x/harbor-apps/immich/immich/')).toBe('/mnt/x/harbor-apps/immich/immich/volumes');
     expect(protectorNameFor('My Photos!', ID)).toBe('harbor-my-photos-11111111');
+    // decision 146: each new seal gets its own, still a valid fscrypt name
+    const { protectorFor } = await import('../../src/storage/crypto-provider.js');
+    const a = protectorFor('x'.repeat(80), ID);
+    expect(a).toMatch(/^harbor-x{32}-11111111-[0-9a-f]{6}$/);
+    expect(isValidProtectorName(a)).toBe(true);
+    expect(protectorFor('x', ID)).not.toBe(protectorFor('x', ID));
     expect(isValidProtectorName('harbor-my-photos-11111111')).toBe(true);
     expect(isValidProtectorName('-bad')).toBe(false);
     expect(isValidProtectorName('has space')).toBe(false);

@@ -23,7 +23,9 @@ export type Action =
   | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string }
   // decision 127: hostname names one of several public names (withdraw it / make it the main address)
   | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname?: string }
-  | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public'; hostname?: string };
+  | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public'; hostname?: string }
+  // decision 145: dir = <candidate>/<package>
+  | { kind: 'move'; instance: InstanceSummary; dir: string };
 
 export function planRequestFor(a: Action): PlanRequest {
   switch (a.kind) {
@@ -40,6 +42,8 @@ export function planRequestFor(a: Action): PlanRequest {
       return { kind: 'unexpose', instanceId: a.instance.id, via: a.via, ...(a.hostname ? { hostname: a.hostname } : {}) };
     case 'reconfigure':
       return { kind: 'reconfigure', instanceId: a.instance.id, primary: a.primary, ...(a.hostname ? { hostname: a.hostname } : {}) };
+    case 'move':
+      return { kind: 'move', instanceId: a.instance.id, location: { dir: a.dir } };
     default:
       return { kind: a.kind, instanceId: a.instance.id };
   }

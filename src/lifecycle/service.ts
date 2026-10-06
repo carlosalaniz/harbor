@@ -1736,6 +1736,7 @@ export class ApplicationService {
     const pkgName = this.packageMeta(inst).name;
     if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'seal') return this.sealPlan(inst, pkgName, actor, now, expiresAt);
+    if (req.kind === 'move') return this.movePlan(inst, req.location.dir, pkgName, actor, now, expiresAt);
     if (req.kind === 'update') return this.updatePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'configure') return this.configurePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
@@ -2028,6 +2029,53 @@ export class ApplicationService {
       else warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued. Register the domain under Settings → Public addresses to have Harbor check it.`);
     }
     return { hostname, port, protection };
+  }
+
+  // Decision 145: move an encrypted app between install locations (data folder ↔ drive, drive ↔ drive).
+  // Same instance and same app key (passphrase, own words and Harbor card keep working); the target must
+  // be able to seal. A plain-volume app is sealed first (decision 142).
+  private movePlan(inst: InstanceRow, dirReq: string, pkgName: string, actor: string, now: Date, expiresAt: string): PlanDto {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `moving needs an installed app; ${inst.name} is ${inst.installState}`);
+    const home = this.homeRow(inst.id);
+    if (!home) throw new HarborError('INVALID_STATE', `${inst.name} is not encrypted; only an encrypted app can move as a whole`, { nextAction: `Encrypt it first: harbor seal ${inst.name}` });
+    const hs = this.homeState(inst.id);
+    const reachable = this.unlockedApps.has(inst.id) || Boolean(hs?.silentUnlock && this.ctx.machineKey.unlocked);
+    if (!reachable) throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: hs?.defaultKey ? 'Log in again so this machine can open it, then retry.' : 'Unlock it with its passphrase first, then retry.' });
+    if (this.needsDrive(inst.id)) throw new HarborError('DATA_MISSING', `${inst.name} needs its drive back before it can move`);
+    const dir = this.resolveInstallLocation(dirReq, repo.listInstances().filter((i) => i.id !== inst.id), inst.packageId);
+    const target = path.posix.join(dir, inst.name);
+    if (target === home.name) throw new HarborError('INVALID_REQUEST', `${inst.name} already lives at ${home.name}`);
+    if (existsSync(target)) throw new HarborError('NAME_CONFLICT', `${target} already exists`, { nextAction: 'Pick another place, or remove that folder first.' });
+    const cand = this.installCandidates().find((c) => dir.startsWith(c.dir + '/'));
+    if (cand && cand.fsType !== 'unknown' && !['ext4', 'f2fs'].includes(cand.fsType.toLowerCase())) throw new HarborError('INVALID_STATE', `${cand.label} uses ${cand.fsType}, which cannot seal apps (needs ext4)`, { nextAction: 'Format the drive as ext4 in Settings → Storage, then move the app.' });
+    const toDrive = !this.isDataFolderLocation(dir);
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: { dir },
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [
+        `Stop ${pkgName} ("${inst.name}") and delete its containers (data stays)`,
+        `Create a sealed home at ${target}/ with the same app key (its passphrase, own words and your Harbor recovery key keep working)`,
+        `Copy its data from ${home.name} as root: decrypted only inside the kernel, written sealed at the target, verified by entry counts and bytes`,
+        `Start ${pkgName} from the new place and check it answers (same name, ports, addresses, links and secrets)`,
+        `Only then delete the old home ${home.name}; any failure before that puts the app back where it was`,
+      ],
+      warnings: [
+        `${pkgName} is down while its data is copied.`,
+        `Needs free space for a full copy at ${dir}.`,
+        ...(toDrive ? ['On a drive the app stops when the drive is unplugged and starts again when it is back.'] : []),
+      ],
+      releaseHashes: inst.releaseHashes,
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'move', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
   }
 
   // Decision 142: `harbor seal` — an app on plain Docker volumes moves into a sealed home in the Harbor

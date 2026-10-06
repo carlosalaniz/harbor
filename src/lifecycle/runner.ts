@@ -11,7 +11,7 @@ import type { NetworkInfo } from '../docker/adapter.js';
 import type { LinkRow, PlannedLink } from '../state/repo.js';
 import { checkHostDirectory } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
-import { createAppHome, unlockAppHome, unwrapMasterKeyForMachine, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { createAppHome, describeAppHome, unlockAppHome, unwrapMasterKeyForMachine, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { protectorFor } from '../storage/crypto-provider.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import type { LoadedPackage, Manifest } from '../contracts/types.js';
@@ -136,6 +136,7 @@ export class OperationRunner {
         case 'reconfigure': await this.reconfigure(op, plan, inst, secretValues); break;
         case 'configure': await this.configure(op, plan, inst, secretValues); break;
         case 'seal': await this.seal(op, plan, inst, secretValues); break;
+        case 'move': await this.move(op, plan, inst, secretValues); break;
       }
       const result = { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) };
       this.opResult = null;
@@ -152,7 +153,7 @@ export class OperationRunner {
       }
       const { code, message, nextAction, state } = classify(e, secretValues);
       // a failed update that was rolled back leaves the app installed and running on the previous release
-      const rolledBack = (op.kind === 'update' || op.kind === 'seal') && this.opResult?.['rolledBack'] === true;
+      const rolledBack = (op.kind === 'update' || op.kind === 'seal' || op.kind === 'move') && this.opResult?.['rolledBack'] === true;
       const result = rolledBack ? { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) } : undefined;
       this.opResult = null;
       this.ctx.log.warn(`${op.kind} ${state}: ${message}`, { operationId: op.id, instanceId: inst.id, code });
@@ -171,7 +172,7 @@ export class OperationRunner {
       this.ctx.notifier.notify({
         kind: 'operation-failed',
         severity: 'error',
-        title: rolledBack ? (op.kind === 'seal' ? `Encrypting ${inst.name} failed; it runs unencrypted as before` : `Update of ${inst.name} failed; the previous version is back`) : `${op.kind} of ${inst.name} ${state === 'needs_action' ? 'needs attention' : 'failed'}`,
+        title: rolledBack ? (op.kind === 'seal' ? `Encrypting ${inst.name} failed; it runs unencrypted as before` : op.kind === 'move' ? `Moving ${inst.name} failed; it runs where it was` : `Update of ${inst.name} failed; the previous version is back`) : `${op.kind} of ${inst.name} ${state === 'needs_action' ? 'needs attention' : 'failed'}`,
         body: `${message} Next: ${nextAction}`,
         instanceId: inst.id,
         dedupeKey: `operation-failed:${op.id}`,
@@ -1685,6 +1686,114 @@ export class OperationRunner {
       this.event(op, 'cleaning', `deleted plain volume ${r.name}`);
     }
     this.event(op, 'cleaning', `${inst.name} is encrypted; the old blocks of its plain volumes may stay recoverable on the disk until overwritten`);
+  }
+
+  // Decision 145: move an encrypted app's home. Same app key: the target gets a copy of the manifest and
+  // vault (the envelopes), its empty volumes/ is sealed with that key, and the root step copies the data
+  // between the two unlocked homes (plaintext only inside the kernel). New Docker volumes point at the
+  // target; the old home and volumes go only after the app has started from there.
+  private async move(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo, docker } = this.ctx;
+    const loc = plan.proposal.location;
+    if (!loc) throw new HarborError('STATE_CHANGED', 'plan carries no location');
+    const crypto = this.ctx.crypto;
+    if (!crypto) throw new HarborError('UNSUPPORTED_CAPABILITY', 'this machine has no app sealing', { nextAction: 'Re-run bootstrap so Harbor installs its sealing step.' });
+    const homeRow = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    if (!homeRow) throw new HarborError('STATE_CHANGED', `${inst.name} is not encrypted`);
+    const source = homeRow.name;
+    const target = path.join(loc.dir, inst.name);
+    let masterKey: Buffer | null = this.ctx.service.takeAppUnlockCopy(inst.id);
+    const wrapped = homeRow.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+    if (!masterKey && wrapped) {
+      const machineKey = this.ctx.machineKey.take();
+      if (machineKey) {
+        try {
+          masterKey = unwrapMasterKeyForMachine(wrapped, machineKey);
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      }
+    }
+    if (!masterKey) throw new HarborError('INVALID_STATE', `${inst.name} is locked`, { nextAction: homeRow.metadata?.['defaultKey'] === true ? 'Log in again, then retry.' : 'Unlock it with its passphrase, then retry.' });
+    const volumes = repo.resources(inst.id).filter((r) => r.kind === 'volume' && r.role !== '__home__');
+    const created: string[] = [];
+    let targetMade = false;
+    try {
+      this.phase(op, 'applying', 'preparing', `checking ${inst.name} before moving it to ${loc.dir}`);
+      await this.engineOrThrow();
+      const dirs = this.dirs(inst);
+      const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+      const identity = identityFor(this.ctx.installationId, inst.id);
+      await this.verifyOwnedVolumes(op, pkg, identity, inst);
+      await this.ensureKernelUnlocked(op, inst, homeRow);
+      this.phase(op, 'applying', 'stopping', `stopping ${inst.name} (data stays)`);
+      await this.teardownContainers(op, inst, 'stopping');
+      try {
+        if (existsSync(target)) throw new HarborError('NAME_CONFLICT', `${target} already exists`);
+        mkdirSync(loc.dir, { recursive: true, mode: 0o700 });
+        mkdirSync(target, { mode: 0o700 });
+        targetMade = true;
+        const { manifest } = describeAppHome(source);
+        cpSync(path.join(source, manifest.vault), path.join(target, manifest.vault), { recursive: true });
+        cpSync(path.join(source, 'manifest.json'), path.join(target, 'manifest.json'));
+        mkdirSync(path.join(target, 'volumes'), { mode: 0o700 });
+        await crypto.sealApp({ instanceId: inst.id, home: target }, masterKey.toString('hex'), protectorFor(inst.name, inst.id));
+        this.event(op, 'preparing', `sealed ${target}/volumes with the app's own key`);
+        this.phase(op, 'applying', 'copying', `copying the data from ${source} to ${target} as root (sealed on both sides)`);
+        await crypto.transferHome({ instanceId: inst.id, home: source }, target);
+        this.event(op, 'copying', 'copied and verified the data');
+        for (const r of volumes) {
+          const device = this.homeVolumeDir(target, r.role);
+          mkdirSync(device, { recursive: true, mode: 0o700 });
+          const name = `${ownedVolumeName(identity, r.role)}-${this.ctx.ids.token(3).toString('hex')}`;
+          const token = this.ctx.ids.token(16).toString('hex');
+          const v = await docker.createVolume(name, volumeLabels(identity, r.role, token), { driverOpts: { type: 'none', o: 'bind', device } });
+          created.push(name);
+          repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: r.role, dockerId: null, name, token, metadata: { ...(r.metadata ?? {}), createdAt: v.createdAt, homePath: device } });
+        }
+        repo.upsertResource({ ...homeRow, name: target, metadata: { ...(homeRow.metadata ?? {}), kernelSealed: true } });
+        const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink));
+        this.phase(op, 'applying', 'starting', `starting ${inst.name} from ${target}`);
+        repo.updateInstance(inst.id, { runtime: 'starting', desired: 'running' });
+        const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, inst);
+        await this.checkReadiness(op, pkg, inst, containers);
+        repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        this.event(op, 'rollback', `moving failed (${reason}); starting ${inst.name} where it was`);
+        try {
+          await this.teardownContainers(op, inst, 'rollback');
+          for (const r of [homeRow, ...volumes]) repo.upsertResource(r);
+          for (const name of created) await docker.removeVolume(name).catch(() => undefined);
+          if (targetMade) await this.destroyHome(inst, target);
+          const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink));
+          const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, inst);
+          await this.checkReadiness(op, pkg, inst, containers);
+          repo.updateInstance(inst.id, { installState: 'installed', desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+          this.event(op, 'rollback', `${inst.name} runs from ${source} again; nothing was deleted there`);
+          this.opResult = { rolledBack: true };
+        } catch (re) {
+          this.event(op, 'rollback', `starting it where it was failed too: ${re instanceof Error ? re.message : String(re)}`);
+          throw new HarborError('OPERATION_FAILED', `moving ${inst.name} failed (${reason}) and it could not be started where it was`, { nextAction: `Its data at ${source} is untouched. Repair it (harbor repair ${inst.name}).` });
+        }
+        throw new HarborError('OPERATION_FAILED', `moving ${inst.name} failed: ${reason}`, { nextAction: `It runs from ${source} as before. Fix the cause (free space, an ext4 drive), then try again.` });
+      }
+    } finally {
+      zeroKey(masterKey);
+    }
+    this.phase(op, 'applying', 'cleaning', `deleting the old home ${source} now that ${inst.name} runs from ${target}`);
+    for (const r of volumes) {
+      const vol = await docker.inspectVolume(r.name);
+      if (!vol) continue;
+      if (vol.labels[LABELS.instance] !== inst.id || (r.token && vol.labels[LABELS.token] !== r.token)) {
+        this.event(op, 'cleaning', `volume ${r.name} is not the one this app created; left untouched`);
+        continue;
+      }
+      await docker.removeVolume(r.name);
+    }
+    await crypto.lockApp({ instanceId: inst.id, home: source }).catch((e: Error) => this.event(op, 'cleaning', `could not lock the old home before deleting it: ${e.message}`));
+    await this.destroyHome(inst, source);
+    this.event(op, 'cleaning', `${inst.name} now lives at ${target}; the old home is deleted`);
   }
 
   // Decision 144: a home holds files written by the containers' users; only root can delete all of them.

@@ -166,6 +166,7 @@ harbor remove <name>              # deletes containers + private network; RETAIN
 harbor reinstall <name>           # exact same release into the retained instance; publishes its addresses again
 harbor seal <name>                # encrypt an app that runs on plain Docker volumes, in place
 harbor passphrase <name>          # change an encrypted app's passphrase (or --harbor-key)
+harbor move <name> --location /mnt/photos/harbor-apps   # an encrypted app to another place, same key
 harbor repair <name>              # an app stuck in needs_action/failed: run its stored release again (alias: retry)
 harbor plan install n8n && harbor apply <plan-id> --idempotency-key <key>
 harbor tools / tools bind cockpit --url https://localhost:9090/
@@ -444,6 +445,14 @@ in). The app is down while the data is copied (as root, verified per volume), it
 one extra copy, and the plain volumes are deleted only after the sealed app has started; any failure
 before that leaves it running unencrypted as before. Old blocks of the plain volumes cannot be scrubbed
 and may stay recoverable on the disk until overwritten. Folders of your own are never moved.
+
+**Move an app** (decision 145): app details → *Move to…*, or `harbor move <app> --location
+/mnt/photos/harbor-apps` — between the Harbor data folder and an ext4 drive, or drive to drive. It is the
+same app with the same key: its passphrase, its own 12 words and your Harbor recovery key keep working.
+It is down during the copy; the data is decrypted only inside the kernel and written sealed at the new
+place (never plaintext on a disk); the old copy is deleted only after the app has started from the new
+place, and any failure before that leaves it where it was. An app on plain Docker volumes is encrypted
+first (`harbor seal`). A drive that is not ext4 is refused (Settings → Storage can format it).
 
 **Change an app's passphrase** (decision 143): app details → *Change passphrase…*, or
 `harbor passphrase <app>` (prompts; `--stdin` reads the current one on line 1 and the new one on line 2;

@@ -394,6 +394,38 @@ async function importVolumes(instanceId: string, home: string, dir: string, impo
   log(`imported ${plan.length} volume(s), ${total} bytes, into ${dir}`);
 }
 
+// Decision 145 (move): both homes belong to this instance and are sealed and unlocked; the data is read
+// through the source's key and written under the target's policy (same app key), so it is never plaintext
+// on a disk. Verified by entry count and bytes; a failure empties the target's volumes again. The source
+// is left as it was — the daemon deletes it only after the app has started from the target.
+async function transferHome(instanceId: string, home: string, target: string, log: Log): Promise<void> {
+  checkHome(target, instanceId);
+  if (target === home) throw new HarborError('INVALID_REQUEST', 'source and target are the same home');
+  const src = sealedDir(home);
+  const dst = sealedDir(target);
+  for (const d of [src, dst]) {
+    const st = await dirStatus(d);
+    if (!st.encrypted || !st.unlocked || st.partiallyLocked) throw new HarborError('INVALID_STATE', `${d} is not sealed and unlocked; refusing to copy`, { nextAction: 'Unlock the app (log in, or type its passphrase) and try again.' });
+  }
+  if (readdirSync(dst).length) throw new HarborError('INVALID_STATE', `${dst} is not empty; refusing to mix data`);
+  const before = treeSummary(src);
+  const fs = statfsSync(target);
+  const free = Number(fs.bavail) * Number(fs.bsize);
+  const need = before.bytes + 64 * 1024 * 1024;
+  if (free < need) throw new HarborError('INVALID_STATE', `not enough free space at ${target} (needs ${Math.ceil(need / 1024 / 1024)} MiB, ${Math.floor(free / 1024 / 1024)} MiB available)`, { nextAction: 'Pick a place with more room, or free some up. The app stays where it is.' });
+  log(`copying ${src} -> ${dst}: ${before.entries} entries, ${before.bytes} bytes`);
+  try {
+    await execOk('/usr/bin/cp', ['-a', '-T', src, dst], { timeoutMs: 24 * 60 * 60_000 });
+    const after = treeSummary(dst);
+    if (after.entries !== before.entries || after.bytes !== before.bytes) throw new HarborError('OPERATION_FAILED', `the copy differs from the original (${after.entries}/${before.entries} entries, ${after.bytes}/${before.bytes} bytes)`);
+  } catch (e) {
+    log(`transfer failed, emptying ${dst}: ${e instanceof Error ? e.message : String(e)}`);
+    for (const name of readdirSync(dst)) rmSync(path.join(dst, name), { recursive: true, force: true });
+    throw e;
+  }
+  log(`copied ${before.entries} entries, ${before.bytes} bytes into ${dst}`);
+}
+
 // ---------------------------------------------------------------- entry point
 
 function writeStatus(file: string, status: AppCryptoStatus): void {
@@ -498,6 +530,12 @@ export async function applyAppCrypto(spec: string, log: Log): Promise<void> {
       }
       case 'import': {
         await importVolumes(instanceId, home, dir, request.imports ?? [], log);
+        st = await dirStatus(dir);
+        break;
+      }
+      case 'transfer': {
+        if (typeof request.target !== 'string') throw new HarborError('INVALID_REQUEST', 'transfer needs a target home');
+        await transferHome(instanceId, home, request.target, log);
         st = await dirStatus(dir);
         break;
       }

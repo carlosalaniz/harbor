@@ -912,6 +912,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'via'], properties: { kind: { const: 'unexpose' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, endpointId: { type: 'string', pattern: ID_PATTERN }, via: { enum: ['tailnet', 'public', 'proxy'] }, hostname: { type: 'string', minLength: 1, maxLength: 253 } } },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'primary'], properties: { kind: { const: 'reconfigure' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, primary: { enum: ['loopback', 'tailnet', 'public'] }, hostname: { type: 'string', minLength: 1, maxLength: 253 } } },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { const: 'seal' }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'location'], properties: { kind: { const: 'move' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, location: { type: 'object', additionalProperties: false, required: ['dir'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 } } } } },
           ],
         },
         response: { 201: { type: 'object', additionalProperties: true } },

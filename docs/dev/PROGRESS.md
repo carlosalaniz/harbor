@@ -376,6 +376,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Decision 144: app homes deleted by the root step `destroy` (purge, seal rollback) — found live: purge of any sealed app failed with EACCES
 - [x] Tests: unit `fscrypt` (import source check, `import` spec), `app-home` (rewrap both ways); integration new `seal` (failed copy rolls back with nothing deleted, seal in place keeps id/port/address, root import args, `-sealed` volumes in Compose, stop/start + remove/reinstall, passphrase both ways + refusals + Harbor-password silent unlock, purge via `destroyHome`); e2e passphrase round trip in the drawer; live run `docs/evidence/vm-2026-10-06-seal/`; unit 242, integration 188 + 3 skipped, e2e 29
 
+## Phase 54 — move between locations (2026-10-06, 0.25.0) ✅ (verified live on the droplet)
+- [x] Decision 145: plan kind `move` (`harbor move --location`, drawer *Move to…*): target home with the same key (manifest + vault copied, empty volumes/ sealed), root step `transfer` between two sealed+unlocked homes (verified, free space), new volumes at the target, old volumes + home deleted (lock, root `destroy`) only after start; full rollback; plain apps refused (seal first), non-ext4/f2fs targets refused, locked apps refused
+- [x] Decision 146: unique fscrypt protector name per seal (found live: moving back clashed with the deleted home's protector)
+- [x] Tests: unit `fscrypt` (protector names); integration `seal.test.ts` move block (refusals, failed copy rolls back and deletes the target, move to a drive and back with the data, same id/port/key, new volume names); e2e *Move to…* panel; live run `docs/evidence/vm-2026-10-06-move/`; unit 242, integration 192 + 3 skipped, e2e 29
+
 ## Test results (latest local run)
 
 | Command | Result |
@@ -383,7 +388,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
 | `pnpm test` (unit) | 242 passed (2026-10-06, 0.24.0) |
-| `pnpm test:integration` (fake adapter) | 188 passed (0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test:integration` (fake adapter) | 192 passed (0.25.0: move between locations; 0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

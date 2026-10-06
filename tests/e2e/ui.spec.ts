@@ -725,6 +725,10 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await drawer.getByLabel('Current passphrase of memos', { exact: true }).fill('memos own passphrase');
   await drawer.getByRole('button', { name: 'Change passphrase of memos' }).click();
   await expect(drawer.getByRole('status').filter({ hasText: "Done: it opens with Harbor's own key now." })).toBeVisible();
+  // decision 145: Move to… lists where it lives and the other places that can hold it (none here but drives)
+  await drawer.getByText('Move to…', { exact: true }).click();
+  await expect(drawer.getByText(/Lives at .*harbor-apps\/memos\/memos/)).toBeVisible();
+  await expect(drawer.getByText(/No other place can hold it right now|Choose a place…/).first()).toBeVisible();
   await drawer.getByRole('button', { name: 'Close', exact: true }).click();
 });
 

@@ -39,8 +39,9 @@ export const SEALABLE_FS = new Set(['ext4', 'f2fs']);
 
 // import (decision 142): copy an app's plain Docker volumes into its freshly sealed home (`harbor seal`)
 // destroy (decision 144): delete a whole app home as root — containers write files the harbor user cannot remove
-export type AppCryptoAction = 'setup' | 'seal' | 'unlock' | 'lock' | 'status' | 'migrate' | 'import' | 'destroy';
-export const APP_CRYPTO_ACTIONS: readonly AppCryptoAction[] = ['setup', 'seal', 'unlock', 'lock', 'status', 'migrate', 'import', 'destroy'];
+// transfer (decision 145): copy a sealed home's data into another sealed home of the same app (move)
+export type AppCryptoAction = 'setup' | 'seal' | 'unlock' | 'lock' | 'status' | 'migrate' | 'import' | 'destroy' | 'transfer';
+export const APP_CRYPTO_ACTIONS: readonly AppCryptoAction[] = ['setup', 'seal', 'unlock', 'lock', 'status', 'migrate', 'import', 'destroy', 'transfer'];
 export const APP_CRYPTO_UNIT_PREFIX = 'harbor-app-crypto@';
 export const APP_CRYPTO_UNIT_FILE = 'harbor-app-crypto@.service';
 
@@ -228,6 +229,8 @@ export interface AppCryptoRequest {
   protectorName?: string;
   // import: each Docker volume's data dir and the claim folder under <home>/volumes it goes to
   imports?: VolumeImport[];
+  // transfer: the other home of the same app (an allowed home path whose manifest names the same instance)
+  target?: string;
   requestedAt: string;
 }
 

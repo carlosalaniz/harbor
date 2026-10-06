@@ -220,6 +220,16 @@ Fake-adapter and unit evidence only (no live run of these fixes yet):
 - `pnpm catalog:verify`: nextcloud revision 4 (hashes refreshed, qualification `pending` until a
   droplet run).
 
+## 3m. Move between locations (2026-10-06, Harbor 0.25.0, decisions 145–146)
+
+**Live, droplet `harbor-test`** ([evidence](evidence/vm-2026-10-06-move/README.md)): 0.24.0 → 0.25.0
+self-update; a CLI install landed sealed by default (decision 130, live); data folder → loop ext4 drive →
+back → drive with the same SHA-256 each time, ciphertext names on the drive while locked, old homes
+deleted, purge clean. The first build's move back failed on an fscrypt protector name clash and rolled
+back correctly (decision 146 fixed it).
+
+Fake adapter: integration `seal.test.ts` (12 tests incl. 4 for move), unit `fscrypt`, e2e 29. Counts in PROGRESS.
+
 ## 3l. Seal in place, passphrase change, sealed purge (2026-10-06, Harbor 0.24.0, decisions 142–144)
 
 **Live, droplet `harbor-test`** ([evidence](evidence/vm-2026-10-06-seal/README.md)): self-update
