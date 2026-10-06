@@ -9,11 +9,16 @@ import { initializeState, openState } from './state/db.js';
 import { Repo } from './state/repo.js';
 import { systemClock, systemIds } from './util.js';
 
+// Decision 132: a fresh install starts with Bing's picture of the day (keyless, daily). Existing
+// installations keep whatever they had: this is only seeded when the state is created.
+export const FRESH_INSTALL_SETTINGS: Record<string, unknown> = { 'appearance.rotation': { enabled: true, source: 'bing', everyHours: 24 } };
+
 export function initState(config: DaemonConfig): { installationId: string } {
   const result = initializeState(config.stateDir, {
     clock: systemClock,
     ids: systemIds,
     config: { managementPort: config.listen.port, appPortRange: config.appPortRange, docker: config.docker.mode },
+    settings: FRESH_INSTALL_SETTINGS,
   });
   return result;
 }

@@ -1830,7 +1830,7 @@
     },
     "/v1/instances/{id}/appearance": {
       "put": {
-        "description": "Customise how an app appears on the launcher: display name and icon (default, an emoji/letters on a colour, or an uploaded picture up to 1 MB).",
+        "description": "Customise how an app appears on the launcher: display name, icon (default, an emoji/letters on a colour, or an uploaded picture up to 1 MB) and whether Home shows it (hidden apps stay in the Store, Platform and lists).",
         "requestBody": {
           "required": true,
           "content": {
@@ -1845,6 +1845,9 @@
                       "null"
                     ],
                     "maxLength": 80
+                  },
+                  "hidden": {
+                    "type": "boolean"
                   },
                   "icon": {
                     "oneOf": [

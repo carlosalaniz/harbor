@@ -164,6 +164,8 @@ export function mockInstances(): InstanceSummary[] {
     links: [],
     linkedBy: [],
     operatorSecrets: [],
+    hiddenFromHome: false,
+    apiOnly: false,
   };
   return [
     {

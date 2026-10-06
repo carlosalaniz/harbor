@@ -84,6 +84,12 @@ export function PlanDialog({ c }: { c: Console }) {
                 </span>
               </li>
             )}
+            {!plan.location && plan.kind === 'install' && (
+              <li>
+                <span className="fact-k">Encrypted</span>
+                <span>no — plain Docker volumes</span>
+              </li>
+            )}
             {plan.storage.length > 0 && (
               <li>
                 <span className="fact-k">Data</span>
@@ -1035,7 +1041,7 @@ export function UnlockForm({ inst, busy, onUnlocked, onError }: { inst: Instance
   );
 }
 
-export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize, instances = [], catalog = [] }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[] }) {
+export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize, onChanged, instances = [], catalog = [] }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void; onChanged?: (i: InstanceSummary) => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[] }) {
   const [relink, setRelink] = useState<Record<string, string>>({});
   const upd = inst.updateAvailable;
   const [detail, setDetail] = useState<InstanceDetail | null>(null);
@@ -1046,6 +1052,8 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
   const [adopting, setAdopting] = useState(false);
   const [adoptMsg, setAdoptMsg] = useState<string | null>(null);
   useEffect(() => setAutoUpdate(inst.autoUpdate), [inst.id, inst.autoUpdate]);
+  const [hiddenFromHome, setHiddenFromHome] = useState(inst.hiddenFromHome);
+  useEffect(() => setHiddenFromHome(inst.hiddenFromHome), [inst.id, inst.hiddenFromHome]);
   useEffect(() => {
     let live = true;
     const load = () => api.instance(inst.id).then((d) => live && (setDetail(d), setAdoptMsg(null)), (e: Error) => live && setError(e.message));
@@ -1082,6 +1090,15 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
               CPU {inst.usage.cpuPercent}% · {fmtBytes(inst.usage.memoryBytes)} memory
             </p>
           )}
+          <p className="muted small" aria-label="Encryption">
+            {home ? (
+              <>
+                Encrypted: yes — sealed at <code className="path">{home.path}</code>
+              </>
+            ) : (
+              'Encrypted: no — plain Docker volumes, readable on disk; starts on its own after a reboot'
+            )}
+          </p>
         </div>
       </div>
       {locked && !retained && (
@@ -1183,8 +1200,22 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           <span className="muted small">Update this app automatically when a new version arrives (rolls back if it does not start)</span>
         </label>
       )}
+      {!retained && (
+        <label className="row auto-upd">
+          <input
+            type="checkbox"
+            checked={hiddenFromHome}
+            onChange={(e) => {
+              setHiddenFromHome(e.target.checked);
+              void api.setInstanceAppearance(inst.id, { hidden: e.target.checked }).then((u) => onChanged?.(u), () => setHiddenFromHome(!e.target.checked));
+            }}
+            aria-label={`Hide ${inst.name} from Home`}
+          />
+          <span className="muted small">Hide from Home (for helpers without a page of their own; it stays in the App Store and Platform)</span>
+        </label>
+      )}
       <div className="row wrap actions">
-        {canOpen && primary && (
+        {canOpen && primary && !inst.apiOnly && (
           <a className="btn primary" href={openUrl(inst) ?? primary.urls.loopback} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`}>
             Open
           </a>
@@ -1207,6 +1238,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
         {canStop && inst.installState === 'installed' && inst.runtime === 'running' && (
           <button className="btn" disabled={busy} onClick={() => onAction({ kind: 'restart', instance: inst })} aria-label={`Restart ${inst.name}`} title="Restart with the current addresses, for example after changing network settings">
             Restart
+          </button>
+        )}
+        {(inst.installState === 'needs_action' || inst.installState === 'failed') && inst.hasRetainedData && !need && (
+          <button className="btn primary" disabled={busy} onClick={() => onAction({ kind: 'restart', instance: inst })} aria-label={`Repair ${inst.name}`} title="Run it again from its stored release: re-render, recreate the containers, check it answers. Data, ports and addresses stay.">
+            Repair
           </button>
         )}
         {canStop && inst.installState !== 'installing' && (

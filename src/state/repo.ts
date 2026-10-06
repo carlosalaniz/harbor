@@ -198,7 +198,8 @@ export interface PlanProposal {
   warnings: string[];
   releaseHashes: Record<string, string>;
   // expose/unexpose/reconfigure payloads (absent for lifecycle kinds)
-  exposure?: { endpointId: string; via: ExposureVia; hostname: string; port: number; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string };
+  // forget (decision 135): an unexpose on a removed app only drops the address kept for Reinstall
+  exposure?: { endpointId: string; via: ExposureVia; hostname: string; port: number; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string; forget?: true };
   primary?: PrimaryExposure;
   // decision 127: with primary public, the hostname that becomes the main one (null/absent = the first published)
   primaryHost?: string | null;
@@ -822,6 +823,9 @@ export class Repo {
   }
   updateExposureHostname(id: string, hostname: string): void {
     this.db.prepare('UPDATE exposures SET hostname = ? WHERE id = ?').run(hostname, id);
+  }
+  updateExposurePort(id: string, port: number): void {
+    this.db.prepare('UPDATE exposures SET port = ? WHERE id = ?').run(port, id);
   }
   deleteExposure(id: string): void {
     this.db.prepare('DELETE FROM exposures WHERE id = ?').run(id);

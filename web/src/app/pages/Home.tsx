@@ -45,6 +45,9 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   const picks = PICKS.map((id) => data.catalog.find((i) => i.id === id)).filter((i): i is CatalogItemDto => Boolean(i && i.availability === 'available'));
   const active = data.instances.filter((i) => i.installState !== 'retained');
   const retained = data.instances.filter((i) => i.installState === 'retained');
+  // decision 131: helpers the operator hid stay out of the launcher (still in the Store, Platform, lists)
+  const shown = active.filter((i) => !i.hiddenFromHome);
+  const hidden = active.filter((i) => i.hiddenFromHome);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -54,16 +57,18 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   // launcher order: the saved order first, then anything new in install order
   const saved = data.appearance?.home.order ?? [];
   const sortedIds = useMemo(() => {
-    const ids = active.map((i) => i.id);
+    const ids = shown.map((i) => i.id);
     const rank = new Map(saved.map((id, i) => [id, i]));
     return ids.slice().sort((a, b) => (rank.get(a) ?? 1e9) - (rank.get(b) ?? 1e9) || ids.indexOf(a) - ids.indexOf(b));
-  }, [active.map((i) => i.id).join('|'), saved.join('|')]);
+  }, [shown.map((i) => i.id).join('|'), saved.join('|')]);
   const commit = useCallback(
-    (order: string[]) => {
+    (shownOrder: string[]) => {
+      // hidden apps keep their saved slot so Show puts them back where they were
+      const order = [...shownOrder, ...saved.filter((id) => !shownOrder.includes(id))];
       c.patchData((d) => (d.appearance ? { ...d, appearance: { ...d.appearance, home: { order } } } : d));
       void api.setHomeOrder(order).catch(() => c.refresh());
     },
-    [c],
+    [c, saved.join('|')],
   );
   const re = useReorder(sortedIds, commit);
   const byId = new Map(active.map((i) => [i.id, i]));
@@ -81,7 +86,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           <p className="muted">{!loaded ? 'Loading your apps…' : data.instances.length === 0 ? 'Your own cloud, on this machine. Add your first app to get started.' : `${running} of ${active.length} app${active.length === 1 ? '' : 's'} running · ${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}`}</p>
         </div>
         <div className="row wrap head-actions">
-          {active.length > 1 && (
+          {shown.length > 1 && (
             <button className={`btn ghost ${re.arranging ? 'active' : ''}`} onClick={() => re.setArranging(!re.arranging)} aria-pressed={re.arranging}>
               {re.arranging ? 'Done' : 'Arrange'}
             </button>
@@ -206,6 +211,18 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
                 </li>
               )}
             </ul>
+            {hidden.length > 0 && (
+              <details className="retained-list">
+                <summary className="muted small">
+                  {hidden.length} hidden app{hidden.length === 1 ? '' : 's'}
+                </summary>
+                <ul className="icons">
+                  {hidden.map((i) => (
+                    <AppIconTile key={i.id} inst={i} onDetails={() => onOpenApp(i)} />
+                  ))}
+                </ul>
+              </details>
+            )}
             {retained.length > 0 && (
               <details className="retained-list">
                 <summary className="muted small">

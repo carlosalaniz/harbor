@@ -682,13 +682,14 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       preHandler: requireAuth,
       bodyLimit: 2 * 1024 * 1024,
       schema: {
-        description: 'Customise how an app appears on the launcher: display name and icon (default, an emoji/letters on a colour, or an uploaded picture up to 1 MB).',
+        description: 'Customise how an app appears on the launcher: display name, icon (default, an emoji/letters on a colour, or an uploaded picture up to 1 MB) and whether Home shows it (hidden apps stay in the Store, Platform and lists).',
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } },
         body: {
           type: 'object',
           additionalProperties: false,
           properties: {
             displayName: { type: ['string', 'null'], maxLength: 80 },
+            hidden: { type: 'boolean' },
             icon: {
               oneOf: [
                 { type: 'object', additionalProperties: false, required: ['kind'], properties: { kind: { const: 'default' } } },

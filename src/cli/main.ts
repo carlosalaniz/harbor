@@ -1,6 +1,8 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { LinkChoice, LinkDto } from '../contracts/api.js';
+import type { HostStorageDto, LinkChoice, LinkDto } from '../contracts/api.js';
+import { defaultInstallLocation } from '../storage/install-location.js';
+import { validatePackageFolder } from '../packages/validate-folder.js';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
@@ -10,7 +12,7 @@ import { readSetupCode } from '../auth/setup.js';
 import { productVersion } from '../daemon.js';
 import { ApiClient, clearCliState, readCliState, writeCliState } from './client.js';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { confirm, promptHidden, promptVisible, readStdinAll } from './prompt.js';
 
@@ -110,10 +112,30 @@ async function askMissingSecrets(plan: PlanDto, given: Record<string, string>, y
   return out;
 }
 
+// Decision 130: without --location the CLI installs where the console's "Local" does (sealed in the
+// Harbor data folder with Harbor's own key); --unencrypted is the explicit way to plain Docker volumes.
+async function installLocationDir(api: ApiClient, packageId: string, opts: { location?: string; unencrypted?: boolean }): Promise<string | null> {
+  if (opts.location && opts.unencrypted) throw new HarborError('INVALID_REQUEST', '--location and --unencrypted cannot be combined');
+  if (opts.location) return opts.location;
+  if (opts.unencrypted) return null;
+  const st = await api.get<HostStorageDto>('/v1/host/storage');
+  const dir = defaultInstallLocation(st.dataFolder.path, st.installCandidates, packageId);
+  if (!dir) throw new HarborError('INVALID_STATE', `the Harbor data folder (${st.dataFolder.path}) cannot hold encrypted apps right now`, { nextAction: 'Choose a drive with --location <candidate>/<package>, or install on plain Docker volumes with --unencrypted (not encrypted; starts on its own after a reboot).' });
+  return dir;
+}
+
+function encryptedCell(home: InstanceSummary['home']): string {
+  return home ? (home.state === 'locked' ? 'yes (locked)' : 'yes') : 'no';
+}
+
+function encryptionLine(location: PlanDto['location']): string {
+  return location ? `  Encrypted: yes — sealed at ${location.dir}` : '  Encrypted: no — plain Docker volumes (readable on disk, starts on its own after a reboot)';
+}
+
 function planSummary(p: PlanDto): string {
   const lines = [`Plan ${p.id} (${p.kind}) for "${p.name}" [${p.packageId} rev ${p.revision}] — expires ${p.expiresAt}`];
   for (const c of p.changes) lines.push(`  - ${c}`);
-  if (p.location) lines.push(`  Lives on:  ${p.location.dir} (whole app, encrypted)`);
+  if (p.kind === 'install') lines.push(encryptionLine(p.location));
   if (p.endpoints.length) lines.push('  Endpoints: ' + p.endpoints.map((e) => `${e.id}=${e.browserUrl}`).join(', '));
   if (p.storage.length) lines.push('  Storage:   ' + p.storage.map((s) => `${s.volumeName} (${s.state})`).join(', '));
   if (p.secrets.length) lines.push('  Secrets:   ' + p.secrets.map((s) => `${s.id} (${s.source === 'operator' ? (s.ask ? `you provide it${s.ask === 'optional' ? ', optional' : ''}` : 'kept') : s.state})`).join(', '));
@@ -123,13 +145,27 @@ function planSummary(p: PlanDto): string {
   return lines.join('\n');
 }
 
-function operationSummary(o: OperationDto): string {
-  const lines = [`Operation ${o.id}: ${o.kind} ${o.state} (${o.phase})`];
+// Decision 138: values an operation shows once (a provisioned login, basic-auth, a recovery key, values a
+// package marks showOnce). With --credentials-file they go to a 0600 file and the terminal only says where.
+function oneTimeValues(o: OperationDto): string[] {
   const creds = o.result?.['credentials'] as { username: string; password: string } | undefined;
+  const label = typeof o.result?.['credentialsLabel'] === 'string' ? (o.result['credentialsLabel'] as string) : 'Login';
+  const note = typeof o.result?.['credentialsNote'] === 'string' ? (o.result['credentialsNote'] as string) : null;
   const recoveryKey = typeof o.result?.['recoveryKey'] === 'string' ? (o.result['recoveryKey'] as string) : null;
+  const shown = (o.result?.['shownOnce'] as { id: string; label: string; value: string }[] | undefined) ?? [];
+  return [
+    ...(creds ? [`${label}: ${creds.username} / ${creds.password}${note ? ` (${note})` : ''}`] : []),
+    ...shown.map((x) => `${x.label}: ${x.value}`),
+    ...(recoveryKey ? [`Recovery key (write down these 12 words): ${recoveryKey}`] : []),
+  ];
+}
+
+function operationSummary(o: OperationDto, credentialsFile?: string): string {
+  const lines = [`Operation ${o.id}: ${o.kind} ${o.state} (${o.phase})`];
   if (o.result?.['url']) lines.push(`  Address: ${String(o.result['url'])} (${String(o.result['exposureState'] ?? '')})`);
-  if (creds) lines.push(`  Basic-auth credentials (shown once, retained as an instance secret): ${creds.username} / ${creds.password}`);
-  if (recoveryKey) lines.push(`  Recovery key (shown once — write down these 12 words): ${recoveryKey}`);
+  const once = oneTimeValues(o);
+  if (once.length && credentialsFile) lines.push(`  One-time values written to ${credentialsFile} (0600); they are not shown again.`);
+  else for (const v of once) lines.push(`  ${v}  [shown once]`);
   if (o.error) lines.push(`  ${o.error.code}: ${o.error.message}`, `  Next: ${o.error.nextAction}`);
   for (const e of o.events.slice(-12)) lines.push(`  ${e.at} ${e.phase.padEnd(12)} ${e.message}`);
   return lines.join('\n');
@@ -152,7 +188,8 @@ async function waitOperation(api: ApiClient, id: string, follow: boolean): Promi
   }
 }
 
-async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string; passphrase?: string | undefined; secrets?: Record<string, string> }): Promise<void> {
+async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: boolean; wait?: boolean; idempotencyKey?: string; passphrase?: string | undefined; secrets?: Record<string, string>; credentialsFile?: string }): Promise<void> {
+  if (opts.credentialsFile && existsSync(opts.credentialsFile)) throw new HarborError('INVALID_REQUEST', `${opts.credentialsFile} already exists`, { nextAction: 'Name a new file: one-time values are never written over another file.' });
   if (!globals().json) process.stderr.write(planSummary(plan) + '\n');
   if (!opts.yes) {
     const ok = await confirm('Apply this plan?');
@@ -176,7 +213,8 @@ async function approveAndApply(api: ApiClient, plan: PlanDto, opts: { yes?: bool
     return;
   }
   const op = await waitOperation(api, submitted.operationId, true);
-  out(op, () => operationSummary(op));
+  if (opts.credentialsFile && oneTimeValues(op).length) writeFileSync(opts.credentialsFile, `# ${plan.kind} of ${plan.name}, operation ${op.id}\n${oneTimeValues(op).join('\n')}\n`, { mode: 0o600, flag: 'wx' });
+  out(globals().json && opts.credentialsFile ? { ...op, result: op.result ? { ...op.result, credentials: undefined, shownOnce: undefined, recoveryKey: undefined, oneTimeValuesFile: opts.credentialsFile } : null } : op, () => operationSummary(op, opts.credentialsFile));
   if (op.state !== 'succeeded') {
     // The operation (with its error) was already printed; exit with the error's category without a second document.
     alreadyReported = true;
@@ -243,7 +281,7 @@ program
     const { items } = await client().get<{ items: InstanceSummary[] }>('/v1/instances');
     out(items, () =>
       items.length
-        ? table([['NAME', 'PACKAGE', 'UPDATE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'URL', 'ID'], ...items.map((i) => { const ep = i.endpoints.find((e) => e.id === i.primaryEndpoint); const u = ep ? (ep.urls[ep.primary as keyof typeof ep.urls] ?? ep.urls.loopback) : '-'; return [i.name, `${i.packageId}@${i.revision}`, i.updateAvailable ? `-> ${i.updateAvailable.revision}${i.updateAvailable.version ? ` (${i.updateAvailable.version})` : ''}` : '-', i.installState, i.desired, i.runtime, i.readiness, u, i.id]; })])
+        ? table([['NAME', 'PACKAGE', 'UPDATE', 'INSTALL', 'DESIRED', 'RUNTIME', 'READINESS', 'ENCRYPTED', 'URL', 'ID'], ...items.map((i) => { const ep = i.endpoints.find((e) => e.id === i.primaryEndpoint); const u = ep ? (ep.urls[ep.primary as keyof typeof ep.urls] ?? ep.urls.loopback) : '-'; return [i.name, `${i.packageId}@${i.revision}`, i.updateAvailable ? `-> ${i.updateAvailable.revision}${i.updateAvailable.version ? ` (${i.updateAvailable.version})` : ''}` : '-', i.installState, i.desired, i.runtime, i.readiness, encryptedCell(i.home), u, i.id]; })])
         : 'No instances.',
     );
   });
@@ -259,6 +297,7 @@ program
       const lines = [
         `${d.name}  (${d.packageName} ${d.packageId}@${d.revision})  id ${d.id}`,
         `  install ${d.installState}  desired ${d.desired}  runtime ${d.runtime}  readiness ${d.readiness}  observed ${d.observedAt ?? '-'}`,
+        d.home ? `  encrypted: yes — sealed at ${d.home.path} (${d.home.state}${d.home.defaultKey ? ', Harbor\'s own key' : ', own passphrase'})` : '  encrypted: no — plain Docker volumes (readable on disk, starts on its own after a reboot)',
         ...d.endpoints.map((e) => `  endpoint ${e.id} (container port ${e.containerPort}, primary ${e.primary}): loopback ${e.urls.loopback}${e.urls.tailnet ? `, tailnet ${e.urls.tailnet}` : ''}${e.urls.public ? `, public ${e.urls.public}` : ''}`),
         ...(d.setup ? [`  setup: ${d.setup.instructions} -> ${d.setup.browserUrl}`] : []),
         ...(d.lastError ? [`  last error ${d.lastError.code}: ${d.lastError.message}`, `  next: ${d.lastError.nextAction}`] : []),
@@ -277,17 +316,19 @@ program
   .option('--name <slug>', 'instance name for install')
   .option('--location <dir>', 'install the whole app encrypted at <candidate>/<package> (omit the passphrase for the Harbor data folder)')
   .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
-  .action(async (kind: string, target: string | undefined, opts: { name?: string; location?: string; passphraseStdin?: boolean }) => {
+  .option('--unencrypted', 'install on plain Docker volumes instead of the sealed Harbor data folder (not encrypted)', false)
+  .action(async (kind: string, target: string | undefined, opts: { name?: string; location?: string; passphraseStdin?: boolean; unencrypted?: boolean }) => {
     const api = client();
     const extra: Record<string, unknown> = {};
-    if (opts.location) {
-      if (kind !== 'install') throw new HarborError('INVALID_REQUEST', '--location only applies to install');
+    if ((opts.location || opts.unencrypted) && kind !== 'install') throw new HarborError('INVALID_REQUEST', '--location and --unencrypted only apply to install');
+    const dir = kind === 'install' && target ? await installLocationDir(api, target, opts) : null;
+    if (dir) {
       // The Harbor data folder seals with Harbor's own key (no passphrase);
       // removable drives need one. --passphrase-stdin with empty input means
       // "default key"; an interactive prompt is skipped only when stdin pipes
       // a passphrase, otherwise the daemon decides by location.
       const passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() : '';
-      extra['location'] = passphrase ? { dir: opts.location, passphrase } : { dir: opts.location };
+      extra['location'] = passphrase ? { dir, passphrase } : { dir };
     }
     const plan = await createPlan(api, kind, target, opts.name, extra);
     out(plan, () => planSummary(plan) + `\nApply with: ${PRODUCT.cliName} apply ${plan.id} --idempotency-key <key>${opts.location ? ' --passphrase-stdin < passphrase.txt' : ''}`);
@@ -324,11 +365,13 @@ program
   .option('--storage <claim=/host/path>', 'use your own folder for a storage claim the package marks as external (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--location <dir>', 'install the whole app encrypted at <candidate>/<package> (omit the passphrase for the Harbor data folder)')
   .option('--passphrase-stdin', 'read the app encryption passphrase from stdin (with --location; not needed for the Harbor data folder)', false)
+  .option('--unencrypted', 'install on plain Docker volumes instead of the sealed Harbor data folder (not encrypted; starts on its own after a reboot)', false)
   .option('--secret <id=@file|id=->', 'a value the app asks for (operator-provided secret), from a file or stdin; prompted on a terminal otherwise (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--link <id=app[/endpoint]>', 'which installed app satisfies a link of this app (repeatable; the only candidate is picked by itself)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--credentials-file <path>', 'write one-time values (admin login, shown-once secrets) to this new file (0600) instead of the terminal')
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return the operation ID instead of waiting')
-  .action(async (pkg: string, opts: { name?: string; storage: string[]; location?: string; passphraseStdin?: boolean; secret: string[]; link: string[]; yes: boolean; wait: boolean }) => {
+  .action(async (pkg: string, opts: { name?: string; storage: string[]; location?: string; passphraseStdin?: boolean; unencrypted?: boolean; secret: string[]; link: string[]; credentialsFile?: string; yes: boolean; wait: boolean }) => {
     const api = client();
     const storage: Record<string, { hostPath: string }> = {};
     for (const s of opts.storage) {
@@ -338,15 +381,16 @@ program
     }
     const extra: Record<string, unknown> = Object.keys(storage).length ? { storage } : {};
     let passphrase: string | undefined;
-    if (opts.location) {
+    const dir = await installLocationDir(api, pkg, opts);
+    if (dir) {
       passphrase = opts.passphraseStdin ? (await readStdinAll()).trim() || undefined : undefined;
-      extra['location'] = passphrase ? { dir: opts.location, passphrase } : { dir: opts.location };
+      extra['location'] = passphrase ? { dir, passphrase } : { dir };
     }
     const secrets = await readSecretFlags(opts.secret, Boolean(opts.passphraseStdin));
     const links = await readLinkFlags(api, opts.link);
     if (Object.keys(links).length) extra['links'] = links;
     const plan = await createPlan(api, 'install', pkg, opts.name, extra);
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, passphrase, secrets });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, passphrase, secrets, ...(opts.credentialsFile ? { credentialsFile: opts.credentialsFile } : {}) });
   });
 
 program
@@ -402,6 +446,13 @@ packagesCmd.action(async () => {
   const mine = items.filter((i) => i.origin === 'local');
   out(mine, () => (mine.length ? table([['ID', 'NAME', 'REV', 'VERSION', 'AVAILABILITY'], ...mine.map((i) => [i.id, i.name, i.revision, i.version ?? '-', i.availability + (i.reason ? ` (${i.reason})` : '')])]) : 'No uploaded packages. Add one with: harbor packages add <file.zip>'));
 });
+packagesCmd
+  .command('validate <dir>')
+  .description('check a package folder (or a repository with a harbor/ folder) with the same validators the daemon uses, before zipping or pushing it; offline, no login needed')
+  .action((dir: string) => {
+    const r = validatePackageFolder(dir);
+    out(r, () => [`${r.name} (${r.id}) revision ${r.revision}: the package is valid.`, ...r.notes.map((n) => `  note: ${n}`)].join('\n'));
+  });
 packagesCmd
   .command('add <zip>')
   .description('upload a package zip (manifest.yaml, compose.yaml, README.md, icon…); tag images are pinned by digest for you')
@@ -554,6 +605,18 @@ program
     if (opts.wait !== false && inst.operationId) await waitOperation(api, inst.operationId, true);
   });
 
+// Decision 135: the way out of needs_action/failed. Withdraw the address in the way first if there is one.
+program
+  .command('repair <instance>')
+  .alias('retry')
+  .description('run an app left in needs_action/failed again from its stored release (re-render, recreate, check readiness); data, secrets, ports and addresses stay')
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { yes: boolean; wait: boolean }) => {
+    const api = client();
+    await approveAndApply(api, await createPlan(api, 'restart', ref), { yes: opts.yes, wait: opts.wait });
+  });
+
 for (const kind of ['start', 'stop', 'restart', 'remove', 'reinstall'] as const) {
   program
     .command(`${kind} <instance>`)
@@ -563,7 +626,7 @@ for (const kind of ['start', 'stop', 'restart', 'remove', 'reinstall'] as const)
         : kind === 'reinstall'
           ? 'reinstall the exact stored release into a removed (retained) instance'
           : kind === 'restart'
-            ? 'recreate a running app with its current addresses (after changing network settings); data, secrets and ports stay'
+            ? 'recreate a running app with its current addresses (after changing network settings); data, secrets and ports stay. Also repairs an app left in needs_action/failed'
             : `${kind} an installed instance`,
     )
     .option('--yes', 'approve without prompting', false)
@@ -645,9 +708,10 @@ program
   .option('--protect <none|basic>', 'basic-auth protection (public only; default basic for apps without their own login)')
   .option('--primary', 'make this the primary address (re-renders apps that embed their base URL)', false)
   .option('--ui', 'expose the Harbor UI itself on the tailnet (never public)', false)
+  .option('--credentials-file <path>', 'write the one-time basic-auth login to this new file (0600) instead of the terminal')
   .option('--yes', 'approve without prompting', false)
   .option('--no-wait', 'return after submission')
-  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; host?: string; protect?: string; proxyFrom?: string; primary: boolean; ui: boolean; yes: boolean; wait: boolean }) => {
+  .action(async (ref: string | undefined, opts: { via: string; endpoint?: string; host?: string; protect?: string; proxyFrom?: string; primary: boolean; ui: boolean; credentialsFile?: string; yes: boolean; wait: boolean }) => {
     const api = client();
     if (opts.ui) {
       if (opts.via !== 'tailnet') throw new HarborError('INVALID_REQUEST', 'the Harbor UI can only be exposed on the tailnet');
@@ -656,7 +720,7 @@ program
       return;
     }
     const plan = await createPlan(api, 'expose', ref, undefined, { via: opts.via, ...(opts.endpoint ? { endpointId: opts.endpoint } : {}), ...(opts.host ? { hostname: opts.host } : {}), ...(opts.protect ? { protection: opts.protect } : {}), ...(opts.proxyFrom ? { proxyFrom: opts.proxyFrom } : {}), ...(opts.primary ? { makePrimary: true } : {}) });
-    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, ...(opts.credentialsFile ? { credentialsFile: opts.credentialsFile } : {}) });
   });
 
 program
@@ -875,20 +939,24 @@ wallpaperCmd
 
 program
   .command('look <instance>')
-  .description('customise how an app appears on the launcher: --name "Photos", --glyph 📷 --color #3366ff, or --reset')
+  .description('customise how an app appears on the launcher: --name "Photos", --glyph 📷 --color #3366ff, --hide/--show, or --reset')
   .option('--name <name>', 'display name (empty string resets)')
   .option('--glyph <glyph>', 'one emoji or up to two letters for the icon')
   .option('--color <hex>', 'icon colour, e.g. #3366ff (with --glyph)')
   .option('--reset', 'back to the package name and icon', false)
-  .action(async (ref: string, opts: { name?: string; glyph?: string; color?: string; reset: boolean }) => {
+  .option('--hide', 'do not show the app on Home (it stays in the Store, Platform and `harbor list`)')
+  .option('--show', 'show the app on Home again')
+  .action(async (ref: string, opts: { name?: string; glyph?: string; color?: string; reset: boolean; hide?: boolean; show?: boolean }) => {
+    if (opts.hide && opts.show) throw new HarborError('INVALID_REQUEST', '--hide and --show cannot be combined');
     const api = client();
     const inst = await resolveInstance(api, ref);
     const patch: Record<string, unknown> = {};
     if (opts.reset) Object.assign(patch, { displayName: null, icon: { kind: 'default' } });
     if (opts.name !== undefined) patch['displayName'] = opts.name || null;
     if (opts.glyph) patch['icon'] = { kind: 'glyph', glyph: opts.glyph, color: opts.color ?? '#4fb3ff' };
+    if (opts.hide || opts.show) patch['hidden'] = Boolean(opts.hide);
     const r = await api.post<InstanceSummary>(`/v1/instances/${inst.id}/appearance`, patch, {}, 'PUT');
-    out(r, () => `${r.name}: shown as "${r.displayName ?? r.packageName}"${r.customIcon ? ` with a custom ${r.customIcon.kind} icon` : ''}.`);
+    out(r, () => `${r.name}: shown as "${r.displayName ?? r.packageName}"${r.customIcon ? ` with a custom ${r.customIcon.kind} icon` : ''}${r.hiddenFromHome ? ', hidden from Home' : ''}.`);
   });
 
 const powerCmd = program.command('power').description('restart or shut down this machine through Harbor (needs the polkit rule installed by bootstrap)');

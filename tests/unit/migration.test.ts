@@ -108,3 +108,23 @@ describe('state migration v9 -> v10 (decision 127)', () => {
     opened.close();
   });
 });
+
+// Decision 132: fresh-install defaults are written once, at initialization; migrations never add them.
+describe('fresh-install settings', () => {
+  it('seeds the picture of the day on a new state, and only there', async () => {
+    const { initializeState } = await import('../../src/state/db.js');
+    const { FRESH_INSTALL_SETTINGS } = await import('../../src/maintenance.js');
+    const { systemClock, systemIds } = await import('../../src/util.js');
+    const dir = mkdtempSync(path.join(tmpdir(), 'harbor-fresh-'));
+    initializeState(dir, { clock: systemClock, ids: systemIds, config: {}, settings: FRESH_INSTALL_SETTINGS });
+    const db = openState(dir);
+    const row = db.prepare("SELECT value_json FROM settings WHERE key = 'appearance.rotation'").get() as { value_json: string };
+    expect(JSON.parse(row.value_json)).toEqual({ enabled: true, source: 'bing', everyHours: 24 });
+    db.close();
+    const bare = mkdtempSync(path.join(tmpdir(), 'harbor-bare-'));
+    initializeState(bare, { clock: systemClock, ids: systemIds, config: {} });
+    const db2 = openState(bare);
+    expect(db2.prepare("SELECT COUNT(*) AS n FROM settings").get()).toEqual({ n: 0 });
+    db2.close();
+  });
+});

@@ -19,6 +19,7 @@ import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/r
 import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readOperatorSecret, readSecret, removeSecret, secretExists, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose } from './instance-dir.js';
 import { waitReady } from './readiness.js';
 import { appAuthorities, exposureCheck, exposureUrl, primaryUrlFor } from '../exposure/urls.js';
+import { retainedExposures, setRetainedExposures, toRetained } from './retained-exposures.js';
 import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
 import { lanAppHost, lanHostnames, lanNames, machineAddresses } from '../system/lan.js';
 import { HTTPS_SETTING, lanHttpsHosts, readTlsState } from '../system/lan-https.js';
@@ -328,6 +329,9 @@ export class OperationRunner {
         values[s.id] = readOperatorSecret(secretsDir, s.id);
       } else values[s.id] = readSecret(secretsDir, s.id);
       sink.push(values[s.id]!);
+      // a url-encoded template (decision 139) renders a different spelling: redact that one too
+      const encoded = encodeURIComponent(values[s.id]!);
+      if (encoded !== values[s.id]) sink.push(encoded);
     }
     return values;
   }
@@ -491,6 +495,54 @@ export class OperationRunner {
     this.event(op, 'applying', `reconciled ${routes.length} public route(s) in Caddy`);
   }
 
+  // Decision 134: publish again what Remove withdrew. One that cannot come back (the name is someone else's
+  // now, the provider is gone) is reported and skipped — never fatal: Reinstall is about the app's data.
+  private async restoreExposures(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<boolean> {
+    const { repo, ids } = this.ctx;
+    const kept = retainedExposures(repo, inst.id);
+    if (!kept) return false;
+    this.phase(op, 'applying', 'publishing', `publishing ${kept.items.length} address(es) kept by Remove again`);
+    const restored: ExposureRow[] = [];
+    let tailnetUp: boolean | null = null;
+    let caddyUp: boolean | null = null;
+    for (const x of kept.items) {
+      const alloc = inst.endpoints.find((a) => a.id === x.endpointId);
+      const label = exposureUrl(x);
+      try {
+        if (!alloc) throw new Error(`endpoint ${x.endpointId} no longer exists`);
+        let port = x.port;
+        if (x.via === 'tailnet') {
+          tailnetUp ??= await this.ctx.tailscale.status().then((st) => Boolean(st && st.backendState === 'Running' && st.dnsName), () => false);
+          if (!tailnetUp) throw new Error('Tailscale is not connected');
+          port = await this.ctx.service.tailnetPort([alloc.hostPort]);
+        }
+        if (x.via === 'public') {
+          caddyUp ??= await this.ctx.caddy.available();
+          if (!caddyUp) throw new Error('the public proxy (Caddy) is not available');
+        }
+        if (repo.exposureByAddress(x.via, x.hostname, port) || (x.via !== 'tailnet' && repo.exposures().some((e) => e.via !== 'tailnet' && e.hostname === x.hostname))) throw new Error('another app uses this address now');
+        const id = ids.uuid();
+        repo.insertExposure({ id, instanceId: inst.id, endpointId: x.endpointId, via: x.via, hostname: x.hostname, port, protection: x.protection, state: 'pending', note: 'published again by Reinstall', proxyFrom: x.proxyFrom });
+        if (x.via === 'tailnet') await this.ctx.tailscale.serve(port, `http://127.0.0.1:${alloc.hostPort}`);
+        restored.push(repo.exposure(id)!);
+        this.event(op, 'publishing', `${exposureUrl({ ...x, port })} published again`);
+      } catch (e) {
+        this.event(op, 'publishing', `${label} not published again: ${(e as Error).message}; publish it from the app's Publish… dialog`);
+      }
+    }
+    if (restored.some((e) => e.via === 'public')) {
+      try {
+        await this.reconcileCaddy(op, sink);
+      } catch (e) {
+        this.event(op, 'publishing', `Caddy did not take the routes yet (${(e as Error).message}); Harbor retries in the background`);
+      }
+    }
+    const main = kept.primary === 'loopback' ? null : restored.find((e) => e.via === kept.primary && (kept.primary !== 'public' || !kept.primaryHost || e.hostname === kept.primaryHost)) ?? restored.find((e) => e.via === kept.primary);
+    if (main) repo.updateInstance(inst.id, { primaryExposure: kept.primary, primaryHost: kept.primary === 'public' ? main.hostname : null });
+    setRetainedExposures(repo, inst.id, null);
+    return restored.length > 0;
+  }
+
   private async withdrawExposure(op: OperationRow, e: ExposureRow): Promise<void> {
     if (e.via === 'proxy') return; // your proxy's own config is yours to remove
     if (e.via === 'tailnet') {
@@ -556,7 +608,7 @@ export class OperationRunner {
     }
     await this.hookAfterAddressChange(op, inst);
     // Credentials appear once, in this operation's result; they are never in DTOs or logs afterwards.
-    this.opResult = { exposureId, url, exposureState: last.ok ? 'active' : 'degraded', ...(credentials ? { credentials } : {}) };
+    this.opResult = { exposureId, url, exposureState: last.ok ? 'active' : 'degraded', ...(credentials ? { credentials, credentialsLabel: `Basic-auth login for ${url}` } : {}) };
   }
 
   // The manifest's health target, for the reachability check (decision 128). A missing snapshot only means `/` is probed.
@@ -580,9 +632,24 @@ export class OperationRunner {
     const { repo } = this.ctx;
     const x = plan.proposal.exposure;
     if (!x) throw new HarborError('STATE_CHANGED', 'plan carries no exposure');
+    if (x.forget) {
+      const kept = retainedExposures(repo, inst.id);
+      setRetainedExposures(repo, inst.id, kept ? { ...kept, items: kept.items.filter((k) => !(k.endpointId === x.endpointId && k.via === x.via && k.hostname === x.hostname)) } : null);
+      this.event(op, 'withdrawing', `forgot ${exposureUrl(x)}; Reinstall will not publish it again`);
+      return;
+    }
     const e = repo.exposureFor(inst.id, x.endpointId, x.via, x.hostname);
     if (!e) throw new HarborError('STATE_CHANGED', `${inst.name}/${x.endpointId} is no longer exposed via ${x.via} at ${x.hostname}`);
     this.phase(op, 'applying', 'withdrawing', `withdrawing ${exposureUrl(e)}`);
+    if (inst.installState !== 'installed') {
+      // Decision 135, repair path: a broken app's containers are not recreated here; only the record of its
+      // main address changes, and the next start/retry renders the new one.
+      if (plan.proposal.primary) repo.updateInstance(inst.id, { primaryExposure: plan.proposal.primary, primaryHost: plan.proposal.primary === 'public' ? (plan.proposal.primaryHost ?? null) : null });
+      await this.withdrawExposure(op, e);
+      repo.deleteExposure(e.id);
+      this.event(op, 'withdrawing', `${exposureUrl(e)} withdrawn while ${inst.name} is ${inst.installState}; retry or start it to pick up the change`);
+      return;
+    }
     if (plan.proposal.primary === 'loopback' && inst.primaryExposure === x.via) await this.applyPrimary(op, inst, 'loopback', sink);
     // Decision 127: the main public name goes but another stays — that one becomes the main address.
     else if (plan.proposal.primary === 'public' && plan.proposal.primaryHost) await this.applyPrimary(op, inst, 'public', sink, plan.proposal.primaryHost);
@@ -939,13 +1006,16 @@ export class OperationRunner {
     await this.checkReadiness(op, pkg, inst, containers);
     repo.updateInstance(inst.id, { installState: 'installed', everInstalled: true, desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
     // The provisioned admin credential appears once, in this operation's result (same UX as exposure basic-auth).
-    if (provisioned) this.opResult = { ...(this.opResult ?? {}), credentials: provisioned, ...(pkg.manifest.provisionedCredentials?.note ? { credentialsNote: pkg.manifest.provisionedCredentials.note } : {}) };
+    if (provisioned) this.opResult = { ...(this.opResult ?? {}), credentials: provisioned, credentialsLabel: provisionedLabel(pkg), ...(pkg.manifest.provisionedCredentials?.note ? { credentialsNote: pkg.manifest.provisionedCredentials.note } : {}) };
+    // Decision 138: generated values the package marks as shown once (never in DTOs or logs afterwards)
+    const shown = shownOnce(pkg, values);
+    if (shown.length) this.opResult = { ...(this.opResult ?? {}), shownOnce: shown };
     // Main address chosen at install (decision 116): publish on the tailnet / a domain and make it primary,
     // in the same operation. The provisioned admin login (if any) wins the one `credentials` slot.
     if (plan.proposal.exposure) {
       const prior = this.opResult ?? {};
       await this.expose(op, plan, repo.instance(inst.id) ?? inst, sink);
-      this.opResult = { ...prior, ...(this.opResult ?? {}), ...(prior['credentials'] ? { credentials: prior['credentials'] } : {}) };
+      this.opResult = { ...prior, ...(this.opResult ?? {}), ...(prior['credentials'] ? { credentials: prior['credentials'], credentialsLabel: prior['credentialsLabel'] } : {}) };
     }
   }
 
@@ -1153,9 +1223,29 @@ export class OperationRunner {
     const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values);
     this.phase(op, 'applying', 'starting', 'recreating containers (same volumes, secrets and ports)');
     repo.updateInstance(inst.id, { runtime: 'starting' });
+    const repair = inst.installState !== 'installed';
+    const home = repair ? this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__') : undefined;
+    if (home) await this.ensureKernelUnlocked(op, inst, home);
     const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, inst, { forceRecreate: true });
     await this.checkReadiness(op, pkg, inst, containers);
-    repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+    repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now(), ...(repair ? { installState: 'installed', desired: 'running' } : {}) });
+    if (repair) this.event(op, 'checking', `${inst.name} is repaired and runs revision ${inst.revision}`);
+  }
+
+  // A failed `compose up` (e.g. "failed to bind host port") can leave containers that never started, or
+  // that run with no network at all and crash-loop. They hold no data (volumes are separate) and the next
+  // up recreates them, so remove this instance's own ones instead of showing them as part of the app.
+  private async removeHalfCreated(op: OperationRow, identity: InstanceIdentity, inst: InstanceRow): Promise<void> {
+    const { docker } = this.ctx;
+    const containers = await docker.listContainers({ all: true, labels: { 'com.docker.compose.project': identity.project } });
+    for (const c of containers) {
+      if (c.labels[LABELS.instance] !== inst.id || c.labels[LABELS.installation] !== identity.installationId) continue;
+      const broken = c.state === 'created' || c.state === 'dead' || c.state === 'exited' || (c.state !== 'removing' && c.networkIds.length === 0);
+      if (!broken) continue;
+      if (c.state === 'running' || c.state === 'restarting') await docker.stopContainer(c.id, 10);
+      await docker.removeContainer(c.id);
+      this.event(op, 'starting', `removed half-created container ${c.name} (${c.networkIds.length === 0 ? 'no network' : c.state}) left by the failed start`);
+    }
   }
 
   private async upAndRecord(op: OperationRow, inv: { projectDir: string; projectName: string; file: string }, identity: InstanceIdentity, inst: InstanceRow, opts: { forceRecreate?: boolean } = {}): Promise<ContainerInfo[]> {
@@ -1163,6 +1253,7 @@ export class OperationRunner {
       await this.ctx.compose.up(inv, this.ctx.config.startTimeoutMs, opts);
     } catch (e) {
       try {
+        await this.removeHalfCreated(op, identity, inst);
         await this.recordProjectResources(op, identity, inst);
       } catch (re) {
         this.ctx.log.warn(`could not record project resources after failed up: ${(re as Error).message}`, { operationId: op.id });
@@ -1188,6 +1279,8 @@ export class OperationRunner {
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     this.event(op, 'preparing', `verified ${Object.keys(values).length} retained secret(s)`);
     await this.revive(op, inst, sink);
+    // Decision 134: the addresses withdrawn by Remove come back first, so the rendered base URL is the main one
+    if (await this.restoreExposures(op, inst, sink)) inst = repo.instance(inst.id) ?? inst;
     const existing = await this.ctx.docker.listContainers({ all: true, labels: { 'com.docker.compose.project': identity.project } });
     for (const c of existing) {
       if (c.labels[LABELS.instance] !== inst.id) throw new HarborError('OWNERSHIP_CONFLICT', `container ${c.name} occupies project ${identity.project} but is not owned by this instance`);
@@ -1299,7 +1392,19 @@ export class OperationRunner {
   private async purge(op: OperationRow, inst: InstanceRow, sink: string[]): Promise<void> {
     const { repo, docker } = this.ctx;
     if (inst.installState !== 'retained') await this.remove(op, inst, sink);
-    else await this.unlinkOnRemove(op, inst, sink);
+    else {
+      // a retained app should have no live addresses; withdraw any left over before deleting (decision 134)
+      for (const e of repo.exposures(inst.id)) {
+        await this.withdrawExposure(op, e);
+        repo.deleteExposure(e.id);
+        this.event(op, 'purging', `withdrew ${e.via} address ${exposureUrl(e)}`);
+      }
+      await this.unlinkOnRemove(op, inst, sink);
+    }
+    if (retainedExposures(repo, inst.id)) {
+      setRetainedExposures(repo, inst.id, null);
+      this.event(op, 'purging', 'forgot the addresses kept for Reinstall');
+    }
     this.phase(op, 'applying', 'purging', 'deleting retained data of this app (verified as Harbor-created first)');
     const resources = repo.resources(inst.id);
     for (const r of resources.filter((x) => x.kind === 'volume')) {
@@ -1435,10 +1540,12 @@ export class OperationRunner {
       this.event(op, 'checking', `${inst.name} now runs revision ${next.revision}${next.manifest.release.version ? ` (${next.manifest.release.version})` : ''}`);
       await this.afterProviderEndpointsChanged(op, updated, before.endpoints, sink);
       this.opResult = { fromRevision: u.fromRevision, toRevision: u.toRevision, rolledBack: false };
+      const shown = shownOnce(next, values).filter((x) => !inst.secrets.some((r) => r.id === x.id));
+      if (shown.length) this.opResult = { ...this.opResult, shownOnce: shown };
       // Shown once, like at install: it is the login if the app had not been set up yet.
       if (newlyProvisioned) {
         const pc = this.readProvisioned(next, dirs.secrets, sink);
-        if (pc) this.opResult = { ...this.opResult, credentials: pc, credentialsNote: `${next.manifest.provisionedCredentials?.note ?? ''} If you had already set ${next.manifest.metadata.name} up, keep using your own login.`.trim() };
+        if (pc) this.opResult = { ...this.opResult, credentials: pc, credentialsLabel: provisionedLabel(next), credentialsNote: `${next.manifest.provisionedCredentials?.note ?? ''} If you had already set ${next.manifest.metadata.name} up, keep using your own login.`.trim() };
       }
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
@@ -1471,7 +1578,7 @@ export class OperationRunner {
       } catch (re) {
         if (re instanceof HarborError && re.code === 'OPERATION_FAILED' && re.message.includes('rolled back')) throw re;
         this.event(op, 'rollback', `rollback failed too: ${re instanceof Error ? re.message : String(re)}`);
-        throw new HarborError('OPERATION_FAILED', `the update failed (${reason}) and the rollback did not complete (${re instanceof Error ? re.message : String(re)})`, { nextAction: 'Inspect the app (Details → Technical details). Its data volumes and secrets are intact; Remove then Reinstall restores the last stored release.' });
+        throw new HarborError('OPERATION_FAILED', `the update failed (${reason}) and the rollback did not complete (${re instanceof Error ? re.message : String(re)})`, { nextAction: `Its data volumes and secrets are intact. If the error names a port, withdraw the address on it first (harbor unexpose ${inst.name} --via <via>); then Repair runs the last stored release again (drawer → Repair, or harbor repair ${inst.name}).` });
       }
     } finally {
       // leave the previous release around for one more look when the update succeeded; delete when it rolled back
@@ -1501,10 +1608,17 @@ export class OperationRunner {
     this.phase(op, 'applying', 'removing', 'persisting removal intent (data and secrets are retained)');
     await this.engineOrThrow();
     repo.updateInstance(inst.id, { desired: 'retained' });
-    for (const e of repo.exposures(inst.id)) {
+    // Decision 134: remembered for Reinstall (merged with anything still remembered from before)
+    const live = repo.exposures(inst.id);
+    if (live.length) {
+      const prev = retainedExposures(repo, inst.id);
+      const items = [...(prev?.items ?? []).filter((p) => !live.some((e) => e.via === p.via && e.hostname === p.hostname && e.endpointId === p.endpointId)), ...live.map(toRetained)];
+      setRetainedExposures(repo, inst.id, { primary: inst.primaryExposure, primaryHost: inst.primaryHost, items });
+    }
+    for (const e of live) {
       await this.withdrawExposure(op, e);
       repo.deleteExposure(e.id);
-      this.event(op, 'removing', `withdrew ${e.via} address ${exposureUrl(e)}`);
+      this.event(op, 'removing', `withdrew ${e.via} address ${exposureUrl(e)} (Reinstall publishes it again)`);
     }
     if (inst.primaryExposure !== 'loopback' || inst.primaryHost) repo.updateInstance(inst.id, { primaryExposure: 'loopback', primaryHost: null });
     const resources = repo.resources(inst.id);
@@ -1596,6 +1710,15 @@ export function caddyLanHttps(ctx: Ctx): CaddyLanHttps | null {
 // reinstall: back to retained when nothing was created, so the operator can fix data and retry;
 //            failed once containers exist. start/stop/remove: needs_action (inspect, then stop/remove).
 // exposure kinds: the app itself is untouched by a failed publish/withdraw, so its install state stays.
+// Decision 138: what the one-time display calls a provisioned login, and the generated values a package
+// marks as shown once.
+function provisionedLabel(pkg: LoadedPackage): string {
+  return pkg.manifest.provisionedCredentials?.label ?? `${pkg.manifest.metadata.name} admin login`;
+}
+function shownOnce(pkg: LoadedPackage, values: Record<string, string>): { id: string; label: string; value: string }[] {
+  return (pkg.manifest.secrets ?? []).filter((s) => s.showOnce && s.source !== 'operator' && values[s.id] !== undefined).map((s) => ({ id: s.id, label: s.showOnce!, value: values[s.id]! }));
+}
+
 function installStateAfterFailure(kind: OperationRow['kind'], hasContainers: boolean, current: InstanceRow['installState']): InstanceRow['installState'] {
   if (kind === 'install') return 'failed';
   if (kind === 'reinstall') return hasContainers ? 'failed' : 'retained';

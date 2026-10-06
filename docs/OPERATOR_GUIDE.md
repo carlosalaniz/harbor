@@ -156,12 +156,15 @@ CLI (`/opt/harbor/bin/harbor`, add it to PATH if you like):
 ```sh
 harbor login                      # prompts without echo; token stored 0600 in ~/.config/harbor
 harbor catalog
-harbor install excalidraw         # shows the plan (ports, storage, images) and asks to apply
+harbor install excalidraw         # shows the plan (ports, storage, images) and asks to apply; sealed like the console's "Local"
 harbor install excalidraw --name whiteboard-2 --yes --no-wait
+harbor install excalidraw --unencrypted              # plain Docker volumes (says "Encrypted: no" in the plan)
+harbor install nextcloud --credentials-file ~/nextcloud-login.txt   # one-time values to a new 0600 file, not the terminal
 harbor list / inspect <name-or-id> / operation <id> --follow
 harbor stop <name> / start <name>
-harbor remove <name>              # deletes containers + private network; RETAINS volumes, secrets, name, ports
-harbor reinstall <name>           # exact same release into the retained instance
+harbor remove <name>              # deletes containers + private network; RETAINS volumes, secrets, name, ports, addresses
+harbor reinstall <name>           # exact same release into the retained instance; publishes its addresses again
+harbor repair <name>              # an app stuck in needs_action/failed: run its stored release again (alias: retry)
 harbor plan install n8n && harbor apply <plan-id> --idempotency-key <key>
 harbor tools / tools bind cockpit --url https://localhost:9090/
 harbor doctor
@@ -240,8 +243,13 @@ Then, per app:
 ### Failure states
 
 - `failed` install: resources are kept for inspection (`harbor inspect`); use `remove` to clean up.
-- `needs_action`: an operation was interrupted (daemon restart) or an ownership/data check failed.
-  Nothing is replayed automatically. Inspect, then `stop`/`remove`/`reinstall` after confirming ownership.
+- `needs_action`: an operation was interrupted (daemon restart), an ownership/data check failed, or an
+  update failed and its rollback failed too. Nothing is replayed automatically. The way out (decision 135):
+  if the error names a port or an address, withdraw that address first (`harbor unexpose <app> --via
+  <via>` works in this state), then **Repair** (drawer button, `harbor repair <app>`): it renders the
+  stored release again, recreates the containers and checks the app answers. `stop`/`remove`/`reinstall`
+  stay available. A failed start removes the containers it half-created (never started, or left with no
+  network), and a container with no network is never shown as running.
 - Docker unavailable: instances show `unavailable`/`unknown`, never a stale `healthy`.
 
 ## 4a. Your own folders for app data ("bring your own folder")
@@ -420,8 +428,17 @@ once). This is deliberate: the unlock key lives behind your login, not on the di
 locked the data is ciphertext — Docker cannot even find the app's folder. Automatic unlock
 without a login (keyfile/TPM) is a 1.0 item, not a beta one — for now, log in once after a reboot.
 
-CLI: `harbor install <package> --location /mnt/photos/harbor-apps/immich --passphrase-stdin < passphrase.txt`
-(omit the passphrase for the Harbor data folder), `harbor lock <app>` / `harbor unlock <app>`, `harbor found-apps`,
+**Apps that are not encrypted start on their own.** An app installed on plain Docker volumes (the
+CLI's `--unencrypted`, or anything installed from the CLI before 0.23.0 without `--location`) keeps
+its data readable on disk and starts right after a reboot, before anyone logs in. To tell which is
+which: `harbor list` has an **ENCRYPTED** column (`yes`, `yes (locked)`, `no`), `harbor inspect <app>`
+prints `encrypted: yes — sealed at …` or `encrypted: no — plain Docker volumes`, and the app's details
+in the console say the same under its name.
+
+CLI: `harbor install <package>` installs sealed in the Harbor data folder with Harbor's own key, exactly
+like the console's **Local** (decision 130; `--unencrypted` for plain Docker volumes), and
+`harbor install <package> --location /mnt/photos/harbor-apps/immich --passphrase-stdin < passphrase.txt`
+puts it on a drive (omit the passphrase for no custom passphrase), `harbor lock <app>` / `harbor unlock <app>`, `harbor found-apps`,
 `harbor adopt <home-folder>`.
 ## 4b. Settings in the console (for people who do not use a terminal)
 
@@ -460,7 +477,13 @@ on the next check, because the condition is still true. When more than 30 rows p
 
 - **Arrange**: drag an icon with the mouse, or press and hold it on a phone, and drop it where you want it. *Arrange* (top right of Home) turns on a jiggle mode where the arrow keys also move the focused app; *Done* or Esc leaves it. The order is saved on the machine, so every device sees the same home screen.
 - **Customize…** (in an app's details): give the app the name you use for it ("Photos" instead of "Immich") and pick an icon: the app's own, an emoji or two letters on a colour, or a picture of yours (≤ 1 MB). Also shown in search and in progress messages.
-- CLI: `harbor look <app> --name Photos --glyph 📷 --color #3366ff`, `harbor look <app> --reset`; `harbor wallpaper`, `harbor wallpaper set --on --source bing|wikimedia|reddit [--subreddits a,b] [--every 24] [--reddit-client-id ID --reddit-secret-stdin]`, `harbor wallpaper next`; `harbor power restart|shutdown`.
+- **Hide from Home** (in an app's details): helpers without a page of their own (an MCP gateway, a
+  document server) leave the launcher; Home shows a quiet *N hidden apps* to reach them, and they stay in
+  the App Store, Publishing, Platform, `harbor list` and notifications. A package can suggest it
+  (`presentation.hideFromHome`); your choice wins. API-only apps have no *Open* button, only addresses.
+- **Wallpaper**: a fresh install starts with Bing's picture of the day (keyless, daily, credit on Home);
+  offline it keeps the last picture or the flat preset. Existing installations keep their choice.
+- CLI: `harbor look <app> --name Photos --glyph 📷 --color #3366ff`, `harbor look <app> --hide` / `--show`, `harbor look <app> --reset`; `harbor wallpaper`, `harbor wallpaper set --on --source bing|wikimedia|reddit [--subreddits a,b] [--every 24] [--reddit-client-id ID --reddit-secret-stdin]`, `harbor wallpaper next`; `harbor power restart|shutdown`.
 - **Restart / Shut down** work because bootstrap installs a small polkit rule that lets the Harbor service account ask the system for exactly those two actions. On an installation bootstrapped before v0.5.0, run `sudo /opt/harbor/bin/harbor bootstrap --yes` once to add it; Settings tells you when it is missing.
 
 Two things still need root on the machine, once: installing Tailscale (`bootstrap --with-tailscale`) and the public proxy (`bootstrap --with-public-proxy`). Settings shows the exact command when they are missing.
@@ -471,7 +494,7 @@ Disconnecting from the tailnet (`tailscale logout`) used to wipe the permission 
 
 ## 4d. Your own apps and updates
 
-- **Upload a package**: App Store → *+ Your own app* (or `harbor packages add my-app.zip`). A package is a zip with `manifest.yaml`, `compose.yaml`, optionally `README.md`, an icon and screenshots; see [DEVELOPER_PACKAGES.md](DEVELOPER_PACKAGES.md) for the template. Harbor validates it, pins the images by digest, and lists it under *Your apps*. Install it like any other app.
+- **Upload a package**: App Store → *+ Your own app* (or `harbor packages add my-app.zip`). A package is a zip with `manifest.yaml`, `compose.yaml`, optionally `README.md`, an icon and screenshots; see [DEVELOPER_PACKAGES.md](DEVELOPER_PACKAGES.md) for the template. Harbor validates it, pins the images by digest, and lists it under *Your apps*. Install it like any other app. Check a folder before you zip or push it with `harbor packages validate <folder>` (the daemon's own validators, offline, no login).
 - **Update an app**: when a newer revision of its package exists (you uploaded one, or a Harbor upgrade shipped a newer built-in catalog), Home shows an *updates available* card and the app's tile gets a blue ↑. Press **Update**, review the plan (which images change, what is added), approve. Data, ports and addresses stay. If the new version fails to start, Harbor rolls back to the previous one automatically and tells you. CLI: `harbor list` (UPDATE column), `harbor update <name>`.
 - **Remove an uploaded package**: from its App Store page once no app installed from it exists (`harbor packages remove <id>`).
 
@@ -556,13 +579,13 @@ Without LAN mode everything stays bound to 127.0.0.1. Publishing adds an HTTPS a
 
 | Path | Address | Provider | Set up with |
 |---|---|---|---|
-| tailnet (private) | `https://<node>.<tailnet>.ts.net:<same port>/` | Tailscale (`tailscale serve`) | `sudo ... bootstrap --with-tailscale`, then `sudo tailscale up` and approve the login URL; enable **MagicDNS + HTTPS certificates** in the Tailscale admin console (DNS settings) |
+| tailnet (private) | `https://<node>.<tailnet>.ts.net:<its own port>/` (taken from the top of the app range, never the app's own port: in LAN mode that port already answers plain HTTP on every interface, decision 133) | Tailscale (`tailscale serve`) | `sudo ... bootstrap --with-tailscale`, then `sudo tailscale up` and approve the login URL; enable **MagicDNS + HTTPS certificates** in the Tailscale admin console (DNS settings) |
 | your own proxy | `https://<your hostname>/` | your reverse proxy (Nginx Proxy Manager, Traefik…) keeps the certificate | ports 80/443 already go to another machine: point the hostname's DNS at your home IP, forward it in your proxy to `http://<this machine's LAN IP>:<app port>` with WebSockets on, then **Publish… → Your own proxy** with the hostname and the proxy machine's LAN IP (`harbor expose <app> --via proxy --host <fqdn> --proxy-from <ip>`). Harbor only tells the app about the name and trusts forwarded headers from that IP |
 | public | `https://<your hostname>/` | Caddy (Let's Encrypt) | `sudo ... bootstrap --with-public-proxy`; create an A/AAAA record for each hostname pointing at this host; ports 80 and 443 must be reachable from the internet |
 
 ```sh
 harbor tools                                        # Tailscale / Public proxy cards say what is missing
-harbor expose n8n --via tailnet                     # https://<node>.ts.net:18086/
+harbor expose n8n --via tailnet                     # https://<node>.ts.net:18999/ (its own port)
 harbor expose n8n --via public --host n8n.example.com --primary
 harbor expose bentopdf --via public --host pdf.example.com          # basic auth by default (credentials shown once)
 harbor expose bentopdf --via public --host pdf.example.com --protect none
@@ -599,8 +622,14 @@ Notes:
   re-checking and does not mark it `active` before it answers over HTTPS. The check asks for the
   app's own health page (e.g. `https://<host>/healthz` for an API-only app whose `/` answers 404)
   when you publish the endpoint that page lives on, and `/` otherwise.
-- `remove <instance>` withdraws its addresses first. Tailscale and Caddy entries Harbor did not
-  create are never touched.
+- `remove <instance>` withdraws its addresses first and remembers them; the remove plan lists each one,
+  and `reinstall` publishes them again with the same main address (a tailnet address gets a fresh port;
+  a name another app took meanwhile is reported and skipped). `harbor unexpose` on a removed app forgets
+  a remembered address; `purge` forgets all of them. Tailscale and Caddy entries Harbor did not create
+  are never touched.
+- Tailnet addresses published before 0.23.0 used the app's own port number. Harbor moves each one to its
+  own port once after the upgrade (new entry first, old one removed after) and leaves a notification with
+  the new address; an app whose main address is the tailnet one should be restarted so its links follow.
 - The Harbor UI is loopback and tailnet only; the API refuses any public exposure of it.
 
 ### Publishing on the internet, step by step

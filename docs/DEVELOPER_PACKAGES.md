@@ -51,6 +51,8 @@ endpoints:
     httpsRequired: false         # true only if it does NOT work over plain http at all (secure-only login
                                  # cookie, WebCrypto vault): in LAN mode it then needs an HTTPS main address
                                  # (secure LAN, Tailscale or a domain) and the store says so before install
+    kind: web                    # web (default) | api: machine-facing (an MCP gateway, a document server):
+                                 # addresses to copy, no Open button (decision 141). Put it on ui.primaryEndpoint.
 health:
   endpoint: web
   path: /                        # must answer before any account exists; a published address of this
@@ -75,9 +77,16 @@ secrets:                         # optional: Harbor generates and keeps these
     bytes: 32
     encoding: hex
     retention: retain
+    # showOnce: JWT secret for the document server   # optional (decision 138): the operator sees this
+    #                              generated value once after install, under this label (e.g. to paste it
+    #                              into another system); never shown again, kept as an instance secret
     bindings:
       - service: web
         environment: APP_SECRET
+      - service: web             # the value inside a literal (decision 139): images without a shell
+        environment: DATABASE_URL  # cannot assemble a URL in `command:`. Exactly one {{value}}; no `$`.
+        template: "postgres://app:{{value}}@db:5432/app"
+        encode: url              # optional: percent-encode the value first (operator-typed passwords)
   - id: upstream-token           # …or asks the operator for one at install (decision 125, see §8)
     source: operator
     prompt: Access token of the documents app (its Settings → Access tokens)
@@ -130,6 +139,7 @@ provisionedCredentials:          # optional: Harbor creates the admin account th
   usernameEnv: ADMIN_USER        # either: Harbor injects the username ("admin" or `username`) here…
   username: admin                # …or the image uses a fixed name (then omit usernameEnv)
   note: Shown next to the one-time credentials after the install.
+  label: My App admin login      # optional: what the one-time display calls it (default "<name> admin login")
                                  # Mutually exclusive with defaultCredentials. The credential is shown
                                  # once in the install result and retained as an instance secret.
 presentation:
@@ -140,7 +150,12 @@ presentation:
   developer: You
   website: https://example.com
   releaseNotes: What changed in this revision (shown before an update)
+  hideFromHome: false            # true suggests hiding it from Home (helpers without a page); the operator decides
 ```
+
+Text the operator reads (names, descriptions, prompts, setup instructions, notes) is plain text: it is
+shown as text everywhere, never as HTML, so `Bearer <token>` and `https://<domain>/` are fine
+(decision 137). Control characters are refused.
 
 ## 3. compose.yaml (the supported subset)
 
@@ -178,6 +193,12 @@ Every named volume needs exactly one storage
 claim; every claim must be mounted. Secrets and configuration bindings must not be set literally in
 `environment` as well.
 
+**A cache should not persist** (lesson from a real move). A cache service such as Redis whose image
+declares a `VOLUME` keeps its data in an anonymous volume across restarts and reboots. After a data copy
+the app then ran with the empty install's cache (Frappe hid every Server Script until `bench clear-cache`).
+Turn persistence off for caches — `command: [redis-server, --save, "", --appendonly, "no"]` — and claim
+storage only for what is real data.
+
 ## 4. What Harbor does at upload
 
 1. Reads the zip (no symlinks, no `..`, CRC checked), validates `manifest.yaml` against the schema and
@@ -208,6 +229,7 @@ installed app from that package shows an update.
 
 ```sh
 harbor packages                       # your uploaded packages
+harbor packages validate ./my-app     # the daemon's validators on a folder (or a repo with harbor/), offline
 harbor packages add my-app.zip        # upload (pins images, reports what changed)
 harbor install my-app                 # install like any other package
 harbor list                           # UPDATE column shows "-> 2 (1.1.0)" when one is available

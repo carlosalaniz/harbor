@@ -535,7 +535,7 @@ export function FolderPicker({ title, hint, initial, onPick, onClose }: { title:
 // primary, else the secure LAN address (when LAN HTTPS is on) with the host the browser used
 // (mDNS name or IP), else the plain LAN address, else loopback.
 export function openUrl(inst: InstanceSummary, endpoint = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0]): string | null {
-  if (!endpoint) return null;
+  if (!endpoint || inst.apiOnly) return null; // decision 141: an API has addresses, not a page to open
   const primary = endpoint.urls[endpoint.primary as keyof typeof endpoint.urls];
   if (primary && endpoint.primary !== 'loopback') return primary;
   const here = location.hostname;

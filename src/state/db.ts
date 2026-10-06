@@ -217,7 +217,7 @@ function applyPragmas(db: Db): void {
 }
 
 // Explicit fresh-state initialization. Refuses to run when a database already exists.
-export function initializeState(stateDir: string, opts: { clock: Clock; ids: Ids; config: unknown }): { installationId: string } {
+export function initializeState(stateDir: string, opts: { clock: Clock; ids: Ids; config: unknown; settings?: Record<string, unknown> }): { installationId: string } {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const file = dbPath(stateDir);
   if (existsSync(file)) throw new HarborError('STATE_UNAVAILABLE', `state already initialized at ${file}`, { nextAction: 'Use the existing state; initialization never overwrites.' });
@@ -234,6 +234,8 @@ export function initializeState(stateDir: string, opts: { clock: Clock; ids: Ids
       rfc3339(opts.clock.now()),
       JSON.stringify(opts.config ?? {}),
     );
+    // Fresh-install defaults (decision 132): written once here, so an existing installation never gets them.
+    for (const [key, value] of Object.entries(opts.settings ?? {})) db.prepare('INSERT INTO settings (key, value_json, updated_at) VALUES (?, ?, ?)').run(key, JSON.stringify(value), rfc3339(opts.clock.now()));
     return { installationId };
   } finally {
     db.close();

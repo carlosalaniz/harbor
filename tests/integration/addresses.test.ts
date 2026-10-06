@@ -81,7 +81,7 @@ describe('app addresses: hook, restart, HTTPS main address', () => {
     const r = await h.api.run({ kind: 'expose', instanceId: app.id, via: 'tailnet' });
     expect(r.op.state).toBe('succeeded');
     expect(h.fake.execs.length).toBeGreaterThan(before);
-    expect(lastExec().env['HARBOR_ADDRESSES']).toContain(`harbor-test.tail1234.ts.net:${app.endpoints[0]!.hostPort}`);
+    expect(lastExec().env['HARBOR_ADDRESSES']).toContain(new URL(r.plan.exposure!.url).host); // its own port (decision 133)
     const un = await h.api.run({ kind: 'unexpose', instanceId: app.id, via: 'tailnet' });
     expect(un.op.state).toBe('succeeded');
     expect(lastExec().env['HARBOR_ADDRESSES']).not.toContain('tail1234');
@@ -125,7 +125,8 @@ describe('app addresses: hook, restart, HTTPS main address', () => {
     expect(r.op.state).toBe('succeeded');
     const inst = (await h.api.instances()).find((i) => i.packageId === 'secureapp')!;
     expect(inst.endpoints[0]!.primary).toBe('tailnet');
-    expect(inst.endpoints[0]!.urls.tailnet).toBe(`https://harbor-test.tail1234.ts.net:${inst.endpoints[0]!.hostPort}/`);
+    expect(inst.endpoints[0]!.urls.tailnet).toMatch(/^https:\/\/harbor-test\.tail1234\.ts\.net:\d+\/$/);
+    expect(inst.endpoints[0]!.urls.tailnet).not.toContain(`:${inst.endpoints[0]!.hostPort}/`); // its own port (decision 133)
   });
 
   it('LAN HTTPS: main address becomes the secure one after Restart; the switch lists who restarts or breaks', async () => {

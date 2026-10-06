@@ -5,7 +5,7 @@ import { instanceDir, loadReleaseSnapshot } from './instance-dir.js';
 import { probeOnce } from './readiness.js';
 import { LABELS } from '../naming.js';
 import type { Readiness, Runtime } from '../state/repo.js';
-import { exposureCheck } from '../exposure/urls.js';
+import { exposureCheck, exposureUrl } from '../exposure/urls.js';
 import type { Manifest } from '../contracts/types.js';
 import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyLanHttps, caddyRoutesFromState, caddySignature } from './runner.js';
@@ -75,7 +75,8 @@ export class Observer {
             const c = await this.ctx.docker.inspectContainer(r.dockerId ?? r.name);
             if (c && c.labels[LABELS.instance] === inst.id) {
               present += 1;
-              if (c.state === 'running') {
+              // a container with no network at all is not part of a working app (crash-loops on its upstreams)
+              if (c.state === 'running' && c.networkIds.length > 0) {
                 running += 1;
                 try {
                   const s = await this.ctx.docker.containerStats(c.id);
@@ -474,9 +475,33 @@ export class Observer {
     } catch {
       return;
     }
+    const appPorts = new Set(this.ctx.repo.claimedPorts().map((c) => c.port));
     for (const e of tailnet) {
-      const target = `http://127.0.0.1:${e.port}`;
+      const inst = this.ctx.repo.instance(e.instanceId);
+      if (!inst || inst.activeOperationId) continue;
+      const alloc = inst.endpoints.find((x) => x.id === e.endpointId);
+      const target = `http://127.0.0.1:${alloc?.hostPort ?? e.port}`;
       const fixes: string[] = [];
+      // Decision 133, one-time move: addresses published before 0.23.0 shared the app's own port number,
+      // which clashes with the app's LAN listener and blocks its next container recreate. New one first,
+      // then drop the old entry, then record it — a failure leaves the old address working.
+      if (alloc && appPorts.has(e.port)) {
+        const old = e.port;
+        try {
+          const port = await this.service.tailnetPort();
+          await this.ctx.tailscale.serve(port, target);
+          await this.ctx.tailscale.unserve(old, target).catch((err: Error) => this.ctx.log.warn(`could not drop the old tailnet serve entry on port ${old}: ${err.message}`));
+          this.ctx.repo.updateExposurePort(e.id, port);
+          e.port = port;
+          const url = exposureUrl(e);
+          this.ctx.repo.addEvent({ instanceId: e.instanceId, phase: 'observer', message: `tailnet address moved from port ${old} to its own port: ${url}` });
+          this.ctx.notifier.notify({ kind: 'tailnet-moved', severity: 'info', title: `${inst.displayName ?? inst.name} has a new tailnet address`, body: `${url} (was port ${old}, which clashed with the app's own port).${inst.primaryExposure === 'tailnet' ? ' It is the main address: restart the app so links it sends out use the new one.' : ''}`, instanceId: inst.id, dedupeKey: `tailnet-moved:${e.id}` });
+          this.ctx.log.info('tailnet exposure moved to its own port', { instanceId: e.instanceId, from: old, to: port });
+          continue;
+        } catch (err) {
+          this.ctx.log.warn(`could not move the tailnet address of ${inst.name} off port ${old}: ${(err as Error).message}`);
+        }
+      }
       if (!entries.some((x) => x.port === e.port && x.target === target)) {
         try {
           await this.ctx.tailscale.serve(e.port, target);

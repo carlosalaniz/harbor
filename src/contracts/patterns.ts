@@ -30,3 +30,6 @@ export function parseDuration(value: string): number | null {
     default: return null;
   }
 }
+
+// Decision 139: where a secret goes inside an environment literal (secrets[].bindings[].template).
+export const SECRET_TEMPLATE_SLOT = '{{value}}';

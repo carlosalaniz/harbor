@@ -80,6 +80,10 @@ export interface InstanceSummary {
   linkedBy: { instanceId: string; name: string; linkId: string; state: AppLinkState }[];
   // decision 125: secrets the operator typed (never their values); set = a value is stored
   operatorSecrets: { id: string; prompt: string; optional: boolean; set: boolean }[];
+  // decision 131: not shown on Home (the operator's choice, else the package's presentation.hideFromHome)
+  hiddenFromHome: boolean;
+  // decision 141: the main endpoint is machine-facing (kind api): addresses to copy, no Open button
+  apiOnly: boolean;
 }
 
 // ---- app links (decision 126)
@@ -511,7 +515,7 @@ export interface RotationPatch {
   everyHours?: number;
   reddit?: { clientId: string; clientSecret?: string } | null;
 }
-export type InstanceAppearancePatch = { displayName?: string | null; icon?: { kind: 'default' } | { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; dataUrl: string } };
+export type InstanceAppearancePatch = { displayName?: string | null; hidden?: boolean; icon?: { kind: 'default' } | { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; dataUrl: string } };
 export interface SystemHostDto {
   hostname: string;
   os: string;

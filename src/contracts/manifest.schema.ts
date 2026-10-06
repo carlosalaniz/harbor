@@ -3,8 +3,11 @@ import { ENV_KEY_PATTERN, ID_PATTERN, RELATIVE_PATH_PATTERN, REVISION_PATTERN } 
 
 const idString = { type: 'string', pattern: ID_PATTERN } as const;
 const envKey = { type: 'string', pattern: ENV_KEY_PATTERN } as const;
+// Package text is shown as text everywhere (React text nodes, CLI, plain-text notifications), never as
+// HTML, so `<` and `>` are ordinary characters (decision 137: "Bearer <token>", "https://<domain>/").
+// Control characters stay out.
 const plainText = (maxLength: number) =>
-  ({ type: 'string', minLength: 1, maxLength, pattern: '^[^<>\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]*$' }) as const;
+  ({ type: 'string', minLength: 1, maxLength, pattern: '^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]*$' }) as const;
 
 export const MANIFEST_SCHEMA = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -65,6 +68,8 @@ export const MANIFEST_SCHEMA = {
         usernameEnv: envKey,
         username: plainText(64),
         note: plainText(200),
+        // decision 138: what the one-time display calls it ("Nextcloud admin login"); default "<app> admin login"
+        label: plainText(60),
       },
     },
     release: {
@@ -108,6 +113,9 @@ export const MANIFEST_SCHEMA = {
           // Decision 116: does not work at all over plain http (secure-only login cookie, WebCrypto vault).
           // Stricter than browserContext: secure ("better on HTTPS"); gates install in LAN mode.
           httpsRequired: { type: 'boolean' },
+          // decision 141: api = a machine-facing endpoint (an MCP gateway, a document server): it gets its
+          // addresses like any other, but the console offers no Open button for it
+          kind: { enum: ['web', 'api'] },
         },
       },
     },
@@ -176,6 +184,9 @@ export const MANIFEST_SCHEMA = {
           minLength: { type: 'integer', minimum: 1, maximum: 4096 },
           maxLength: { type: 'integer', minimum: 1, maximum: 4096 },
           retention: { const: 'retain' },
+          // decision 138: a generated secret the operator must see once (e.g. a document server's JWT secret
+          // another system needs); the label is what the one-time display calls it
+          showOnce: plainText(80),
           bindings: {
             type: 'array',
             minItems: 1,
@@ -184,7 +195,9 @@ export const MANIFEST_SCHEMA = {
               type: 'object',
               additionalProperties: false,
               required: ['service', 'environment'],
-              properties: { service: idString, environment: envKey },
+              // decision 139: template = a literal with one {{value}} where the secret goes (an image without
+              // a shell cannot assemble e.g. a database URL); encode url percent-encodes the value first
+              properties: { service: idString, environment: envKey, template: { type: 'string', minLength: 9, maxLength: 500, pattern: '^[^$\\u0000-\\u001F]*$' }, encode: { enum: ['url'] } },
             },
           },
         },
@@ -253,6 +266,8 @@ export const MANIFEST_SCHEMA = {
         developer: plainText(80),
         website: { type: 'string', pattern: '^https://[^\\s<>"]{1,200}$' },
         releaseNotes: plainText(1000),
+        // decision 131: helpers without a page of their own (an MCP gateway, a document server)
+        hideFromHome: { type: 'boolean' },
         // Home widget (decision 81): the app exposes JSON on its own port; the daemon proxies it.
         widget: {
           type: 'object',

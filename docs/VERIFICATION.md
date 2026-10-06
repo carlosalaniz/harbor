@@ -220,6 +220,37 @@ Fake-adapter and unit evidence only (no live run of these fixes yet):
 - `pnpm catalog:verify`: nextcloud revision 4 (hashes refreshed, qualification `pending` until a
   droplet run).
 
+## 3k. Real-host TODOs, batch 1 (2026-10-06, Harbor 0.23.0, decisions 130–141)
+
+Fake-adapter and unit evidence (live droplet run of the tailnet port and remove/reinstall paths: pending,
+see the 0.24.0 section once it exists):
+
+- `pnpm test` 240 passed. `install-location`: `defaultInstallLocation` is `<data>/harbor-apps/<pkg>` only
+  for an eligible data-folder candidate, never a drive. `migration`: `initializeState` with
+  `FRESH_INSTALL_SETTINGS` writes `appearance.rotation {enabled: true, source: bing, everyHours: 24}`;
+  without it the settings table stays empty. `package-text`: `<token>` accepted, control characters
+  refused; a `template` renders `postgres://app:<value>@db…`, `encode: url` percent-encodes, the
+  prospective model keeps `<<secret:id>>`; zero/two slots, `$`, or `encode` without a template refused;
+  `showOnce` refused on operator secrets; `[redis-server, --save, "", …]` accepted (`[""]` still
+  refused); `validatePackageFolder` passes `catalog/excalidraw`, finds a repo's `harbor/`, checks the
+  Dockerfile in a build context, refuses `build:` in a flat folder and `ports:`.
+- `pnpm test:integration` 180 passed + 3 live-Docker skipped. `repair.test.ts`: an install without a
+  location carries the "Not encrypted" warning and `home: null`; `presentation.hideFromHome` is the
+  default and the operator's `hidden` wins both ways; remove lists "Withdraw … Reinstall publishes it
+  again", leaves no rows/Caddy routes/serve entries, reinstall re-publishes the public name (main again)
+  and the tailnet one on a fresh port; on the removed app `unexpose --via tailnet` forgets it (a second
+  one is NOT_FOUND) and the next reinstall publishes only the domain; an update with `failUp` leaves
+  `needs_action` with the "harbor repair" next action, `unexpose` of the domain succeeds in that state,
+  `expose` is still refused, Restart plans "Repair …" and brings revision 1 back `installed/running`;
+  a container with no network flips runtime away from running and back; a failed restart removes it
+  ("removed half-created container … (no network)"); port 80 taken: warn "another program" with Caddy
+  down, info "Harbor's public proxy (Caddy)" with it up. `exposure.test.ts`: the tailnet port is in
+  range and ≠ the app port, serve targets the app port, a later install never gets that port; a
+  pre-0.23 row on the app port is moved by the observer with a `tailnet-moved` notification.
+- `pnpm test:e2e` 29 passed (Hide from Home → "1 hidden app" → Show; wallpaper switch on at first start;
+  "Basic-auth login for https://draw.example.com/, shown once").
+- `pnpm catalog:verify`, `pnpm openapi -- --check` (84 paths, no new route): pass.
+
 ## 3. Live acceptance runs (`pnpm test:vm -- --fresh`)
 
 ### Run vm-2026-09-14T17-27-18 (fresh VM) — FAILED at A01, fixed

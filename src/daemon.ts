@@ -232,15 +232,21 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     if (config.lan.enabled) {
       lanServer = createHttpServer((req, res) => app.routing(req, res));
       lanServer.on('upgrade', (req, socket, head) => app.server.emit('upgrade', req, socket, head));
-      await new Promise<void>((resolve, reject) => {
+      const failure = await new Promise<void>((resolve, reject) => {
         lanServer!.once('error', reject);
         lanServer!.listen({ host: '::', port: config.lan.port }, () => resolve());
-      }).catch((e: Error) => {
-        // Caddy owns port 80 when the public proxy is installed: it proxies the console for LAN names instead (observer)
-        if (/EADDRINUSE/.test(e.message)) log.info(`port ${config.lan.port} is taken (Caddy): the LAN console is served through the proxy`);
-        else log.error(`LAN listener on port ${config.lan.port} failed: ${e.message}; the console stays reachable on 127.0.0.1:${config.listen.port}`);
+      }).then(
+        () => null,
+        (e: Error) => e,
+      );
+      if (failure) {
         lanServer = null;
-      });
+        // Caddy owns port 80 when the public proxy is installed: it proxies the console for LAN names instead
+        // (observer). Only its admin API answering says it is Caddy; anything else is another program (decision 136).
+        if (/EADDRINUSE/.test(failure.message) && (await caddy.available().catch(() => false))) log.info(`port ${config.lan.port} is taken by Harbor's public proxy (Caddy): the LAN console is served through it`);
+        else if (/EADDRINUSE/.test(failure.message)) log.warn(`port ${config.lan.port} is taken by another program (not Harbor's Caddy): the console is only on 127.0.0.1:${config.listen.port} until that port is free`);
+        else log.error(`LAN listener on port ${config.lan.port} failed: ${failure.message}; the console stays reachable on 127.0.0.1:${config.listen.port}`);
+      }
       if (lanServer) log.info('LAN listener up', { port: config.lan.port });
     }
     observer.start();

@@ -39,6 +39,7 @@ import type { Ctx } from './context.js';
 import { exposureDto, instanceSummary, operationDto, planDto } from './dto.js';
 import type { ExposureDto, ExposureVia } from '../contracts/api.js';
 import { HOSTNAME_RE, exposureUrl, mainPublicExposure } from '../exposure/urls.js';
+import { retainedExposures } from './retained-exposures.js';
 import { instanceDir, loadReleaseSnapshot, secretExists } from './instance-dir.js';
 
 export interface SubmitResult {
@@ -47,6 +48,9 @@ export interface SubmitResult {
 }
 
 // Read paths and the plan/submit contract. Mutations of Docker resources live in the runner.
+// Decision 130: an install without a location is said plainly, wherever it comes from.
+export const NOT_ENCRYPTED_WARNING = 'Not encrypted: the app keeps its data on plain Docker volumes, readable on disk, and starts on its own after a reboot before anyone logs in.';
+
 export class ApplicationService {
   private lastDockerObservation: { available: boolean; observedAt: string | null; version: string | null; error: string | null } = { available: false, observedAt: null, version: null, error: null };
   private wake: () => void = () => {};
@@ -409,7 +413,7 @@ export class ApplicationService {
     this.ctx.repo.setAutoUpdate(row.id, enabled);
     const meta = this.packageMeta(row);
     const fresh = this.ctx.repo.instance(row.id)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.linkLook(fresh, meta) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.extraLook(fresh, meta) });
   }
   // One update plan per eligible instance, submitted through the normal queue ("Update all").
   // Failures roll back per instance and never stop the rest (the queue is serial anyway).
@@ -732,15 +736,15 @@ export class ApplicationService {
     return this.ctx.packages.list();
   }
 
-  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; links: LinkClaim[] } {
-    const from = (pkg: LoadedPackage) => ({ name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), links: pkg.manifest.links ?? [] });
+  private packageMeta(i: InstanceRow): { name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; links: LinkClaim[]; hideFromHome: boolean; apiOnly: boolean } {
+    const from = (pkg: LoadedPackage) => ({ hideFromHome: pkg.manifest.presentation?.hideFromHome === true, apiOnly: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.kind === 'api', name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), links: pkg.manifest.links ?? [] });
     try {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
         return from(this.ctx.packages.load(i.packageId));
       } catch {
-        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], links: [] };
+        return { name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], links: [], hideFromHome: false, apiOnly: false };
       }
     }
   }
@@ -756,6 +760,13 @@ export class ApplicationService {
   }
 
   // ---- app links (decision 126) and operator secrets (decision 125): read models
+
+  // Read-time look that is not a column: links, operator secrets and Hide from Home (decision 131: the
+  // operator's per-app choice in the `home.hidden` setting wins over the package's suggestion).
+  private extraLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; links: LinkClaim[]; hideFromHome: boolean; apiOnly: boolean }): ReturnType<ApplicationService['linkLook']> & { hiddenFromHome: boolean; apiOnly: boolean } {
+    const choice = this.ctx.repo.setting<Record<string, boolean>>('home.hidden')?.[i.id];
+    return { ...this.linkLook(i, meta), hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly };
+  }
 
   private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets'] } {
     const secretsDir = path.join(instanceDir(this.ctx.config.stateDir, i.id), 'secrets');
@@ -883,7 +894,7 @@ export class ApplicationService {
     const current = this.currentRevisionsSafe();
     return this.ctx.repo.listInstances().map((i) => {
       const meta = this.packageMeta(i);
-      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id), ...this.linkLook(i, meta) });
+      return instanceSummary(i, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(i.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(i, current), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(i.id) ?? null, needsDrive: this.needsDrive(i.id), home: this.homeState(i.id), ...this.extraLook(i, meta) });
     });
   }
   // Install-location read model: the encrypted home on the drive (null =
@@ -1197,7 +1208,7 @@ export class ApplicationService {
   private summaryOf(instanceId: string): InstanceSummary {
     const fresh = this.ctx.repo.instance(instanceId)!;
     const meta = this.packageMeta(fresh);
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.linkLook(fresh, meta) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.extraLook(fresh, meta) });
   }
   private currentRevisionsSafe(): ReturnType<PackageStore['currentRevisions']> {
     try {
@@ -1276,7 +1287,7 @@ export class ApplicationService {
     this.ctx.log.info('drive adopted', { instanceId, storageId, path: hostPath, actor });
     const meta = this.packageMeta(this.ctx.repo.instance(instanceId)!);
     const fresh = this.ctx.repo.instance(instanceId)!;
-    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.linkLook(fresh, meta) });
+    return instanceSummary(fresh, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(fresh.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(fresh, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(fresh.id) ?? null, needsDrive: this.needsDrive(fresh.id), home: this.homeState(fresh.id), ...this.extraLook(fresh, meta) });
   }
 
   // ---- your own apps
@@ -1436,7 +1447,7 @@ export class ApplicationService {
       void submit;
       const fresh = this.ctx.repo.instance(instanceId)!;
       const meta = this.packageMeta(fresh);
-      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: null, needsDrive: null, home: this.homeState(instanceId) });
+      return instanceSummary(fresh, meta.name, meta.primaryEndpoint, [], { icon: meta.icon, category: meta.category, lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: null, needsDrive: null, home: this.homeState(instanceId), hiddenFromHome: this.extraLook(fresh, meta).hiddenFromHome, apiOnly: meta.apiOnly });
     } finally {
       zeroKey(masterKey);
     }
@@ -1445,7 +1456,7 @@ export class ApplicationService {
   async instance(id: string): Promise<InstanceDetail> {
     const row = this.instanceRow(id);
     const meta = this.packageMeta(row);
-    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id), ...this.linkLook(row, meta) });
+    const summary = instanceSummary(row, meta.name, meta.primaryEndpoint, this.ctx.repo.exposures(row.id), { icon: meta.icon, category: meta.category, updateAvailable: this.updateFor(row, this.currentRevisionsSafe()), lanHost: this.lanHost(), lanSecureHost: this.lanSecureHost(), usage: this.usageCache.get(row.id) ?? null, needsDrive: this.needsDrive(row.id), home: this.homeState(row.id), ...this.extraLook(row, meta) });
     const resources = this.ctx.repo.resources(row.id);
     const presence: (boolean | null)[] = [];
     for (const r of resources) {
@@ -1605,7 +1616,7 @@ export class ApplicationService {
       const mainWarnings: string[] = [];
       let mainExposure: PlanProposal['exposure'];
       if (req.main) {
-        const t = await this.exposureTarget(req.main.via, mainEndpoint, pkg, pkg.manifest.metadata.name, req.main.via === 'public' ? { hostname: req.main.hostname } : {}, mainWarnings);
+        const t = await this.exposureTarget(req.main.via, mainEndpoint, pkg, pkg.manifest.metadata.name, req.main.via === 'public' ? { hostname: req.main.hostname } : {}, mainWarnings, endpoints.map((e) => e.hostPort));
         if (repo.exposureByAddress(req.main.via, t.hostname, t.port)) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.main.via, hostname: t.hostname, port: t.port })} is already used by another app`);
         mainExposure = { endpointId: mainEndpoint.id, via: req.main.via, hostname: t.hostname, port: t.port, protection: t.protection, makePrimary: true };
       } else if (requiresHttps(pkg) && this.ctx.config.lan.enabled && !this.httpsEnabled()) {
@@ -1655,7 +1666,7 @@ export class ApplicationService {
                     ? 'The app (including its database) lives sealed on this machine and unlocks silently when you log in.'
                     : 'The app (including its database) lives sealed on this machine; its own passphrase opens it on another Harbor machine.',
               ]
-            : []),
+            : [NOT_ENCRYPTED_WARNING]),
         ],
         releaseHashes: pkg.hashes,
         ...(mainExposure ? { exposure: mainExposure } : {}),
@@ -1702,9 +1713,15 @@ export class ApplicationService {
       }
       case 'restart': {
         // Decision 116: re-render with today's addresses (LAN HTTPS, rename) and recreate, then the hook.
-        if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `cannot restart an instance in state ${inst.installState}`);
-        if (inst.runtime !== 'running') throw new HarborError('INVALID_STATE', `${inst.name} is not running`, { nextAction: 'Start it instead.' });
+        // Decision 135: Restart is also the repair of an app left in needs_action/failed by an operation
+        // that could not finish (e.g. an update whose rollback failed): re-render, recreate, check readiness.
+        const repair = (inst.installState === 'needs_action' || inst.installState === 'failed') && inst.everInstalled;
+        if (inst.installState !== 'installed' && !repair) throw new HarborError('INVALID_STATE', `cannot restart an instance in state ${inst.installState}`);
+        if (!repair && inst.runtime !== 'running') throw new HarborError('INVALID_STATE', `${inst.name} is not running`, { nextAction: 'Start it instead.' });
+        const need = this.needsDrive(inst.id);
+        if (repair && need) throw new HarborError('DATA_MISSING', `${inst.name} needs its drive: ${need.path} (${need.purpose}) is not the folder it was using (${need.detail})`, { nextAction: 'Re-insert the drive first.' });
         const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+        if (repair) changes.push(`Repair "${inst.name}": it is ${inst.installState.replace('_', ' ')} after its last operation; run revision ${inst.revision} again from its stored release`);
         changes.push(
           `Re-render the private Compose file of "${inst.name}" with its current addresses`,
           `Recreate the containers of project ${inst.project} (same volumes, secrets and ports)`,
@@ -1719,7 +1736,13 @@ export class ApplicationService {
         break;
       case 'remove':
         if (inst.installState === 'retained') throw new HarborError('INVALID_STATE', `instance ${inst.name} is already removed (retained)`);
-        changes.push(`Stop and delete the recorded containers of "${inst.name}"`, `Delete the private network ${inst.project}_default if unused`, ...this.linkRemovalNotes(inst).changes, 'Retain volumes, secrets, name and port allocations');
+        changes.push(
+          `Stop and delete the recorded containers of "${inst.name}"`,
+          `Delete the private network ${inst.project}_default if unused`,
+          ...this.ctx.repo.exposures(inst.id).map((e) => `Withdraw ${exposureUrl(e)} for now (${e.via === 'proxy' ? 'your proxy keeps its own entry' : e.via === 'public' ? 'Caddy route' : 'tailscale serve entry'}); Reinstall publishes it again`),
+          ...this.linkRemovalNotes(inst).changes,
+          'Retain volumes, secrets, name and port allocations',
+        );
         break;
       case 'purge':
         if (inst.installState === 'installing') throw new HarborError('INVALID_STATE', `cannot uninstall ${inst.name} while it is installing`);
@@ -1734,7 +1757,7 @@ export class ApplicationService {
       case 'reinstall':
         if (inst.installState !== 'retained') throw new HarborError('INVALID_STATE', `reinstall requires a removed (retained) instance; ${inst.name} is ${inst.installState}`);
         if (!inst.everInstalled) throw new HarborError('INVALID_STATE', `instance ${inst.name} never completed an installation; manual investigation is required`, { nextAction: 'Inspect the instance and its resources manually. Automatic reinstall only applies to previously successful instances.' });
-        changes.push(`Reinstall ${pkgName} revision ${inst.revision} into "${inst.name}" using its stored release`, 'Verify retained volumes (ownership tokens) and secrets before starting', `Recreate containers and network for project ${inst.project}`, ...this.ctx.repo.linksOfConsumer(inst.id).filter((l) => l.state === 'dormant').map((l) => `Re-create link ${l.linkId} (network ${l.networkName}) if its provider is still installed`), 'Check readiness');
+        changes.push(`Reinstall ${pkgName} revision ${inst.revision} into "${inst.name}" using its stored release`, 'Verify retained volumes (ownership tokens) and secrets before starting', ...(retainedExposures(this.ctx.repo, inst.id)?.items ?? []).map((x) => `Publish ${exposureUrl(x)} again${x.via === 'tailnet' ? ' (on a fresh tailnet port)' : ''}`), `Recreate containers and network for project ${inst.project}`, ...this.ctx.repo.linksOfConsumer(inst.id).filter((l) => l.state === 'dormant').map((l) => `Re-create link ${l.linkId} (network ${l.networkName}) if its provider is still installed`), 'Check readiness');
         break;
     }
     const resources = this.ctx.repo.resources(inst.id);
@@ -1907,7 +1930,7 @@ export class ApplicationService {
 
   // Where a tailnet / public exposure of `alloc` would live, after checking the provider is ready
   // (shared by Publish and by install with a chosen main address, decision 116). Pushes plan warnings.
-  private async exposureTarget(via: ExposureVia, alloc: EndpointAllocation, pkg: LoadedPackage, pkgName: string, req: { hostname?: string; protection?: 'none' | 'basic'; proxyFrom?: string }, warnings: string[]): Promise<{ hostname: string; port: number; protection: 'none' | 'basic' }> {
+  private async exposureTarget(via: ExposureVia, alloc: EndpointAllocation, pkg: LoadedPackage, pkgName: string, req: { hostname?: string; protection?: 'none' | 'basic'; proxyFrom?: string }, warnings: string[], reserved: number[] = []): Promise<{ hostname: string; port: number; protection: 'none' | 'basic' }> {
     const { repo } = this.ctx;
     let hostname: string;
     let port: number;
@@ -1929,7 +1952,10 @@ export class ApplicationService {
       if (!st.httpsEnabled) throw new HarborError('UNSUPPORTED_CAPABILITY', 'HTTPS certificates are not enabled for this tailnet', { nextAction: 'Enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS settings), then retry.' });
       if (req.hostname && req.hostname !== st.dnsName) throw new HarborError('INVALID_REQUEST', `tailnet exposures use the node name ${st.dnsName}; a custom hostname is not possible`);
       hostname = st.dnsName;
-      port = alloc.hostPort; // same port number as loopback: "same port, three addresses"
+      // Decision 133: its own port, never the app's. In LAN mode the app port is published on every
+      // interface (0.0.0.0), so tailscaled on the same number shares it with the app's plain-HTTP listener
+      // and later blocks the app's own container recreate ("failed to bind host port").
+      port = await this.tailnetPort([alloc.hostPort, ...reserved]);
       protection = 'none'; // tailnet ACLs are the access control; serve has no auth layer
       if (req.protection === 'basic') warnings.push('Basic-auth protection is not available on the tailnet path; access is governed by your tailnet ACLs.');
     } else {
@@ -1949,9 +1975,44 @@ export class ApplicationService {
     return { hostname, port, protection };
   }
 
+  // Decision 135: `unexpose` on a removed app forgets an address Remove kept for Reinstall (nothing is
+  // served for it right now, so no provider is touched).
+  private forgetRetainedPlan(req: Extract<PlanRequest, { kind: 'unexpose' }>, inst: InstanceRow, actor: string, now: Date, expiresAt: string): PlanDto {
+    const { repo, ids } = this.ctx;
+    const endpointId = req.endpointId ?? this.packageMeta(inst).primaryEndpoint;
+    const kept = (retainedExposures(repo, inst.id)?.items ?? []).filter((x) => x.endpointId === endpointId && x.via === req.via && (req.hostname === undefined || x.hostname === req.hostname));
+    if (!kept.length) throw new HarborError('NOT_FOUND', `${inst.name} is removed and keeps no ${req.via} address${req.hostname ? ` at ${req.hostname}` : ''} for Reinstall`);
+    if (kept.length > 1) throw new HarborError('INVALID_REQUEST', `${inst.name} keeps ${kept.length} ${req.via} addresses (${kept.map((x) => x.hostname).join(', ')})`, { nextAction: `Name the one to forget: harbor unexpose ${inst.name} --via ${req.via} --host <hostname>` });
+    const x = kept[0]!;
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: null,
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [`Forget ${exposureUrl(x)}: ${inst.name} is removed, so nothing serves it now, and Reinstall will not publish it again`],
+      warnings: [],
+      releaseHashes: inst.releaseHashes,
+      exposure: { endpointId, via: x.via, hostname: x.hostname, port: x.port, protection: x.protection, makePrimary: false, forget: true },
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'unexpose', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
   private async exposurePlan(req: Extract<PlanRequest, { kind: 'expose' | 'unexpose' | 'reconfigure' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
     const { repo, ids } = this.ctx;
-    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `exposure changes require an installed instance; ${inst.name} is ${inst.installState}`);
+    // Decision 135: withdrawing an address is also the way out of a broken state (needs_action/failed:
+    // the address that broke an update must be removable through Harbor), and on a removed app it
+    // forgets an address kept for Reinstall. Publishing and switching still need an installed app.
+    const repairable = inst.installState === 'needs_action' || inst.installState === 'failed';
+    if (req.kind === 'unexpose' && inst.installState === 'retained') return this.forgetRetainedPlan(req, inst, actor, now, expiresAt);
+    if (inst.installState !== 'installed' && !(req.kind === 'unexpose' && repairable)) {
+      throw new HarborError('INVALID_STATE', `${req.kind === 'unexpose' ? 'withdrawing an address' : 'exposure changes'} require${req.kind === 'unexpose' ? 's' : ''} an installed app; ${inst.name} is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? `Reinstall it first: harbor reinstall ${inst.name}` : repairable ? `Withdraw the address that is in the way (harbor unexpose ${inst.name} --via <via>), then retry: harbor retry ${inst.name}` : 'Wait for the current operation to finish.' });
+    }
     const meta = this.packageMeta(inst);
     const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
     const existing = repo.exposures(inst.id);
@@ -2050,9 +2111,28 @@ export class ApplicationService {
     return this.plan(plan.id);
   }
 
+  // Decision 133: a tailnet address's own port, from the top of the app range down (app ports grow from
+  // the bottom up), never a claimed app port, another tailnet address, a Docker-published port or a port
+  // with any listener on it right now (the probe also sees wildcard 0.0.0.0 listeners).
+  async tailnetPort(reserved: number[] = []): Promise<number> {
+    const { repo, docker, ports, config } = this.ctx;
+    const taken = new Set<number>([config.listen.port, ...repo.claimedPorts().map((c) => c.port), ...repo.exposures().filter((e) => e.via === 'tailnet').map((e) => e.port), ...reserved]);
+    try {
+      for (const p of await docker.publishedHostPorts()) taken.add(p);
+    } catch (e) {
+      throw new HarborError('DOCKER_UNAVAILABLE', `cannot query Docker port bindings: ${(e as Error).message}`);
+    }
+    for (let p = config.appPortRange.to; p >= config.appPortRange.from; p--) {
+      if (taken.has(p)) continue;
+      if (await ports.free(p)) return p;
+    }
+    throw new HarborError('PORT_CONFLICT', `no free port left in ${config.appPortRange.from}-${config.appPortRange.to} for a tailnet address`, { nextAction: 'Withdraw an address or remove an app you no longer use, then try again.' });
+  }
+
   private async allocatePorts(pkg: LoadedPackage, alsoUnavailable: Set<number> = new Set()) {
     const { repo, docker, ports, config } = this.ctx;
-    const unavailable = new Set<number>([config.listen.port, ...repo.claimedPorts().map((c) => c.port), ...alsoUnavailable]);
+    // tailnet addresses hold their own ports (decision 133): an app port there would clash again
+    const unavailable = new Set<number>([config.listen.port, ...repo.claimedPorts().map((c) => c.port), ...repo.exposures().filter((e) => e.via === 'tailnet').map((e) => e.port), ...alsoUnavailable]);
     try {
       for (const p of await docker.publishedHostPorts()) unavailable.add(p);
     } catch (e) {

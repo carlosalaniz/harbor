@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–129 so far) | `docs/DECISIONS.md` — **next number is 130**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–141 so far) | `docs/DECISIONS.md` — **next number is 142**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -93,6 +93,7 @@ bootstrap adds the `caddy` user to the `harbor` group and makes the state dir gr
 validated live against Caddy v2.11.4.
 
 **Last three actions, most recent first:**
+1. **0.23.0 (decisions 130–141, 2026-10-06)**: docs/TODO.md batch 1 — CLI installs sealed by default, own tailnet port, remove/reinstall keeps addresses, needs_action Repair, hide from Home, picture of the day, package-author items. Plan: 0.24.0 = `harbor seal` + passphrase change, 0.25.0 = move between locations; the production box stays on 0.22.1 until 0.25.0 (tests a multi-version jump).
 1. **Fixed `https://harbor.local` on home-server (decision 110)** (2026-09-24): Caddy owned :443
    so the daemon's LAN HTTPS listener failed (`port 443 is already in use`); Caddy now terminates TLS
    for the LAN hostnames with the Harbor cert. `renderCaddyConfig` `lanHttps` option, `caddyLanHttps`
@@ -185,6 +186,7 @@ validated live against Caddy v2.11.4.
 - Caddy (public proxy) owns ports 80 AND 443 → the LAN console is a Caddy route (`harbor_lan` server on :80) reconciled by the observer, and LAN HTTPS is served THROUGH Caddy too (the LAN hostnames are a route on the same :443 `harbor` server, pinned to the Harbor cert, decision 110); the daemon's direct :80/:443 listeners are fallbacks when Caddy is absent. Caddy's stock config used to squat :80 until the first exposure; the observer now reconciles at startup. Caddy runs as user `caddy`, which bootstrap adds to the `harbor` group so it can read the 0640 server cert/key under `<stateDir>/tls` (the CA key stays 0600); the state dir is 0710 (group-traverse) so Caddy can reach `tls/`.
 - Operator-provided secrets (decision 125) never go into a plan: they ride `POST /v1/operations` `secrets`, are checked in `submit()` and taken by the runner at the very start of `execute()` (`takeOperatorSecrets`). A daemon restart in between loses them on purpose. Link networks (decision 126) are created by the runner, not Compose (`external: true` in both projects); `renderAndValidate` re-creates a missing one and `upAndRecord` re-attaches the other side live — Compose only ever attaches its own side.
 - Several public rows per endpoint (decision 127, schema v10): never look an exposure up by `(instance, endpoint, via)` alone for `public` — pass the hostname (`repo.exposureFor(..., hostname)`), and get the main name through `mainPublicExposure(exposures, endpointId, inst.primaryHost)` (null = first published; `repo.exposures()` orders by `created_at, rowid` for that reason).
+- Tailnet ports (decision 133): a tailnet exposure's `port` is its OWN port, not the endpoint's `hostPort`; the serve target is always `127.0.0.1:<hostPort>`. Never derive one from the other. Remembered addresses of a removed app live in the `exposures.retained` setting, not in `exposures` rows (decision 134).
 - Exposure reachability (decision 128): never call `ctx.verify(exposureUrl(e))` directly — use `exposureCheck(e, manifest.health)` (`src/exposure/urls.ts`) so an API-only app is probed at its health path, not `/` (a 404 there is not "unreachable"). The stored/shown URL stays the root.
 - A pinned `host-name=` in `/etc/avahi/avahi-daemon.conf` outlives `hostnamectl` (decision 129): `bootstrap --hostname` comments it out; a manual rename needs the same.
 - Commander: an option named `--version` collides with the global version flag (that is why the root apply step uses `--to`).

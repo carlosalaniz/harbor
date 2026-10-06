@@ -90,3 +90,13 @@ export function checkInstallLocation(dir: string, candidates: InstallCandidateDt
   }
   return norm;
 }
+
+// Decision 130: the CLI's default install location, the same one the console wizard preselects
+// ("Local"): <dataFolder>/harbor-apps/<packageId>, sealed with Harbor's own key. null when the data
+// folder offers no eligible candidate (missing or unwritable) — the caller refuses rather than
+// silently falling back to plain Docker volumes.
+export function defaultInstallLocation(dataFolderPath: string, candidates: InstallCandidateDto[], packageId: string): string | null {
+  const dir = normalizeHostPath(path.posix.join(dataFolderPath, APP_HOME_DIR_NAME));
+  const c = candidates.find((cd) => cd.dir === dir);
+  return c?.eligible ? `${c.dir}/${packageId}` : null;
+}

@@ -270,6 +270,7 @@ export class AppearanceService {
       }
     }
     this.repo.setInstanceAppearance(instanceId, update);
+    if (patch.hidden !== undefined) this.repo.setSetting('home.hidden', { ...(this.repo.setting<Record<string, boolean>>('home.hidden') ?? {}), [instanceId]: patch.hidden });
   }
   instanceIcon(instanceId: string): { bytes: Buffer; contentType: string } | null {
     const row = this.repo.instance(instanceId);
@@ -281,5 +282,10 @@ export class AppearanceService {
     rmSync(this.iconFile(instanceId), { force: true });
     const order = this.repo.setting<string[]>('home.order');
     if (order?.includes(instanceId)) this.repo.setSetting('home.order', order.filter((x) => x !== instanceId));
+    const hidden = this.repo.setting<Record<string, boolean>>('home.hidden');
+    if (hidden && instanceId in hidden) {
+      delete hidden[instanceId];
+      this.repo.setSetting('home.hidden', hidden);
+    }
   }
 }

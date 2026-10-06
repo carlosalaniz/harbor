@@ -1,3 +1,4 @@
+import { SECRET_TEMPLATE_SLOT } from '../contracts/patterns.js';
 import { stringify as yamlStringify } from 'yaml';
 import type { ComposeSource, Manifest } from '../contracts/types.js';
 import type { EndpointAllocation } from '../state/repo.js';
@@ -98,7 +99,8 @@ export function renderCompose(input: RenderInput): RenderedCompose {
         // decision 125: an optional operator secret nobody provided leaves its variable unset
         if (secretValues && value === undefined && s.source === 'operator' && s.optional) continue;
         if (secretValues && value === undefined) throw new Error(`missing value for secret ${s.id}`);
-        env[b.environment] = escapeCompose(value ?? secretPlaceholder(s.id));
+        const v = value ?? secretPlaceholder(s.id);
+        env[b.environment] = escapeCompose(b.template ? b.template.split(SECRET_TEMPLATE_SLOT).join(b.encode === 'url' && value !== undefined ? encodeURIComponent(v) : v) : v);
         generated.push(b.environment);
       }
     }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary, NotificationsDto } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken, restoreRemembered } from './api';
-import { EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
+import { Copy, EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
 import { EyeIcon, EyeOffIcon, Mark } from './app/icons';
 import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
 import { Home } from './app/pages/Home';
@@ -442,6 +442,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           }}
           onPublish={() => setPublishing(liveDrawer)}
           onCustomize={() => setCustomizing(liveDrawer)}
+          onChanged={(updated) => c.patchData((d) => ({ ...d, instances: d.instances.map((i) => (i.id === updated.id ? updated : i)) }))}
           instances={c.data.instances}
           catalog={c.data.catalog}
         />
@@ -611,6 +612,10 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
   if (!op) return null;
   const final = isFinal(op);
   const creds = op.result?.['credentials'] as { username: string; password: string } | undefined;
+  // decision 138: the package's own name for it (an admin login is not basic-auth), and shown-once values
+  const credsLabel = typeof op.result?.['credentialsLabel'] === 'string' ? (op.result['credentialsLabel'] as string) : 'Login';
+  const credsNote = typeof op.result?.['credentialsNote'] === 'string' ? (op.result['credentialsNote'] as string) : null;
+  const shownOnce = (op.result?.['shownOnce'] as { id: string; label: string; value: string }[] | undefined) ?? [];
   const recoveryKey = typeof op.result?.['recoveryKey'] === 'string' ? (op.result['recoveryKey'] as string) : null;
   const recoveryNote = typeof op.result?.['recoveryNote'] === 'string' ? (op.result['recoveryNote'] as string) : null;
   // The Harbor recovery key appears only in the operation that issued it.
@@ -671,9 +676,15 @@ function Tray({ c }: { c: ReturnType<typeof useConsole> }) {
       )}
       {creds && (
         <p className="warn">
-          Basic-auth credentials, shown once (kept as an instance secret): <code>{creds.username}</code> / <code>{creds.password}</code>
+          {credsLabel}, shown once: <code>{creds.username}</code> / <code>{creds.password}</code> <Copy text={creds.password} />
+          {credsNote && <span className="muted small"> {credsNote}</span>}
         </p>
       )}
+      {shownOnce.map((x) => (
+        <p key={x.id} className="warn">
+          {x.label}, shown once: <code>{x.value}</code> <Copy text={x.value} />
+        </p>
+      ))}
       {harborKey && <RecoveryCard words={harborKey} note={harborNote} title="Your Harbor recovery key" onDismiss={c.dismiss} />}
       {recoveryKey && <RecoveryCard words={recoveryKey} note={recoveryNote} onDismiss={c.dismiss} />}
       {op.error && (

@@ -54,24 +54,51 @@ describe('exposure: tailnet and public paths on the generic engine', () => {
     h.tailscale.statusValue = { ...h.tailscale.statusValue!, httpsEnabled: true };
   });
 
-  it('exposes Excalidraw on the tailnet with the same port number; verifies; unexposes cleanly', async () => {
+  it('exposes Excalidraw on the tailnet on its OWN port (decision 133); verifies; unexposes cleanly', async () => {
     const plan = await h.api.plan({ kind: 'expose', instanceId: exca.id, via: 'tailnet' });
-    expect(plan.exposure).toMatchObject({ via: 'tailnet', url: `https://harbor-test.tail1234.ts.net:${exca.endpoints[0]!.hostPort}/`, protection: 'none' });
+    const hostPort = exca.endpoints[0]!.hostPort;
+    const port = Number(new URL(plan.exposure!.url).port);
+    expect(port).not.toBe(hostPort);
+    expect(port).toBeGreaterThanOrEqual(h.config.appPortRange.from);
+    expect(port).toBeLessThanOrEqual(h.config.appPortRange.to);
+    expect(plan.exposure).toMatchObject({ via: 'tailnet', url: `https://harbor-test.tail1234.ts.net:${port}/`, protection: 'none' });
     const sub = await h.api.submit(plan.id);
     const op = await h.api.waitOperation(sub.operationId);
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     expect(op.result?.['exposureState']).toBe('active');
-    expect(h.tailscale.entries).toEqual([{ port: exca.endpoints[0]!.hostPort, target: `http://127.0.0.1:${exca.endpoints[0]!.hostPort}` }]);
+    expect(h.tailscale.entries).toEqual([{ port, target: `http://127.0.0.1:${hostPort}` }]);
     const list = await exposures();
     expect(list.items).toHaveLength(1);
-    expect(list.items[0]).toMatchObject({ instanceName: 'excalidraw', via: 'tailnet', state: 'active', isPrimary: false });
+    expect(list.items[0]).toMatchObject({ instanceName: 'excalidraw', via: 'tailnet', state: 'active', isPrimary: false, port });
     exca = await byName('excalidraw');
-    expect(exca.endpoints[0]!.urls.tailnet).toBe(`https://harbor-test.tail1234.ts.net:${exca.endpoints[0]!.hostPort}/`);
+    expect(exca.endpoints[0]!.urls.tailnet).toBe(`https://harbor-test.tail1234.ts.net:${port}/`);
     await h.api.expectError(409, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'expose', instanceId: exca.id, via: 'tailnet' });
+    // a later install never gets the tailnet address's port for its own endpoint
+    const app2 = (await h.api.plan({ kind: 'install', packageId: 'urlapp', name: 'urlapp-probe' })).endpoints.map((e) => e.hostPort);
+    expect(app2).not.toContain(port);
     const un = await h.api.run({ kind: 'unexpose', instanceId: exca.id, via: 'tailnet' });
     expect(un.op.state).toBe('succeeded');
     expect(h.tailscale.entries).toEqual([]);
     expect((await exposures()).items).toEqual([]);
+  });
+
+  it('moves an address published before 0.23.0 (same port as the app) to its own port, new entry first', async () => {
+    const hostPort = exca.endpoints[0]!.hostPort;
+    const target = `http://127.0.0.1:${hostPort}`;
+    // the old shape: row and serve entry on the app's own port
+    h.daemon.ctx.repo.insertExposure({ id: '0a0a0a0a-0000-4000-8000-000000000133', instanceId: exca.id, endpointId: exca.endpoints[0]!.id, via: 'tailnet', hostname: 'harbor-test.tail1234.ts.net', port: hostPort, protection: 'none', state: 'active', note: null });
+    await h.tailscale.serve(hostPort, target);
+    let moved: ExposureDto | undefined;
+    for (let i = 0; i < 60 && !moved; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      moved = (await exposures()).items.find((e) => e.via === 'tailnet' && e.port !== hostPort);
+    }
+    expect(moved, 'observer moved the address').toBeDefined();
+    expect(h.tailscale.entries).toEqual([{ port: moved!.port, target }]);
+    const { items } = await h.api.expect<{ items: { kind: string; body: string }[] }>(200, 'GET', '/v1/notifications');
+    expect(items.some((n) => n.kind === 'tailnet-moved' && n.body.includes(`was port ${hostPort}`))).toBe(true);
+    expect((await h.api.run({ kind: 'unexpose', instanceId: exca.id, via: 'tailnet' })).op.state).toBe('succeeded');
+    expect(h.tailscale.entries).toEqual([]);
   });
 
   it('public exposure: hostname validation, default basic protection for apps without their own login, one-time credentials, Caddy reconcile', async () => {

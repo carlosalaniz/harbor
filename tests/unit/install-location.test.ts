@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkInstallLocation, installCandidates } from '../../src/storage/install-location.js';
+import { checkInstallLocation, defaultInstallLocation, installCandidates } from '../../src/storage/install-location.js';
 
 // Pure candidate logic: which folders may hold whole encrypted apps.
 describe('install candidates', () => {
@@ -52,5 +52,19 @@ describe('install candidates', () => {
     expect(() => checkInstallLocation('/mnt/photos/harbor-apps/immich/immich', out, 'immich', 'immich')).toThrowError(/must be/);
     expect(() => checkInstallLocation('/mnt/photos/harbor-apps/other', out, 'immich', 'immich')).toThrowError(/must be/);
     expect(() => checkInstallLocation('/mnt/photos/harbor-apps', out, 'immich', 'immich')).toThrowError(/must be/);
+  });
+});
+
+// Decision 130: `harbor install` without --location lands where the console's "Local" does.
+describe('default install location', () => {
+  it('is <data folder>/harbor-apps/<package> when the data folder is a candidate', () => {
+    const data = path.join(tmpdir(), 'harbor-data-default');
+    mkdirSync(data, { recursive: true });
+    const cands = installCandidates([], { path: data, exists: true, writable: true });
+    expect(defaultInstallLocation(data, cands, 'excalidraw')).toBe(`${path.posix.join(data, 'harbor-apps')}/excalidraw`);
+  });
+  it('is null without an eligible data-folder candidate (never a drive)', () => {
+    const cands = installCandidates([{ mountpoint: '/mnt/photos', device: '/dev/sdb1', fsType: 'ext4', totalBytes: 1, usedBytes: 0, writable: true, label: 'Photos' }], { path: '/nonexistent-harbor', exists: false, writable: false });
+    expect(defaultInstallLocation('/nonexistent-harbor', cands, 'excalidraw')).toBeNull();
   });
 });

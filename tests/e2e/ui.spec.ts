@@ -282,7 +282,7 @@ test('publish wizard: tailnet address on the tile; public exposure shows one-tim
   await dlg2.getByRole('button', { name: 'Publish', exact: true }).click();
   await approve(page, 'Publish');
   await trayDone(page, 'Expose');
-  await expect(page.getByText(/Basic-auth credentials, shown once/)).toBeVisible();
+  await expect(page.getByText(/Basic-auth login for https:\/\/draw\.example\.com\/, shown once/)).toBeVisible(); // decision 138
   await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toContainText('basic auth');
   // decision 127: a second domain for the same app, with its own protection
   await page.getByRole('button', { name: 'Publish excalidraw-2' }).click();
@@ -698,6 +698,17 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await dlg3.getByRole('button', { name: 'Save' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   await expect(tile).toContainText('Memos');
+  // decision 131: Hide from Home — out of the launcher, behind a quiet "1 hidden app", and back
+  await page.getByRole('button', { name: 'Details of memos' }).click();
+  await page.getByRole('dialog').getByLabel('Hide memos from Home', { exact: true }).check();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  const launcher = page.locator('.icons[aria-label="Installed apps"]');
+  await expect(launcher.locator('.icon-tile[data-instance="memos"]')).toHaveCount(0);
+  await page.getByText('1 hidden app', { exact: true }).click();
+  await page.locator('.retained-list .icon-tile[data-instance="memos"]').getByRole('button', { name: 'Details of memos' }).click();
+  await page.getByRole('dialog').getByLabel('Hide memos from Home', { exact: true }).uncheck();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(launcher.locator('.icon-tile[data-instance="memos"]')).toHaveCount(1);
 });
 
 test('arrange the launcher: drag an icon to the front, the order survives a reload; keyboard arranging works', async ({ page }) => {
@@ -732,7 +743,7 @@ test('arrange the launcher: drag an icon to the front, the order survives a relo
   await page.getByRole('button', { name: 'Done' }).click();
 });
 
-test('rotating wallpapers: turn on from Settings, a picture with credit appears, next picture works; Reddit asks for a key', async ({ page }) => {
+test('rotating wallpapers: on from the first start, a picture with credit appears, next picture works; Reddit asks for a key', async ({ page }) => {
   await login(page);
   await page.goto('/#/settings/appearance');
   await expect(page.getByRole('heading', { name: 'Readability over pictures' })).toBeVisible();
@@ -744,7 +755,8 @@ test('rotating wallpapers: turn on from Settings, a picture with credit appears,
   await page.getByRole('button', { name: 'Reset' }).click();
   expect(await page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--surfaces-opacity').trim()")).toBe('0.82');
   await expect(page.getByRole('heading', { name: 'Rotating wallpapers' })).toBeVisible();
-  await page.getByRole('switch', { name: 'Rotating wallpapers' }).check();
+  // decision 132: a fresh install starts with the picture of the day already on
+  await expect(page.getByRole('switch', { name: 'Rotating wallpapers' })).toBeChecked();
   await expect(page.getByRole('status')).toContainText(/Now showing .* \(Bing\)/);
   const first = await page.getByRole('status').textContent();
   await page.getByRole('button', { name: 'Next picture' }).click();

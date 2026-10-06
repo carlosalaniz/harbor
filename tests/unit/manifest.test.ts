@@ -102,9 +102,11 @@ describe('manifest schema', () => {
     expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('multiInstance: true', 'multiInstance: "true"')), 'INVALID_PACKAGE', /multiInstance/);
     expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('revision: "1"', 'revision: 1')), 'INVALID_PACKAGE', /revision/);
   });
-  it('rejects bad ids, html in text, and out-of-range bounds', () => {
+  it('rejects bad ids, control characters in text, and out-of-range bounds', () => {
     expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('id: demo', 'id: Demo_App')), 'INVALID_PACKAGE', /id/);
-    expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('name: Demo', 'name: <b>Demo</b>')), 'INVALID_PACKAGE', /name/);
+    expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('name: Demo', 'name: "De\\u0007mo"')), 'INVALID_PACKAGE', /name/);
+    // decision 137: angle brackets are text (it is never rendered as HTML)
+    expect(manifestOf(MINIMAL_MANIFEST.replace('name: Demo', 'name: <Demo>')).metadata.name).toBe('<Demo>');
     expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('timeoutSeconds: 5', 'timeoutSeconds: 31')), 'INVALID_PACKAGE', /timeoutSeconds/);
     expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('deadlineSeconds: 90', 'deadlineSeconds: 601')), 'INVALID_PACKAGE', /deadlineSeconds/);
     expectCode(() => manifestOf(MINIMAL_MANIFEST.replace('path: /', 'path: ../etc')), 'INVALID_PACKAGE', /path/);

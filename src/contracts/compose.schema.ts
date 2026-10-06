@@ -38,7 +38,9 @@ export const COMPOSE_SOURCE_SCHEMA = {
             type: 'array',
             minItems: 1,
             maxItems: 64,
-            items: { type: 'string', minLength: 1, maxLength: 8192 },
+            // the program is never empty; a later empty argument is a real one (`redis-server --save ""`)
+            prefixItems: [{ type: 'string', minLength: 1, maxLength: 8192 }],
+            items: { type: 'string', minLength: 0, maxLength: 8192 },
           },
           environment: {
             type: 'object',

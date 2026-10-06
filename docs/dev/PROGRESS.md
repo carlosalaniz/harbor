@@ -360,14 +360,24 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Nextcloud package revision 4: the after-start hook re-runs `occ richdocuments:activate-config` on every run when the built-in CODE server is in use (empty or `…/richdocumentscode/proxy.php` `wopi_url`), never for an external Collabora, never failing the hook
 - [x] Tests: unit `exposure` (check target: health path, tailnet port, fallback, statuses), `mdns` (pinned host-name rewrite), new `nextcloud-hook` (the real hook script against a stub `php occ`); integration `exposure` (API-only app: `/` answers 404 in the fake verifier, the publish and the re-check ask only `/healthz`, address `active`); unit 230, integration 173 + 3 skipped, e2e 29
 
+## Phase 52 — real-host TODOs, batch 1 (2026-10-06, 0.23.0) ✅ (fake adapter; live run pending)
+- [x] Decision 130: `harbor install` without `--location` seals in the Harbor data folder like the console's Local (`defaultInstallLocation`); `--unencrypted` opt-out; "Not encrypted" plan warning; ENCRYPTED column in `harbor list`, `encrypted:` line in `harbor inspect`, drawer + plan dialog rows
+- [x] Decision 131: Hide from Home (`home.hidden` setting, `PUT …/appearance {hidden}`, `harbor look --hide/--show`, `presentation.hideFromHome`, Home "N hidden apps")
+- [x] Decision 132: fresh installs start with Bing's picture of the day (`FRESH_INSTALL_SETTINGS` seeded by `initState` only)
+- [x] Decision 133: tailnet addresses get their own port (top of the app range down; app allocation skips them); observer moves pre-0.23 rows once with a notification
+- [x] Decision 134: remove remembers addresses (`exposures.retained`), reinstall re-publishes them incl. the main address; `unexpose` on a removed app forgets one; purge forgets all
+- [x] Decision 135: `unexpose` in needs_action/failed, Restart = Repair (`harbor repair`/`retry`, drawer Repair), half-created containers removed after a failed up, networkless containers not counted as running
+- [x] Decisions 136–141: port-80 owner via Caddy admin API; `<`/`>` in package text; credential labels + `showOnce` + `--credentials-file`; secret `template`/`encode: url` + empty command args; `harbor packages validate`; endpoint `kind: api` (no Open)
+- [x] Tests: unit `install-location` (default location), `migration` (fresh-install settings), new `package-text` (angle brackets, templates, showOnce, empty args, folder validation), `manifest`; integration new `repair` (encryption warning, hide, remove/reinstall addresses, forget, needs_action unexpose + Repair, half-created cleanup, port-80 owner), `exposure` (own tailnet port, legacy move), `addresses`, `security-terminal`; e2e Hide from Home round-trip, wallpaper on from the start, basic-auth label; unit 240, integration 180 + 3 skipped, e2e 29
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 230 passed (2026-10-05, 0.22.1) |
-| `pnpm test:integration` (fake adapter) | 173 passed (exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 240 passed (2026-10-06, 0.23.0) |
+| `pnpm test:integration` (fake adapter) | 180 passed (0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

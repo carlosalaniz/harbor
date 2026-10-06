@@ -22,7 +22,7 @@ export interface Manifest {
   // Harbor provisions the admin account at first install (decision 79): a generated
   // password (and username unless fixed) is injected via env vars on `service`,
   // shown once in the operation result and retained as instance secrets.
-  provisionedCredentials?: { service: string; passwordEnv: string; usernameEnv?: string; username?: string; note?: string };
+  provisionedCredentials?: { service: string; passwordEnv: string; usernameEnv?: string; username?: string; note?: string; label?: string };
   // Decision 116: run inside `service` after every start/publish/unpublish with the app's current
   // addresses (HARBOR_ADDRESSES, HARBOR_PROXIES, HARBOR_URL) in the environment.
   hooks?: { afterStart?: AfterStartHook };
@@ -46,6 +46,8 @@ export interface PackagePresentation {
   releaseNotes?: string;
   // Home widget (decision 81): JSON the app serves on its own port, proxied by the daemon.
   widget?: { endpoint: string; path: string; kind: 'metrics' | 'list'; refreshSeconds?: number };
+  // decision 131: suggest hiding the app from Home (helpers without a page of their own); the operator decides
+  hideFromHome?: boolean;
 }
 
 export interface ManifestEndpoint {
@@ -55,6 +57,7 @@ export interface ManifestEndpoint {
   exposure: 'direct';
   browserContext: 'secure' | 'ordinary';
   httpsRequired?: boolean; // decision 116: unusable over plain http; needs an HTTPS main address in LAN mode
+  kind?: 'web' | 'api'; // decision 141: api = no Open button (addresses only)
 }
 
 export interface StorageClaim {
@@ -76,7 +79,9 @@ export interface SecretClaim {
   minLength?: number; // operator only
   maxLength?: number; // operator only (default 4096)
   retention: 'retain';
-  bindings: { service: string; environment: string }[];
+  showOnce?: string; // generated only (decision 138): label of a value shown to the operator once
+  // template (decision 139): a literal with one {{value}}; encode url percent-encodes the value first
+  bindings: { service: string; environment: string; template?: string; encode?: 'url' }[];
 }
 export function isOperatorSecret(s: SecretClaim): boolean {
   return s.source === 'operator';
