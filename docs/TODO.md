@@ -32,7 +32,7 @@ plaintext on disk.
       machine wrapping; console drawer *Change passphrase…* + `harbor passphrase <app>` (values via
       stdin/console only, never in plans or logs, like decision 125).
 
-## 3. Features wanted
+## 2. Features wanted
 
 - [ ] **Hide apps from Home.** Helper apps without a page of their own (e.g. an MCP gateway, a
       document server) clutter the launcher. Per-app *Hide from Home* (drawer + `harbor look <app>
@@ -53,7 +53,7 @@ plaintext on disk.
       (non-ext4). Console *Move to…* in the drawer + `harbor move <app> --location <dir>`.
       Pairs with `harbor seal` (§1): plain → sealed first, then move.
 
-## 2. Smaller bugs and rough edges
+## 3. Smaller bugs and rough edges
 
 - [ ] **Tailnet exposure collides with the LAN app port.** In LAN mode an app's host port (e.g.
       18080) is published on every interface (`0.0.0.0:18080`, plain HTTP, via docker-proxy).
