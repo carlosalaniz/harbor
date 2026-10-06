@@ -29,6 +29,16 @@ plaintext on disk.
 
 ## 2. Smaller bugs and rough edges
 
+- [ ] **Tailnet exposure collides with the LAN app port.** In LAN mode an app's host port (e.g.
+      18080) is published on every interface (`0.0.0.0:18080`, plain HTTP, via docker-proxy).
+      Publishing the same app on the tailnet runs `tailscale serve --https=18080 → 127.0.0.1:18080`
+      on the **same port number**: tailscaled only gets the tailnet IPv6 address, while on the
+      tailnet IPv4 address the app's plain-HTTP listener answers the TLS handshake. Seen as
+      `degraded` with `write EPROTO … SSL routines:tls_get_more_records:packet length too long`;
+      `http://<tailnet-ipv4>:18080/` answers 200 in plain HTTP. Fix: give tailnet HTTPS its own port
+      (or `:443` with a path/hostname split), or bind LAN app ports to the LAN interface only (not
+      `tailscale0`); add a check that refuses a tailnet port already bound on `0.0.0.0`.
+
 - [ ] **Port-80 owner misdetection.** With another reverse proxy (not Harbor's Caddy) on :80 the
       daemon logs `port 80 is taken (Caddy): the LAN console is served through the proxy` — wrong
       owner and wrong conclusion; the console is then only on `127.0.0.1:<management port>`.
