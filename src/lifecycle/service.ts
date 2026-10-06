@@ -23,7 +23,7 @@ import { renderCompose } from '../planner/render.js';
 import { checkHostDirectory, hostPathsOverlap, normalizeHostPath } from '../storage/host-path.js';
 import { assertMarkerWritable, verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
 import { installCandidates } from '../storage/install-location.js';
-import { describeAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { describeAppHome, rewrapAppHome, scanAppHomes, unwrapMasterKeyForMachine, unlockAppHome, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { verifyPassword } from '../auth/password.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import { protectorFor, type AppHomeRef } from '../storage/crypto-provider.js';
@@ -1036,6 +1036,60 @@ export class ApplicationService {
     this.ctx.log.info(sealed ? 'app unlocked for this boot (kernel key added)' : 'app unlocked for this boot (not sealed yet; Start seals it)', { instanceId: inst.id });
     return this.summaryOf(inst.id);
   }
+  // Decision 143: change how an encrypted app opens without touching its data. `current` is its passphrase,
+  // its own 12 words or the Harbor card; without it the machine wrapping is used (Harbor's own key, or a
+  // passphrase equal to the Harbor password) while this machine's key is in memory. `next` null = Harbor's
+  // own key (unlocks at login on this machine). Values never reach a plan, a log or a DTO.
+  async changeAppPassphrase(instanceId: string, current: string | undefined, next: string | null): Promise<{ instance: InstanceSummary; recoveryKey: string | null }> {
+    const inst = this.instanceRow(instanceId);
+    const home = this.homeRow(inst.id);
+    if (!home) throw new HarborError('INVALID_STATE', `${inst.name} is not encrypted`, { nextAction: `Encrypt it first: harbor seal ${inst.name}` });
+    if (inst.activeOperationId) throw new HarborError('BUSY', `${inst.name} has an active operation`, { operationId: inst.activeOperationId });
+    if (next !== null && (typeof next !== 'string' || next.length < 8)) throw new HarborError('INVALID_REQUEST', 'the new passphrase must be at least 8 characters');
+    if (next !== null && next.length > 256) throw new HarborError('INVALID_REQUEST', 'the new passphrase must be at most 256 characters');
+    const wrapped = home.metadata?.['machineWrapped'] as MachineWrappedKey | undefined;
+    let masterKey: Buffer | null = null;
+    if (current) masterKey = await unlockAppHome(home.name, current);
+    else if (wrapped) {
+      const machineKey = this.ctx.machineKey.take();
+      if (machineKey) {
+        try {
+          masterKey = unwrapMasterKeyForMachine(wrapped, machineKey);
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      }
+    }
+    if (!masterKey) throw new HarborError('INVALID_REQUEST', `type the current passphrase of ${inst.name} (or its 12 words, or your Harbor recovery key)`, { nextAction: wrapped ? 'Or log in again so this machine can open it by itself, then retry.' : 'Its passphrase is what you typed at install.' });
+    try {
+      const loginKey = next !== null && (await this.matchesAdminPassword(next));
+      // Harbor's own key and a passphrase equal to the Harbor password open at login: those keep (or get) the machine wrapping.
+      let machineWrapped: MachineWrappedKey | undefined;
+      if (next === null || loginKey) {
+        const machineKey = this.ctx.machineKey.take();
+        if (!machineKey) throw new HarborError('INVALID_STATE', 'Harbor restarted since your last login: log in again first', { nextAction: "Log out and log in with your password once (it unlocks this machine's key), then retry." });
+        try {
+          machineWrapped = wrapMasterKeyForMachine(masterKey, machineKey);
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      }
+      const { recoveryKey } = await rewrapAppHome(home.name, masterKey, next);
+      const meta: Record<string, unknown> = { ...(home.metadata ?? {}) };
+      delete meta['machineWrapped'];
+      delete meta['defaultKey'];
+      delete meta['loginKey'];
+      if (machineWrapped) meta['machineWrapped'] = machineWrapped;
+      if (next === null) meta['defaultKey'] = true;
+      if (loginKey) meta['loginKey'] = true;
+      this.ctx.repo.upsertResource({ ...home, metadata: meta });
+      this.ctx.repo.addEvent({ instanceId: inst.id, phase: 'encryption', message: next === null ? `${inst.name} now opens with Harbor's own key (unlocks when you log in)` : `${inst.name} has a new passphrase${loginKey ? ' (your Harbor password: it unlocks when you log in)' : ''}${recoveryKey ? '; its own 12 words were issued' : ''}` });
+      this.ctx.log.info('app passphrase changed', { instanceId: inst.id, mode: next === null ? 'harbor-key' : loginKey ? 'login-password' : 'own-passphrase' });
+      return { instance: this.summaryOf(inst.id), recoveryKey };
+    } finally {
+      zeroKey(masterKey);
+    }
+  }
   /** Lock one encrypted app: evict its key from the kernel (refused while it runs) and drop this boot's copy. */
   async lockAppApi(instanceId: string): Promise<InstanceSummary> {
     const inst = this.instanceRow(instanceId);
@@ -1681,6 +1735,7 @@ export class ApplicationService {
     if (inst.activeOperationId) throw new HarborError('BUSY', `instance ${inst.name} has an active operation`, { operationId: inst.activeOperationId });
     const pkgName = this.packageMeta(inst).name;
     if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
+    if (req.kind === 'seal') return this.sealPlan(inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'update') return this.updatePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'configure') return this.configurePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
@@ -1973,6 +2028,47 @@ export class ApplicationService {
       else warnings.push(`DNS: an A/AAAA record for ${hostname} must point at this host's public address, and ports 80/443 must be reachable from the internet, or the certificate cannot be issued. Register the domain under Settings → Public addresses to have Harbor check it.`);
     }
     return { hostname, port, protection };
+  }
+
+  // Decision 142: `harbor seal` — an app on plain Docker volumes moves into a sealed home in the Harbor
+  // data folder (Harbor's own key), same instance: id, name, ports, links, addresses and secrets stay.
+  private sealPlan(inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): PlanDto {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `sealing needs an installed app; ${inst.name} is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? `Reinstall it first: harbor reinstall ${inst.name}` : 'Repair it first (harbor repair).' });
+    const resources = repo.resources(inst.id);
+    if (resources.some((r) => r.kind === 'volume' && r.role === '__home__')) throw new HarborError('INVALID_STATE', `${inst.name} is already encrypted`);
+    const plain = resources.filter((r) => r.kind === 'volume' && !r.metadata?.['homePath']).sort((a, b) => a.role.localeCompare(b.role));
+    const folders = resources.filter((r) => r.kind === 'bind');
+    if (!plain.length) throw new HarborError('INVALID_STATE', `${inst.name} keeps no data in Harbor volumes${folders.length ? ' (only in your own folders, which Harbor never moves)' : ''}; there is nothing to seal`);
+    if (!this.ctx.machineKey.unlocked) throw new HarborError('INVALID_STATE', 'Harbor restarted since your last login: log in again before encrypting an app', { nextAction: 'Log out and log in with your password once (it unlocks this machine\'s key), then try again.' });
+    const dir = this.resolveInstallLocation(path.posix.join(this.ctx.config.userDataDir, 'harbor-apps', inst.packageId), repo.listInstances(), inst.packageId);
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: { dir, defaultKey: true },
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [
+        `Stop ${pkgName} ("${inst.name}") and delete its containers (data stays)`,
+        `Create a sealed home at ${dir}/${inst.name}/ with Harbor's own key; this machine unlocks it when you log in`,
+        ...plain.map((r) => `Copy volume ${r.name} into the sealed home as root and verify entry counts and bytes`),
+        `Start ${pkgName} on the sealed copies and check it answers (same name, ports, addresses, links and secrets)`,
+        `Only then delete the plain volume${plain.length === 1 ? '' : 's'} ${plain.map((r) => r.name).join(', ')}; any failure before that puts the app back on them`,
+      ],
+      warnings: [
+        `${pkgName} is down while its data is copied.`,
+        'Needs free space for one extra copy of the data on the system disk.',
+        'Old blocks of the plain volumes cannot be scrubbed from the disk: they may stay recoverable until overwritten.',
+        ...(folders.length ? [`Your own folder${folders.length === 1 ? '' : 's'} ${folders.map((f) => f.name).join(', ')} stay${folders.length === 1 ? 's' : ''} as ${folders.length === 1 ? 'it is' : 'they are'} (not encrypted).`] : []),
+      ],
+      releaseHashes: inst.releaseHashes,
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'seal', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
   }
 
   // Decision 135: `unexpose` on a removed app forgets an address Remove kept for Reinstall (nothing is

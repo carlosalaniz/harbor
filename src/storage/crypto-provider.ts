@@ -22,7 +22,7 @@
 import { spawn } from 'node:child_process';
 import { closeSync, constants as fsConstants, mkdirSync, openSync, readFileSync, rmSync, rmdirSync, writeFileSync, writeSync } from 'node:fs';
 import { HarborError } from '../errors.js';
-import { appCryptoFiles, appCryptoUnit, isEnokey, parseAppCryptoStatus, protectorNameFor, sealedDir, type AppCryptoAction, type AppCryptoRequest } from './fscrypt.js';
+import { appCryptoFiles, appCryptoUnit, isEnokey, parseAppCryptoStatus, protectorNameFor, sealedDir, type AppCryptoAction, type AppCryptoRequest, type VolumeImport } from './fscrypt.js';
 
 export interface AppHomeRef {
   instanceId: string;
@@ -41,6 +41,12 @@ export interface CryptoProvider {
   // before sealing worked): seal-empty + copy-back, verified, rolled back on
   // failure. Leaves the dir unlocked.
   migrateApp(ref: AppHomeRef, masterKeyHex: string, protectorName: string): Promise<void>;
+  // Decision 142 (`harbor seal`): copy plain Docker volumes into the sealed, unlocked <home>/volumes,
+  // verified per claim; any failure empties every target. Sources stay untouched.
+  importVolumes(ref: AppHomeRef, imports: VolumeImport[]): Promise<void>;
+  // Decision 144: delete the whole home as root (purge, a failed seal). Files inside belong to the
+  // containers' users, so the harbor user cannot remove them itself.
+  destroyHome(ref: AppHomeRef): Promise<void>;
   // Add the key to the kernel (idempotent when already unlocked).
   unlockApp(ref: AppHomeRef, masterKeyHex: string): Promise<void>;
   // Evict the key (refuses while files are open — stop the app first).
@@ -109,6 +115,20 @@ export class FakeCryptoProvider implements CryptoProvider {
     this.fail();
     this.sealed.add(ref.home);
     this.open.add(ref.home);
+  }
+  imports: { home: string; imports: VolumeImport[] }[] = [];
+  async importVolumes(ref: AppHomeRef, imports: VolumeImport[]): Promise<void> {
+    this.calls.push({ op: 'importVolumes', home: ref.home });
+    this.fail();
+    if (!this.sealed.has(ref.home) || !this.open.has(ref.home)) throw new HarborError('INVALID_STATE', `${ref.home}/volumes is not sealed and unlocked; refusing to copy data into it`);
+    this.imports.push({ home: ref.home, imports: imports.map((i) => ({ ...i })) });
+  }
+  async destroyHome(ref: AppHomeRef): Promise<void> {
+    this.calls.push({ op: 'destroyHome', home: ref.home });
+    this.fail();
+    rmSync(ref.home, { recursive: true, force: true });
+    this.sealed.delete(ref.home);
+    this.open.delete(ref.home);
   }
   async unlockApp(ref: AppHomeRef, _masterKeyHex: string): Promise<void> {
     this.calls.push({ op: 'unlockApp', home: ref.home });
@@ -179,6 +199,8 @@ const TIMEOUTS: Record<AppCryptoAction, number> = {
   status: 60_000,
   // In-place migration copies the whole app; bounded by the data, not by us.
   migrate: 24 * 60 * 60_000,
+  import: 24 * 60 * 60_000,
+  destroy: 60 * 60_000,
 };
 
 export class RootCryptoProvider implements CryptoProvider {
@@ -187,12 +209,12 @@ export class RootCryptoProvider implements CryptoProvider {
     private readonly startUnit: UnitStarter = systemctlStartBlocking,
   ) {}
 
-  private async run(ref: AppHomeRef, action: AppCryptoAction, extra: { protectorName?: string; keyHex?: string } = {}): Promise<{ encrypted: boolean; unlocked: boolean }> {
+  private async run(ref: AppHomeRef, action: AppCryptoAction, extra: { protectorName?: string; keyHex?: string; imports?: VolumeImport[] } = {}): Promise<{ encrypted: boolean; unlocked: boolean }> {
     const files = appCryptoFiles(this.stateDir, ref.instanceId);
     mkdirSync(files.dir, { recursive: true, mode: 0o700 });
     rmSync(files.status, { force: true });
     rmSync(files.fifo, { force: true });
-    const request: AppCryptoRequest = { action, home: ref.home, ...(extra.protectorName ? { protectorName: extra.protectorName } : {}), requestedAt: new Date().toISOString() };
+    const request: AppCryptoRequest = { action, home: ref.home, ...(extra.protectorName ? { protectorName: extra.protectorName } : {}), ...(extra.imports ? { imports: extra.imports } : {}), requestedAt: new Date().toISOString() };
     writeFileSync(files.request, JSON.stringify(request), { mode: 0o600 });
     const unit = appCryptoUnit(ref.instanceId, action);
     let unitError: string | null = null;
@@ -259,6 +281,13 @@ export class RootCryptoProvider implements CryptoProvider {
   async migrateApp(ref: AppHomeRef, masterKeyHex: string, protectorName: string): Promise<void> {
     const r = await this.run(ref, 'migrate', { protectorName, keyHex: masterKeyHex });
     if (!r.encrypted || !r.unlocked) throw new HarborError('OPERATION_FAILED', `${ref.home}/volumes is not sealed and unlocked after migration`);
+  }
+  async importVolumes(ref: AppHomeRef, imports: VolumeImport[]): Promise<void> {
+    const r = await this.run(ref, 'import', { imports });
+    if (!r.encrypted || !r.unlocked) throw new HarborError('OPERATION_FAILED', `${ref.home}/volumes is not sealed and unlocked after the copy`);
+  }
+  async destroyHome(ref: AppHomeRef): Promise<void> {
+    await this.run(ref, 'destroy');
   }
   async unlockApp(ref: AppHomeRef, masterKeyHex: string): Promise<void> {
     const r = await this.run(ref, 'unlock', { keyHex: masterKeyHex });

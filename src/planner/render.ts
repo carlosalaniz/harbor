@@ -30,6 +30,9 @@ export interface RenderInput {
   endpoints: EndpointAllocation[];
   // secret id -> value. When absent, a non-secret placeholder is rendered (prospective model).
   secretValues: Record<string, string> | null;
+  // compose volume -> the Docker volume recorded for it (default: the owned name). `harbor seal` gives the
+  // sealed copy its own name so the plain volume survives until the sealed app has started (decision 142).
+  volumeNames?: Record<string, string>;
   // endpoint id -> URL handed to `configuration` bindings (defaults to the loopback URL)
   endpointUrls?: Record<string, string>;
   // compose volume name -> host directory chosen by the operator (rendered as a bind mount; no Docker volume)
@@ -177,7 +180,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
   for (const claim of [...(manifest.storage ?? [])].sort((a, b) => a.composeVolume.localeCompare(b.composeVolume))) {
     if (external[claim.composeVolume]) continue; // bound to a host directory: no Docker volume at all
     // Generated `external`: Harbor created this volume explicitly; Compose must never create it.
-    volumes[claim.composeVolume] = { name: ownedVolumeName(identity, claim.composeVolume), external: true };
+    volumes[claim.composeVolume] = { name: input.volumeNames?.[claim.composeVolume] ?? ownedVolumeName(identity, claim.composeVolume), external: true };
   }
 
   const model: Record<string, unknown> = {

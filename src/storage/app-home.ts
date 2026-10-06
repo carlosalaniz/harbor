@@ -448,6 +448,29 @@ export async function changeAppHomePassphrase(home: string, oldPassphrase: strin
   }
 }
 
+// Decision 143: re-wrap the SAME master key for a new way in (the data is never re-encrypted).
+// next = a passphrase: the home opens with it; it gains its own 12 words if it had none (returned once).
+// next = null: back to Harbor's own key — a fresh secret nobody sees, and the app's own words are
+// dropped (they would otherwise keep opening it). The Harbor card envelope is untouched either way.
+export async function rewrapAppHome(home: string, masterKey: Buffer, next: string | null): Promise<{ recoveryKey: string | null }> {
+  const norm = normalizeHostPath(home);
+  const { manifest } = describeAppHome(norm);
+  let recoveryKey: string | null = null;
+  if (next === null) {
+    manifest.encryption.passphrase = await wrapMasterKey(masterKey, `harbor-default-key ${randomBytes(32).toString('hex')}`);
+    delete manifest.encryption.recovery;
+  } else {
+    manifest.encryption.passphrase = await wrapMasterKey(masterKey, next);
+    if (!manifest.encryption.recovery) {
+      recoveryKey = generateRecoveryKey();
+      manifest.encryption.recovery = await wrapMasterKey(masterKey, recoveryKey);
+    }
+  }
+  manifest.format = APP_HOME_FORMAT;
+  writeManifest(norm, manifest);
+  return { recoveryKey };
+}
+
 // Rotate to a fresh recovery key (old recovery key required, e.g. after a
 // suspected leak). Returns the new 12 words, shown once. The passphrase
 // envelope is untouched.

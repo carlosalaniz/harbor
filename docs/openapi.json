@@ -766,6 +766,56 @@
         }
       }
     },
+    "/v1/instances/{id}/passphrase": {
+      "post": {
+        "description": "Change an encrypted app's passphrase, or switch it between its own passphrase and Harbor's own key (next: null). current = its passphrase, its 12 words or the Harbor recovery key; omit it when this machine opens the app by itself. Returns the app's own 12 words once when they are issued.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "next"
+                ],
+                "properties": {
+                  "current": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  },
+                  "next": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "minLength": 8,
+                    "maxLength": 256
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response"
+          }
+        }
+      }
+    },
     "/v1/instances/{id}/lock": {
       "post": {
         "description": "Lock one encrypted app again (drop this boot's key; running containers keep running until stopped).",
@@ -2621,6 +2671,25 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 253
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "instanceId"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "enum": [
+                          "seal"
+                        ]
+                      },
+                      "instanceId": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
                       }
                     }
                   }

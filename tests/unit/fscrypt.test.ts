@@ -218,3 +218,20 @@ describe('root crypto provider handoff (unit starter stubbed)', () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 });
+
+// Decision 142: the root step copies only out of the instance's own Docker volumes.
+describe('import sources', () => {
+  it('accepts exactly <docker root>/volumes/hb_<instance hex>_<claim>/_data', async () => {
+    const { isImportSourceFor, parseAppCryptoSpec } = await import('../../src/storage/fscrypt.js');
+    const id = '11111111-2222-4333-8444-555555555555';
+    const own = { from: '/var/lib/docker/volumes/hb_11111111222243338444555555555555_data/_data', claim: 'data' };
+    expect(isImportSourceFor(id, own)).toBe(true);
+    expect(isImportSourceFor(id, { ...own, from: '/srv/docker/volumes/hb_11111111222243338444555555555555_data/_data' })).toBe(true); // another docker root
+    expect(isImportSourceFor(id, { ...own, claim: 'db' })).toBe(false); // wrong claim for the path
+    expect(isImportSourceFor('99999999-2222-4333-8444-555555555555', own)).toBe(false); // another instance
+    expect(isImportSourceFor(id, { ...own, from: '/var/lib/docker/volumes/../volumes/hb_11111111222243338444555555555555_data/_data' })).toBe(false);
+    expect(isImportSourceFor(id, { ...own, from: 'volumes/hb_11111111222243338444555555555555_data/_data' })).toBe(false);
+    expect(isImportSourceFor(id, { ...own, claim: '../x' })).toBe(false);
+    expect(parseAppCryptoSpec(`${id}:import`)).toEqual({ instanceId: id, action: 'import' });
+  });
+});

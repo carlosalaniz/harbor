@@ -17,7 +17,7 @@ plaintext on disk.
       console; an explicit opt-out flag only if a real need appears (decide in the decision row).
 - [x] *(0.23.0, decision 130)* Install plan + `harbor inspect` + console drawer say plainly whether an app is sealed
       ("Encrypted: no — plain Docker volumes"), and `harbor list` gets a column or marker.
-- [ ] **`harbor seal <app>`**: move an installed app's plain volumes into a sealed home in place —
+- [x] *(0.24.0, decisions 142 + 144, verified live)* **`harbor seal <app>`**: move an installed app's plain volumes into a sealed home in place —
       same instance id, ports, names, links, exposures, secrets. Shape like the 0.17.0-beta.2
       in-place sealing (stop → create home → seal empty `volumes/` → `cp -a` each claim's volume
       into it as root → verify entry counts and bytes → switch the instance's volume definitions →
@@ -26,7 +26,7 @@ plaintext on disk.
       the drawer for unsealed apps. Integration tests with the fake adapter + a live run.
 - [x] *(0.23.0)* Doc: OPERATOR_GUIDE "Headless reboot" section must also say that unsealed apps restart on
       their own (and how to tell which are which).
-- [ ] **Change an app's encryption passphrase** (custom-passphrase apps, and switching an app between
+- [x] *(0.24.0, decision 143, verified live)* **Change an app's encryption passphrase** (custom-passphrase apps, and switching an app between
       "Harbor's own key" and "my own passphrase"): re-wrap the app key in the home's envelope
       (old passphrase or recovery key + new passphrase), never re-encrypt the data; refresh the
       machine wrapping; console drawer *Change passphrase…* + `harbor passphrase <app>` (values via

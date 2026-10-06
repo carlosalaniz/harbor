@@ -709,6 +709,23 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await page.getByRole('dialog').getByLabel('Hide memos from Home', { exact: true }).uncheck();
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   await expect(launcher.locator('.icon-tile[data-instance="memos"]')).toHaveCount(1);
+  // decision 143: an encrypted app's passphrase — to my own, then back to Harbor's own key
+  await page.getByRole('button', { name: 'Details of memos' }).click();
+  const drawer = page.getByRole('dialog');
+  await drawer.getByText('Change passphrase…', { exact: true }).click();
+  await drawer.getByRole('radio', { name: 'My own passphrase' }).check();
+  await drawer.getByLabel('New passphrase for memos', { exact: true }).fill('memos own passphrase');
+  await drawer.getByLabel('New passphrase for memos again', { exact: true }).fill('memos own passphrase');
+  await drawer.getByRole('button', { name: 'Change passphrase of memos' }).click();
+  await expect(drawer.getByRole('status').filter({ hasText: 'Done: it has its new passphrase.' })).toBeVisible();
+  await expect(drawer.locator('.recovery-card')).toBeVisible(); // its own 12 words, once
+  await dismissRecovery(page);
+  await expect(drawer.getByText('It opens with its own passphrase now.')).toBeVisible();
+  await drawer.getByRole('radio', { name: /Harbor's own key/ }).check();
+  await drawer.getByLabel('Current passphrase of memos', { exact: true }).fill('memos own passphrase');
+  await drawer.getByRole('button', { name: 'Change passphrase of memos' }).click();
+  await expect(drawer.getByRole('status').filter({ hasText: "Done: it opens with Harbor's own key now." })).toBeVisible();
+  await drawer.getByRole('button', { name: 'Close', exact: true }).click();
 });
 
 test('arrange the launcher: drag an icon to the front, the order survives a reload; keyboard arranging works', async ({ page }) => {

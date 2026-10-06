@@ -297,7 +297,7 @@ program
       const lines = [
         `${d.name}  (${d.packageName} ${d.packageId}@${d.revision})  id ${d.id}`,
         `  install ${d.installState}  desired ${d.desired}  runtime ${d.runtime}  readiness ${d.readiness}  observed ${d.observedAt ?? '-'}`,
-        d.home ? `  encrypted: yes — sealed at ${d.home.path} (${d.home.state}${d.home.defaultKey ? ', Harbor\'s own key' : ', own passphrase'})` : '  encrypted: no — plain Docker volumes (readable on disk, starts on its own after a reboot)',
+        d.home ? `  encrypted: yes — sealed at ${d.home.path} (${d.home.state}${d.home.defaultKey ? ', Harbor\'s own key' : ', own passphrase'})` : '  encrypted: no — plain Docker volumes (readable on disk, starts on its own after a reboot); encrypt it with: harbor seal ' + d.name,
         ...d.endpoints.map((e) => `  endpoint ${e.id} (container port ${e.containerPort}, primary ${e.primary}): loopback ${e.urls.loopback}${e.urls.tailnet ? `, tailnet ${e.urls.tailnet}` : ''}${e.urls.public ? `, public ${e.urls.public}` : ''}`),
         ...(d.setup ? [`  setup: ${d.setup.instructions} -> ${d.setup.browserUrl}`] : []),
         ...(d.lastError ? [`  last error ${d.lastError.code}: ${d.lastError.message}`, `  next: ${d.lastError.nextAction}`] : []),
@@ -337,7 +337,7 @@ program
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
-  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure', 'seal'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
@@ -603,6 +603,43 @@ program
     const inst = await api.post<InstanceSummary>('/v1/found-apps/adopt', opts.name ? { home, passphrase, name: opts.name } : { home, passphrase });
     out(inst, () => `Adopted ${inst.displayName ?? inst.name} (${inst.packageId}) from ${home}.`);
     if (opts.wait !== false && inst.operationId) await waitOperation(api, inst.operationId, true);
+  });
+
+// Decision 143: values come from a terminal prompt or stdin (line 1 current, line 2 new), never the command line.
+program
+  .command('passphrase <instance>')
+  .description("change an encrypted app's passphrase, or switch it to Harbor's own key (--harbor-key); its data is not re-encrypted")
+  .option('--harbor-key', "use Harbor's own key instead of a passphrase (unlocks when you log in on this machine)", false)
+  .option('--stdin', 'read the current passphrase (line 1, empty when this machine opens the app by itself) and the new one (line 2) from stdin', false)
+  .action(async (ref: string, opts: { harborKey: boolean; stdin: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    let current: string | undefined;
+    let next: string | null = null;
+    if (opts.stdin) {
+      const lines = (await readStdinAll()).split('\n');
+      current = lines[0]?.trim() || undefined;
+      next = opts.harborKey ? null : (lines[1] ?? '').replace(/\r$/, '');
+    } else {
+      current = (await promptHidden('Current passphrase (Enter if this machine opens the app by itself): ')) || undefined;
+      if (!opts.harborKey) {
+        next = await promptHidden('New passphrase (8+ characters): ');
+        if ((await promptHidden('New passphrase again: ')) !== next) throw new HarborError('INVALID_REQUEST', 'the two new passphrases differ');
+      }
+    }
+    const r = await api.post<{ instance: InstanceSummary; recoveryKey: string | null }>(`/v1/instances/${inst.id}/passphrase`, { ...(current ? { current } : {}), next });
+    out({ instance: r.instance.name, recoveryKey: r.recoveryKey }, () => [`${r.instance.name}: ${next === null ? "opens with Harbor's own key now (unlocks when you log in)" : 'has its new passphrase'}.`, ...(r.recoveryKey ? [`  Its own recovery key (shown once — write down these 12 words): ${r.recoveryKey}`] : [])].join('\n'));
+  });
+
+// Decision 142: an app on plain Docker volumes moves into a sealed home in the Harbor data folder, in place.
+program
+  .command('seal <instance>')
+  .description('encrypt an installed app that runs on plain Docker volumes: same app, its data moved into a sealed home in the Harbor data folder (it is down during the copy; needs free space for one copy)')
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { yes: boolean; wait: boolean }) => {
+    const api = client();
+    await approveAndApply(api, await createPlan(api, 'seal', ref), { yes: opts.yes, wait: opts.wait });
   });
 
 // Decision 135: the way out of needs_action/failed. Withdraw the address in the way first if there is one.

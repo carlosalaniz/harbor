@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DomainsDto, HostStorageDto } from '../../../src/contracts/api';
 import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
-import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
+import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, RecoveryCard, StatusPill, appLabel, openUrl } from './components';
 import { categoryLabel, fmtBytes, fmtTime } from './format';
 import type { Action, Console } from './store';
 
@@ -58,7 +58,7 @@ export function PlanDialog({ c }: { c: Console }) {
   const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
-  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : capitalize(plan.kind);
+  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : plan.kind === 'seal' ? 'Encrypt now' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
       {planError && (
@@ -1041,6 +1041,77 @@ export function UnlockForm({ inst, busy, onUnlocked, onError }: { inst: Instance
   );
 }
 
+// Decision 143: change how an encrypted app opens. Its data is not re-encrypted: the app key is wrapped anew.
+function PassphrasePanel({ inst, defaultKey: given, onChanged }: { inst: InstanceSummary; defaultKey: boolean; onChanged: ((i: InstanceSummary) => void) | undefined }) {
+  // follows the server, and our own change at once (the drawer's detail poll lags a few seconds)
+  const [defaultKey, setDefaultKey] = useState(given);
+  useEffect(() => setDefaultKey(given), [given]);
+  const [mode, setMode] = useState<'own' | 'harbor'>(defaultKey ? 'own' : 'harbor');
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [again, setAgain] = useState('');
+  const [working, setWorking] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [words, setWords] = useState<string | null>(null);
+  const mismatch = mode === 'own' && again.length > 0 && next !== again;
+  const ready = mode === 'harbor' ? !defaultKey : next.length >= 8 && next === again;
+  return (
+    <details className="danger-zone">
+      <summary className="small">Change passphrase…</summary>
+      <p className="small muted">{defaultKey ? "It opens with Harbor's own key now and unlocks when you log in." : 'It opens with its own passphrase now.'} Changing this re-wraps its key; the data itself is not copied or re-encrypted.</p>
+      <fieldset className="storage-choices">
+        <legend className="small">Open it with</legend>
+        <label className="check">
+          <input type="radio" name={`pp-${inst.id}`} checked={mode === 'own'} onChange={() => setMode('own')} /> {defaultKey ? 'My own passphrase' : 'A new passphrase'}
+        </label>
+        <label className="check">
+          <input type="radio" name={`pp-${inst.id}`} checked={mode === 'harbor'} disabled={defaultKey} onChange={() => setMode('harbor')} /> Harbor's own key (unlocks when you log in on this machine)
+        </label>
+      </fieldset>
+      <form
+        className="stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!ready || working) return;
+          setWorking(true);
+          setMsg(null);
+          void api
+            .changePassphrase(inst.id, current, mode === 'harbor' ? null : next)
+            .then((r) => {
+              setCurrent('');
+              setNext('');
+              setAgain('');
+              setWords(r.recoveryKey);
+              setDefaultKey(mode === 'harbor');
+              setMsg(mode === 'harbor' ? "Done: it opens with Harbor's own key now." : 'Done: it has its new passphrase.');
+              onChanged?.(r.instance);
+            })
+            .catch((err: Error) => setMsg(err.message))
+            .finally(() => setWorking(false));
+        }}
+      >
+        {!defaultKey && <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} autoComplete="current-password" aria-label={`Current passphrase of ${inst.name}`} placeholder="Current passphrase, its 12 words or your Harbor recovery key" />}
+        {mode === 'own' && (
+          <>
+            <input type="password" value={next} onChange={(e) => setNext(e.target.value)} autoComplete="new-password" aria-label={`New passphrase for ${inst.name}`} placeholder="New passphrase (8+ characters)" />
+            <input type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" aria-label={`New passphrase for ${inst.name} again`} placeholder="New passphrase again" />
+            {mismatch && <p className="warn small">The two new passphrases differ.</p>}
+          </>
+        )}
+        <button className="btn" type="submit" disabled={!ready || working} aria-label={`Change passphrase of ${inst.name}`}>
+          {working ? 'Changing…' : 'Change'}
+        </button>
+      </form>
+      {msg && (
+        <p className="small" role="status">
+          {msg}
+        </p>
+      )}
+      {words && <RecoveryCard words={words} note={`These 12 words open ${inst.name} on any Harbor machine if its passphrase is forgotten. Shown once.`} onDismiss={() => setWords(null)} />}
+    </details>
+  );
+}
+
 export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish, onCustomize, onChanged, instances = [], catalog = [] }: { inst: InstanceSummary; exposures: ExposureDto[]; busy: boolean; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void; onChanged?: (i: InstanceSummary) => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[] }) {
   const [relink, setRelink] = useState<Record<string, string>>({});
   const upd = inst.updateAvailable;
@@ -1099,6 +1170,11 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
               'Encrypted: no — plain Docker volumes, readable on disk; starts on its own after a reboot'
             )}
           </p>
+          {!home && inst.installState === 'installed' && (
+            <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'seal', instance: inst })} aria-label={`Encrypt ${inst.name}`} title="Move its data into a sealed home on this machine (Harbor's own key, unlocks when you log in)">
+              Encrypt this app…
+            </button>
+          )}
         </div>
       </div>
       {locked && !retained && (
@@ -1378,6 +1454,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           </ul>
         </>
       )}
+      {home && !retained && !locked && <PassphrasePanel inst={inst} defaultKey={Boolean(home.defaultKey)} onChanged={onChanged} />}
       {detail?.defaultCredentials && !retained && <DefaultLogin creds={detail.defaultCredentials} />}
       {retained && <p className="muted">Removed. Data volumes and secrets are retained; Reinstall restores the exact same release.</p>}
       {inst.installState !== 'installing' && (
@@ -1482,13 +1559,15 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
       return `Harbor will uninstall ${n} completely: containers, its data volumes, secrets and stored release. Folders of yours are left alone. This cannot be undone.`;
     case 'configure':
       return `Harbor will apply the new settings to ${n} and recreate only what changed. Data, ports and addresses stay.`;
+    case 'seal':
+      return `Harbor will encrypt ${n} in place: it stops, its data is copied into a sealed home at ${plan.location?.dir ?? 'the Harbor data folder'}, and it starts again on the sealed copy. The plain copy is deleted only after that works.`;
     case 'update':
       return `Harbor will update ${n} to revision ${plan.update?.toRevision ?? plan.revision}${plan.update?.toVersion ? ` (${plan.update.toVersion})` : ''}. Data, ports and addresses stay; if the new release does not start, the previous one is put back automatically.`;
   }
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

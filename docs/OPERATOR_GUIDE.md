@@ -164,6 +164,8 @@ harbor list / inspect <name-or-id> / operation <id> --follow
 harbor stop <name> / start <name>
 harbor remove <name>              # deletes containers + private network; RETAINS volumes, secrets, name, ports, addresses
 harbor reinstall <name>           # exact same release into the retained instance; publishes its addresses again
+harbor seal <name>                # encrypt an app that runs on plain Docker volumes, in place
+harbor passphrase <name>          # change an encrypted app's passphrase (or --harbor-key)
 harbor repair <name>              # an app stuck in needs_action/failed: run its stored release again (alias: retry)
 harbor plan install n8n && harbor apply <plan-id> --idempotency-key <key>
 harbor tools / tools bind cockpit --url https://localhost:9090/
@@ -434,6 +436,23 @@ its data readable on disk and starts right after a reboot, before anyone logs in
 which: `harbor list` has an **ENCRYPTED** column (`yes`, `yes (locked)`, `no`), `harbor inspect <app>`
 prints `encrypted: yes — sealed at …` or `encrypted: no — plain Docker volumes`, and the app's details
 in the console say the same under its name.
+
+**Encrypt an app that is not encrypted** (decision 142): app details → *Encrypt this app…*, or
+`harbor seal <app>`. It is the same app afterwards — same name, ports, addresses, links and secrets —
+with its data moved into a sealed home in the Harbor data folder (Harbor's own key, unlocks when you log
+in). The app is down while the data is copied (as root, verified per volume), it needs free space for
+one extra copy, and the plain volumes are deleted only after the sealed app has started; any failure
+before that leaves it running unencrypted as before. Old blocks of the plain volumes cannot be scrubbed
+and may stay recoverable on the disk until overwritten. Folders of your own are never moved.
+
+**Change an app's passphrase** (decision 143): app details → *Change passphrase…*, or
+`harbor passphrase <app>` (prompts; `--stdin` reads the current one on line 1 and the new one on line 2;
+`--harbor-key` switches to Harbor's own key). The current passphrase, the app's own 12 words or your
+Harbor recovery key all work as "current"; an app that opens with Harbor's own key needs none while you
+are logged in. Choosing your own passphrase issues the app's own 12 words once (if it had none); a
+passphrase equal to your Harbor password unlocks at login, any other one must be typed after each
+reboot. Switching back to Harbor's own key removes the app's own words. The data is never re-encrypted —
+only the key that opens it is wrapped anew, so it takes a second.
 
 CLI: `harbor install <package>` installs sealed in the Harbor data folder with Harbor's own key, exactly
 like the console's **Local** (decision 130; `--unencrypted` for plain Docker volumes), and

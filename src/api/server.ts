@@ -314,6 +314,22 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     { preHandler: requireAuth, schema: { description: 'Unlock one encrypted app for this boot with its encryption passphrase (or 12-word recovery key). A reboot returns it to locked.', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] }, body: { type: 'object', additionalProperties: false, required: ['passphrase'], properties: { passphrase: { type: 'string', minLength: 1, maxLength: 1024 } } } } },
     async (req) => service.unlockApp((req.params as { id: string }).id, (req.body as { passphrase: string }).passphrase),
   );
+  // Decision 143: change how an encrypted app opens (re-wraps its key; the data is not re-encrypted).
+  app.post(
+    '/v1/instances/:id/passphrase',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: "Change an encrypted app's passphrase, or switch it between its own passphrase and Harbor's own key (next: null). current = its passphrase, its 12 words or the Harbor recovery key; omit it when this machine opens the app by itself. Returns the app's own 12 words once when they are issued.",
+        params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] },
+        body: { type: 'object', additionalProperties: false, required: ['next'], properties: { current: { type: 'string', minLength: 1, maxLength: 1024 }, next: { type: ['string', 'null'], minLength: 8, maxLength: 256 } } },
+      },
+    },
+    async (req) => {
+      const b = req.body as { current?: string; next: string | null };
+      return service.changeAppPassphrase((req.params as { id: string }).id, b.current, b.next);
+    },
+  );
   app.post(
     '/v1/instances/:id/lock',
     { preHandler: requireAuth, schema: { description: 'Lock one encrypted app again (drop this boot\'s key; running containers keep running until stopped).', params: { type: 'object', properties: { id: { type: 'string', maxLength: 64 } }, required: ['id'] } } },
@@ -895,6 +911,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'via'], properties: { kind: { const: 'unexpose' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, endpointId: { type: 'string', pattern: ID_PATTERN }, via: { enum: ['tailnet', 'public', 'proxy'] }, hostname: { type: 'string', minLength: 1, maxLength: 253 } } },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'primary'], properties: { kind: { const: 'reconfigure' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, primary: { enum: ['loopback', 'tailnet', 'public'] }, hostname: { type: 'string', minLength: 1, maxLength: 253 } } },
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { const: 'seal' }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
           ],
         },
         response: { 201: { type: 'object', additionalProperties: true } },

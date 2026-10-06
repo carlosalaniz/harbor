@@ -7,7 +7,7 @@ export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unkn
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
 // configure (decisions 125/126): change an installed app's operator-provided secrets and/or link providers.
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal';
 // 'proxy' = published through the operator's own reverse proxy (decision 118); Harbor runs nothing for it.
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The address an app treats as its own, chosen at install (decision 116). Omitted = this network
@@ -404,7 +404,9 @@ export type PlanRequest =
   // decision 127: hostname picks one of several public names (required when there are several)
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string }
   // decision 127: with primary public, hostname names the main public name (default: the first published)
-  | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure; hostname?: string };
+  | { kind: 'reconfigure'; instanceId: string; primary: PrimaryExposure; hostname?: string }
+  // decision 142: move an app's plain Docker volumes into a sealed home in the Harbor data folder, in place
+  | { kind: 'seal'; instanceId: string };
 
 export interface DomainDto {
   hostname: string;

@@ -220,6 +220,20 @@ Fake-adapter and unit evidence only (no live run of these fixes yet):
 - `pnpm catalog:verify`: nextcloud revision 4 (hashes refreshed, qualification `pending` until a
   droplet run).
 
+## 3l. Seal in place, passphrase change, sealed purge (2026-10-06, Harbor 0.24.0, decisions 142–144)
+
+**Live, droplet `harbor-test`** ([evidence](evidence/vm-2026-10-06-seal/README.md)): self-update
+0.20.1 → 0.24.0 from a local archive; `harbor install memos --unencrypted`, a 5 MB random marker file,
+`harbor seal` → same SHA-256 inside the container, only `…_data-sealed` left, `fscrypt status` sealed +
+unlocked, after Stop + Lock the home lists only ciphertext names, Start reopens it; `harbor passphrase`
+to an own passphrase (own words once), Lock, unlock with it, back to Harbor's key; remove + reinstall keep
+the data; purge failed with EACCES on the first build (container-owned files) and succeeded after
+decision 144.
+
+Fake adapter: `pnpm test` (unit) incl. `fscrypt` import-source checks and `rewrapAppHome`;
+`pnpm test:integration` incl. `tests/integration/seal.test.ts` (8 tests); `pnpm test:e2e` 29 (drawer
+*Change passphrase…* round trip). Counts in PROGRESS.
+
 ## 3k. Real-host TODOs, batch 1 (2026-10-06, Harbor 0.23.0, decisions 130–141)
 
 Fake-adapter and unit evidence (live droplet run of the tailnet port and remove/reinstall paths: pending,

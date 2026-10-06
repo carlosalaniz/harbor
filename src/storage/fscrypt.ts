@@ -37,8 +37,10 @@ export const FINDMNT_BIN = '/usr/bin/findmnt';
 // flow produces; f2fs works the same way).
 export const SEALABLE_FS = new Set(['ext4', 'f2fs']);
 
-export type AppCryptoAction = 'setup' | 'seal' | 'unlock' | 'lock' | 'status' | 'migrate';
-export const APP_CRYPTO_ACTIONS: readonly AppCryptoAction[] = ['setup', 'seal', 'unlock', 'lock', 'status', 'migrate'];
+// import (decision 142): copy an app's plain Docker volumes into its freshly sealed home (`harbor seal`)
+// destroy (decision 144): delete a whole app home as root — containers write files the harbor user cannot remove
+export type AppCryptoAction = 'setup' | 'seal' | 'unlock' | 'lock' | 'status' | 'migrate' | 'import' | 'destroy';
+export const APP_CRYPTO_ACTIONS: readonly AppCryptoAction[] = ['setup', 'seal', 'unlock', 'lock', 'status', 'migrate', 'import', 'destroy'];
 export const APP_CRYPTO_UNIT_PREFIX = 'harbor-app-crypto@';
 export const APP_CRYPTO_UNIT_FILE = 'harbor-app-crypto@.service';
 
@@ -224,7 +226,25 @@ export interface AppCryptoRequest {
   action: AppCryptoAction;
   home: string;
   protectorName?: string;
+  // import: each Docker volume's data dir and the claim folder under <home>/volumes it goes to
+  imports?: VolumeImport[];
   requestedAt: string;
+}
+
+export interface VolumeImport {
+  from: string; // the engine's mountpoint, e.g. /var/lib/docker/volumes/hb_<instance>_<claim>/_data
+  claim: string; // compose volume name; target <home>/volumes/<claim>
+}
+
+// Decision 142: the root step copies only out of THIS instance's own Docker volumes: an absolute
+// `<docker root>/volumes/hb_<instance hex>_<claim>/_data` with the claim it is declared for, never a
+// path with `..`, and the claim a single safe segment. Anything else is refused before a byte moves.
+export function isImportSourceFor(instanceId: string, imp: VolumeImport): boolean {
+  if (!UUID_RE.test(instanceId) || typeof imp?.from !== 'string' || typeof imp.claim !== 'string') return false;
+  if (!/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(imp.claim)) return false;
+  if (!imp.from.startsWith('/') || imp.from.includes('\0') || imp.from.split('/').some((seg) => seg === '..' || seg === '.')) return false;
+  const want = `/volumes/${PRODUCT.projectPrefix}${instanceId.replace(/-/g, '')}_${imp.claim}/_data`;
+  return imp.from.endsWith(want) && imp.from.length > want.length;
 }
 
 export interface AppCryptoStatus {

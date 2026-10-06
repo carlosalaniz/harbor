@@ -108,7 +108,7 @@ export class DockerodeAdapter implements DockerAdapter {
   async inspectVolume(name: string): Promise<VolumeInfo | null> {
     try {
       const v = await this.docker.getVolume(name).inspect();
-      return { name: v.Name, labels: v.Labels ?? {}, createdAt: (v as { CreatedAt?: string }).CreatedAt ?? null, driver: v.Driver };
+      return { name: v.Name, labels: v.Labels ?? {}, createdAt: (v as { CreatedAt?: string }).CreatedAt ?? null, driver: v.Driver, mountpoint: (v as { Mountpoint?: string }).Mountpoint ?? null };
     } catch (e) {
       if (isNotFound(e)) return null;
       throw e;

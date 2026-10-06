@@ -24,6 +24,8 @@ export interface VolumeInfo {
   labels: Record<string, string>;
   createdAt: string | null;
   driver: string;
+  // where the engine keeps the data (root-only on a real host); `harbor seal` hands it to the root step
+  mountpoint?: string | null;
 }
 
 export interface NetworkInfo {

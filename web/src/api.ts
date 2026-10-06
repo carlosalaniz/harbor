@@ -134,6 +134,8 @@ const realApi = {
   adoptFoundApp: (home: string, passphrase: string, name?: string) => call<InstanceSummary>('POST', '/v1/found-apps/adopt', name ? { home, passphrase, name } : { home, passphrase }),
   unlockApp: (id: string, passphrase: string) => call<InstanceSummary>('POST', `/v1/instances/${id}/unlock`, { passphrase }),
   lockApp: (id: string) => call<InstanceSummary>('POST', `/v1/instances/${id}/lock`, {}),
+  // decision 143: next null = Harbor's own key
+  changePassphrase: (id: string, current: string, next: string | null) => call<{ instance: InstanceSummary; recoveryKey: string | null }>('POST', `/v1/instances/${id}/passphrase`, { ...(current ? { current } : {}), next }),
   operation: (id: string) => call<OperationDto>('GET', `/v1/operations/${id}`),
   // settings
   changePassword: (currentPassword: string, newPassword: string) => call<{ revokedSessions: number }>('PUT', '/v1/account/password', { currentPassword, newPassword }),

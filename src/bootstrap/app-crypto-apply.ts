@@ -49,6 +49,8 @@ import {
   type AppCryptoRequest,
   type AppCryptoStatus,
   type FscryptDirStatus,
+  isImportSourceFor,
+  type VolumeImport,
 } from '../storage/fscrypt.js';
 
 type Log = (m: string) => void;
@@ -338,6 +340,60 @@ async function migrateDir(home: string, dir: string, protectorName: string, mast
   log(`sealed ${dir} with its existing data; deleted the plaintext copy (old blocks may linger on the device until overwritten)`);
 }
 
+// Decision 142 (`harbor seal`): copy an app's plain Docker volumes into its freshly sealed, unlocked
+// <home>/volumes/<claim> as root (cp -a keeps the uids the containers wrote with), verify entry counts
+// and bytes per claim, and on any failure empty every target again. The sources are left untouched —
+// the daemon deletes them only after the sealed app has started.
+async function importVolumes(instanceId: string, home: string, dir: string, imports: VolumeImport[], log: Log): Promise<void> {
+  const st = await dirStatus(dir);
+  if (!st.encrypted || !st.unlocked || st.partiallyLocked) throw new HarborError('INVALID_STATE', `${dir} is not sealed and unlocked; refusing to copy data into it`, { nextAction: 'Seal the app home first (Harbor does this in the same operation), then retry.' });
+  if (!imports.length) throw new HarborError('INVALID_REQUEST', 'import needs at least one volume');
+  const plan: { from: string; to: string; before: { entries: number; bytes: number } }[] = [];
+  for (const imp of imports) {
+    if (!isImportSourceFor(instanceId, imp)) throw new HarborError('INVALID_REQUEST', `${imp.from} is not a Docker volume of this app (claim ${imp.claim})`);
+    let real: string;
+    try {
+      real = realpathSync(imp.from);
+    } catch {
+      throw new HarborError('DATA_MISSING', `volume data ${imp.from} does not exist`);
+    }
+    if (real !== imp.from || !lstatSync(real).isDirectory()) throw new HarborError('INVALID_REQUEST', `${imp.from} is not a plain directory (symlink or file); refusing`);
+    const to = path.join(dir, imp.claim);
+    if (existsSync(to) && readdirSync(to).length) throw new HarborError('INVALID_STATE', `${to} is not empty; refusing to mix data`);
+    plan.push({ from: real, to, before: treeSummary(real) });
+  }
+  const total = plan.reduce((n, p) => n + p.before.bytes, 0);
+  const fs = statfsSync(home);
+  const free = Number(fs.bavail) * Number(fs.bsize);
+  const need = total + 64 * 1024 * 1024;
+  if (free < need) throw new HarborError('INVALID_STATE', `not enough free space to seal this app (needs ${Math.ceil(need / 1024 / 1024)} MiB for the copy, ${Math.floor(free / 1024 / 1024)} MiB available)`, { nextAction: 'Free up space on the system disk, then try again. The app keeps running unsealed meanwhile.' });
+  const owner = statSync(dir);
+  const undo = () => {
+    for (const p of plan) {
+      rmSync(p.to, { recursive: true, force: true });
+      mkdirSync(p.to, { mode: 0o700 });
+      chownSync(p.to, owner.uid, owner.gid);
+    }
+  };
+  try {
+    for (const p of plan) {
+      if (!existsSync(p.to)) {
+        mkdirSync(p.to, { mode: 0o700 });
+        chownSync(p.to, owner.uid, owner.gid);
+      }
+      log(`copying ${p.from} -> ${p.to}: ${p.before.entries} entries, ${p.before.bytes} bytes`);
+      await execOk('/usr/bin/cp', ['-a', '-T', p.from, p.to], { timeoutMs: 24 * 60 * 60_000 });
+      const after = treeSummary(p.to);
+      if (after.entries !== p.before.entries || after.bytes !== p.before.bytes) throw new HarborError('OPERATION_FAILED', `copy of ${p.from} differs from the original (${after.entries}/${p.before.entries} entries, ${after.bytes}/${p.before.bytes} bytes)`);
+    }
+  } catch (e) {
+    log(`import failed, emptying the sealed copies: ${e instanceof Error ? e.message : String(e)}`);
+    undo();
+    throw e;
+  }
+  log(`imported ${plan.length} volume(s), ${total} bytes, into ${dir}`);
+}
+
 // ---------------------------------------------------------------- entry point
 
 function writeStatus(file: string, status: AppCryptoStatus): void {
@@ -438,6 +494,17 @@ export async function applyAppCrypto(spec: string, log: Log): Promise<void> {
       case 'lock': {
         await lockDir(dir, log);
         st = await dirStatus(dir);
+        break;
+      }
+      case 'import': {
+        await importVolumes(instanceId, home, dir, request.imports ?? [], log);
+        st = await dirStatus(dir);
+        break;
+      }
+      case 'destroy': {
+        // checkHome above proved the manifest names this instance; files are deleted whatever their owner
+        rmSync(home, { recursive: true, force: true });
+        log(`deleted app home ${home}`);
         break;
       }
       case 'status': {

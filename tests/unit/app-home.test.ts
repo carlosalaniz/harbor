@@ -396,3 +396,25 @@ describe('Harbor recovery key (installation-wide envelope)', () => {
   });
 });
 
+
+// Decision 143: a new way in for the same key; data untouched.
+describe('rewrapAppHome', () => {
+  it('own passphrase gains own words once; Harbor key drops them; the master key never changes', async () => {
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { rewrapAppHome, unlockAppHome } = await import('../../src/storage/app-home.js');
+    const parent = mkdtempSync(path.join(tmpdir(), 'harbor-rewrap-'));
+    const made = await createAppHome({ parentDir: parent, name: 'app', instanceId: '11111111-2222-4333-8444-555555555555', packageId: 'demo', packageRevision: '1', displayName: 'Demo', harborVersion: 'test' });
+    const key = Buffer.from(made.masterKey);
+    const first = await rewrapAppHome(made.descriptor.home, key, 'my own passphrase');
+    expect(first.recoveryKey?.split(' ')).toHaveLength(12);
+    expect((await unlockAppHome(made.descriptor.home, 'my own passphrase')).equals(key)).toBe(true);
+    expect((await unlockAppHome(made.descriptor.home, first.recoveryKey!)).equals(key)).toBe(true);
+    expect((await rewrapAppHome(made.descriptor.home, key, 'second passphrase')).recoveryKey).toBeNull();
+    await expect(unlockAppHome(made.descriptor.home, 'my own passphrase')).rejects.toThrow();
+    await rewrapAppHome(made.descriptor.home, key, null);
+    await expect(unlockAppHome(made.descriptor.home, 'second passphrase')).rejects.toThrow();
+    await expect(unlockAppHome(made.descriptor.home, first.recoveryKey!)).rejects.toThrow();
+    expect(describeAppHome(made.descriptor.home).manifest.encryption.recovery).toBeUndefined();
+  }, 30_000);
+});
