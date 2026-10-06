@@ -64,6 +64,27 @@ plaintext on disk.
       `http://<tailnet-ipv4>:18080/` answers 200 in plain HTTP. Fix: give tailnet HTTPS its own port
       (or `:443` with a path/hostname split), or bind LAN app ports to the LAN interface only (not
       `tailscale0`); add a check that refuses a tailnet port already bound on `0.0.0.0`.
+      **Worse than a warning:** once tailscaled holds that port, the app's next `update` (or any
+      container recreate) fails with `failed to bind host port` for the endpoint service, the
+      automatic rollback fails the same way, and the app is down in `needs_action`. Seen live; the
+      way out was freeing the port by hand (`tailscale serve --https=<port> off`), `remove` +
+      `reinstall`, then re-publishing. Fix this before tailnet publishing is offered again.
+- [ ] **`needs_action` has no repair path for publishing.** `unexpose`, `update` and `expose` all
+      refuse in `needs_action` ("requires an installed app"), so the exposure that caused the failure
+      cannot be withdrawn through Harbor. Allow withdrawing exposures (and a "retry last operation")
+      in `needs_action`.
+- [ ] **`remove` silently withdraws public names; `reinstall` does not bring them back.** After
+      remove + reinstall both domains had to be re-published by hand (and `primary` re-set). Either
+      keep exposures with the retained instance and re-apply them on reinstall, or say clearly in the
+      remove plan which names will go.
+- [ ] **Failed recreate leaves a container with no network.** After the failed bind, the endpoint
+      container existed with `NetworkSettings.Networks = {}` and crash-looped (`host not found in
+      upstream`); Harbor showed it as part of a running app. Rollback should remove such half-created
+      containers, and readiness should flag them.
+- [ ] **Package lesson (document in DEVELOPER_PACKAGES):** a cache service (redis) inside a package
+      should not persist (`--save ""`): an image-declared VOLUME keeps the cache across restarts and
+      reboots, and after a data copy the app ran with the empty install's cache (Frappe hid all
+      Server Scripts until `bench clear-cache`).
 
 - [ ] **Port-80 owner misdetection.** With another reverse proxy (not Harbor's Caddy) on :80 the
       daemon logs `port 80 is taken (Caddy): the LAN console is served through the proxy` — wrong
