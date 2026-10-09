@@ -135,9 +135,9 @@ export class CaddyAdminClient implements CaddyAdmin {
     this.description = `caddy admin http://${host}:${port}`;
   }
 
-  private call(method: string, path: string, body?: string): Promise<{ status: number; body: string }> {
+  private call(method: string, path: string, body?: string, timeoutMs = 15_000): Promise<{ status: number; body: string }> {
     return new Promise((resolve, reject) => {
-      const req = httpRequest({ host: this.host, port: this.port, path, method, timeout: 15_000, headers: body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {} }, (res) => {
+      const req = httpRequest({ host: this.host, port: this.port, path, method, timeout: timeoutMs, headers: body ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } : {} }, (res) => {
         let data = '';
         res.on('data', (c: Buffer) => (data += c.toString()));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body: data }));
@@ -149,9 +149,11 @@ export class CaddyAdminClient implements CaddyAdmin {
     });
   }
 
+  // Short timeout: platform tools and the address picker ask this on every console refresh, and a wedged
+  // Caddy answering nothing made each of those wait the full 15 s.
   async available(): Promise<boolean> {
     try {
-      return (await this.call('GET', '/config/')).status === 200;
+      return (await this.call('GET', '/config/', undefined, 3_000)).status === 200;
     } catch {
       return false;
     }
@@ -181,6 +183,8 @@ export class FakeCaddyAdmin implements CaddyAdmin {
   readonly description = 'fake caddy admin';
   config: Record<string, unknown> | null = null;
   down = false;
+  reject: string | null = null; // simulate Caddy refusing a config (HTTP 400)
+  loadAttempts = 0;
   async available(): Promise<boolean> {
     return !this.down;
   }
@@ -190,6 +194,8 @@ export class FakeCaddyAdmin implements CaddyAdmin {
   }
   async load(config: Record<string, unknown>): Promise<void> {
     if (this.down) throw new HarborError('DOCKER_UNAVAILABLE', 'Caddy admin API not reachable: fake down');
+    this.loadAttempts++;
+    if (this.reject) throw new HarborError('OPERATION_FAILED', `Caddy rejected the configuration (HTTP 400): ${this.reject}`);
     this.config = config;
   }
   routes(): string[] {

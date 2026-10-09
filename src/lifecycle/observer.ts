@@ -9,6 +9,7 @@ import { exposureCheck, exposureUrl } from '../exposure/urls.js';
 import type { Manifest } from '../contracts/types.js';
 import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyLanHttps, caddyRoutesFromState, caddySignature } from './runner.js';
+import { HarborError } from '../errors.js';
 import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
 import { listDevices, type DeviceInfo } from '../system/host-storage.js';
@@ -21,6 +22,7 @@ export class Observer {
   private timer: NodeJS.Timeout | null = null;
   private busy = false;
   private caddyApplied: string | null = null;
+  private caddyRejected: { sig: string; at: number } | null = null; // config Caddy refused: re-sent only after a pause
   private lanHttpsApplied: string | null = null;
   private lastSourceCheck = 0;
   private lastDevices: string | null = null;
@@ -442,6 +444,7 @@ export class Observer {
   private async reconcileCaddy(): Promise<void> {
     const want = caddySignature(this.ctx);
     if (want === this.caddyApplied) return;
+    if (want === this.caddyRejected?.sig && this.ctx.clock.now().getTime() - this.caddyRejected.at < 10 * 60_000) return;
     const publicRoutes = this.ctx.repo.exposures().some((e) => e.via === 'public');
     if (!publicRoutes && !this.ctx.config.lan.enabled) {
       this.caddyApplied = want; // nothing to manage; leave Caddy alone
@@ -453,9 +456,14 @@ export class Observer {
       const routes = caddyRoutesFromState(this.ctx, sink);
       await this.ctx.caddy.load(renderCaddyConfig(routes, { lan: caddyLanConsole(this.ctx.config), lanHttps: caddyLanHttps(this.ctx) }));
       this.caddyApplied = want;
+      this.caddyRejected = null;
       this.ctx.log.info('caddy config reconciled', { publicRoutes: routes.length, lan: this.ctx.config.lan.enabled, lanHttps: Boolean(caddyLanHttps(this.ctx)) });
     } catch (e) {
-      this.ctx.log.warn(`caddy reconcile failed: ${(e as Error).message}`);
+      // A rejected config fails the same way every time, and on a real host re-sending it every tick ended
+      // with Caddy's admin API (and every site behind it) hanging. Unreachable stays retried every tick.
+      const rejected = e instanceof HarborError && e.code === 'OPERATION_FAILED';
+      if (rejected) this.caddyRejected = { sig: want, at: this.ctx.clock.now().getTime() };
+      this.ctx.log.warn(`caddy reconcile failed: ${(e as Error).message}${rejected ? ' (Caddy keeps its last good config; retrying in 10 minutes)' : ''}`);
     }
   }
 

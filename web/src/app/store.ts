@@ -72,8 +72,14 @@ export function useConsole(onAuthLost: (msg?: string) => void) {
 
   const refresh = useCallback(async () => {
     try {
-      const [system, catalog, instances, tools, exp, metrics, appearance, notifications] = await Promise.all([api.system(), api.catalog(), api.instances(), api.tools(), api.exposures(), api.metrics().catch(() => null), api.appearance().catch(() => null), api.notifications().catch(() => null)]);
-      setData((prev) => ({ system, metrics, catalog, instances, tools, exposures: exp.items, uiExposure: exp.ui, appearance: appearance ?? prev.appearance, notifications: notifications ?? prev.notifications }));
+      // Platform tools probe Tailscale and Caddy, which can be slow (a wedged Caddy took 15 s): they fill in
+      // on their own and never hold back Home's app list.
+      void api
+        .tools()
+        .then((tools) => setData((prev) => ({ ...prev, tools })))
+        .catch(() => undefined);
+      const [system, catalog, instances, exp, metrics, appearance, notifications] = await Promise.all([api.system(), api.catalog(), api.instances(), api.exposures(), api.metrics().catch(() => null), api.appearance().catch(() => null), api.notifications().catch(() => null)]);
+      setData((prev) => ({ ...prev, system, metrics, catalog, instances, exposures: exp.items, uiExposure: exp.ui, appearance: appearance ?? prev.appearance, notifications: notifications ?? prev.notifications }));
       setLoadError(null);
       setLoaded(true);
       if (!watching) {

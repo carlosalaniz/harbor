@@ -146,6 +146,9 @@ function daysUntil(iso: string, now = Date.now()): number {
 export async function ensureTlsCerts(stateDir: string, hosts: string[]): Promise<TlsState> {
   const p = P(stateDir);
   mkdirSync(tlsDir(stateDir), { recursive: true, mode: 0o750 });
+  // mkdir's mode is masked by the service's UMask=0077 (the dir came out 0700 and Caddy could not read the
+  // cert, which wedged Caddy on a real host): set it explicitly, which also repairs a dir made before.
+  chmodSync(tlsDir(stateDir), 0o750);
   const cur = readTlsState(stateDir);
   const sameHosts = cur && hosts.length === cur.hosts.length && hosts.every((h) => cur.hosts.includes(h));
   if (cur && sameHosts && daysUntil(cur.expiresAt) > 30 && daysUntil(cur.caExpiresAt) > 30) return cur;

@@ -384,6 +384,10 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 ## Phase 55 — USB disks without the removable flag (2026-10-06, 0.25.1) ✅ (fake adapter; real host check after release)
 - [x] Decision 147: `TRAN=usb` disks count as external unless they hold a system mount (LVM/LUKS included); unit `host-storage` (14 TB Seagate shape listed, USB boot disk and USB LVM root refused, internal SATA still out)
 
+## Phase 56 — LAN HTTPS wedged Caddy (2026-10-09, 0.25.2) ✅ (found + recovered live on the home server)
+- [x] Decision 148: `tls/` chmod 0750 (UMask=0077 masked mkdir), no re-send of a Caddy-rejected config for 10 min, 3 s Caddy probe, console loads platform tools off Home's critical path
+- [x] Tests: integration `lan-https` (0700 dir repaired to 0750 on enable; a rejected config is sent once over four ticks)
+
 ## Test results (latest local run)
 
 | Command | Result |
@@ -391,7 +395,7 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
 | `pnpm test` (unit) | 244 passed (2026-10-06, 0.25.1) |
-| `pnpm test:integration` (fake adapter) | 192 passed (0.25.0: move between locations; 0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test:integration` (fake adapter) | 193 passed (0.25.2: Caddy-rejected config not re-sent, tls/ dir 0750; 0.25.0: move between locations; 0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
 | `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |

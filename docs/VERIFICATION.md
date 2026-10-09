@@ -230,6 +230,24 @@ back correctly (decision 146 fixed it).
 
 Fake adapter: integration `seal.test.ts` (12 tests incl. 4 for move), unit `fscrypt`, e2e 29. Counts in PROGRESS.
 
+## 3m. LAN HTTPS wedged Caddy on the home server (2026-10-09, Harbor 0.25.1, decision 148)
+
+What was seen and measured on the box (loopback, logged in):
+
+| Check | Before | After `systemctl restart caddy` |
+|---|---|---|
+| `GET /v1/platform-tools` | 15.04 s | 0.04 s |
+| `GET /v1/network/addresses` | 15.02 s | 0.02 s |
+| `GET /v1/instances` | 0.05 s | 0.04 s |
+| Caddy admin `GET /config/` | no answer in 20 s | 200 in 1 ms |
+| A public site through Caddy (`--resolve …:443:127.0.0.1`) | no answer in 10 s | 302 in 0.06 s |
+
+Cause chain from the journals: turning secure addresses on minted the cert into a `tls/` dir that came out
+0700 (service `UMask=0077`), Caddy rejected the config (`open …/server.crt: permission denied`), Harbor re-sent it
+every minute, and after the fifth reject Caddy's certificate maintenance panicked and the admin endpoint hung.
+Fixes (0.25.2) are proved by the fake adapter only (`tests/integration/lan-https.test.ts`); turning secure
+addresses on again with Caddy on the real box is still to do after the update.
+
 ## 3l. Seal in place, passphrase change, sealed purge (2026-10-06, Harbor 0.24.0, decisions 142–144)
 
 **Live, droplet `harbor-test`** ([evidence](evidence/vm-2026-10-06-seal/README.md)): self-update

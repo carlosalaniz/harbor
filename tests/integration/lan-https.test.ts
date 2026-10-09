@@ -2,7 +2,7 @@
 // mints the local CA on enable (openssl), serves the cert openly, reports
 // the secure address + fingerprint, and adds lanSecure to app endpoints.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
@@ -70,6 +70,11 @@ describe('LAN HTTPS (local CA + secure addresses)', () => {
       console.warn('openssl not installed: skipping LAN HTTPS mint test');
       return;
     }
+    // harbor.service runs with UMask=0077, so mkdir alone left tls/ at 0700 and Caddy could not open the
+    // cert (it wedged Caddy on a real host). A dir left 0700 by an older version is repaired on enable.
+    const tlsDir = path.join(h.stateDir, 'tls');
+    mkdirSync(tlsDir, { recursive: true, mode: 0o700 });
+    chmodSync(tlsDir, 0o700);
     const on = await h.api.expect<NetworkHttpsDto>(200, 'PUT', '/v1/network/https', { enabled: true });
     expect(on.enabled).toBe(true);
     expect(on.url).toBe('https://harbor.local/');
@@ -77,7 +82,7 @@ describe('LAN HTTPS (local CA + secure addresses)', () => {
     expect(on.hosts).toContain('harbor.local');
     // The server cert/key are group-readable (0640) so Caddy (added to the
     // harbor group) can terminate TLS for the LAN hostnames; the CA key stays 0600.
-    const tlsDir = path.join(h.stateDir, 'tls');
+    expect(statSync(tlsDir).mode & 0o777).toBe(0o750);
     expect(statSync(path.join(tlsDir, 'server.crt')).mode & 0o777).toBe(0o640);
     expect(statSync(path.join(tlsDir, 'server.key')).mode & 0o777).toBe(0o640);
     expect(statSync(path.join(tlsDir, 'ca.key')).mode & 0o777).toBe(0o600);
@@ -99,4 +104,19 @@ describe('LAN HTTPS (local CA + secure addresses)', () => {
     expect(inst2.endpoints[0]!.urls.lanSecure).toBeUndefined();
     expect(inst2.endpoints[0]!.urls.lan).toMatch(/^http:\/\//);
   }, 60_000);
+
+  it('a config Caddy rejects is sent once, not re-pushed every tick (repeated rejects wedged a real Caddy)', async () => {
+    if (!hasOpenssl()) return;
+    h.caddy.reject = 'loading certificates: open server.crt: permission denied';
+    h.caddy.loadAttempts = 0;
+    await h.api.expect<NetworkHttpsDto>(200, 'PUT', '/v1/network/https', { enabled: true });
+    await new Promise((r) => setTimeout(r, 2_000)); // four observer ticks
+    expect(h.caddy.loadAttempts).toBe(1);
+    // Caddy kept its last good config (a rejected load rolls back), so turning HTTPS off sends nothing.
+    h.caddy.reject = null;
+    await h.api.expect<NetworkHttpsDto>(200, 'PUT', '/v1/network/https', { enabled: false });
+    await new Promise((r) => setTimeout(r, 1_500));
+    expect(h.caddy.loadAttempts).toBe(1);
+    expect(JSON.stringify(h.caddy.config)).not.toContain('server.crt');
+  }, 30_000);
 });
