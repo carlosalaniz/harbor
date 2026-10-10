@@ -2640,3 +2640,84 @@ pre.code.wrap {
 .default-login p {
   margin: 0;
 }
+
+/* ---- backups (decisions 149–154) ---- */
+.backups-panel {
+  margin-top: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 6px 12px 10px;
+}
+.backups-panel summary {
+  font-weight: 600;
+}
+.backups-panel fieldset {
+  border: 0;
+  padding: 0;
+  margin: 8px 0;
+}
+.backups-panel h4 {
+  margin: 12px 0 4px;
+}
+.restore-points li,
+.backup-apps li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.places .place {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.place-types li {
+  padding: 8px 0;
+}
+.place-type {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.place-type:hover,
+.place-type:focus-visible {
+  border-color: var(--accent, currentColor);
+}
+.warn-text {
+  color: var(--warn, inherit);
+}
+
+.danger-zone.quiet {
+  border: 0;
+  padding: 0;
+  margin-top: 6px;
+}
+.danger-zone.quiet[open] {
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--line));
+  padding: 6px 12px 10px;
+}
+fieldset.retention {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+fieldset.retention legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+fieldset.retention input,
+input.narrow {
+  width: 5.5em;
+}
+
+.backups-panel fieldset label {
+  margin: 2px 0;
+}

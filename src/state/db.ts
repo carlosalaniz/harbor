@@ -4,7 +4,7 @@ import path from 'node:path';
 import { HarborError } from '../errors.js';
 import { rfc3339, type Clock, type Ids } from '../util.js';
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 // Decision 126: one row per (consumer, link id). provider_instance_id NULL = needs a provider;
 // 'dormant' = the consumer is removed (retained) and Reinstall re-creates the link.
@@ -23,6 +23,27 @@ CREATE TABLE links (
   PRIMARY KEY (consumer_instance_id, link_id)
 );
 CREATE INDEX links_provider ON links(provider_instance_id);
+`;
+
+// v11 (decision 154): one row per backup / restore / prune / check run. No foreign key on purpose:
+// the history of an app outlives a purge, and a restore on a new machine starts before its instance.
+const BACKUP_RUNS_SQL = `
+CREATE TABLE backup_runs (
+  id TEXT PRIMARY KEY,
+  instance_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('backup','restore','prune','check')),
+  trigger TEXT NOT NULL CHECK (trigger IN ('schedule','manual')),
+  state TEXT NOT NULL CHECK (state IN ('running','succeeded','partial','failed','skipped')),
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  downtime_ms INTEGER,
+  bytes_added INTEGER,
+  total_bytes INTEGER,
+  message TEXT,
+  operation_id TEXT,
+  targets_json TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX backup_runs_instance ON backup_runs(instance_id, started_at);
 `;
 
 export const SCHEMA_SQL = `
@@ -201,6 +222,7 @@ CREATE TABLE package_sources (
   note TEXT
 );
 ${LINKS_SQL}
+${BACKUP_RUNS_SQL}
 `;
 
 export type Db = Database.Database;
@@ -304,6 +326,10 @@ export function openState(stateDir: string, opts: { readonly?: boolean } = {}): 
         if (version === 9) {
           migrateV9toV10(db);
           version = 10;
+        }
+        if (version === 10) {
+          migrateV10toV11(db);
+          version = 11;
         }
       } finally {
         db.pragma('foreign_keys = ON');
@@ -418,6 +444,13 @@ function migrateV9toV10(db: Db): void {
       ALTER TABLE instances ADD COLUMN primary_host TEXT;
     `);
     db.pragma('user_version = 10');
+  })();
+}
+
+function migrateV10toV11(db: Db): void {
+  db.transaction(() => {
+    db.exec(BACKUP_RUNS_SQL);
+    db.pragma('user_version = 11');
   })();
 }
 

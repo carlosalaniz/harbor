@@ -220,6 +220,24 @@ Fake-adapter and unit evidence only (no live run of these fixes yet):
 - `pnpm catalog:verify`: nextcloud revision 4 (hashes refreshed, qualification `pending` until a
   droplet run).
 
+## 3n. App backups (2026-10-10, Harbor 0.26.0, decisions 149–154)
+
+**Live, harbor-old (physical test box) + droplet `harbor-test`** ([evidence](evidence/live-2026-10-10-backups/README.md)):
+0.20.1 → 0.26.0 and 0.25.0 → 0.26.0 self-updates (existing apps untouched, restic 0.19.1 + rclone 1.75.2
+installed by bootstrap). Places Another disk, S3 (SeaweedFS, bucket created at init) and SFTP all ready; a
+backup to all three paused the app **2 s**, the next one sent 156 kB; no plaintext marker anywhere at the
+places; restore in place brought the marker back and kept the previous copy until deleted. **Cross-machine:**
+an app backed up on the droplet was restored on harbor-old from the same SFTP place after opening it with the
+droplet's recovery key — same SHA-256 of a 3 MB random blob, healthy, kernel-sealed; after a purge it restored
+again under a fresh identity. Six defects were found live and fixed before release (evidence README).
+**Not verified live:** Proton Drive (needs a real account and a 2FA code), a real cloud S3 provider (SeaweedFS
+stood in), the nightly window firing on its own (the schedule math is unit-tested; manual runs exercised the
+same worker).
+
+Fake adapter: unit `backups.test.ts` (17, incl. a real-restic round trip when restic is installed), migration v11;
+integration `backups.test.ts` (13); e2e 30 (Settings → Backups → place, drawer → back up → restore → delete kept
+copy). Counts in PROGRESS.
+
 ## 3m. Move between locations (2026-10-06, Harbor 0.25.0, decisions 145–146)
 
 **Live, droplet `harbor-test`** ([evidence](evidence/vm-2026-10-06-move/README.md)): 0.24.0 → 0.25.0

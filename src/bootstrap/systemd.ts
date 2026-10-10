@@ -1,6 +1,8 @@
 import { PRODUCT } from '../naming.js';
 import { UNIT_MARKER } from './host.js';
 import { APP_CRYPTO_UNIT_PREFIX } from '../storage/fscrypt.js';
+import { BACKUP_UNIT_PREFIX } from '../backups/step.js';
+export { BACKUP_UNIT_FILE } from '../backups/step.js';
 export { APP_CRYPTO_UNIT_FILE } from '../storage/fscrypt.js';
 
 // The unit restarts the daemon, runs it as the dedicated user with Docker group access, and kills
@@ -96,6 +98,12 @@ polkit.addRule(function (action, subject) {
   // Per-app kernel sealing (fscrypt): start harbor-app-crypto@<instanceId>:<action>.service
   if (action.id === "org.freedesktop.systemd1.manage-units" &&
       String(action.lookup("unit")).indexOf("${APP_CRYPTO_UNIT_PREFIX}") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
+  // App backups (restic): start harbor-backup@<requestId>.service
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("${BACKUP_UNIT_PREFIX}") === 0 &&
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
@@ -198,5 +206,24 @@ Description=Harbor per-app encryption step (%i: <instanceId>:<setup|seal|unlock|
 Type=oneshot
 ExecStart=${PRODUCT.paths.opt}/bin/harbor app-crypto %i
 TimeoutStartSec=0
+`;
+}
+
+// Oneshot unit for app backups (decision 153). The daemon starts `harbor-backup@<requestId>` and
+// BLOCKS on it; the root step runs `harbor backup-step <requestId>`, which re-validates the request
+// under <stateDir>/backup/requests/<id>/, reads its secrets from a FIFO there and runs restic. No start
+// timeout: a first backup is bounded by the data and the uplink; the request carries its own deadline.
+export function backupUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor app backup step (%i: request id)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor backup-step %i
+TimeoutStartSec=0
+Nice=5
 `;
 }

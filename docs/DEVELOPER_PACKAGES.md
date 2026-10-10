@@ -309,3 +309,53 @@ database and other services never join), with no route to the internet. The prov
 - Use the address as a base URL (`url` has no trailing slash). Authenticate to the other app like any
   client would (often with an operator-provided secret, above): a link is reachability, not trust.
 
+
+## 9. Backup place packages (`kind: BackupTarget`)
+
+Apps are not the only packages. A **backup place** (decision 152) is a package too: it tells Harbor
+which form to show and which built-in transport to hand the answers to. It carries **no code**:
+backups run as root over every app's plaintext, so a package that could run something would be a root
+shell. Bundled ones live in `targets/<id>/` (`manifest.yaml` + `README.md`); uploading your own is
+planned for 0.27.
+
+```yaml
+apiVersion: harbor/v1alpha1
+kind: BackupTarget
+metadata:
+  id: mega                       # lowercase, dashes; the folder name
+  name: MEGA
+  description: Your MEGA account, through rclone.
+  status: beta                   # stable | beta (shown as a badge)
+release:
+  revision: "1"
+transport: rclone                # local | s3 | sftp | rclone | rest
+rclone:
+  backend: mega                  # any rclone backend name (https://rclone.org/overview/)
+fields:
+  - id: user                     # ^[a-z][A-Za-z0-9]{0,31}$
+    label: Email
+    type: text                   # text | secret | textarea | number
+    required: true
+    rclone: user                 # the rclone option this answer fills
+  - id: pass
+    label: Password
+    type: secret                 # stored masked, never in DTOs or logs, no default allowed
+    required: true
+    rclone: pass
+    obscure: true                # passed through `rclone obscure` (rclone wants passwords obscured)
+  - id: path                     # the one field without `rclone`: the folder in the remote
+    label: Folder
+    type: text
+    default: harbor-backups
+```
+
+Rules the loader enforces (`src/backups/targets.ts`):
+
+- Built-in transports read fixed field ids: `local` → `path`; `s3` → `endpoint`, `bucket`,
+  `accessKeyId`, `secretAccessKey` (+ optional `path`, `region`); `sftp` → `host`, `user`, `path`,
+  `privateKey` (+ optional `port`, `hostKey`); `rest` → `url` (+ optional `username`, `password`). A
+  field the transport does not read is refused.
+- `rclone` targets need `rclone.backend`, and every field except `path` must name its rclone option.
+- `obscure` and `rclone` only apply to rclone targets; a secret cannot have a default.
+- Any cloud rclone supports is a new package, not a Harbor release. One rclone does not support needs
+  a new transport in the engine.

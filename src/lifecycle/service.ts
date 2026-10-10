@@ -1,5 +1,7 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { UUID_RE } from '../contracts/patterns.js';
+import { tagValue } from '../backups/restic.js';
 import type { AppLinkDto, LinkChoice, LinkDto } from '../contracts/api.js';
 import type { LinkClaim, Manifest, SecretClaim } from '../contracts/types.js';
 import { linkAlias, linkNetworkName, linkValue } from '../planner/links.js';
@@ -1288,7 +1290,7 @@ export class ApplicationService {
   // it just predates identities, so stamp and record going forward.
   // Adopting a replacement drive re-stamps the folder with a new identity
   // (the old data is gone; the operator accepts the folder as the new home).
-  private needsDrive(instanceId: string): InstanceSummary['needsDrive'] {
+  needsDrive(instanceId: string): InstanceSummary['needsDrive'] {
     try {
       const inst = this.ctx.repo.instance(instanceId);
       if (!inst || inst.installState !== 'installed') return null;
@@ -1737,6 +1739,8 @@ export class ApplicationService {
     if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'seal') return this.sealPlan(inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'move') return this.movePlan(inst, req.location.dir, pkgName, actor, now, expiresAt);
+    if (req.kind === 'backup') return this.backupPlan(inst, req.runId, pkgName, actor, now, expiresAt);
+    if (req.kind === 'restore') return this.restorePlan(inst, req.runId, req.targetId, pkgName, actor, now, expiresAt);
     if (req.kind === 'update') return this.updatePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'configure') return this.configurePlan(req, inst, pkgName, actor, now, expiresAt);
     const changes: string[] = [];
@@ -2074,6 +2078,143 @@ export class ApplicationService {
       releaseHashes: inst.releaseHashes,
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'move', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Decision 151: the cold pass of a backup run. Submitted by the backup worker (actor `scheduler`) once
+  // the warm passes converged; the app is down only while what changed since the last pass is sent.
+  private backupPlan(inst: InstanceRow, runId: string, pkgName: string, actor: string, now: Date, expiresAt: string): PlanDto {
+    const { repo, ids } = this.ctx;
+    if (!UUID_RE.test(runId)) throw new HarborError('INVALID_REQUEST', 'invalid backup run id');
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `backing up needs an installed app; ${inst.name} is ${inst.installState}`);
+    if (!this.homeRow(inst.id)) throw new HarborError('INVALID_STATE', `${inst.name} is not encrypted`, { nextAction: `Encrypt it first: harbor seal ${inst.name}` });
+    const cap = this.ctx.backups?.policy().maxDowntimeMinutes ?? 5;
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: null,
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [`Stop ${pkgName} ("${inst.name}"); its containers and data stay`, `Send what changed since the last pass to every backup place (at most ${cap} min)`, `Start ${pkgName} again and check it answers`],
+      warnings: [`${pkgName} is down while the last changes are sent (at most ${cap} min; it starts again either way).`],
+      releaseHashes: inst.releaseHashes,
+      backup: { runId },
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'backup', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Decision 153: put an app back as it was at a restore point. The current home is kept aside until the
+  // operator deletes it; any failure puts it back and starts the app as it was.
+  private restorePlan(inst: InstanceRow, runId: string, targetId: string | undefined, pkgName: string, actor: string, now: Date, expiresAt: string): PlanDto {
+    const { repo, ids } = this.ctx;
+    const backups = this.ctx.backups;
+    if (!backups) throw new HarborError('UNSUPPORTED_CAPABILITY', 'backups are not available on this machine');
+    if (!['installed', 'needs_action', 'failed'].includes(inst.installState)) throw new HarborError('INVALID_STATE', `cannot restore ${inst.name} while it is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? `Reinstall it first: harbor reinstall ${inst.name}` : 'Wait for it to settle, then try again.' });
+    const home = this.homeRow(inst.id);
+    if (!home) throw new HarborError('INVALID_STATE', `${inst.name} is not encrypted, so it has no backups`);
+    if (this.needsDrive(inst.id)) throw new HarborError('DATA_MISSING', `${inst.name} needs its drive back before it can be restored`);
+    if (backups.previous(inst.id) && existsSync(backups.previous(inst.id)!.path)) throw new HarborError('INVALID_STATE', `${inst.name} still keeps the copy from before its last restore`, { nextAction: 'Delete that copy from the app\'s Backups tab first (or keep it by moving it elsewhere yourself).' });
+    const point = backups.resolvePoint(inst.id, runId, targetId);
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: null,
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [
+        `Stop ${pkgName} ("${inst.name}") and delete its containers`,
+        `Keep its current data aside at ${home.name}.before-restore-… (delete it later from the Backups tab)`,
+        `Create a fresh sealed home at ${home.name} with the same key and restore the data of ${point.snapshot.time} from ${point.target.name} into it`,
+        `Put back its secrets and release as they were then, start it and check it answers (same name, ports, addresses and links)`,
+      ],
+      warnings: [`Everything ${pkgName} saved after ${point.snapshot.time} is only in the copy kept aside.`, `${pkgName} is down while the data is restored.`, 'Needs free space for a second copy of the app at the same place.'],
+      releaseHashes: inst.releaseHashes,
+      restore: { runId, targetId: point.target.id, snapshotId: point.snapshot.id, sourceHome: point.home, sourceStage: point.stage, time: point.snapshot.time },
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'restore', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Decision 153: delete the copy of an app a restore kept aside. Not Docker, not the app's live data: the
+  // folder named in the setting, deleted by root after it re-checks the manifest names this instance.
+  async deletePreviousCopy(instanceId: string): Promise<{ deleted: string }> {
+    const inst = this.instanceRow(instanceId);
+    const prev = this.ctx.backups?.previous(inst.id);
+    if (!prev) throw new HarborError('NOT_FOUND', `${inst.name} keeps no copy from before a restore`);
+    if (prev.path === this.homeRow(inst.id)?.name) throw new HarborError('INVALID_STATE', 'that folder is the app\'s live home; refusing');
+    if (existsSync(prev.path)) {
+      if (this.ctx.crypto) await this.ctx.crypto.destroyHome({ instanceId: inst.id, home: prev.path });
+      else rmSync(prev.path, { recursive: true, force: true });
+    }
+    this.ctx.backups!.setPrevious(inst.id, null);
+    this.ctx.log.info(`deleted the copy of ${inst.name} kept by its last restore`, { instanceId, path: prev.path });
+    return { deleted: prev.path };
+  }
+
+  // Decision 153: restore an app from a backup place onto THIS machine (a new machine, or an app purged
+  // here). Same identity (the instance id travels in the backup), fresh ports, an install plan whose
+  // home is created from the restore point instead of empty.
+  async restoreAppPlan(req: { targetId: string; instanceId: string; runId: string; location: { dir: string }; name?: string }, actor: string): Promise<PlanDto> {
+    const { repo, ids, clock, config } = this.ctx;
+    const backups = this.ctx.backups;
+    if (!backups) throw new HarborError('UNSUPPORTED_CAPABILITY', 'backups are not available on this machine');
+    const existing = repo.instance(req.instanceId);
+    if (existing && !existing.purgedAt) throw new HarborError('NAME_CONFLICT', 'that app is already on this machine', { nextAction: 'Restore it from its own Backups tab instead.' });
+    // An app fully uninstalled here keeps its row for history: the restored copy gets a fresh identity.
+    const instanceId = existing ? ids.uuid() : req.instanceId;
+    if (!this.ctx.machineKey.unlocked) throw new HarborError('INVALID_STATE', 'Harbor restarted since your last login: log in again before restoring an app', { nextAction: 'Log out and log in with your password once, then try again.' });
+    const point = backups.resolvePoint(req.instanceId, req.runId, req.targetId);
+    const pkgId = tagValue(point.snapshot.tags, 'pkg') ?? '';
+    let pkg: LoadedPackage;
+    try {
+      pkg = this.ctx.packages.load(pkgId);
+    } catch {
+      throw new HarborError('NOT_FOUND', `this Harbor has no package ${pkgId}`, { nextAction: 'Add that app\'s package first (App Store → Your apps → Upload, or its git source), then restore again.' });
+    }
+    const instances = repo.listInstances();
+    if (!pkg.manifest.deployment.multiInstance && instances.some((i) => i.packageId === pkg.id)) throw new HarborError('NAME_CONFLICT', `${pkg.id} does not support multiple instances`, { nextAction: 'Remove the existing one first.' });
+    const taken = new Set(instances.map((i) => i.name));
+    const slug = point.home.split('/').pop() ?? pkg.id;
+    const proposed = proposeName(req.name ?? slug, taken, req.name);
+    if (proposed.error) throw new HarborError(proposed.error.includes('already used') ? 'NAME_CONFLICT' : 'INVALID_REQUEST', proposed.error);
+    const identity = identityFor(this.ctx.installationId, instanceId);
+    const endpoints = await this.allocatePorts(pkg);
+    const storage = this.resolveStorage(pkg, identity, {}, instances);
+    const dir = this.resolveInstallLocation(req.location.dir, instances, pkg.id);
+    const target = path.posix.join(dir, proposed.name);
+    if (existsSync(target)) throw new HarborError('NAME_CONFLICT', `${target} already exists`, { nextAction: 'Pick another name or place.' });
+    const now = clock.now();
+    const proposal: PlanProposal = {
+      packageId: pkg.id,
+      revision: pkg.revision,
+      name: proposed.name,
+      project: identity.project,
+      endpoints,
+      storage,
+      location: { dir, defaultKey: true },
+      secrets: (pkg.manifest.secrets ?? []).map((s) => ({ id: s.id })),
+      changes: [
+        `Restore ${pkg.manifest.metadata.name} as it was at ${point.snapshot.time}, from ${point.target.name}`,
+        `Create a sealed home at ${target}/ with the app's own key; this machine unlocks it when you log in, and your Harbor recovery key opens it anywhere`,
+        `Put back its secrets, then create Compose project ${identity.project}`,
+        ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
+      ],
+      warnings: ['Ports are allocated fresh on this machine; addresses differ from the previous one.', ...(tagValue(point.snapshot.tags, 'pkg') && pkg.revision ? [`It runs package revision ${pkg.revision} here; the app updates its own data if that is newer than the one it was backed up with.`] : [])],
+      releaseHashes: pkg.hashes,
+      restore: { runId: req.runId, targetId: point.target.id, snapshotId: point.snapshot.id, sourceHome: point.home, sourceStage: point.stage, time: point.snapshot.time, ...(instanceId !== req.instanceId ? { fromInstanceId: req.instanceId } : {}) },
+    };
+    await this.validateProspective(pkg, identity, endpoints);
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'install', instanceId, proposal, expectedGeneration: 0, createdAt: rfc3339(now), expiresAt: rfc3339(addSeconds(now, config.planTtlSeconds)) };
     repo.insertPlan(plan);
     return this.plan(plan.id);
   }
@@ -2432,5 +2573,6 @@ export function isProxyAddress(s: string): boolean {
 // Decision 122: where a notification is fixed, by kind (no stored column: derived, so old rows link too).
 export function notificationLink(kind: string): string | null {
   if (kind === 'drive-attention' || kind.startsWith('device-') || kind === 'storage-missing') return '#/settings/storage';
+  if (kind.startsWith('backup-')) return '#/settings/backups';
   return null;
 }

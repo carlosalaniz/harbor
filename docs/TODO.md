@@ -112,3 +112,19 @@ plaintext on disk.
       alternative.
 - [x] *(0.23.0, decision 141)* **API-only apps.** Every app must have a main web endpoint, so an API (e.g. an MCP gateway)
       still shows an *Open* button; allow an endpoint kind "api" with no browser launch.
+
+## Backups (decisions 149–154): what 0.26.0 left for the next batches
+
+Built in 0.26.0: restic engine through the root step, places Another disk / S3 / SFTP / Proton Drive
+(beta), the nightly schedule with warm passes and the downtime cap, restore in place, restore on
+another machine with the recovery key, console + CLI. Next:
+
+- [ ] **0.27 — consistency B (database dumps).** Manifest `backup.dumps[] {service, command[],
+      restore[], replaces}` (BACKUPS.md §10): `docker exec` streamed into `restic --stdin`, the
+      `replaces` claim's raw files skipped, no pause at all; restore starts only that service, pipes the
+      dump back, then the rest. Bundled Postgres/MySQL/SQLite packages declare it; operator can force A.
+- [ ] **0.27 — uploaded place packages** (zip, same validator as bundled ones) and bundled Google Drive
+      (operator pastes a token from `rclone authorize drive`) and MEGA packages.
+- [ ] **0.27 — `check` and prune on demand** from Settings → Backups (today: weekly prune, monthly 2 %
+      check, when nothing else runs).
+- [ ] Live-verify Proton Drive with a real account (needs Carlos's credentials and a 2FA code).

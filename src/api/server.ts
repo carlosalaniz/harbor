@@ -17,6 +17,8 @@ import type { PowerControl } from '../system/power.js';
 import type { TerminalService, TerminalSession } from '../system/terminal.js';
 import type { SetupRequest, TerminalClientMessage } from '../contracts/api.js';
 import type { SetupService } from '../auth/setup.js';
+import type { BackupService } from '../backups/service.js';
+import type { BackupAppPolicyDto, BackupPolicyDto } from '../contracts/api.js';
 import { lanHostAllowed } from '../system/lan.js';
 import { hostname as osHostname } from 'node:os';
 import { hostFacts } from '../system/metrics.js';
@@ -45,6 +47,7 @@ export interface ApiDeps {
   tailscaleFacts: () => Promise<{ installed: boolean; loggedIn: boolean }>;
   log: Logger;
   version: string;
+  backups?: BackupService | null;
 }
 
 declare module 'fastify' {
@@ -867,6 +870,8 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
               },
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'restart', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+            // decision 153: restore an app in place from a restore point (its run id), optionally from one place
+            { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'runId'], properties: { kind: { const: 'restore' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, runId: { type: 'string', pattern: UUID_PATTERN }, targetId: { type: 'string', pattern: UUID_PATTERN } } },
             {
               type: 'object',
               additionalProperties: false,
@@ -987,6 +992,86 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
         throw new HarborError('NOT_FOUND', 'LAN HTTPS has not been turned on yet', { nextAction: 'Turn on Secure addresses in Settings → Network first.' });
       }
     },
+  );
+
+  // --- app backups (decisions 149–154)
+  const backups = (): BackupService => {
+    if (!deps.backups) throw new HarborError('UNSUPPORTED_CAPABILITY', 'backups are not available on this machine');
+    return deps.backups;
+  };
+  const ID_PARAM = { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } } as const;
+  const WINDOW = { type: 'string', pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' } as const;
+  const VALUES = { type: 'object', maxProperties: 16, propertyNames: { pattern: '^[a-z][A-Za-z0-9]{0,31}$' }, additionalProperties: { type: 'string', maxLength: 16384 } } as const;
+  app.get('/v1/backups', { preHandler: requireAuth, schema: { description: 'Backups at a glance: the global policy, place types (target packages), installed places (secrets redacted), every app with its policy and last run, what runs right now, recent runs.' } }, async () => backups().overview());
+  app.put(
+    '/v1/backups/policy',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Change the global backup policy: window start (local HH:MM), cadence, weekday, maximum downtime per app, retention, pause.',
+        body: { type: 'object', additionalProperties: false, properties: { window: WINDOW, cadence: { enum: ['daily', 'weekly'] }, weekday: { type: 'integer', minimum: 0, maximum: 6 }, maxDowntimeMinutes: { type: 'integer', minimum: 1, maximum: 120 }, paused: { type: 'boolean' }, retention: { type: 'object', additionalProperties: false, properties: { daily: { type: 'integer', minimum: 0, maximum: 400 }, weekly: { type: 'integer', minimum: 0, maximum: 400 }, monthly: { type: 'integer', minimum: 0, maximum: 400 } } } } },
+      },
+    },
+    async (req) => backups().setPolicy(req.body as Partial<BackupPolicyDto>),
+  );
+  app.post(
+    '/v1/backups/targets',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Install a backup place from a target package: test it, set it up (an empty place gets Harbor\'s backup key and your recovery key), or recognise backups of another Harbor there. The first place may issue the Harbor recovery key; it is returned once.',
+        body: { type: 'object', additionalProperties: false, required: ['packageId', 'name', 'values'], properties: { packageId: { type: 'string', pattern: ID_PATTERN }, name: { type: 'string', minLength: 1, maxLength: 64 }, values: VALUES } },
+      },
+    },
+    async (req) => {
+      const b = req.body as { packageId: string; name: string; values: Record<string, string> };
+      return backups().addTarget(b.packageId, b.name, b.values);
+    },
+  );
+  app.put(
+    '/v1/backups/targets/:id',
+    { preHandler: requireAuth, schema: { description: 'Rename a place or change its answers ("••••" keeps a stored secret); new answers are tested before they are saved.', params: ID_PARAM, body: { type: 'object', additionalProperties: false, properties: { name: { type: 'string', minLength: 1, maxLength: 64 }, values: VALUES } } } },
+    async (req) => backups().updateTarget((req.params as { id: string }).id, req.body as { name?: string; values?: Record<string, string> }),
+  );
+  app.post('/v1/backups/targets/:id/test', { preHandler: requireAuth, schema: { description: 'Test a place again: reachable, and whether its backups open with this Harbor\'s key.', params: ID_PARAM } }, async (req) => backups().testTarget((req.params as { id: string }).id));
+  app.post('/v1/backups/targets/:id/unlock', { preHandler: requireAuth, schema: { description: 'Clear a stale lock a crashed run left at a place (restic unlock).', params: ID_PARAM } }, async (req) => backups().unlockTarget((req.params as { id: string }).id));
+  app.post(
+    '/v1/backups/targets/:id/open',
+    { preHandler: requireAuth, schema: { description: 'Open another Harbor\'s backups at this place with that Harbor\'s recovery key (12 words). This Harbor adds its own key there, so it can restore those apps.', params: ID_PARAM, body: { type: 'object', additionalProperties: false, required: ['recoveryKey'], properties: { recoveryKey: { type: 'string', minLength: 1, maxLength: 512 } } } } },
+    async (req) => backups().openForeign((req.params as { id: string }).id, (req.body as { recoveryKey: string }).recoveryKey),
+  );
+  app.post(
+    '/v1/backups/targets/:id/remove',
+    { preHandler: requireAuth, schema: { description: 'Uninstall a place: apps stop backing up there and its credentials are forgotten. The backups stored there are kept unless deleteBackups is true and confirmName repeats the place\'s name.', params: ID_PARAM, body: { type: 'object', additionalProperties: false, required: ['deleteBackups'], properties: { deleteBackups: { type: 'boolean' }, confirmName: { type: 'string', maxLength: 64 } } } } },
+    async (req) => backups().removeTarget((req.params as { id: string }).id, req.body as { deleteBackups: boolean; confirmName?: string }),
+  );
+  app.get('/v1/backups/targets/:id/apps', { preHandler: requireAuth, schema: { description: 'Apps that have restore points at this place (for restoring onto this machine).', params: ID_PARAM } }, async (req) => ({ items: await backups().foundApps((req.params as { id: string }).id) }));
+  app.post(
+    '/v1/backups/restore',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Plan restoring an app from a place onto this machine (a new machine, or an app purged here): an install plan whose home comes from the restore point. Submit it with POST /v1/operations.',
+        body: { type: 'object', additionalProperties: false, required: ['targetId', 'instanceId', 'runId', 'location'], properties: { targetId: { type: 'string', pattern: UUID_PATTERN }, instanceId: { type: 'string', pattern: UUID_PATTERN }, runId: { type: 'string', pattern: UUID_PATTERN }, name: { type: 'string', pattern: ID_PATTERN }, location: { type: 'object', additionalProperties: false, required: ['dir'], properties: { dir: { type: 'string', minLength: 1, maxLength: 4096 } } } } },
+      },
+    },
+    async (req, reply) => reply.status(201).send(await service.restoreAppPlan(req.body as { targetId: string; instanceId: string; runId: string; location: { dir: string }; name?: string }, req.actor!)),
+  );
+  app.get(
+    '/v1/instances/:id/backups',
+    { preHandler: requireAuth, schema: { description: 'One app\'s backups: policy, next window, runs, restore points (refresh=true asks every place again), the copy kept by the last restore.', params: ID_PARAM, querystring: { type: 'object', additionalProperties: false, properties: { refresh: { type: 'boolean' } } } } },
+    async (req) => backups().appBackups((req.params as { id: string }).id, (req.query as { refresh?: boolean }).refresh === true),
+  );
+  app.put(
+    '/v1/instances/:id/backups',
+    { preHandler: requireAuth, schema: { description: 'Turn an app\'s backups on or off, pick its places (fan-out) and optionally its own window/cadence (null = the global one).', params: ID_PARAM, body: { type: 'object', additionalProperties: false, properties: { enabled: { type: 'boolean' }, targets: { type: 'array', maxItems: 16, items: { type: 'string', pattern: UUID_PATTERN } }, window: { oneOf: [WINDOW, { type: 'null' }] }, cadence: { oneOf: [{ enum: ['daily', 'weekly'] }, { type: 'null' }] }, weekday: { oneOf: [{ type: 'integer', minimum: 0, maximum: 6 }, { type: 'null' }] } } } } },
+    async (req) => backups().setAppPolicy((req.params as { id: string }).id, req.body as Partial<BackupAppPolicyDto>),
+  );
+  app.post('/v1/instances/:id/backups/run', { preHandler: requireAuth, schema: { description: 'Back this app up now (queued behind any app being backed up; same warm/cold passes and cap as the schedule).', params: ID_PARAM } }, async (req, reply) => reply.status(202).send(backups().runNow((req.params as { id: string }).id)));
+  app.delete(
+    '/v1/instances/:id/backups/previous',
+    { preHandler: requireAuth, schema: { description: 'Delete the copy of the app kept aside by its last restore (root deletes it; the app is not touched).', params: ID_PARAM } },
+    async (req) => service.deletePreviousCopy((req.params as { id: string }).id),
   );
 
   // --- static UI

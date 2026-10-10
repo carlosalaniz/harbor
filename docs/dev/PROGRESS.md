@@ -388,16 +388,28 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Decision 148: `tls/` chmod 0750 (UMask=0077 masked mkdir), no re-send of a Caddy-rejected config for 10 min, 3 s Caddy probe, console loads platform tools off Home's critical path
 - [x] Tests: integration `lan-https` (0700 dir repaired to 0750 on enable; a rejected config is sent once over four ticks)
 
+## Phase 57 — app backups (2026-10-10, 0.26.0)
+- [x] Decision 149: restic 0.19.1 + rclone 1.75.2 pinned by sha256 (bootstrap installs into `/usr/local/lib/harbor/bin`); a restore point = app home + state slice; one repository per place
+- [x] Decision 150: backup key (machine-wrapped) + Harbor recovery card as restic keys; card rotation re-keys places on the next run; the app key travels inside the snapshot; state slice via FIFO to tmpfs
+- [x] Decision 151: stop-copy with warm passes, the cold pass as a `backup` operation with the downtime cap as deadline, one app at a time, global window + per-app override
+- [x] Decision 152: place packages `targets/` (Another disk, S3, SFTP, Proton Drive beta), installed places in settings, uninstall keeps remote backups unless typed confirmation
+- [x] Decision 153: root step `harbor-backup@<requestId>`; restore in place (old home kept aside, rollback); restore on another machine = install plan from `POST /v1/backups/restore`
+- [x] Decision 154: schema v11 `backup_runs`; weekly prune, monthly 2 % check; notifications link to Settings → Backups
+- [x] Console: Settings → Backups, app drawer Backups panel, App Store *Backup places*; CLI `harbor backup …`, `harbor restore`; 13 routes (openapi 98 paths)
+- [x] Decision 155 (found live): restic retry limits, missing S3 bucket = empty place, `--no-lock` listing + `--retry-lock`, maintenance in the worker, purged app restored under a fresh identity
+- [x] Live: harbor-old + droplet, `docs/evidence/live-2026-10-10-backups/` (three places, 2 s pause, ciphertext only, restore in place, cross-machine restore with the recovery key)
+- [x] Tests: unit `backups.test.ts` (builders, parsers, target validation, schedule math, root contract, rclone zip, real restic when installed), migration v11; integration `backups.test.ts` (13: places, eligibility, warm+cold, cap, too busy, schedule, restore in place, restore on a second daemon with the card, purge-then-restore, BFU skip, uninstall); e2e backups flow; unit 261, integration 206 + 3 skipped, e2e 30
+
 ## Test results (latest local run)
 
 | Command | Result |
 |---|---|
 | `pnpm typecheck` | pass |
 | `pnpm lint` | pass |
-| `pnpm test` (unit) | 244 passed (2026-10-06, 0.25.1) |
-| `pnpm test:integration` (fake adapter) | 193 passed (0.25.2: Caddy-rejected config not re-sent, tls/ dir 0750; 0.25.0: move between locations; 0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
+| `pnpm test` (unit) | 261 passed (2026-10-10, 0.26.0) |
+| `pnpm test:integration` (fake adapter) | 206 passed (0.26.0: app backups — places, warm + cold passes, cap, restore in place and on another daemon; 0.25.2: Caddy-rejected config not re-sent, tls/ dir 0750; 0.25.0: move between locations; 0.24.0: seal in place + passphrase change; 0.23.0: repair paths, own tailnet port, exposure check at the health path, several public hostnames per endpoint, links + operator secrets, install, lifecycle, auth incl. remember/sessions, tools, exposure, storage incl. drive guard + auto-start + policy, app-homes install-location + adopt, settings, purge/domains, appearance, packages/updates, git sources, notifications, security/terminal, setup/LAN/self-update, lan-https); 3 live-Docker tests skipped without opt-in |
 | `HARBOR_LIVE_DOCKER_SOCKET=… pnpm test:integration` (Docker Desktop, opt-in) | 3 passed (real Compose/Dockerode path) |
-| `pnpm test:e2e` (Playwright, fake adapter) | 29 passed (publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
+| `pnpm test:e2e` (Playwright, fake adapter) | 30 passed (backups: add a place, back up, restore in place, delete the kept copy; publish wizard incl. Add another domain + withdraw one by name, app links + typed-in secret, console: login, store, install wizard incl. Local default + External Format-first + passphrase-after-format, drawer lifecycle, publish wizard, phone width, own folder, settings incl. storage Format-first + format-as-ext4, network secure-addresses card, uninstall incl. purge-reinstall, domains + palette, customize, arrange, rotating wallpapers, upload + update via wizard, terminal/troubleshoot/rename, two-factor, Harbor update card + default login; first-run wizard against a setup-mode daemon) |
 | CLI smoke (`pnpm dev` + CLI, fake adapter) | login, catalog, install, stop, start, remove, reinstall, second instance, logout — exit codes as documented |
 | Live VM (manual, 2026-09-14) | bootstrap with Docker install + tools; Excalidraw/BentoPDF/n8n installed; browser demos (draw+export, merge, n8n owner+workflow) — docs/evidence/manual-2026-09-14 |
 | `pnpm test:vm -- --fresh` (2026-09-14, run vm-2026-09-14T18-40-00) | **A01–A16: 16 passed, 0 failed** on a freshly rebuilt Ubuntu 24.04.4 x86-64 droplet, including host reboot |

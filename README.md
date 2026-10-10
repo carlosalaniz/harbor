@@ -39,6 +39,12 @@ and qualified on a real machine. Apps with big data (photos, media, files) can l
 of yours instead of a Docker volume — on a removable drive if you like (Harbor mounts it,
 notices when it leaves, stops the app to protect its data, and starts it again when it returns).
 
+**Backups that cannot be read where they are kept** — turn on backups per app and Harbor copies it
+every night, encrypted on your machine first and sent only as changes, to as many places as you
+pick: another disk, any S3-compatible bucket (Backblaze B2, R2, Wasabi…), an SFTP server, or Proton
+Drive. Each app pauses only for its last few seconds of changes, one at a time. Your 12-word Harbor
+recovery key opens every backup on a new machine. See the [operator guide](docs/OPERATOR_GUIDE.md) §4g.
+
 **Plus your own apps** — upload a zip or point Harbor at a git repo; every push can redeploy
 automatically. Apps can ask you for a value at install (another service's token, an SMTP password)
 and talk privately to another app you pick, over a network only those two join. See
@@ -62,7 +68,7 @@ actually use (password + two-factor, tailnet, domains, storage picker, appearanc
 
 ## Status
 
-Harbor is a **beta preview** (v0.17.0): one administrator, one daemon with Docker
+Harbor is a **beta preview** (v0.26.0): one administrator, one daemon with Docker
 authority. It is not a hardened multi-user service. Encrypted apps are sealed in the kernel
 (fscrypt, one key per app): while locked their data is ciphertext for every reader, root and
 Docker included. After a reboot they stay locked (and down) until the first console login — see

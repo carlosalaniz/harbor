@@ -55,6 +55,10 @@ describe('state migration v1 -> v2', () => {
     opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, note, created_at, proxy_from) VALUES ('99999999-9999-4999-8999-999999999999', '22222222-2222-4222-8222-222222222222', 'web', 'proxy', 'cloud.example.com', 443, 'none', 'active', NULL, 't', '192.168.0.20')").run();
     expect(opened.prepare('SELECT via, proxy_from FROM exposures').get()).toEqual({ via: 'proxy', proxy_from: '192.168.0.20' });
     expect(() => opened.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '22222222-2222-4222-8222-222222222222', 'web', 'carrier-pigeon', 'x', 1, 'none', 'active', 't')").run()).toThrow(/CHECK/);
+    // v11: backup run history (decision 154); no FK, state CHECKed
+    opened.prepare("INSERT INTO backup_runs (id, instance_id, kind, trigger, state, started_at) VALUES ('bbbbbbbb-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', 'backup', 'schedule', 'running', 't')").run();
+    expect(() => opened.prepare("INSERT INTO backup_runs (id, kind, trigger, state, started_at) VALUES ('bbbbbbbb-2222-4222-8222-222222222222', 'backup', 'schedule', 'dreaming', 't')").run()).toThrow(/CHECK/);
+    expect(opened.prepare('SELECT targets_json FROM backup_runs').get()).toEqual({ targets_json: '[]' });
     // v9: app links (decision 126), one row per (consumer, link id); provider null = needs a provider
     opened.prepare("INSERT INTO links (consumer_instance_id, link_id, provider_instance_id, provider_endpoint, network_name, state, created_at, updated_at) VALUES ('22222222-2222-4222-8222-222222222222', 'docs', NULL, NULL, 'hb_x_link_docs', 'needs_provider', 't', 't')").run();
     expect(opened.prepare('SELECT link_id, state, network_id FROM links').get()).toEqual({ link_id: 'docs', state: 'needs_provider', network_id: null });
@@ -87,6 +91,7 @@ describe('state migration v9 -> v10 (decision 127)', () => {
       DROP TABLE exposures;
       CREATE TABLE exposures (id TEXT PRIMARY KEY, instance_id TEXT NOT NULL REFERENCES instances(id), endpoint_id TEXT NOT NULL, via TEXT NOT NULL CHECK (via IN ('tailnet','public','proxy')), hostname TEXT NOT NULL, port INTEGER NOT NULL, protection TEXT NOT NULL CHECK (protection IN ('none','basic')), state TEXT NOT NULL CHECK (state IN ('pending','active','degraded','removing')), observed_at TEXT, note TEXT, created_at TEXT NOT NULL, proxy_from TEXT, UNIQUE (instance_id, endpoint_id, via), UNIQUE (via, hostname, port));
       ALTER TABLE instances DROP COLUMN primary_host;
+      DROP TABLE backup_runs;
     `);
     v9.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at) VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '22222222-2222-4222-8222-222222222222', 'web', 'public', 'erp.example.com', 443, 'basic', 'active', '2026-10-01T00:00:00Z')").run();
     v9.prepare("INSERT INTO exposures (id, instance_id, endpoint_id, via, hostname, port, protection, state, created_at, proxy_from) VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '22222222-2222-4222-8222-222222222222', 'web', 'proxy', 'lan.example.net', 443, 'none', 'active', '2026-09-01T00:00:00Z', '192.0.2.20')").run();
@@ -95,7 +100,7 @@ describe('state migration v9 -> v10 (decision 127)', () => {
     v9.close();
 
     const opened = openState(dir);
-    expect(opened.pragma('user_version', { simple: true })).toBe(10);
+    expect(opened.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
     expect(opened.prepare('SELECT id, via, hostname, protection, proxy_from FROM exposures ORDER BY rowid').all()).toEqual([
       { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', via: 'proxy', hostname: 'lan.example.net', protection: 'none', proxy_from: '192.0.2.20' },
       { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', via: 'public', hostname: 'erp.example.com', protection: 'basic', proxy_from: null },

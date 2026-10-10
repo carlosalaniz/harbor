@@ -1,0 +1,16 @@
+apiVersion: harbor/v1alpha1
+kind: BackupTarget
+metadata:
+  id: folder
+  name: Another disk
+  description: A folder on a second disk or a USB drive plugged into this machine. Fast, but it is in the same house as the original.
+  status: stable
+release:
+  revision: "1"
+transport: local
+fields:
+  - id: path
+    label: Folder
+    type: text
+    required: true
+    hint: A folder under /mnt or /media (a mounted drive), e.g. /mnt/backup/harbor

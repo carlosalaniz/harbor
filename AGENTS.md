@@ -14,7 +14,7 @@ App Store, Publishing, Platform, Settings), and a `harbor` CLI against the same 
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **149**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **156**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -24,7 +24,7 @@ src/            daemon (TypeScript strict ESM, Node 24.12, pnpm 10.16)
   contracts/    JSON Schemas + DTO types — the API's source of truth
   packages/     restricted YAML parser, manifest/compose validators, catalog loader, zip import
   planner/      identity, port allocation, Compose rendering (PURE functions, no I/O)
-  state/        SQLite (better-sqlite3, SCHEMA_VERSION 10, migrations v1→v10; v9 = `links`, v10 = several public names per endpoint), repositories
+  state/        SQLite (better-sqlite3, SCHEMA_VERSION 11, migrations v1→v11; v9 = `links`, v10 = several public names per endpoint, v11 = `backup_runs`), repositories
   docker/       adapter interface, Dockerode adapter, Compose CLI runner, FAKE adapter, port probe
   lifecycle/    plans/operations service, serial runner, readiness, observer (drive-guard stop,
               auto-mount on insert, auto-start on return, lock-guard start once a sealed app's
@@ -42,16 +42,20 @@ src/            daemon (TypeScript strict ESM, Node 24.12, pnpm 10.16)
               ReadWritePaths `/var/lib/harbor /srv/harbor /mnt /media` so markers backfill);
               app-crypto-apply.ts = root half of sealing (tune2fs/fscrypt readiness, seal,
               unlock, lock, status, migrate-in-place) — the daemon NEVER runs fscrypt itself
+  backups/      app backups (decisions 149–154): restic.ts + step.ts + schedule.ts + targets.ts are PURE;
+              engine.ts = root handoff (`harbor-backup@<requestId>`, bootstrap/backup-apply.ts runs restic)
+              + FAKE engine; service.ts = places, policy, sequential worker, restore points
   cli/          commander CLI (mirrors every console action)
   notify/       notifications engine + channels (ntfy/webhook/email; resolved rows delete fully)
 web/src/        React 19 + Vite, plain CSS tokens, strict CSP; App.tsx, app/pages/*, app/icons.tsx,
                 mock/ fixtures for `pnpm dev:ui`
 catalog/<id>/   one package = manifest.yaml + compose.yaml + README.md + release.json (+ icon)
+targets/<id>/   one backup place package = manifest.yaml (kind BackupTarget: a form + a transport) + README.md
 tests/          unit/ integration/ (fake adapter) e2e/ (Playwright) vm/ (live suite, opt-in)
 scripts/        catalog-pin/hash/verify, openapi.ts, package.mjs, vm/ controllers
 docs/           OPERATOR_GUIDE.md (user manual), DEVELOPER_PACKAGES.md (package authoring),
                 VERIFICATION.md (evidence log), FUTURE.md (deliberately not built), TODO.md (wanted, not built yet),
-                design/ (UI, CATALOG, EXPOSURE, ROUND9, APP_HOMES), openapi.json (GENERATED — never hand-edit)
+                design/ (UI, CATALOG, EXPOSURE, ROUND9, APP_HOMES, BACKUPS), openapi.json (GENERATED — never hand-edit)
 ```
 
 Key separations (do not blur them):
@@ -118,7 +122,7 @@ Key separations (do not blur them):
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **149**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **156**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant

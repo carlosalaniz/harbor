@@ -210,8 +210,9 @@ Harbor keeps two different kinds of data, and only one of them is in the recover
   per-instance secrets, the stored release snapshots, your uploaded packages, and the app-home
   envelopes (which app lives where, and how to unlock it). This is what
   `harbor recovery export` writes into one passphrase-wrapped file.
-- **Application data** — the databases, photos, files and workflows inside the apps. Harbor never
-  backs these up. Managed Docker volumes live on the engine; drive apps live on their drive.
+- **Application data** — the databases, photos, files and workflows inside the apps. The bundle
+  never includes these; app backups (4g) do, for every encrypted app you turn them on for. Managed
+  Docker volumes live on the engine; drive apps live on their drive.
 
 Export regularly (daemon stopped; the passphrase is the only key — without it the file is
 unreadable, so store both somewhere that is not this machine):
@@ -242,6 +243,8 @@ Then, per app:
 - **Managed volumes** (apps without a drive home) are **not** in the bundle: their data lived on
   the dead machine's Docker engine. Reinstall the app; its configuration is back, its data is
   whatever the app's own backup holds.
+- **Apps you back up** (4g below) come back from their backup place with their data, even when the
+  machine and its disks are gone.
 
 ### Failure states
 
@@ -254,6 +257,72 @@ Then, per app:
   stay available. A failed start removes the containers it half-created (never started, or left with no
   network), and a container with no network is never shown as running.
 - Docker unavailable: instances show `unavailable`/`unknown`, never a stale `healthy`.
+
+## 4g. Backups of your apps (encrypted, incremental, to several places)
+
+Since 0.26 Harbor backs up whole apps: their data, and the secrets and release they need to come back
+(design: `docs/design/BACKUPS.md`). The recovery bundle above stays the way to rebuild Harbor itself;
+backups are how the **apps' data** survives a dead machine, a dead disk or a bad day.
+
+**What gets backed up.** Every app installed encrypted (the default since 0.17: the Harbor data folder
+or an ext4 drive). An app on plain Docker volumes says *Not encrypted* in its Backups panel: encrypt it
+first (*Encrypt* in its window, or `harbor seal <app>`). Folders of your own (bring your own folder) are
+not included: Harbor never owns them, back them up with your own tool.
+
+**Privacy.** Everything is encrypted on this machine before it leaves (restic: AES-256). The place only
+stores pieces it cannot read; it learns sizes and times, nothing else. Two keys open a place: Harbor's
+own backup key (so the nightly runs need no one; it works after the first login after a reboot), and
+**your Harbor recovery key** (the 12 words from setup). The 12 words alone open every backup this
+Harbor made, on any machine, even with plain `restic` (the words, lowercase, single spaces, are the
+password).
+
+**1. Add a place** (Settings → Backups → *Add a place*, or App Store → *Backup places*):
+
+| Place | You fill in | Notes |
+|---|---|---|
+| Another disk | a folder under `/mnt/…` or `/media/…` (a mounted drive) | fast; same house as the original |
+| S3-compatible | endpoint, bucket, folder, access key ID + secret | Backblaze B2, Cloudflare R2, Wasabi, AWS, MinIO; a bucket with object lock keeps backups even a hacked machine cannot delete |
+| SFTP server | server, port, user, folder, a private key (no passphrase) | put the key's public half in the server's `authorized_keys`; the server key is pinned at the first test |
+| Proton Drive (beta) | Proton email, password, the current 2FA code | through rclone's unofficial Proton backend: it can break when Proton changes things, pair it with another place |
+
+Harbor tests a place before it saves it. An empty place is set up there and then; a place that already
+holds this Harbor's backups is simply ready; a place holding **another Harbor's** backups says so
+(see 4 below). Add as many places as you like ("B2", "USB disk", "Mom's NAS").
+
+**2. Turn backups on per app.** Open the app from Home → *Backups*: tick the places (it is sent to every
+one of them), tick *Back up on the schedule*, optionally give it its own start time. *Back up now* runs
+it right away.
+
+**3. The schedule** (Settings → Backups → Schedule): start time (default 02:00), every night or once a
+week, **longest pause per app** (default 5 min), how many restore points to keep (7 daily, 4 weekly,
+6 monthly), and a pause switch. Apps go **one at a time**. Each one is first copied while it keeps
+running (the slow part), then paused only to send what changed in the last minutes, then started
+again. The pause depends on how much changed, not on how big the app is: a 100 GB database usually
+pauses for seconds. If the last pass would take longer than your limit, the app keeps running, the
+run is marked *Skipped* or *Failed*, and the bell tells you; raise the limit or pick another time.
+A locked app (before the first login after a reboot, or a custom passphrase not typed since) is
+skipped, never forced open.
+
+**Restore in place** (the app's *Backups* → a restore point → *Restore…*): Harbor stops the app,
+moves its current data aside to `<home>.before-restore-<time>`, puts back the data, secrets and
+release of that moment, and starts it. Anything that fails puts it back exactly as it was. The copy
+kept aside stays until you press *Delete it* (or `harbor backup forget-previous <app>`), so a wrong
+restore point costs nothing. Everything the app saved after the restore point is only in that copy.
+
+**4. Restore on a new machine.** Install Harbor, then Settings → Backups → *Add a place* with the same
+details. It shows *Another Harbor's backups*: type the old Harbor's 12 words, then *Restore apps from
+here* → pick the app and where it should live → review → *Restore here*. It comes back with the same
+data and secrets on fresh ports (addresses differ). The app's package must be on this Harbor (bundled
+ones are; re-upload your own apps first). From then on this Harbor can back it up to the same place.
+
+**Removing a place** keeps the backups stored there. Tick *Also delete every backup this Harbor stored
+there* and type the place's name to delete them too.
+
+CLI: `harbor backup` (overview), `harbor backup add s3 B2 --set endpoint=… --set bucket=… --set
+accessKeyId=… --secret secretAccessKey=@key.txt`, `harbor backup enable immich --to B2 --to "USB disk"`,
+`harbor backup now immich`, `harbor backup points immich`, `harbor restore immich <run-id>`,
+`harbor backup policy --window 03:30 --max-downtime 10`, `echo "<12 words>" | harbor backup open "Old
+USB"`, `harbor backup found "Old USB"`, `harbor backup restore-app "Old USB" <instance-id> <run-id>`.
 
 ## 4a. Your own folders for app data ("bring your own folder")
 

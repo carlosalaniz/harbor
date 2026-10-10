@@ -6,12 +6,13 @@ import type { AppearanceDto, DomainsDto, FoundAppDto, HostStorageDto, InstanceLo
 import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, RecoveryCard, appLabel } from '../components';
 import { Network } from './Network';
+import { BackupsSettings } from './Backups';
 import { Mark, PencilIcon } from '../icons';
 import { fmtBytes, fmtUptime } from '../format';
 import type { Console } from '../store';
 import { WALLPAPERS, applySurfacesOpacity, applyTheme, applyWallpaper, hasExplicitWallpaper, readSurfacesOpacity, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'overview' | 'account' | 'network' | 'links' | 'remote' | 'public' | 'storage' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
+type Section = 'overview' | 'account' | 'network' | 'links' | 'remote' | 'public' | 'storage' | 'backups' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
 // One 16px stroke set for the settings rail: same weight, same box, no emoji.
 const SECTION_ICON: Record<Section, ReactNode> = {
   overview: (
@@ -60,6 +61,13 @@ const SECTION_ICON: Record<Section, ReactNode> = {
       <path d="M3 8c0 1.1 2.2 2 5 2s5-.9 5-2" />
     </svg>
   ),
+  backups: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 8a5 5 0 1 0 1.5-3.6" />
+      <path d="M3 3v2.5h2.5" />
+      <path d="M8 5.5V8l1.8 1.2" />
+    </svg>
+  ),
   appearance: (
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" aria-hidden="true">
       <circle cx="8" cy="8" r="5.5" />
@@ -102,6 +110,7 @@ const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: 'remote', label: 'Remote access', blurb: 'Reach Harbor from your other devices' },
   { id: 'public', label: 'Public addresses', blurb: 'Publishing apps on the internet' },
   { id: 'storage', label: 'Storage', blurb: 'Disks and folders your apps use' },
+  { id: 'backups', label: 'Backups', blurb: 'Encrypted copies of your apps, elsewhere' },
   { id: 'appearance', label: 'Appearance', blurb: 'Theme and wallpapers' },
   { id: 'notifications', label: 'Notifications', blurb: 'Reach you when something needs attention' },
   { id: 'access', label: 'Advanced access', blurb: 'Terminal, SSH forwarding, CLI' },
@@ -146,6 +155,7 @@ export function Settings({ c, initialSection, onSection }: { c: Console; initial
         {section === 'remote' && <RemoteAccess c={c} />}
         {section === 'public' && <PublicAddresses c={c} />}
         {section === 'storage' && <Storage />}
+        {section === 'backups' && <BackupsSettings c={c} />}
         {section === 'appearance' && <Appearance c={c} />}
         {section === 'notifications' && <Notifications />}
         {section === 'access' && <Access c={c} />}

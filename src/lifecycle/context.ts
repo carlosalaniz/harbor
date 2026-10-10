@@ -16,6 +16,7 @@ import type { MachineKeyHolder } from '../auth/machine-holder.js';
 import type { ApplicationService } from './service.js';
 import type { CryptoProvider } from '../storage/crypto-provider.js';
 import type { LanHttpsServers } from '../system/lan-https.js';
+import type { BackupService } from '../backups/service.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
 export type UrlVerifier = (url: string, opts?: { expectStatus?: number[]; timeoutMs?: number }) => Promise<{ ok: boolean; status: number | null; error: string | null }>;
@@ -63,6 +64,9 @@ export interface Ctx {
   // LAN HTTPS listeners (console 443 + one proxy per app endpoint). Wired in
   // daemon.ts; the observer reconciles them from state every tick.
   lanHttps?: LanHttpsServers | null;
+  // App backups (decisions 149–154): places, policy, the sequential worker. Wired in daemon.ts; the
+  // runner's backup/restore operations call into it.
+  backups?: BackupService | null;
   // The Fastify routing function, stashed by daemon.ts so the HTTPS console
   // listener serves the same routes (same guards, same auth).
   __routing?: (req: never, res: never) => void;

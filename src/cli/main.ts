@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { randomUUID } from 'node:crypto';
-import type { HostStorageDto, LinkChoice, LinkDto } from '../contracts/api.js';
+import type { AppBackupsDto, BackupPolicyDto, BackupsOverviewDto, BackupTargetDto, FoundBackupAppDto, HostStorageDto, LinkChoice, LinkDto } from '../contracts/api.js';
 import { defaultInstallLocation } from '../storage/install-location.js';
 import { validatePackageFolder } from '../packages/validate-folder.js';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, SystemDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto } from '../contracts/api.js';
@@ -337,7 +337,7 @@ program
 async function createPlan(api: ApiClient, kind: string, target: string | undefined, name?: string, extra: Record<string, unknown> = {}): Promise<PlanDto> {
   if (!target) throw new HarborError('INVALID_REQUEST', `${kind} requires a target`);
   if (kind === 'install') return api.post<PlanDto>('/v1/plans', { kind, packageId: target, ...(name ? { name } : {}), ...extra });
-  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure', 'seal', 'move'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
+  if (!['start', 'stop', 'restart', 'remove', 'reinstall', 'purge', 'update', 'expose', 'unexpose', 'reconfigure', 'seal', 'move', 'restore'].includes(kind)) throw new HarborError('INVALID_REQUEST', `unknown plan kind ${kind}`);
   const inst = await resolveInstance(api, target);
   return api.post<PlanDto>('/v1/plans', { kind, instanceId: inst.id, ...extra });
 }
@@ -655,6 +655,218 @@ program
   .action(async (ref: string, opts: { yes: boolean; wait: boolean }) => {
     const api = client();
     await approveAndApply(api, await createPlan(api, 'seal', ref), { yes: opts.yes, wait: opts.wait });
+  });
+
+// ---------------- app backups (decisions 149–154)
+const bytes = (n: number | null): string => (n === null ? '-' : n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.round(n / 1e3)} kB`);
+async function resolvePlace(api: ApiClient, ref: string): Promise<BackupTargetDto> {
+  const o = await api.get<BackupsOverviewDto>('/v1/backups');
+  const t = o.targets.find((x) => x.id === ref) ?? o.targets.find((x) => x.name === ref);
+  if (!t) throw new HarborError('NOT_FOUND', `no backup place ${ref}`, { nextAction: `Run \`${PRODUCT.cliName} backup places\`.` });
+  return t;
+}
+const backupCmd = program.command('backup').description('app backups: places to back up to, the nightly policy, per-app backups and restore points');
+backupCmd.action(async () => {
+  const o = await client().get<BackupsOverviewDto>('/v1/backups');
+  out(o, () =>
+    [
+      o.available ? null : `Backups cannot run here: ${o.reason}`,
+      `Window ${o.policy.window} ${o.policy.cadence === 'weekly' ? `weekly (day ${o.policy.weekday})` : 'daily'}, at most ${o.policy.maxDowntimeMinutes} min down per app, keep ${o.policy.retention.daily}/${o.policy.retention.weekly}/${o.policy.retention.monthly} daily/weekly/monthly${o.policy.paused ? ' — PAUSED' : ''}`,
+      o.targets.length ? table([['PLACE', 'TYPE', 'STATE', 'APPS'], ...o.targets.map((t) => [t.name, t.packageName, t.repo, String(t.usedBy.length)])]) : 'No places yet: harbor backup add <type> <name> --set key=value …',
+      table([['APP', 'BACKUPS', 'NEXT', 'LAST'], ...o.apps.map((a) => [a.name, a.eligible ? (a.policy.enabled ? `on → ${a.policy.targets.length} place(s)` : 'off') : 'not encrypted', a.nextAt ?? '-', a.lastRun ? `${a.lastRun.state} ${a.lastRun.finishedAt ?? a.lastRun.startedAt}` : '-'])]),
+      ...o.activity.map((a) => `now: ${a.name} ${a.phase}${a.percent !== null ? ` ${a.percent}%` : ''}`),
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  );
+});
+backupCmd
+  .command('types')
+  .description('the kinds of places Harbor can back up to (target packages) and the fields each asks for')
+  .action(async () => {
+    const o = await client().get<BackupsOverviewDto>('/v1/backups');
+    out(o.packages, () => o.packages.map((p) => `${p.id}${p.status === 'beta' ? ' (beta)' : ''} — ${p.name}: ${p.description}\n  ${p.fields.map((f) => `${f.id}${f.required ? '*' : ''}${f.type === 'secret' ? ' (secret)' : ''}`).join(', ')}`).join('\n'));
+  });
+backupCmd
+  .command('places')
+  .description('installed places')
+  .action(async () => {
+    const o = await client().get<BackupsOverviewDto>('/v1/backups');
+    out(o.targets, () => (o.targets.length ? table([['ID', 'NAME', 'TYPE', 'STATE', 'NOTE'], ...o.targets.map((t) => [t.id, t.name, t.packageName, t.repo, t.note ?? ''])]) : 'No places yet.'));
+  });
+backupCmd
+  .command('add <type> <name>')
+  .description('install a place: e.g. harbor backup add s3 B2 --set endpoint=… --set bucket=… --set accessKeyId=… --secret secretAccessKey=@key.txt')
+  .option('--set <key=value>', 'a non-secret answer (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--secret <key=@file|key=->', 'a secret answer from a file or stdin (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .action(async (type: string, name: string, opts: { set: string[]; secret: string[] }) => {
+    const values: Record<string, string> = {};
+    for (const kv of opts.set) {
+      const eq = kv.indexOf('=');
+      if (eq <= 0) throw new HarborError('INVALID_REQUEST', `--set expects key=value, got ${kv}`);
+      values[kv.slice(0, eq)] = kv.slice(eq + 1);
+    }
+    Object.assign(values, await readSecretFlags(opts.secret));
+    const r = await client().post<{ target: BackupTargetDto; recoveryKey: string | null }>('/v1/backups/targets', { packageId: type, name, values });
+    out(r, () => [`${r.target.name}: ${r.target.repo}${r.target.note ? ` — ${r.target.note}` : ''}`, r.recoveryKey ? `\nYour Harbor recovery key (shown once; it opens every backup of this Harbor):\n  ${r.recoveryKey}` : null].filter(Boolean).join('\n'));
+  });
+backupCmd
+  .command('test <place>')
+  .description('test a place again')
+  .action(async (ref: string) => {
+    const api = client();
+    const t = await api.post<BackupTargetDto>(`/v1/backups/targets/${(await resolvePlace(api, ref)).id}/test`, {});
+    out(t, () => `${t.name}: ${t.repo}${t.note ? ` — ${t.note}` : ''}`);
+  });
+backupCmd
+  .command('open <place>')
+  .description("open another Harbor's backups at a place with that Harbor's recovery key (read from stdin)")
+  .action(async (ref: string) => {
+    const api = client();
+    const words = (await readStdinAll()).trim();
+    const t = await api.post<BackupTargetDto>(`/v1/backups/targets/${(await resolvePlace(api, ref)).id}/open`, { recoveryKey: words });
+    out(t, () => `${t.name}: ${t.repo}. Restore its apps with: harbor backup found "${t.name}"`);
+  });
+backupCmd
+  .command('unlock <place>')
+  .description('clear a stale lock a crashed run left at a place')
+  .action(async (ref: string) => {
+    const api = client();
+    const t = await api.post<BackupTargetDto>(`/v1/backups/targets/${(await resolvePlace(api, ref)).id}/unlock`, {});
+    out(t, () => `${t.name}: unlocked`);
+  });
+backupCmd
+  .command('remove <place>')
+  .description('uninstall a place; the backups stored there stay unless --delete-backups (asks you to type its name)')
+  .option('--delete-backups', 'also delete every restore point this Harbor stored there', false)
+  .action(async (ref: string, opts: { deleteBackups: boolean }) => {
+    const api = client();
+    const t = await resolvePlace(api, ref);
+    let confirmName: string | undefined;
+    if (opts.deleteBackups) confirmName = (await promptVisible(`Type ${t.name} to delete every backup stored there: `)).trim();
+    const r = await api.post<{ removed: number }>(`/v1/backups/targets/${t.id}/remove`, { deleteBackups: opts.deleteBackups, ...(confirmName !== undefined ? { confirmName } : {}) });
+    out(r, () => `${t.name} removed${opts.deleteBackups ? ` (${r.removed} restore points deleted there)` : '; its backups stay where they are'}.`);
+  });
+backupCmd
+  .command('policy')
+  .description('show or change the nightly policy')
+  .option('--window <HH:MM>', 'when the run starts (local time)')
+  .option('--cadence <daily|weekly>', 'how often')
+  .option('--weekday <0-6>', 'weekly: which day (0 = Sunday)')
+  .option('--max-downtime <minutes>', 'longest an app may be down for its last pass')
+  .option('--keep <daily,weekly,monthly>', 'retention, e.g. 7,4,6')
+  .option('--pause', 'pause every scheduled backup')
+  .option('--resume', 'resume scheduled backups')
+  .action(async (opts: { window?: string; cadence?: string; weekday?: string; maxDowntime?: string; keep?: string; pause?: boolean; resume?: boolean }) => {
+    const api = client();
+    const body: Record<string, unknown> = {};
+    if (opts.window) body['window'] = opts.window;
+    if (opts.cadence) body['cadence'] = opts.cadence;
+    if (opts.weekday !== undefined) body['weekday'] = Number(opts.weekday);
+    if (opts.maxDowntime !== undefined) body['maxDowntimeMinutes'] = Number(opts.maxDowntime);
+    if (opts.keep) {
+      const [daily, weekly, monthly] = opts.keep.split(',').map(Number);
+      body['retention'] = { daily, weekly, monthly };
+    }
+    if (opts.pause) body['paused'] = true;
+    if (opts.resume) body['paused'] = false;
+    const p = Object.keys(body).length ? await api.post<BackupPolicyDto>('/v1/backups/policy', body, {}, 'PUT') : (await api.get<BackupsOverviewDto>('/v1/backups')).policy;
+    out(p, () => `window ${p.window} ${p.cadence}${p.cadence === 'weekly' ? ` (day ${p.weekday})` : ''}, max downtime ${p.maxDowntimeMinutes} min, keep ${p.retention.daily}/${p.retention.weekly}/${p.retention.monthly}${p.paused ? ', PAUSED' : ''}`);
+  });
+backupCmd
+  .command('enable <instance>')
+  .description('back an app up to one or more places (--to repeatable), optionally on its own window')
+  .requiredOption('--to <place>', 'a place (name or id; repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--window <HH:MM>', 'its own window (default: the global one)')
+  .action(async (ref: string, opts: { to: string[]; window?: string }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const targets = await Promise.all(opts.to.map(async (t) => (await resolvePlace(api, t)).id));
+    const b = await api.post<AppBackupsDto>(`/v1/instances/${inst.id}/backups`, { enabled: true, targets, ...(opts.window ? { window: opts.window } : {}) }, {}, 'PUT');
+    out(b, () => `${b.name}: backed up to ${b.policy.targets.length} place(s); next ${b.nextAt ?? '-'}`);
+  });
+backupCmd
+  .command('disable <instance>')
+  .description('stop backing an app up (its restore points stay at the places)')
+  .action(async (ref: string) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const b = await api.post<AppBackupsDto>(`/v1/instances/${inst.id}/backups`, { enabled: false }, {}, 'PUT');
+    out(b, () => `${b.name}: backups off`);
+  });
+backupCmd
+  .command('now <instance>')
+  .description('back an app up now (same passes and downtime cap as the schedule)')
+  .action(async (ref: string) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const b = await api.post<AppBackupsDto>(`/v1/instances/${inst.id}/backups/run`, {});
+    out(b, () => `${b.name}: queued. Follow it with: harbor backup points ${inst.name}`);
+  });
+backupCmd
+  .command('points <instance>')
+  .description("an app's restore points and recent runs (--refresh asks every place again)")
+  .option('--refresh', 'list the restore points at every place again', false)
+  .action(async (ref: string, opts: { refresh: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const b = await api.get<AppBackupsDto>(`/v1/instances/${inst.id}/backups${opts.refresh ? '?refresh=true' : ''}`);
+    out(b, () =>
+      [
+        b.points.length ? table([['RUN', 'TIME', 'SIZE', 'PLACES'], ...b.points.map((p) => [p.runId, p.time, bytes(p.totalBytes), p.places.map((x) => x.name).join(', ')])]) : 'No restore points yet.',
+        table([['STARTED', 'KIND', 'STATE', 'DOWN', 'MESSAGE'], ...b.runs.slice(0, 10).map((r) => [r.startedAt, r.kind, r.state, r.downtimeSeconds === null ? '-' : `${r.downtimeSeconds}s`, (r.message ?? '').slice(0, 80)])]),
+        b.previous ? `Kept from the last restore: ${b.previous.path} (harbor backup forget-previous ${inst.name})` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  });
+backupCmd
+  .command('found <place>')
+  .description('apps with restore points at a place (to restore onto this machine)')
+  .action(async (ref: string) => {
+    const api = client();
+    const { items } = await api.get<{ items: FoundBackupAppDto[] }>(`/v1/backups/targets/${(await resolvePlace(api, ref)).id}/apps`);
+    out(items, () => (items.length ? table([['INSTANCE', 'APP', 'PACKAGE', 'HERE', 'LATEST RUN', 'TIME'], ...items.map((a) => [a.instanceId, a.name, a.packageId, a.installedHere ? 'yes' : 'no', a.points[0]?.runId ?? '-', a.points[0]?.time ?? '-'])]) : 'No apps there.'));
+  });
+backupCmd
+  .command('restore-app <place> <instance-id> <run-id>')
+  .description('restore an app from a place onto this machine (a new machine, or one purged here)')
+  .option('--location <dir>', 'install location (<candidate>/<package>); default: the Harbor data folder')
+  .option('--name <slug>', 'instance name')
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, instanceId: string, runId: string, opts: { location?: string; name?: string; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const t = await resolvePlace(api, ref);
+    const found = (await api.get<{ items: FoundBackupAppDto[] }>(`/v1/backups/targets/${t.id}/apps`)).items.find((a) => a.instanceId === instanceId);
+    if (!found) throw new HarborError('NOT_FOUND', `no app ${instanceId} at ${t.name}`);
+    const storage = await api.get<HostStorageDto>('/v1/host/storage');
+    const dir = opts.location ?? defaultInstallLocation(storage.dataFolder.path, storage.installCandidates, found.packageId);
+    if (!dir) throw new HarborError('INVALID_STATE', 'no place on this machine can hold an encrypted app', { nextAction: 'Pass --location <candidate>/<package>.' });
+    const plan = await api.post<PlanDto>('/v1/backups/restore', { targetId: t.id, instanceId, runId, location: { dir }, ...(opts.name ? { name: opts.name } : {}) });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
+  });
+backupCmd
+  .command('forget-previous <instance>')
+  .description('delete the copy of an app kept aside by its last restore')
+  .action(async (ref: string) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    await api.delete(`/v1/instances/${inst.id}/backups/previous`);
+    out({ deleted: true }, () => `deleted the copy of ${inst.name} kept by its last restore`);
+  });
+program
+  .command('restore <instance> <run-id>')
+  .description('put an app back as it was at a restore point (see: harbor backup points <instance>); the current copy is kept aside until you delete it')
+  .option('--from <place>', 'read it from this place (default: the first that holds it)')
+  .option('--yes', 'approve without prompting', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, runId: string, opts: { from?: string; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const extra: Record<string, unknown> = { runId };
+    if (opts.from) extra['targetId'] = (await resolvePlace(api, opts.from)).id;
+    await approveAndApply(api, await createPlan(api, 'restore', ref, undefined, extra), { yes: opts.yes, wait: opts.wait });
   });
 
 // Decision 135: the way out of needs_action/failed. Withdraw the address in the way first if there is one.
@@ -1355,6 +1567,14 @@ program
   .action(async (spec: string) => {
     const { applyAppCrypto } = await import('../bootstrap/app-crypto-apply.js');
     await applyAppCrypto(spec, (msg) => process.stderr.write(`[app-crypto] ${msg}\n`));
+  });
+
+program
+  .command('backup-step <requestId>')
+  .description('ROOT, run by harbor-backup@<requestId>.service: one restic step for app backups (request + secrets handed over by the daemon)')
+  .action(async (requestId: string) => {
+    const { applyBackupStep } = await import('../bootstrap/backup-apply.js');
+    await applyBackupStep(requestId, (msg) => process.stderr.write(`[backup-step] ${msg}\n`));
   });
 
 // ---------------- recovery bundle (local maintenance, daemon stopped)

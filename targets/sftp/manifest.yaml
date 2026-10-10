@@ -1,0 +1,38 @@
+apiVersion: harbor/v1alpha1
+kind: BackupTarget
+metadata:
+  id: sftp
+  name: SFTP server
+  description: Any machine you can reach over SSH, a NAS, a friend's server or a rented box. Harbor logs in with a key of its own.
+  status: stable
+release:
+  revision: "1"
+transport: sftp
+fields:
+  - id: host
+    label: Server
+    type: text
+    required: true
+    hint: Host name or address
+  - id: port
+    label: Port
+    type: number
+    default: "22"
+  - id: user
+    label: User
+    type: text
+    required: true
+  - id: path
+    label: Folder on the server
+    type: text
+    required: true
+    hint: e.g. /home/backup/harbor (created if missing)
+  - id: privateKey
+    label: Private key
+    type: secret
+    required: true
+    hint: An OpenSSH private key without a passphrase; its public half goes into the server's authorized_keys
+  - id: hostKey
+    label: Server key
+    type: textarea
+    hint: Leave empty to trust the key the server shows at the first test (it is pinned from then on)

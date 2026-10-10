@@ -1,3 +1,4 @@
+import type { AppBackupsDto, BackupAppPolicyDto, BackupPolicyDto, BackupsOverviewDto, BackupTargetDto, FoundBackupAppDto } from '../../src/contracts/api';
 import type { AddressOptionsDto, ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailscaleLoginDto, UiExposureDto, WidgetDto, LinkDto } from '../../src/contracts/api';
 import { isMockUi, mockApi } from './mock/api';
 
@@ -157,6 +158,21 @@ const realApi = {
   notificationChannels: () => call<{ channels: NotificationChannelDto[] }>('GET', '/v1/notifications/channels'),
   setNotificationChannels: (channels: NotificationChannelDto[]) => call<{ channels: NotificationChannelDto[] }>('PUT', '/v1/notifications/channels', { channels }),
   testNotificationChannels: () => call<{ results: { kind: string; ok: boolean; error: string | null }[] }>('POST', '/v1/notifications/channels/test', {}),
+  // app backups (decisions 149–154)
+  backups: () => call<BackupsOverviewDto>('GET', '/v1/backups'),
+  setBackupPolicy: (p: Partial<BackupPolicyDto>) => call<BackupPolicyDto>('PUT', '/v1/backups/policy', p),
+  addBackupTarget: (packageId: string, name: string, values: Record<string, string>) => call<{ target: BackupTargetDto; recoveryKey: string | null }>('POST', '/v1/backups/targets', { packageId, name, values }),
+  updateBackupTarget: (id: string, patch: { name?: string; values?: Record<string, string> }) => call<BackupTargetDto>('PUT', `/v1/backups/targets/${id}`, patch),
+  testBackupTarget: (id: string) => call<BackupTargetDto>('POST', `/v1/backups/targets/${id}/test`, {}),
+  unlockBackupTarget: (id: string) => call<BackupTargetDto>('POST', `/v1/backups/targets/${id}/unlock`, {}),
+  openBackupTarget: (id: string, recoveryKey: string) => call<BackupTargetDto>('POST', `/v1/backups/targets/${id}/open`, { recoveryKey }),
+  removeBackupTarget: (id: string, deleteBackups: boolean, confirmName?: string) => call<{ removed: number }>('POST', `/v1/backups/targets/${id}/remove`, { deleteBackups, ...(confirmName !== undefined ? { confirmName } : {}) }),
+  backupTargetApps: (id: string) => call<{ items: FoundBackupAppDto[] }>('GET', `/v1/backups/targets/${id}/apps`).then((r) => r.items),
+  restoreAppPlan: (req: { targetId: string; instanceId: string; runId: string; location: { dir: string }; name?: string }) => call<PlanDto>('POST', '/v1/backups/restore', req),
+  appBackups: (id: string, refresh = false) => call<AppBackupsDto>('GET', `/v1/instances/${id}/backups${refresh ? '?refresh=true' : ''}`),
+  setAppBackups: (id: string, p: Partial<BackupAppPolicyDto>) => call<AppBackupsDto>('PUT', `/v1/instances/${id}/backups`, p),
+  backupNow: (id: string) => call<AppBackupsDto>('POST', `/v1/instances/${id}/backups/run`, {}),
+  deletePreviousCopy: (id: string) => call<{ deleted: string }>('DELETE', `/v1/instances/${id}/backups/previous`),
   updatesPolicy: () => call<{ autoDefault: boolean }>('GET', '/v1/updates/policy'),
   setUpdatesPolicy: (autoDefault: boolean) => call<{ autoDefault: boolean }>('PUT', '/v1/updates/policy', { autoDefault }),
   setAutoUpdate: (instanceId: string, enabled: boolean) => call<InstanceSummary>('PUT', `/v1/instances/${instanceId}/auto-update`, { enabled }),

@@ -18,6 +18,11 @@ import type {
   SystemMetricsDto,
   UiExposureDto,
   LinkDto,
+  AppBackupsDto,
+  BackupAppPolicyDto,
+  BackupPolicyDto,
+  BackupsOverviewDto,
+  BackupTargetDto,
 } from '../../../src/contracts/api';
 import {
   mockAppearance,
@@ -161,6 +166,39 @@ const detailFor = (inst: InstanceSummary): InstanceDetail => ({
   lastError: null,
 });
 
+// Backups (decisions 149–154): two places, one app on, a week of restore points.
+const BK_PACKAGES: BackupsOverviewDto['packages'] = [
+  { id: 'folder', name: 'Another disk', description: 'A folder on a second disk or a USB drive plugged into this machine.', status: 'stable', revision: '1', transport: 'local', fields: [{ id: 'path', label: 'Folder', type: 'text', required: true, default: null, hint: 'A folder under /mnt or /media' }], readme: null },
+  { id: 's3', name: 'S3-compatible storage', description: 'Backblaze B2, Cloudflare R2, Wasabi, Amazon S3, MinIO.', status: 'stable', revision: '1', transport: 's3', fields: [{ id: 'endpoint', label: 'Endpoint', type: 'text', required: true, default: null, hint: null }, { id: 'bucket', label: 'Bucket', type: 'text', required: true, default: null, hint: null }, { id: 'accessKeyId', label: 'Access key ID', type: 'text', required: true, default: null, hint: null }, { id: 'secretAccessKey', label: 'Secret access key', type: 'secret', required: true, default: null, hint: null }], readme: null },
+  { id: 'sftp', name: 'SFTP server', description: 'Any machine you can reach over SSH.', status: 'stable', revision: '1', transport: 'sftp', fields: [{ id: 'host', label: 'Server', type: 'text', required: true, default: null, hint: null }, { id: 'user', label: 'User', type: 'text', required: true, default: null, hint: null }, { id: 'path', label: 'Folder on the server', type: 'text', required: true, default: null, hint: null }, { id: 'privateKey', label: 'Private key', type: 'secret', required: true, default: null, hint: null }], readme: null },
+  { id: 'protondrive', name: 'Proton Drive', description: 'Your Proton Drive, through rclone. Beta.', status: 'beta', revision: '1', transport: 'rclone', fields: [{ id: 'username', label: 'Proton email', type: 'text', required: true, default: null, hint: null }, { id: 'password', label: 'Password', type: 'secret', required: true, default: null, hint: null }], readme: null },
+];
+let bkPolicy: BackupPolicyDto = { window: '02:00', cadence: 'daily', weekday: 0, maxDowntimeMinutes: 5, retention: { daily: 7, weekly: 4, monthly: 6 }, paused: false };
+let bkTargets: BackupTargetDto[] = [
+  { id: 'aaaaaaaa-0000-4000-8000-000000000001', packageId: 's3', packageName: 'S3-compatible storage', status: 'stable', name: 'Backblaze B2', values: { endpoint: 's3.us-west-002.backblazeb2.com', bucket: 'harbor-home', accessKeyId: 'K002', secretAccessKey: '••••' }, createdAt: '2026-10-01T10:00:00Z', repo: 'ready', note: null, checkedAt: '2026-10-10T02:04:00Z', lastPruneAt: '2026-10-06T03:00:00Z', lastCheckAt: '2026-10-01T03:00:00Z', usedBy: [] },
+  { id: 'aaaaaaaa-0000-4000-8000-000000000002', packageId: 'folder', packageName: 'Another disk', status: 'stable', name: 'USB disk', values: { path: '/mnt/backup/harbor' }, createdAt: '2026-10-01T10:05:00Z', repo: 'ready', note: null, checkedAt: '2026-10-10T02:03:00Z', lastPruneAt: null, lastCheckAt: null, usedBy: [] },
+];
+const bkApps: Record<string, BackupAppPolicyDto> = {};
+// design mode: these packages count as encrypted, and immich already backs up to both places
+const BK_SEALED = new Set(['immich', 'memos', 'vaultwarden']);
+const bkImmich = instances.find((i) => i.packageId === 'immich');
+if (bkImmich) bkApps[bkImmich.id] = { enabled: true, targets: ['aaaaaaaa-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-000000000002'], window: null, cadence: null, weekday: null };
+function bkFor(id: string): AppBackupsDto {
+  const inst = instances.find((i) => i.id === id) ?? instances[0]!;
+  const policy = bkApps[id] ?? { enabled: false, targets: [], window: null, cadence: null, weekday: null };
+  const days = policy.enabled ? 7 : 0;
+  const points = Array.from({ length: days }, (_, d) => ({ runId: `bbbbbbbb-0000-4000-8000-00000000000${d}`, time: new Date(Date.UTC(2026, 9, 10 - d, 2, 3)).toISOString(), instanceId: id, packageId: inst.packageId, totalBytes: 2_400_000_000 - d * 12_000_000, places: bkTargets.filter((t) => policy.targets.includes(t.id)).map((t) => ({ targetId: t.id, name: t.name, snapshotId: `c0ffee0${d}` })) }));
+  const run = (d: number) => ({ id: `cccccccc-0000-4000-8000-00000000000${d}`, instanceId: id, instanceName: inst.displayName ?? inst.name, kind: 'backup' as const, trigger: 'schedule' as const, state: 'succeeded' as const, startedAt: new Date(Date.UTC(2026, 9, 10 - d, 2, 0)).toISOString(), finishedAt: new Date(Date.UTC(2026, 9, 10 - d, 2, 3)).toISOString(), downtimeSeconds: 14 + d, bytesAdded: 48_000_000, totalBytes: 2_400_000_000, message: 'Backblaze B2: ok · USB disk: ok', operationId: null, targets: [] });
+  return { instanceId: id, name: inst.displayName ?? inst.name, packageId: inst.packageId, eligible: Boolean(inst.home) || BK_SEALED.has(inst.packageId), reason: inst.home || BK_SEALED.has(inst.packageId) ? null : `${inst.name} keeps its data in plain Docker volumes, which Harbor does not back up. Encrypt it first.`, policy, nextAt: policy.enabled ? '2026-10-11T02:00:00Z' : null, lastRun: days ? run(0) : null, lastSuccessAt: days ? run(0).finishedAt : null, runs: Array.from({ length: Math.min(days, 5) }, (_, d) => run(d)), points, previous: null };
+}
+function bkOverview(): BackupsOverviewDto {
+  const apps = instances.filter((i) => i.installState !== 'retained').map((i) => {
+    const { runs: _r, points: _p, previous: _x, ...a } = bkFor(i.id);
+    return a;
+  });
+  return { available: true, reason: null, engine: 'fake', keyReady: true, policy: bkPolicy, packages: BK_PACKAGES, targets: bkTargets.map((t) => ({ ...t, usedBy: apps.filter((a) => a.policy.targets.includes(t.id)).map((a) => ({ instanceId: a.instanceId, name: a.name })) })), apps, activity: [], recent: apps.flatMap((a) => (a.lastRun ? [a.lastRun] : [])) };
+}
+
 export const mockApi = {
   async login(): Promise<{ token: string; expiresAt: string }> {
     await beat(150);
@@ -241,6 +279,38 @@ export const mockApi = {
     return { revokedSessions: 1 };
   },
   hostStorage: async (): Promise<HostStorageDto> => storage,
+  backups: async () => bkOverview(),
+  setBackupPolicy: async (p: Partial<BackupPolicyDto>) => {
+    await beat(150);
+    bkPolicy = { ...bkPolicy, ...p };
+    return bkPolicy;
+  },
+  addBackupTarget: async (packageId: string, name: string, values: Record<string, string>) => {
+    await beat(700);
+    const pkg = BK_PACKAGES.find((p) => p.id === packageId)!;
+    const t: BackupTargetDto = { id: `aaaaaaaa-0000-4000-8000-0000000000${10 + bkTargets.length}`, packageId, packageName: pkg.name, status: pkg.status, name, values, createdAt: new Date().toISOString(), repo: 'ready', note: null, checkedAt: new Date().toISOString(), lastPruneAt: null, lastCheckAt: null, usedBy: [] };
+    bkTargets = [...bkTargets, t];
+    return { target: t, recoveryKey: null };
+  },
+  updateBackupTarget: async (id: string, patch: { name?: string }) => {
+    await beat(500);
+    bkTargets = bkTargets.map((t) => (t.id === id ? { ...t, ...(patch.name ? { name: patch.name } : {}) } : t));
+    return bkTargets.find((t) => t.id === id)!;
+  },
+  testBackupTarget: async (id: string) => (await beat(500), bkTargets.find((t) => t.id === id)!),
+  removeBackupTarget: async (id: string) => {
+    await beat(300);
+    bkTargets = bkTargets.filter((t) => t.id !== id);
+    return { removed: 0 };
+  },
+  backupTargetApps: async () => [],
+  appBackups: async (id: string) => bkFor(id),
+  setAppBackups: async (id: string, p: Partial<BackupAppPolicyDto>) => {
+    await beat(150);
+    bkApps[id] = { ...(bkApps[id] ?? { enabled: false, targets: [], window: null, cadence: null, weekday: null }), ...p };
+    return bkFor(id);
+  },
+  backupNow: async (id: string) => (await beat(200), bkFor(id)),
   setStoragePolicy: async (p: { autoMount?: boolean; autoStart?: boolean }): Promise<{ autoMount: boolean; autoStart: boolean }> => {
     await beat(150);
     storage = { ...storage, storagePolicy: { autoMount: p.autoMount ?? storage.storagePolicy.autoMount, autoStart: p.autoStart ?? storage.storagePolicy.autoStart } };

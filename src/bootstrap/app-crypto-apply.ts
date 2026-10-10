@@ -185,7 +185,7 @@ async function withKeyFile<T>(masterKeyHex: string, fn: (keyFile: string) => Pro
 
 // ---------------------------------------------------------------- fscrypt steps
 
-async function dirStatus(dir: string): Promise<FscryptDirStatus> {
+export async function dirStatus(dir: string): Promise<FscryptDirStatus> {
   const s = fscryptStatusArgs(dir);
   const r = await exec(s.file, s.args, { timeoutMs: 30_000 });
   if (r.code !== 0) {

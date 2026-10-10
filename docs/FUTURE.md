@@ -34,8 +34,9 @@ added for it. This note records how the current code already leaves room for it,
    check the change. Only that counts as "working"; the UI must show setup-required/degraded
    separately from container health.
 
-Backups remain configuration and Harbor-owned recovery secrets only; Nextcloud files, databases and
-documents stay the application's/administrator's responsibility.
+App data backups exist since 0.26 (decisions 149–154, `docs/design/BACKUPS.md`): encrypted restic
+restore points of every encrypted app, fanned out to installable places; what is still future is listed
+under "Backups: later" below.
 
 ## Context-only architecture check (plan.md §11), performed 2026-09-14
 
@@ -111,3 +112,15 @@ refused while an app uses the drive). What remains future: **partition, LUKS, SM
   sealed dir and deletes the plaintext copy; the old blocks are not scrubbed (SSD/ext4 make
   `shred` unreliable). New installs seal before any data exists, which is the real fix.
 
+
+## Backups: later (recorded 2026-10-10, after decisions 149–154)
+
+- **Harbor-to-Harbor backups.** Sending = a `rest` target package (the transport exists). Receiving = a
+  built-in system feature, off by default, enable/disable and never uninstall (that would destroy
+  friends' data): restic rest-server, append-only, one private space and quota per friend, pairing
+  codes, reachable over the tailnet or public HTTPS. Open questions: pruning under append-only (a
+  host-approved cleanup window), per-friend quotas (rest-server's limit is per server).
+- **Restore as a copy** (a second instance from a restore point, next to the running one).
+- **Backing up operator folders** (bind claims) opt-in per claim, read-only, never restored over.
+- **A local staging pass** while an app is paused, then shipping to every place after it runs again —
+  only if several slow places ever make the pause too long.

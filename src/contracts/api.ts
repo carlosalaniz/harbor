@@ -7,7 +7,8 @@ export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unkn
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
 // configure (decisions 125/126): change an installed app's operator-provided secrets and/or link providers.
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move';
+// backup/restore (decisions 151, 153): the cold pass of a backup run, and restoring an app in place.
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move' | 'backup' | 'restore';
 // 'proxy' = published through the operator's own reverse proxy (decision 118); Harbor runs nothing for it.
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The address an app treats as its own, chosen at install (decision 116). Omitted = this network
@@ -408,7 +409,11 @@ export type PlanRequest =
   // decision 142: move an app's plain Docker volumes into a sealed home in the Harbor data folder, in place
   | { kind: 'seal'; instanceId: string }
   // decision 145: move an encrypted app's home to another install location (<candidate>/<package>), keeping its key
-  | { kind: 'move'; instanceId: string; location: { dir: string } };
+  | { kind: 'move'; instanceId: string; location: { dir: string } }
+  // decision 151: the cold pass of a backup run (normally submitted by the scheduler, actor `scheduler`)
+  | { kind: 'backup'; instanceId: string; runId: string }
+  // decision 153: put an app back as it was at a restore point (its run), from one place that holds it
+  | { kind: 'restore'; instanceId: string; runId: string; targetId?: string };
 
 export interface DomainDto {
   hostname: string;
@@ -629,3 +634,144 @@ export interface InstanceLogsDto {
 // {type:'resize', cols, rows}; server sends binary frames (terminal bytes) and JSON {type:'ready'|'exit'|'error'}.
 export type TerminalClientMessage = { type: 'auth'; token: string; cols: number; rows: number } | { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number };
 export type TerminalServerMessage = { type: 'ready' } | { type: 'exit'; code: number | null; reason: string } | { type: 'error'; message: string };
+
+// ---- app backups (decisions 149–154)
+export interface BackupRetentionDto {
+  daily: number;
+  weekly: number;
+  monthly: number;
+}
+export type BackupCadence = 'daily' | 'weekly';
+// Settings → Backups. window = local time the nightly run starts ("02:00"); weekday 0 = Sunday.
+export interface BackupPolicyDto {
+  window: string;
+  cadence: BackupCadence;
+  weekday: number;
+  maxDowntimeMinutes: number;
+  retention: BackupRetentionDto;
+  paused: boolean;
+}
+// Drawer → Backups. null window/cadence/weekday = the global policy's.
+export interface BackupAppPolicyDto {
+  enabled: boolean;
+  targets: string[]; // installed target ids (the fan-out)
+  window: string | null;
+  cadence: BackupCadence | null;
+  weekday: number | null;
+}
+export interface BackupTargetFieldDto {
+  id: string;
+  label: string;
+  type: 'text' | 'secret' | 'textarea' | 'number';
+  required: boolean;
+  default: string | null;
+  hint: string | null;
+}
+// A target package (the App Store's Backup section): a form, no code.
+export interface BackupTargetPackageDto {
+  id: string;
+  name: string;
+  description: string;
+  status: 'stable' | 'beta';
+  revision: string;
+  transport: 'local' | 's3' | 'sftp' | 'rclone' | 'rest';
+  fields: BackupTargetFieldDto[];
+  readme: string | null;
+}
+// An installed place. values: the operator's answers, secrets as "••••".
+// repo: ready = Harbor's backups open here; foreign = another Harbor's backups are here (open them with
+// that Harbor's recovery key); unreachable = the last test failed; unknown = never tested.
+export interface BackupTargetDto {
+  id: string;
+  packageId: string;
+  packageName: string;
+  status: 'stable' | 'beta';
+  name: string;
+  values: Record<string, string>;
+  createdAt: string;
+  repo: 'unknown' | 'ready' | 'foreign' | 'unreachable';
+  note: string | null;
+  checkedAt: string | null;
+  lastPruneAt: string | null;
+  lastCheckAt: string | null;
+  usedBy: { instanceId: string; name: string }[];
+}
+export interface BackupRunTargetDto {
+  targetId: string;
+  name: string;
+  state: 'succeeded' | 'failed' | 'skipped';
+  snapshotId: string | null;
+  bytesAdded: number | null;
+  error: string | null;
+}
+export interface BackupRunDto {
+  id: string;
+  instanceId: string | null;
+  instanceName: string | null;
+  kind: 'backup' | 'restore' | 'prune' | 'check';
+  trigger: 'schedule' | 'manual';
+  state: 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped';
+  startedAt: string;
+  finishedAt: string | null;
+  downtimeSeconds: number | null;
+  bytesAdded: number | null;
+  totalBytes: number | null;
+  message: string | null;
+  operationId: string | null;
+  targets: BackupRunTargetDto[];
+}
+// One restore point = one run, on every place that holds it.
+export interface RestorePointDto {
+  runId: string;
+  time: string;
+  instanceId: string;
+  packageId: string;
+  totalBytes: number | null;
+  places: { targetId: string; name: string; snapshotId: string }[];
+}
+export interface BackupAppDto {
+  instanceId: string;
+  name: string;
+  packageId: string;
+  // eligible = Harbor can back this app up (an encrypted home); reason says why not
+  eligible: boolean;
+  reason: string | null;
+  policy: BackupAppPolicyDto;
+  nextAt: string | null;
+  lastRun: BackupRunDto | null;
+  lastSuccessAt: string | null;
+}
+export interface BackupActivityDto {
+  instanceId: string;
+  name: string;
+  phase: 'queued' | 'warm' | 'cold' | 'restoring' | 'maintenance';
+  percent: number | null;
+  since: string;
+}
+export interface BackupsOverviewDto {
+  // tools: restic/rclone present (root engine) or the fake engine; reason when backups cannot run here
+  available: boolean;
+  reason: string | null;
+  engine: 'root' | 'fake';
+  keyReady: boolean; // the backup key exists (made on the first place you add)
+  policy: BackupPolicyDto;
+  packages: BackupTargetPackageDto[];
+  targets: BackupTargetDto[];
+  apps: BackupAppDto[];
+  activity: BackupActivityDto[];
+  recent: BackupRunDto[];
+}
+export interface AppBackupsDto extends BackupAppDto {
+  runs: BackupRunDto[];
+  points: RestorePointDto[];
+  // the copy kept by the last in-place restore, until you delete it
+  previous: { path: string; createdAt: string } | null;
+}
+// Apps found at a place (restore on a new machine): grouped from its snapshots.
+export interface FoundBackupAppDto {
+  instanceId: string;
+  packageId: string;
+  name: string;
+  installedHere: boolean;
+  points: RestorePointDto[];
+}

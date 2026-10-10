@@ -39,6 +39,7 @@ import { FakeTransport, Notifier, realTransport, type NotifyTransport } from './
 import { FakeGit, GitCli, type GitFetcher } from './packages/git.js';
 import { MachineKeyHolder } from './auth/machine-holder.js';
 import type { CryptoProvider } from './storage/crypto-provider.js';
+import type { BackupEngine } from './backups/engine.js';
 
 export function productVersion(): string {
   try {
@@ -72,6 +73,8 @@ export interface DaemonOverrides {
   notifyTransport?: NotifyTransport;
   git?: GitFetcher;
   crypto?: CryptoProvider;
+  backupEngine?: BackupEngine;
+  backupTickMs?: number;
 }
 
 export interface Daemon {
@@ -191,6 +194,15 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     // root helpers on a live host (same unit starter as mount/format).
     const { FakeCryptoProvider, RootCryptoProvider } = await import('./storage/crypto-provider.js');
     ctx.crypto = overrides.crypto ?? (fakeMode ? new FakeCryptoProvider() : new RootCryptoProvider(config.stateDir));
+    // App backups (decisions 149–154): restic through the root step on a live host, in-memory places in fake mode.
+    const { BackupService } = await import('./backups/service.js');
+    const { FakeBackupEngine, RootBackupEngine } = await import('./backups/engine.js');
+    const { RESTIC_BIN } = await import('./backups/restic.js');
+    const { targetsDirFor } = await import('./backups/targets.js');
+    const backupEngine = overrides.backupEngine ?? (fakeMode ? new FakeBackupEngine() : new RootBackupEngine(config.stateDir));
+    ctx.backups = new BackupService(ctx, backupEngine, targetsDirFor(config.catalogDir), {
+      available: () => (backupEngine.kind === 'fake' || existsSync(RESTIC_BIN) ? { ok: true, reason: null } : { ok: false, reason: 'restic is not installed on this machine. Re-run bootstrap (or update Harbor) so it installs its backup tools.' }),
+    });
     // LAN HTTPS (decision 109): daemon-terminated TLS on 443 + one proxy per
     // app endpoint. The routing function is stashed on the ctx so the HTTPS
     // console listener serves the same Fastify routes (same guards, auth).
@@ -219,7 +231,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
         return { installed: false, loggedIn: false };
       }
     };
-    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version });
+    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version, backups: ctx.backups });
     await app.listen({ host: config.listen.host, port: config.listen.port });
     // The HTTPS console listener serves these same routes (same Host/Origin
     // guards, same bearer auth) — stashed before the LAN listeners start.
@@ -250,6 +262,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       if (lanServer) log.info('LAN listener up', { port: config.lan.port });
     }
     observer.start();
+    ctx.backups.start(overrides.backupTickMs ?? 30_000);
     appearance.start();
     selfUpdate.start();
     const url = `http://localhost:${config.listen.port}`;
@@ -261,6 +274,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       closed = true;
       machineKey.clear(); // AFU -> BFU: the unsealed key never outlives the process
       observer.stop();
+      await ctx.backups?.stop();
       appearance.stop();
       selfUpdate.stop();
       terminals.closeAll();

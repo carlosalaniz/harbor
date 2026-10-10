@@ -1,0 +1,36 @@
+apiVersion: harbor/v1alpha1
+kind: BackupTarget
+metadata:
+  id: s3
+  name: S3-compatible storage
+  description: Backblaze B2, Cloudflare R2, Wasabi, Amazon S3, MinIO. Cheap and far away; buckets with object lock keep backups even a hacked machine cannot delete.
+  status: stable
+release:
+  revision: "1"
+transport: s3
+fields:
+  - id: endpoint
+    label: Endpoint
+    type: text
+    required: true
+    hint: Host name of the service, e.g. s3.us-west-002.backblazeb2.com (https is assumed)
+  - id: bucket
+    label: Bucket
+    type: text
+    required: true
+  - id: path
+    label: Folder in the bucket
+    type: text
+    default: harbor
+  - id: region
+    label: Region
+    type: text
+    hint: Only if your provider asks for one, e.g. us-east-1
+  - id: accessKeyId
+    label: Access key ID
+    type: text
+    required: true
+  - id: secretAccessKey
+    label: Secret access key
+    type: secret
+    required: true

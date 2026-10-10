@@ -25,7 +25,11 @@ export type Action =
   | { kind: 'unexpose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname?: string }
   | { kind: 'reconfigure'; instance: InstanceSummary; primary: 'loopback' | 'tailnet' | 'public'; hostname?: string }
   // decision 145: dir = <candidate>/<package>
-  | { kind: 'move'; instance: InstanceSummary; dir: string };
+  | { kind: 'move'; instance: InstanceSummary; dir: string }
+  // decision 153: restore in place from a restore point (its run), optionally from one place
+  | { kind: 'restore'; instance: InstanceSummary; runId: string; targetId?: string }
+  // decision 153: restore an app from a place onto this machine (an install plan from /v1/backups/restore)
+  | { kind: 'restore-app'; targetId: string; instanceId: string; runId: string; dir: string; name?: string };
 
 export function planRequestFor(a: Action): PlanRequest {
   switch (a.kind) {
@@ -44,6 +48,10 @@ export function planRequestFor(a: Action): PlanRequest {
       return { kind: 'reconfigure', instanceId: a.instance.id, primary: a.primary, ...(a.hostname ? { hostname: a.hostname } : {}) };
     case 'move':
       return { kind: 'move', instanceId: a.instance.id, location: { dir: a.dir } };
+    case 'restore':
+      return { kind: 'restore', instanceId: a.instance.id, runId: a.runId, ...(a.targetId ? { targetId: a.targetId } : {}) };
+    case 'restore-app':
+      throw new Error('restore-app plans come from /v1/backups/restore');
     default:
       return { kind: a.kind, instanceId: a.instance.id };
   }
@@ -122,6 +130,11 @@ export function useConsole(onAuthLost: (msg?: string) => void) {
     try {
       // Strip the passphrase for the plan call: the daemon validates it but
       // never stores it in the plan. It travels with approve() instead.
+      if (action.kind === 'restore-app') {
+        setPlan(await api.restoreAppPlan({ targetId: action.targetId, instanceId: action.instanceId, runId: action.runId, location: { dir: action.dir }, ...(action.name ? { name: action.name } : {}) }));
+        key.current = newIdempotencyKey();
+        return;
+      }
       const req = planRequestFor(action);
       if (req.kind === 'install' && req.location) req.location = { dir: req.location.dir, passphrase: req.location.passphrase };
       setPlan(await api.plan(req));

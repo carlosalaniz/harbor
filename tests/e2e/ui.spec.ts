@@ -21,7 +21,7 @@ async function approve(page: Page, label: string | RegExp) {
   await dlg.getByRole('button', { name: label }).click();
 }
 // Tray titles are human sentences; map the operation kind to the wording that proves success.
-const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/, Restart: /restarted$/ };
+const DONE_RE: Record<string, RegExp> = { Update: /is up to date$/, Install: /is ready$/, Start: /is running again$/, Stop: /is stopped$/, Remove: /was removed \(data kept\)$/, Reinstall: /is back$/, Purge: /was uninstalled completely$/, Expose: /is published$/, Unexpose: /address withdrawn$/, Restart: /restarted$/, Restore: /is restored$/ };
 const trayDone = (page: Page, kind: string) => expect(page.getByRole('heading', { name: DONE_RE[kind]! })).toBeVisible({ timeout: 30_000 });
 
 // A finished install may show recovery cards: the Harbor recovery key the
@@ -591,10 +591,14 @@ test('storage: a non-ext4 drive offers Format as ext4 with typed confirmation', 
 
 test('full uninstall: typed confirmation, data deleted, name free again', async ({ page }) => {
   await login(page);
-  await installFromStore(page, 'Memos');
-  await approve(page, 'Install');
-  await trayDone(page, 'Install');
-  await dismissRecovery(page);
+  // an encrypted app to back up: the suite's memos when it is there, a fresh one when run alone
+  await page.waitForTimeout(1500); // let Home load its tiles
+  if (!(await page.getByRole('button', { name: 'Details of memos', exact: true }).count())) {
+    await installFromStore(page, 'Memos');
+    await approve(page, 'Install');
+    await trayDone(page, 'Install');
+    await dismissRecovery(page);
+  }
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of memos' }).click();
   const d = page.getByRole('dialog');
@@ -710,7 +714,7 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   await expect(launcher.locator('.icon-tile[data-instance="memos"]')).toHaveCount(1);
   // decision 143: an encrypted app's passphrase — to my own, then back to Harbor's own key
-  await page.getByRole('button', { name: 'Details of memos' }).click();
+  await page.getByRole('button', { name: 'Details of memos', exact: true }).click();
   const drawer = page.getByRole('dialog');
   await drawer.getByText('Change passphrase…', { exact: true }).click();
   await drawer.getByRole('radio', { name: 'My own passphrase' }).check();
@@ -1119,4 +1123,55 @@ defaultCredentials:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of hello-creds' }).click();
   await expect(page.getByRole('dialog').getByRole('note')).toContainText('changeme', { timeout: 10_000 });
+});
+
+test('backups: add a place, back an encrypted app up, restore it in place, delete the copy kept aside (decisions 149–154)', async ({ page }) => {
+  await login(page);
+  // an encrypted app to back up: the suite's memos when it is there, a fresh one when run alone
+  await page.waitForTimeout(1500); // let Home load its tiles
+  if (!(await page.getByRole('button', { name: 'Details of memos', exact: true }).count())) {
+    await installFromStore(page, 'Memos');
+    await approve(page, 'Install');
+    await trayDone(page, 'Install');
+    await dismissRecovery(page);
+  }
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /^Backups/ }).click();
+  await expect(page.getByRole('heading', { name: 'Backups', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Add a place' }).click();
+  const add = page.getByRole('dialog');
+  await add.getByRole('button', { name: 'Choose Another disk' }).click();
+  await add.getByLabel('Folder', { exact: false }).fill('/mnt/backup/e2e');
+  await add.getByRole('button', { name: 'Test and add' }).click();
+  await expect(page.getByRole('status')).toContainText('Another disk is ready');
+  await expect(page.locator('.place').first()).toContainText('Ready');
+  // the schedule is there with its defaults
+  await expect(page.getByLabel('Backup window start')).toHaveValue('02:00');
+
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of memos', exact: true }).click();
+  const drawer = page.getByRole('dialog');
+  await drawer.locator('summary', { hasText: /^Backups/ }).click();
+  await drawer.getByLabel('Back up memos to Another disk').check();
+  await drawer.getByLabel('Back up memos every night').check();
+  await drawer.getByRole('button', { name: 'Back up memos now' }).click();
+  await expect(drawer.getByRole('status')).toContainText('Queued');
+  // the run stops the app only for its last pass; a restore point appears
+  const restore = drawer.getByRole('button', { name: /^Restore memos to / });
+  await expect(async () => {
+    await drawer.getByRole('button', { name: 'Refresh' }).click();
+    await expect(restore.first()).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 30_000 });
+  await restore.first().click();
+  const review = page.getByRole('dialog');
+  await expect(review).toContainText('Review restore');
+  await expect(review).toContainText('kept aside');
+  await review.getByRole('button', { name: 'Restore now' }).click();
+  await trayDone(page, 'Restore');
+  await page.getByRole('button', { name: 'Details of memos', exact: true }).click();
+  const after = page.getByRole('dialog');
+  await after.locator('summary', { hasText: /^Backups/ }).click();
+  await expect(after).toContainText('before the last restore', { timeout: 15_000 });
+  await after.getByRole('button', { name: 'Delete it' }).click();
+  await expect(after).not.toContainText('before the last restore', { timeout: 15_000 });
 });

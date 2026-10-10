@@ -1,0 +1,39 @@
+apiVersion: harbor/v1alpha1
+kind: BackupTarget
+metadata:
+  id: protondrive
+  name: Proton Drive
+  description: Your Proton Drive, through rclone. Beta - Proton has no official API for this, so it can break when Proton changes things; pair it with another place.
+  status: beta
+release:
+  revision: "1"
+transport: rclone
+rclone:
+  backend: protondrive
+fields:
+  - id: username
+    label: Proton email
+    type: text
+    required: true
+    rclone: username
+  - id: password
+    label: Password
+    type: secret
+    required: true
+    rclone: password
+    obscure: true
+  - id: mailboxPassword
+    label: Mailbox password
+    type: secret
+    rclone: mailbox_password
+    obscure: true
+    hint: Only for accounts that still use a separate mailbox password
+  - id: twoFactor
+    label: Two-factor code
+    type: secret
+    rclone: 2fa
+    hint: The current 6-digit code, needed once at the first test; Harbor keeps the session afterwards
+  - id: path
+    label: Folder in your Drive
+    type: text
+    default: harbor-backups

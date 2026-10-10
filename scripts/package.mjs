@@ -39,7 +39,7 @@ async function download(url, dest) {
 if (!skipBuild) {
   run('pnpm', ['build']);
 }
-for (const f of ['dist/daemon.js', 'dist/cli/main.js', 'web/dist/index.html', 'catalog/index.json']) {
+for (const f of ['dist/daemon.js', 'dist/cli/main.js', 'web/dist/index.html', 'catalog/index.json', 'targets/s3/manifest.yaml']) {
   if (!existsSync(path.join(ROOT, f))) throw new Error(`missing build output ${f}`);
 }
 
@@ -73,6 +73,7 @@ for (const f of ['CHANGELOG.md', 'README.md', 'bin/npm', 'bin/npx', 'bin/corepac
 cpSync(path.join(ROOT, 'dist'), path.join(stage, 'dist'), { recursive: true });
 cpSync(path.join(ROOT, 'web', 'dist'), path.join(stage, 'web'), { recursive: true });
 cpSync(path.join(ROOT, 'catalog'), path.join(stage, 'catalog'), { recursive: true });
+cpSync(path.join(ROOT, 'targets'), path.join(stage, 'targets'), { recursive: true }); // backup place packages (decision 152)
 cpSync(path.join(ROOT, 'release-assets', 'bin'), path.join(stage, 'bin'), { recursive: true });
 for (const b of readdirSync(path.join(stage, 'bin'))) chmodSync(path.join(stage, 'bin', b), 0o755);
 mkdirSync(path.join(stage, 'docs'), { recursive: true });

@@ -4,6 +4,7 @@ import { api } from '../../api';
 import { StoreCard } from '../components';
 import { categoryLabel } from '../format';
 import type { Console } from '../store';
+import { BackupPlaces } from './Backups';
 
 export function Store({ c, onOpen, onInstall, onUpload }: { c: Console; onOpen: (item: CatalogItemDto) => void; onInstall: (item: CatalogItemDto) => void; onUpload: () => void }) {
   const [q, setQ] = useState('');
@@ -46,6 +47,7 @@ export function Store({ c, onOpen, onInstall, onUpload }: { c: Console; onOpen: 
         </ul>
       )}
       <GitSources />
+      <BackupPlaces />
     </section>
   );
 }

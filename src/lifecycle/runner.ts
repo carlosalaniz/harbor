@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { Ctx } from './context.js';
 import { HarborError, type ErrorCode } from '../errors.js';
 import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
@@ -11,7 +11,7 @@ import type { NetworkInfo } from '../docker/adapter.js';
 import type { LinkRow, PlannedLink } from '../state/repo.js';
 import { checkHostDirectory } from '../storage/host-path.js';
 import { verifyBindMarker, writeBindMarker } from '../storage/bind-marker.js';
-import { createAppHome, describeAppHome, unlockAppHome, unwrapMasterKeyForMachine, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
+import { createAppHome, describeAppHome, stampInstallationRecovery, unlockAppHome, unwrapMasterKeyForMachine, wrapMasterKeyForMachine, zeroKey, type MachineWrappedKey } from '../storage/app-home.js';
 import { protectorFor } from '../storage/crypto-provider.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import type { LoadedPackage, Manifest } from '../contracts/types.js';
@@ -137,6 +137,8 @@ export class OperationRunner {
         case 'configure': await this.configure(op, plan, inst, secretValues); break;
         case 'seal': await this.seal(op, plan, inst, secretValues); break;
         case 'move': await this.move(op, plan, inst, secretValues); break;
+        case 'backup': await this.backupCold(op, plan, inst); break;
+        case 'restore': await this.restoreInPlace(op, plan, inst, secretValues); break;
       }
       const result = { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) };
       this.opResult = null;
@@ -153,7 +155,7 @@ export class OperationRunner {
       }
       const { code, message, nextAction, state } = classify(e, secretValues);
       // a failed update that was rolled back leaves the app installed and running on the previous release
-      const rolledBack = (op.kind === 'update' || op.kind === 'seal' || op.kind === 'move') && this.opResult?.['rolledBack'] === true;
+      const rolledBack = (op.kind === 'update' || op.kind === 'seal' || op.kind === 'move' || op.kind === 'restore' || op.kind === 'backup') && this.opResult?.['rolledBack'] === true;
       const result = rolledBack ? { instanceId: inst.id, name: inst.name, ...(this.opResult ?? {}) } : undefined;
       this.opResult = null;
       this.ctx.log.warn(`${op.kind} ${state}: ${message}`, { operationId: op.id, instanceId: inst.id, code });
@@ -169,10 +171,12 @@ export class OperationRunner {
         repo.addEvent({ operationId: op.id, instanceId: inst.id, phase: state, message: `${op.kind} ${state}: ${message}` });
       });
       // One row per failed operation (unique id in the key): auto-updates and background redeploys surface here.
+      // A backup whose app runs again is reported by the backup worker itself (one row per app, resolved by the next success).
+      if (op.kind === 'backup' && rolledBack) return;
       this.ctx.notifier.notify({
         kind: 'operation-failed',
         severity: 'error',
-        title: rolledBack ? (op.kind === 'seal' ? `Encrypting ${inst.name} failed; it runs unencrypted as before` : op.kind === 'move' ? `Moving ${inst.name} failed; it runs where it was` : `Update of ${inst.name} failed; the previous version is back`) : `${op.kind} of ${inst.name} ${state === 'needs_action' ? 'needs attention' : 'failed'}`,
+        title: rolledBack ? (op.kind === 'seal' ? `Encrypting ${inst.name} failed; it runs unencrypted as before` : op.kind === 'move' ? `Moving ${inst.name} failed; it runs where it was` : op.kind === 'restore' ? `Restoring ${inst.name} failed; it runs as it was before` : `Update of ${inst.name} failed; the previous version is back`) : `${op.kind} of ${inst.name} ${state === 'needs_action' ? 'needs attention' : 'failed'}`,
         body: `${message} Next: ${nextAction}`,
         instanceId: inst.id,
         dedupeKey: `operation-failed:${op.id}`,
@@ -292,9 +296,16 @@ export class OperationRunner {
     }
   }
 
-  private generateSecrets(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow, secretsDir: string): void {
+  // restored (decision 153): the secrets came back with a restore point; a value that exists is the one the
+  // app's data was created with, so it is kept instead of refused.
+  private generateSecrets(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow, secretsDir: string, opts: { restored?: boolean } = {}): void {
     const refs = [...inst.secrets];
     for (const s of pkg.manifest.secrets ?? []) {
+      if (opts.restored && secretExists(secretsDir, s.id)) {
+        if (!refs.some((r) => r.id === s.id)) refs.push({ id: s.id, file: path.join('secrets', s.id) });
+        this.event(op, 'preparing', `kept the restored secret ${s.id}`);
+        continue;
+      }
       if (s.source === 'operator') {
         // Decision 125: the value the operator typed, from the submission; stored exactly like a generated one.
         const v = this.supplied.store[s.id];
@@ -991,7 +1002,7 @@ export class OperationRunner {
       homeDir = await this.createAppHomeForInstall(op, plan, inst, pkg);
     }
     await this.createOwnedVolumes(op, pkg, identity, inst, plan.proposal.storage, homeDir);
-    this.generateSecrets(op, pkg, inst, dirs.secrets);
+    this.generateSecrets(op, pkg, inst, dirs.secrets, { restored: Boolean(plan.proposal.restore) });
     await this.applyPlannedLinks(op, inst, plan.proposal.links ?? [], sink);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     const provisioned = this.readProvisioned(pkg, dirs.secrets, sink);
@@ -1039,6 +1050,7 @@ export class OperationRunner {
     // secret like before.
     const passphrase = this.ctx.service.takeInstallLocationSecret(plan.id);
     if (!passphrase) throw new HarborError('STATE_CHANGED', 'the encryption passphrase for this install is gone', { nextAction: 'Create a new plan and submit it with the passphrase.' });
+    if (plan.proposal.restore) return this.createRestoredHome(op, plan, inst);
     if (passphrase === 'adopted') {
       const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
       if (!home) throw new HarborError('STATE_CHANGED', 'adopted app home is not recorded', { nextAction: 'Adopt the app again from Storage.' });
@@ -1058,6 +1070,68 @@ export class OperationRunner {
     } finally {
       // The passphrase is single-use: never linger in memory past apply.
       (passphrase as unknown as { fill?: (v: number) => void }).fill?.(0);
+    }
+  }
+
+  // Decision 153: an install that restores an app from a backup place. The home is created from the restore
+  // point (its manifest, its key, its data); the state slice puts the app's secrets back before the install
+  // continues exactly like an adopt (fresh ports, this machine's card stamped onto the home).
+  private async createRestoredHome(op: OperationRow, plan: PlanRow, inst: InstanceRow): Promise<string> {
+    const { repo } = this.ctx;
+    const r = plan.proposal.restore!;
+    const loc = plan.proposal.location!;
+    const backups = this.ctx.backups;
+    if (!backups) throw new HarborError('UNSUPPORTED_CAPABILITY', 'backups are not available on this machine');
+    const call = backups.callFor(r.targetId);
+    this.phase(op, 'applying', 'preparing', `reading the restore point of ${r.time}`);
+    const meta = restoredFiles(await backups.engine.restoreMeta(call, r.snapshotId, r.sourceStage));
+    const masterKey = restoredKey(meta);
+    const manifestBytes = meta.get('home-manifest.json');
+    if (!manifestBytes) throw new HarborError('DATA_MISSING', 'the restore point carries no app home manifest');
+    const manifest = JSON.parse(manifestBytes.toString('utf8')) as { instanceId?: string; driveId?: string; encryption?: { recovery?: unknown } };
+    const expected = r.fromInstanceId ?? inst.id;
+    if (manifest.instanceId !== expected) throw new HarborError('STATE_CHANGED', `the restore point belongs to instance ${manifest.instanceId}, not ${expected}`);
+    // a copy restored under a fresh identity (the original was uninstalled here): the home names the new one
+    const homeManifest = r.fromInstanceId ? Buffer.from(JSON.stringify({ ...JSON.parse(manifestBytes.toString('utf8')), instanceId: inst.id }, null, 2)) : manifestBytes;
+    const home = path.join(loc.dir, plan.proposal.name);
+    if (existsSync(home)) throw new HarborError('NAME_CONFLICT', `${home} already exists`);
+    mkdirSync(loc.dir, { recursive: true, mode: 0o700 });
+    mkdirSync(home, { mode: 0o700 });
+    try {
+      writeFileSync(path.join(home, 'manifest.json'), homeManifest, { mode: 0o644 });
+      mkdirSync(path.join(home, 'vault'), { mode: 0o700 });
+      mkdirSync(path.join(home, 'volumes'), { mode: 0o700 });
+      const crypto = this.ctx.crypto;
+      if (crypto) {
+        await crypto.sealApp({ instanceId: inst.id, home }, masterKey.toString('hex'), protectorFor(plan.proposal.name, inst.id));
+        this.event(op, 'preparing', `kernel-sealed ${home}/volumes with the app's own key`);
+      }
+      this.phase(op, 'applying', 'restoring', `restoring the data into ${home} as root (written sealed)`);
+      await backups.engine.restoreData(call, { instanceId: inst.id, snapshotId: r.snapshotId, sourceHome: r.sourceHome, destHome: home });
+      this.event(op, 'restoring', 'restored the data');
+      writeRestoredTree(this.dirs(inst).secrets, meta, 'secrets/');
+      this.event(op, 'restoring', 'put back the app\'s secrets');
+      const defaultKey = manifest.encryption?.recovery === undefined;
+      const machineKey = defaultKey ? this.ctx.machineKey.take() : null;
+      let wrapped: MachineWrappedKey | null = null;
+      if (machineKey) {
+        try {
+          wrapped = wrapMasterKeyForMachine(masterKey, machineKey);
+        } finally {
+          zeroMachineKey(machineKey);
+        }
+      }
+      const card = this.ctx.service.ensureInstallationRecoveryKey();
+      if (card) await stampInstallationRecovery(home, masterKey, card.words);
+      repo.upsertResource({ instanceId: inst.id, kind: 'volume', role: '__home__', dockerId: null, name: home, token: null, metadata: { home: true, driveId: manifest.driveId ?? null, kernelSealed: Boolean(crypto), restored: true, ...(defaultKey ? { defaultKey: true } : {}), ...(wrapped ? { machineWrapped: wrapped } : {}) } });
+      if (!defaultKey) this.ctx.service.holdAppUnlock(inst.id, Buffer.from(masterKey));
+      return home;
+    } catch (e) {
+      await this.destroyHome(inst, home).catch(() => rmSync(home, { recursive: true, force: true }));
+      this.event(op, 'preparing', `restoring failed; removed the unfinished home ${home}`);
+      throw e;
+    } finally {
+      zeroKey(masterKey);
     }
   }
 
@@ -1796,6 +1870,149 @@ export class OperationRunner {
     this.event(op, 'cleaning', `${inst.name} now lives at ${target}; the old home is deleted`);
   }
 
+  // Decision 151: the cold pass of a backup run. Containers stop (desired stays running), the backup worker
+  // sends what changed since its last warm pass to every place within the cap, and the app starts again
+  // whatever happened. A failed pass on an app that runs again is rolledBack: it stays installed.
+  private async backupCold(op: OperationRow, plan: PlanRow, inst: InstanceRow): Promise<void> {
+    const { repo, config } = this.ctx;
+    const runId = plan.proposal.backup?.runId;
+    const backups = this.ctx.backups;
+    if (!runId || !backups) throw new HarborError('STATE_CHANGED', 'plan carries no backup run');
+    this.phase(op, 'applying', 'stopping', `stopping ${inst.name} for the last backup pass (containers and data stay)`);
+    await this.engineOrThrow();
+    const started = Date.now();
+    await this.stopContainers(op, inst, 'stopping');
+    repo.updateInstance(inst.id, { runtime: 'stopped', readiness: 'unknown', observedAt: repo.now() });
+    let cold: { succeeded: number; failed: string[] } | null = null;
+    let coldError: unknown = null;
+    this.phase(op, 'applying', 'backing-up', 'sending what changed since the last pass to every backup place');
+    try {
+      cold = await backups.coldPass(runId);
+      this.event(op, 'backing-up', `${cold.succeeded} place(s) took the last pass${cold.failed.length ? `; failed: ${cold.failed.join('; ')}` : ''}`);
+    } catch (e) {
+      coldError = e;
+      this.event(op, 'backing-up', `the last pass failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    this.phase(op, 'applying', 'starting', `starting ${inst.name} again`);
+    const dirs = this.dirs(inst);
+    const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    repo.updateInstance(inst.id, { runtime: 'starting' });
+    await this.ensureLinkNetworks(op, inst);
+    await this.ctx.compose.start({ projectDir: dirs.runtime, projectName: identity.project, file: path.join(dirs.runtime, 'compose.yaml') }, config.startTimeoutMs);
+    const containers = await this.recordProjectResources(op, identity, inst);
+    await this.attachLinkPeers(op, inst);
+    await this.checkReadiness(op, pkg, inst, containers);
+    repo.updateInstance(inst.id, { installState: 'installed', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+    const downtimeMs = Date.now() - started;
+    this.opResult = { downtimeMs, places: cold?.succeeded ?? 0, failed: cold?.failed ?? [] };
+    if (coldError || !cold || cold.succeeded === 0) {
+      this.opResult = { ...this.opResult, rolledBack: true };
+      if (coldError instanceof HarborError) throw coldError;
+      throw new HarborError('OPERATION_FAILED', `no backup place took the last pass${cold?.failed.length ? `: ${cold.failed.join('; ')}` : ''}`, { nextAction: `${inst.name} runs again. Check the places in Settings → Backups.` });
+    }
+  }
+
+  // Stop an instance's recorded containers without touching `desired` (backup cold pass).
+  private async stopContainers(op: OperationRow, inst: InstanceRow, phase: string): Promise<void> {
+    const { repo, docker } = this.ctx;
+    for (const r of repo.resources(inst.id).filter((x) => x.kind === 'container')) {
+      const c = await docker.inspectContainer(r.dockerId ?? r.name);
+      if (!c) continue;
+      if (c.labels[LABELS.instance] !== inst.id) throw new HarborError('OWNERSHIP_CONFLICT', `container ${r.name} is not owned by this instance; not stopping it`);
+      if (c.state === 'running' || c.state === 'restarting' || c.state === 'paused') {
+        await docker.stopContainer(c.id, 15);
+        this.event(op, phase, `stopped ${c.name}`);
+      }
+    }
+  }
+
+  // Decision 153: restore in place. The current home is renamed aside (kept until the operator deletes it),
+  // a fresh home with the same manifest is sealed with the app's key from the restore point, root restores
+  // the data into it, the secrets and release come back, and the app starts. Any failure puts the old home
+  // back and starts the app as it was.
+  private async restoreInPlace(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    const r = plan.proposal.restore;
+    const backups = this.ctx.backups;
+    if (!r || !backups) throw new HarborError('STATE_CHANGED', 'plan carries no restore point');
+    const crypto = this.ctx.crypto;
+    if (!crypto) throw new HarborError('UNSUPPORTED_CAPABILITY', 'this machine has no app sealing', { nextAction: 'Re-run bootstrap so Harbor installs its sealing step.' });
+    const homeRow = repo.resources(inst.id).find((x) => x.kind === 'volume' && x.role === '__home__');
+    if (!homeRow) throw new HarborError('STATE_CHANGED', `${inst.name} is not encrypted`);
+    const home = homeRow.name;
+    const call = backups.callFor(r.targetId);
+    this.phase(op, 'applying', 'preparing', `reading the restore point of ${r.time}`);
+    await this.engineOrThrow();
+    const meta = restoredFiles(await backups.engine.restoreMeta(call, r.snapshotId, r.sourceStage));
+    const masterKey = restoredKey(meta);
+    const dirs = this.dirs(inst);
+    const before = { secrets: snapshotTree(dirs.secrets), release: snapshotTree(dirs.release), revision: inst.revision, releaseHashes: inst.releaseHashes };
+    const stamp = this.ctx.clock.now().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '');
+    const aside = `${home}.before-restore-${stamp}`;
+    let movedAside = false;
+    let made = false;
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    try {
+      this.phase(op, 'applying', 'stopping', `stopping ${inst.name} and deleting its containers (data stays)`);
+      await this.teardownContainers(op, inst, 'stopping');
+      repo.updateInstance(inst.id, { runtime: 'stopped', readiness: 'unknown' });
+      renameSync(home, aside);
+      movedAside = true;
+      this.event(op, 'preparing', `kept the current data aside at ${aside}`);
+      mkdirSync(home, { mode: 0o700 });
+      made = true;
+      cpSync(path.join(aside, 'manifest.json'), path.join(home, 'manifest.json'));
+      mkdirSync(path.join(home, 'vault'), { mode: 0o700 });
+      mkdirSync(path.join(home, 'volumes'), { mode: 0o700 });
+      await crypto.sealApp({ instanceId: inst.id, home }, masterKey.toString('hex'), protectorFor(inst.name, inst.id));
+      this.phase(op, 'applying', 'restoring', `restoring the data of ${r.time} into ${home} as root (written sealed)`);
+      await backups.engine.restoreData(call, { instanceId: inst.id, snapshotId: r.snapshotId, sourceHome: r.sourceHome, destHome: home });
+      replaceTree(dirs.secrets, meta, 'secrets/', false);
+      replaceTree(dirs.release, meta, 'release/', true);
+      const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+      if (pkg.revision !== inst.revision) {
+        repo.updateInstanceRelease(inst.id, { revision: pkg.revision, releaseHashes: pkg.hashes, endpoints: inst.endpoints });
+        this.event(op, 'restoring', `back on package revision ${pkg.revision} (as at the restore point); Updates offers the newer one again`);
+      }
+      repo.upsertResource({ ...homeRow, metadata: { ...(homeRow.metadata ?? {}), kernelSealed: true } });
+      const fresh = repo.instance(inst.id) ?? inst;
+      const file = await this.renderAndValidate(op, pkg, identity, fresh, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink));
+      this.phase(op, 'applying', 'starting', `starting ${inst.name} as it was at ${r.time}`);
+      repo.updateInstance(inst.id, { runtime: 'starting', desired: 'running' });
+      const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, fresh);
+      await this.checkReadiness(op, pkg, fresh, containers);
+      repo.updateInstance(inst.id, { installState: 'installed', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+      backups.setPrevious(inst.id, { path: aside, createdAt: repo.now() });
+      this.opResult = { restoredFrom: r.time, previous: aside };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      this.event(op, 'rollback', `restoring failed (${reason}); putting ${inst.name} back as it was`);
+      try {
+        await this.teardownContainers(op, inst, 'rollback');
+        if (movedAside) {
+          if (made) await this.destroyHome(inst, home);
+          renameSync(aside, home);
+        }
+        restoreTree(dirs.secrets, before.secrets);
+        restoreTree(dirs.release, before.release);
+        repo.updateInstanceRelease(inst.id, { revision: before.revision, releaseHashes: before.releaseHashes, endpoints: inst.endpoints });
+        const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+        const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink));
+        const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, inst);
+        await this.checkReadiness(op, pkg, inst, containers);
+        repo.updateInstance(inst.id, { installState: 'installed', desired: 'running', runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+        this.opResult = { rolledBack: true };
+      } catch (re) {
+        this.event(op, 'rollback', `starting it as it was failed too: ${re instanceof Error ? re.message : String(re)}`);
+        throw new HarborError('OPERATION_FAILED', `restoring ${inst.name} failed (${reason}) and it could not be started as it was`, { nextAction: movedAside ? `Its previous data is at ${existsSync(aside) ? aside : home}. Repair it (harbor repair ${inst.name}).` : `Repair it (harbor repair ${inst.name}).` });
+      }
+      throw new HarborError('OPERATION_FAILED', `restoring ${inst.name} failed: ${reason}`, { nextAction: `It runs as it was before. Check the place in Settings → Backups, then try again.` });
+    } finally {
+      zeroKey(masterKey);
+    }
+  }
+
   // Decision 144: a home holds files written by the containers' users; only root can delete all of them.
   // The root step re-checks that the home's manifest names this instance before deleting anything.
   private async destroyHome(inst: InstanceRow, home: string): Promise<void> {
@@ -1964,4 +2181,51 @@ function classify(e: unknown, secrets: string[]): { code: ErrorCode; message: st
     return { code: 'DOCKER_UNAVAILABLE', message: redact(msg), nextAction: 'Start Docker Engine and retry.', state: 'failed' };
   }
   return { code: 'INTERNAL', message: redact(msg), nextAction: 'Check the daemon log.', state: 'failed' };
+}
+
+// ---- restore helpers (decision 153): the state slice comes back as files in memory, never via disk
+
+function restoredFiles(files: { path: string; base64: string }[]): Map<string, Buffer> {
+  return new Map(files.map((f) => [f.path, Buffer.from(f.base64, 'base64')]));
+}
+function restoredKey(meta: Map<string, Buffer>): Buffer {
+  const hex = meta.get('app-key')?.toString('utf8').trim() ?? '';
+  if (!/^[0-9a-f]{64}$/i.test(hex)) throw new HarborError('DATA_MISSING', 'the restore point carries no app key');
+  return Buffer.from(hex, 'hex');
+}
+function writeRestoredTree(dir: string, meta: Map<string, Buffer>, prefix: string): void {
+  for (const [p, bytes] of meta) {
+    if (!p.startsWith(prefix)) continue;
+    const rel = p.slice(prefix.length);
+    if (!rel || rel.split('/').some((s) => s === '..' || s === '.' || s === '')) continue;
+    const file = path.join(dir, rel);
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(file, bytes, { mode: 0o600 });
+  }
+}
+function snapshotTree(dir: string, base = ''): Map<string, Buffer> {
+  const out = new Map<string, Buffer>();
+  if (!existsSync(path.join(dir, base))) return out;
+  for (const e of readdirSync(path.join(dir, base))) {
+    const rel = base ? `${base}/${e}` : e;
+    const st = statSync(path.join(dir, rel));
+    if (st.isDirectory()) for (const [k, v] of snapshotTree(dir, rel)) out.set(k, v);
+    else if (st.isFile()) out.set(rel, readFileSync(path.join(dir, rel)));
+  }
+  return out;
+}
+function restoreTree(dir: string, files: Map<string, Buffer>): void {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const [rel, bytes] of files) {
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true, mode: 0o700 });
+    writeFileSync(path.join(dir, rel), bytes, { mode: 0o600 });
+  }
+}
+function replaceTree(dir: string, meta: Map<string, Buffer>, prefix: string, required: boolean): void {
+  const files = new Map<string, Buffer>();
+  for (const [p, bytes] of meta) if (p.startsWith(prefix)) files.set(p.slice(prefix.length), bytes);
+  if (!files.size && required) throw new HarborError('DATA_MISSING', `the restore point carries no ${prefix.replace(/\/$/, '')}`);
+  for (const rel of files.keys()) if (rel.split('/').some((s) => s === '..' || s === '.' || s === '')) throw new HarborError('INVALID_REQUEST', `unsafe path ${rel} in the restore point`);
+  restoreTree(dir, files);
 }

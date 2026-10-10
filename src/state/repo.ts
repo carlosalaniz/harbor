@@ -8,7 +8,7 @@ export type InstallState = 'installing' | 'installed' | 'failed' | 'needs_action
 export type Runtime = 'running' | 'stopped' | 'starting' | 'unavailable' | 'unknown';
 export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action';
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move' | 'backup' | 'restore';
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The operator's own proxy (decision 118) is never the main address: Harbor does not own its TLS.
 export type PrimaryExposure = 'loopback' | 'tailnet' | 'public';
@@ -205,6 +205,10 @@ export interface PlanProposal {
   primaryHost?: string | null;
   // update plans: what changes between the installed release and the new one
   update?: { fromRevision: string; toRevision: string; fromVersion: string | null; toVersion: string | null; images: { service: string; from: string; to: string }[]; newSecrets: string[]; newStorage: string[]; newEndpoints: string[]; releaseNotes: string | null };
+  // decision 151: the cold pass of this backup run
+  backup?: { runId: string };
+  // decision 153: restore point to put back (restore in place, or an install plan restoring onto this machine)
+  restore?: { runId: string; targetId: string; snapshotId: string; sourceHome: string; sourceStage: string; time: string; fromInstanceId?: string };
 }
 
 export interface OperationRow {
@@ -866,4 +870,80 @@ export class Repo {
       )
       .run(t.id, t.mode, t.browserUrl, t.installationState, t.availability, t.observedAt, t.note, t.resources ? j(t.resources) : null, this.now());
   }
+
+  // ---- backup runs (decision 154)
+  insertBackupRun(r: { id: string; instanceId: string | null; kind: BackupRunRow['kind']; trigger: BackupRunRow['trigger']; state?: BackupRunRow['state']; message?: string | null }): void {
+    this.db.prepare('INSERT INTO backup_runs (id, instance_id, kind, trigger, state, started_at, message) VALUES (?, ?, ?, ?, ?, ?, ?)').run(r.id, r.instanceId, r.kind, r.trigger, r.state ?? 'running', this.now(), r.message ?? null);
+  }
+  finishBackupRun(id: string, f: { state: Exclude<BackupRunRow['state'], 'running'>; message?: string | null; downtimeMs?: number | null; bytesAdded?: number | null; totalBytes?: number | null; operationId?: string | null; targets?: BackupRunTarget[] }): void {
+    this.db
+      .prepare('UPDATE backup_runs SET state = ?, finished_at = ?, message = COALESCE(?, message), downtime_ms = COALESCE(?, downtime_ms), bytes_added = COALESCE(?, bytes_added), total_bytes = COALESCE(?, total_bytes), operation_id = COALESCE(?, operation_id), targets_json = COALESCE(?, targets_json) WHERE id = ?')
+      .run(f.state, this.now(), f.message ?? null, f.downtimeMs ?? null, f.bytesAdded ?? null, f.totalBytes ?? null, f.operationId ?? null, f.targets ? j(f.targets) : null, id);
+  }
+  updateBackupRun(id: string, f: { message?: string; operationId?: string; targets?: BackupRunTarget[] }): void {
+    this.db.prepare('UPDATE backup_runs SET message = COALESCE(?, message), operation_id = COALESCE(?, operation_id), targets_json = COALESCE(?, targets_json) WHERE id = ?').run(f.message ?? null, f.operationId ?? null, f.targets ? j(f.targets) : null, id);
+  }
+  backupRun(id: string): BackupRunRow | null {
+    const r = this.db.prepare('SELECT * FROM backup_runs WHERE id = ?').get(id) as Raw | undefined;
+    return r ? backupRunFrom(r) : null;
+  }
+  backupRuns(o: { instanceId?: string; kind?: BackupRunRow['kind']; limit?: number } = {}): BackupRunRow[] {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (o.instanceId) {
+      where.push('instance_id = ?');
+      args.push(o.instanceId);
+    }
+    if (o.kind) {
+      where.push('kind = ?');
+      args.push(o.kind);
+    }
+    const rows = this.db.prepare(`SELECT * FROM backup_runs ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY started_at DESC, rowid DESC LIMIT ?`).all(...args, o.limit ?? 50) as Raw[];
+    return rows.map(backupRunFrom);
+  }
+  // A daemon restart ends every run that was in flight; never replayed (same rule as operations).
+  failRunningBackupRuns(message: string): number {
+    return this.db.prepare("UPDATE backup_runs SET state = 'failed', finished_at = ?, message = ? WHERE state = 'running'").run(this.now(), message).changes;
+  }
+}
+
+export interface BackupRunTarget {
+  targetId: string;
+  name: string;
+  state: 'succeeded' | 'failed' | 'skipped';
+  snapshotId: string | null;
+  bytesAdded: number | null;
+  error: string | null;
+}
+export interface BackupRunRow {
+  id: string;
+  instanceId: string | null;
+  kind: 'backup' | 'restore' | 'prune' | 'check';
+  trigger: 'schedule' | 'manual';
+  state: 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped';
+  startedAt: string;
+  finishedAt: string | null;
+  downtimeMs: number | null;
+  bytesAdded: number | null;
+  totalBytes: number | null;
+  message: string | null;
+  operationId: string | null;
+  targets: BackupRunTarget[];
+}
+function backupRunFrom(r: Raw): BackupRunRow {
+  return {
+    id: r['id'] as string,
+    instanceId: (r['instance_id'] as string | null) ?? null,
+    kind: r['kind'] as BackupRunRow['kind'],
+    trigger: r['trigger'] as BackupRunRow['trigger'],
+    state: r['state'] as BackupRunRow['state'],
+    startedAt: r['started_at'] as string,
+    finishedAt: (r['finished_at'] as string | null) ?? null,
+    downtimeMs: (r['downtime_ms'] as number | null) ?? null,
+    bytesAdded: (r['bytes_added'] as number | null) ?? null,
+    totalBytes: (r['total_bytes'] as number | null) ?? null,
+    message: (r['message'] as string | null) ?? null,
+    operationId: (r['operation_id'] as string | null) ?? null,
+    targets: pj(r['targets_json'], [] as BackupRunTarget[]),
+  };
 }

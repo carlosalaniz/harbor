@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { DomainsDto, HostStorageDto } from '../../../src/contracts/api';
 import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
+import { AppBackupsPanel } from './pages/Backups';
 import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, Pill, RecoveryCard, StatusPill, appLabel, openUrl } from './components';
 import { categoryLabel, fmtBytes, fmtTime } from './format';
 import type { Action, Console } from './store';
@@ -55,10 +56,10 @@ export function PlanDialog({ c }: { c: Console }) {
   if (!pending) return null;
   const missingSecret = plan ? plan.secrets.some((s) => s.ask === 'required' && (secretValues[s.id] ?? '').length < Math.max(1, s.minLength ?? 1)) : false;
   const typed = Object.fromEntries(Object.entries(secretValues).filter(([id, v]) => v !== '' || plan?.secrets.find((s) => s.id === id)?.ask === 'optional' && plan.kind === 'configure'));
-  const title = plan ? `Review ${verb(plan.kind)}` : `Planning ${verb(pending.kind)}…`;
+  const title = plan ? (plan.kind === 'install' && pending.kind === 'restore-app' ? 'Review restore' : `Review ${verb(plan.kind)}`) : `Planning ${pending.kind === 'restore-app' ? 'restore' : verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
-  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? 'Install' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : plan.kind === 'seal' ? 'Encrypt now' : plan.kind === 'move' ? 'Move now' : capitalize(plan.kind);
+  const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? (pending.kind === 'restore-app' ? 'Restore here' : 'Install') : plan.kind === 'restore' ? 'Restore now' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : plan.kind === 'seal' ? 'Encrypt now' : plan.kind === 'move' ? 'Move now' : capitalize(plan.kind);
   return (
     <Dialog title={title} onClose={c.cancel}>
       {planError && (
@@ -1489,6 +1490,7 @@ export function AppDrawer({ inst, exposures, busy, onClose, onAction, onPublish,
           </ul>
         </>
       )}
+      {!retained && <AppBackupsPanel inst={inst} busy={busy} onAction={onAction} />}
       {home && !retained && !locked && <PassphrasePanel inst={inst} defaultKey={Boolean(home.defaultKey)} onChanged={onChanged} />}
       {home && !retained && !locked && inst.installState === 'installed' && <MovePanel inst={inst} current={home.path} busy={busy} onMove={(dir) => onAction({ kind: 'move', instance: inst, dir })} />}
       {detail?.defaultCredentials && !retained && <DefaultLogin creds={detail.defaultCredentials} />}
@@ -1597,6 +1599,10 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
       return `Harbor will apply the new settings to ${n} and recreate only what changed. Data, ports and addresses stay.`;
     case 'move':
       return `Harbor will move ${n} to ${plan.location?.dir ?? 'its new place'}: it stops, its data is copied sealed (never as plaintext on a disk), and it starts from there. The old copy is deleted only after that works.`;
+    case 'backup':
+      return `Harbor will stop ${n} for a moment, send what changed since the last pass to its backup places, and start it again.`;
+    case 'restore':
+      return `Harbor will put ${n} back as it was at ${plan.changes.find((c) => c.includes('restore the data of'))?.match(/data of (\S+)/)?.[1] ?? 'the restore point'}. Its current data is kept aside until you delete it; if anything fails, it runs as it was.`;
     case 'seal':
       return `Harbor will encrypt ${n} in place: it stops, its data is copied into a sealed home at ${plan.location?.dir ?? 'the Harbor data folder'}, and it starts again on the sealed copy. The plain copy is deleted only after that works.`;
     case 'update':
@@ -1605,7 +1611,7 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption', move: 'move' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption', move: 'move', backup: 'backup', restore: 'restore' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
