@@ -207,6 +207,8 @@ export class ApplicationService {
         const upd = this.updateFor(i, current);
         if (!upd) continue;
         if (this.autoTried()[i.id] === upd.revision) continue;
+        // decision 190: a locked app's update is refused at plan time; wait for the unlock instead of marking it tried
+        if (this.homeUnreachable(i)) continue;
         this.setAutoTried(i.id, upd.revision);
         try {
           const plan = await this.createPlan({ kind: 'update', instanceId: i.id }, 'git-source');
@@ -484,6 +486,8 @@ export class ApplicationService {
       const upd = this.updateFor(i, current);
       if (!upd) continue;
       if (this.autoTried()[i.id] === upd.revision) continue;
+      // decision 190: a locked app's update is refused at plan time; wait for the unlock instead of marking it tried
+      if (this.homeUnreachable(i)) continue;
       if (this.preUpdateBackup(i, upd.revision) !== 'go') continue;
       this.setAutoTried(i.id, upd.revision);
       try {
@@ -2286,20 +2290,24 @@ export class ApplicationService {
     return this.plan(plan.id);
   }
 
-  // Update: same instance (name, ports, volumes, secrets, addresses), new release. New claims get new
-  // volumes/secrets/ports; removed claims keep their data (never deleted); images change to the new digests.
   // A locked encrypted app (kernel-locked, or never unlocked this boot) can only be touched when the runner can
   // reach a key: this boot's held key, or the machine wrapping while AFU. Otherwise refuse at plan time, so the
   // console prompts and a queued action waits for a person (decision 183) instead of failing deep in the runner.
+  private homeUnreachable(inst: InstanceRow): boolean {
+    const hs = this.homeState(inst.id);
+    if (hs?.state !== 'locked') return false;
+    return !(this.unlockedApps.has(inst.id) || (hs.silentUnlock && this.ctx.machineKey.unlocked));
+  }
   private refuseUnreachableHome(inst: InstanceRow, verb: string): void {
     const hs = this.homeState(inst.id);
-    if (hs?.state !== 'locked') return;
-    if (this.unlockedApps.has(inst.id) || (hs.silentUnlock && this.ctx.machineKey.unlocked)) return;
+    if (!hs || !this.homeUnreachable(inst)) return;
     throw personCanResolve(new HarborError('INVALID_STATE', `${inst.name} is locked`, {
       nextAction: hs.defaultKey ? `Log in again to unlock apps on this machine, then ${verb} again.` : hs.silentUnlock ? `Log in again (it unlocks with your Harbor password), or unlock it with its passphrase, then ${verb} again.` : `Unlock it with its encryption passphrase (or recovery key), then ${verb} again.`,
     }));
   }
 
+  // Update: same instance (name, ports, volumes, secrets, addresses), new release. New claims get new
+  // volumes/secrets/ports; removed claims keep their data (never deleted); images change to the new digests.
   private async updatePlan(req: Extract<PlanRequest, { kind: 'update' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
     const { repo, ids } = this.ctx;
     if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `update requires an installed app; ${inst.name} is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? 'Reinstall it first, then update.' : 'Fix the app first (Details shows the last error).' });

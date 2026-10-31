@@ -53,7 +53,7 @@ src/
 web/src/               React 19 + Vite, plain CSS tokens, strict CSP (style-src allows inline for xterm); App.tsx (Umbrel-style login hero, sidebar, bell), app/pages/*, app/dialogs.tsx (InstallWizard location picker + passphrase, PlanDialog Lives-on row, locked drawer banner), app/Setup.tsx (wizard), app/Terminal.tsx, app/reorder.ts (drag-to-arrange), mock/ (fixtures for `pnpm dev:ui`)
 (no catalog/)          the 17 official apps live in carlosalaniz/harbor-apps (`apps/<id>/`, checkout beside this repo as ../harbor-apps)
 tests/fixtures/catalog FROZEN copies of 9 apps (bentopdf excalidraw freshrss immich jellyfin memos n8n nextcloud uptime-kuma) for tests, e2e and `pnpm dev`
-tests/unit (646 + 2 skipped) tests/integration (379 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 44, two dev daemons on 18500/18700: normal + setup mode)
+tests/unit (646 + 2 skipped) tests/integration (382 + 3 live-Docker skipped, files run serially) tests/e2e (Playwright 45, two dev daemons on 18500/18700: normal + setup mode)
 scripts/               package.mjs (release archive; downloads + checks the catalog seed), catalog-dir.mjs (--catalog / HARBOR_CATALOG_DIR / ../harbor-apps/apps), catalog-pin/hash/verify/bundle/qualify, openapi, vm/ (DigitalOcean controller do-vm.mjs, vm-ssh.sh, vm-scp.sh, run-vm-tests.mjs acceptance suite)
 install.sh             curl one-liner (published as a release asset too)
 ```
@@ -189,7 +189,7 @@ validated live against Caddy v2.11.4.
 - Carlos's style: questions up front, then autonomous executive decisions; document everything; be pragmatic. He replies tersely ("ok do it", "2", "lets do it"). Confirm before outward-facing/irreversible actions (repo visibility, destroying droplets); routine judgment calls are yours.
 - Every round: code + tests (unit/integration/e2e) + live verification on a droplet + docs (DECISIONS row(s), PROGRESS phase + counts, VERIFICATION section + evidence dir with README, OPERATOR_GUIDE, design doc) + commit on `main` + tag + push (+ GitHub Release since 0.7.0) + memory file update.
 - Commits end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` (use whatever the current session's attribution reminder says).
-- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 646 + 2 skipped), `pnpm test:integration` (379 + 3 live-Docker skipped), `pnpm test:e2e` (44, Playwright, ~3 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
+- Commands: `pnpm typecheck && pnpm lint`, `pnpm test` (unit, 646 + 2 skipped), `pnpm test:integration` (382 + 3 live-Docker skipped), `pnpm test:e2e` (45, Playwright, ~3 min, spins two dev daemons on 18500/18700), `pnpm openapi` after route changes (unit test pins the exact route list), `pnpm build && pnpm package`.
 - Dev daemon: `pnpm dev` (fake Docker adapter, fakes for Tailscale/Caddy/net/fetcher/registry/release feed/power/unit starter; `HARBOR_DEV_SETUP=1 HARBOR_DEV_SETUP_CODE=…` starts in setup-wizard mode). `pnpm dev:ui` renders the console from fixtures (no daemon; `?screen=login` previews the login hero) — fastest UI iteration.
 - Fake mode conveniences live in `src/daemon.ts` (`demoFetcher`, `demoRegistry`, `demoReleaseFeed`) and are shared by dev and tests.
 - Adding a DTO field: `src/contracts/api.ts` → `src/lifecycle/dto.ts` → consumers; web imports the same contract types.

@@ -618,7 +618,8 @@ asks only for your password, like a phone after a restart. The password unlocks 
 and lets the nightly backups run again; your session is kept, so nothing else is logged out. From the
 CLI: `harbor account unlock`. While an app is still locked, Harbor refuses to update, repair or
 reinstall it (it asks for the password first), because those steps would delete its containers and
-then find no readable data to start them on.
+then find no readable data to start them on. An app set to update automatically waits the same way: its
+update runs once the password is back.
 
 **Apps that are not encrypted start on their own.** An app installed on plain Docker volumes (the
 CLI's `--unencrypted`, or anything installed from the CLI before 0.23.0 without `--location`) keeps

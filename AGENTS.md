@@ -140,8 +140,8 @@ Key separations (do not blur them):
    ```sh
    pnpm lint && pnpm typecheck
    pnpm test                    # unit (646 + 2 skipped)
-   pnpm test:integration        # 379 + 3 live-Docker skipped (~9 min)
-   pnpm build && pnpm test:e2e  # 44 Playwright (~3 min, ports 18500/18700; HARBOR_E2E_PORT moves them)
+   pnpm test:integration        # 382 + 3 live-Docker skipped (~9 min)
+   pnpm build && pnpm test:e2e  # 45 Playwright (~3 min, ports 18500/18700; HARBOR_E2E_PORT moves them)
    pnpm catalog:verify tests/fixtures/catalog --quiet
    pnpm catalog:hash --catalog tests/fixtures/catalog --check
    pnpm openapi -- --check

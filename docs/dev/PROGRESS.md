@@ -448,6 +448,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 72 — lock screen after a restart (2026-10-31, 0.38.0) ✅
+- [x] PR #4 (0xDonPepe, decision 190): a remembered session opens on a password-only lock screen while the machine key is sealed and something waits on it (`SystemDto.unlockNeeded`; `POST /v1/account/unlock`); update, repair and reinstall refuse a locked app at plan time and the runner opens the data before deleting containers; lock-guard starts a sealed app unless every container runs. Contributor's live run: two reboots of an Ubuntu 26.04 home server (Immich, Nextcloud, Vaultwarden)
+- [x] Follow-up: renumbered 189 → 190 (0.37.2 took 189); automatic updates and redeploy-on-commit skip a locked app before marking the revision as tried (it was lost for good before); the update comment back above `updatePlan`
+- [x] Tests: integration `app-homes.test.ts` (+3: `unlockNeeded` + update refused while locked, lock-guard with one container already running, auto-update waits for the unlock — fails without the fix); e2e lock screen (+1); gate below (§3y)
+- [ ] Live: a reboot of harbor-old with an encrypted app and a remembered session
+
 ## Phase 71 — Publishing grouped by reach (2026-10-31, 0.37.2) ✅
 - [x] Decision 189: Publishing shows *On the internet* (public + proxy names, one row per app, degraded first, quiet healthy rows), *On your tailnet* (compact, hostname header, console toggle, `:port` per app, link to the bulk picker) and *Not published* (running apps without an address). Console only; no route or DTO change
 - [x] Mock fixtures: public names (one degraded) and a tailnet port so `pnpm dev:ui` shows every group; checked dark, light and 390 px

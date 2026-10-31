@@ -1205,6 +1205,21 @@ The full gate for both (§3v, §3w) is the one in §3v.
 
 Local gate ran on Node 24.12.0 (dev machine); CI runs 24.22.1. Console-only change: no daemon, route or schema change.
 
+## 3y. Lock screen after a restart (2026-10-31, Harbor 0.38.0, decision 190)
+
+Contributor pull request carlosalaniz/harbor#4 (0xDonPepe), merged with one follow-up commit.
+
+| Check | Result |
+|---|---|
+| Contributor's live run | **theirs, not ours**: two reboots of an Ubuntu 26.04 home server with Immich, Nextcloud and Vaultwarden sealed; found the update that deleted a locked app's containers and the lock-guard skip (a Redis already running) |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | clean |
+| `pnpm test` (unit) | 646 passed, 2 skipped (no change) |
+| `pnpm test:integration` | 382 passed, 3 live-Docker skipped (+3 in `app-homes.test.ts`: `unlockNeeded` and the update refusal while locked; lock-guard with one container already running; the automatic update waits for the unlock, which fails without the follow-up fix with `expected '2' to be undefined`) |
+| `pnpm test:e2e` | 45 passed (+1: a remembered session lands on the lock screen and the password unlocks in place) |
+| `catalog:verify` / `catalog:hash --check` (fixtures), `openapi -- --check` | ok / ok / current |
+
+Gate ran locally on Node 24.22.1 (darwin-arm64), as CI does. Not covered live by us yet: a reboot of harbor-old.
+
 ## 4. Qualified versions
 
 | Component | Version | Source |

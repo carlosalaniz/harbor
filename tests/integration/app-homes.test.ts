@@ -307,6 +307,67 @@ describe('install to an encrypted app home', () => {
     }
   });
 
+  // Decision 190 follow-up: an automatic update of a locked app must wait for the unlock. It used to mark the
+  // revision as tried before planning, so the plan's "is locked" refusal lost that revision for good.
+  it('decision 190: an automatic update waits while the app is locked and runs once the password is back', async () => {
+    const manifest = (rev: string) => `apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: lockedauto
+  name: lockedauto
+  description: A tiny web page
+release:
+  revision: "${rev}"
+  version: "0.${rev}.0"
+deployment:
+  compose: compose.yaml
+  multiInstance: false
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 30
+ui:
+  primaryEndpoint: web
+presentation:
+  tagline: Says hello
+  category: developer
+`;
+    const upload = (rev: string) => h.api.expect(201, 'POST', '/v1/packages', { fileName: 'lockedauto.zip', dataUrl: `data:application/zip;base64,${writeZip({ 'manifest.yaml': manifest(rev), 'compose.yaml': 'services:\n  web:\n    image: nginx:1.27-alpine\n' }).toString('base64')}` });
+    await upload('1');
+    const appsDir = path.join(h.userDataDir, 'harbor-apps');
+    const plan = await h.api.plan({ kind: 'install', packageId: 'lockedauto', location: { dir: path.join(appsDir, 'lockedauto') } });
+    expect((await h.api.waitOperation((await h.api.submit(plan.id)).operationId)).state).toBe('succeeded');
+    const inst = (await h.api.instances()).find((i) => i.packageId === 'lockedauto')!;
+    await h.api.expect(200, 'PUT', `/v1/instances/${inst.id}/auto-update`, { enabled: true });
+    crypto.open.clear();
+    await h.restart({ login: false });
+    try {
+      await upload('2');
+      // several observer ticks: no attempt, nothing marked as tried
+      await new Promise((r) => setTimeout(r, 2000));
+      expect((await h.api.instances()).find((i) => i.id === inst.id)!.revision).toBe('1');
+      expect(h.daemon.ctx.repo.setting<Record<string, string>>('updates.autoTried')?.[inst.id]).toBeUndefined();
+      expect(await h.api.expect(200, 'POST', '/v1/account/unlock', { password: ADMIN.password })).toEqual({ unlocked: true });
+      await until(async () => {
+        const i = (await h.api.instances()).find((x) => x.id === inst.id)!;
+        return i.revision === '2' && i.installState === 'installed';
+      }, 'lockedauto updated automatically after the unlock', 15000);
+    } finally {
+      await h.restart();
+    }
+  });
+
   // Decision 190 (same home server): after the reboot only Vaultwarden came back. Immich and Nextcloud each have a
   // Redis with no sealed data, which Docker's restart policy had already started, so lock-guard read "running" from
   // that one container and never started the rest.
