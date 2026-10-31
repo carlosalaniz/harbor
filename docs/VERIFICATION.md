@@ -1193,6 +1193,18 @@ The first release run failed on Node 24.22.1 (nothing was published): `auto-upda
 
 The full gate for both (§3v, §3w) is the one in §3v.
 
+## 3x. Publishing grouped by reach (2026-10-31, Harbor 0.37.2, decision 189)
+
+| Check | Result |
+|---|---|
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | clean |
+| `pnpm test` (unit) | 646 passed, 2 skipped (no change) |
+| `pnpm test:integration` | 379 passed, 3 live-Docker skipped |
+| `pnpm test:e2e` | 44 passed (the publish wizard test now checks the *On the internet* / *On your tailnet* / *Not published* regions) |
+| `pnpm dev:ui` screenshots | dark, light and 390 px phone: groups render, the degraded name shows its reason on its own line, tailnet rows stay on one line |
+
+Local gate ran on Node 24.12.0 (dev machine); CI runs 24.22.1. Console-only change: no daemon, route or schema change.
+
 ## 4. Qualified versions
 
 | Component | Version | Source |

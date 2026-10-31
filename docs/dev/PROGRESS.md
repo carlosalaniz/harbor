@@ -448,6 +448,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 71 — Publishing grouped by reach (2026-10-31, 0.37.2) ✅
+- [x] Decision 189: Publishing shows *On the internet* (public + proxy names, one row per app, degraded first, quiet healthy rows), *On your tailnet* (compact, hostname header, console toggle, `:port` per app, link to the bulk picker) and *Not published* (running apps without an address). Console only; no route or DTO change
+- [x] Mock fixtures: public names (one degraded) and a tailnet port so `pnpm dev:ui` shows every group; checked dark, light and 390 px
+- [x] Tests: e2e publish wizard follows the new regions (tailnet link in *On your tailnet*, the app leaves *Not published*, *Manage* opens the same dialog); gate below (§3x)
+
 ## Phase 70 — smoke restart baseline (2026-10-23, 0.37.1) ✅
 - [x] Decision 188: `catalog:smoke` judges restarts per phase (`scripts/smoke-settle.ts`): base revision = counts when healthy, upgrade = counts before the update, fresh = none; the base's tolerated restarts are named in its message
 - [x] Tests: unit `smoke-settle.test.ts` (+7); live: `catalog:smoke` of Homarr (rev 4 → a rev-5 copy) on Docker Desktop, all three phases ok
