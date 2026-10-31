@@ -510,6 +510,11 @@ export function mockExposures(): { items: ExposureDto[]; ui: UiExposureDto | nul
         note: null,
         isPrimary: true,
       },
+      // decision 189: public names (one broken) and a tailnet port so Publishing shows every group
+      { id: 'exp-nextcloud-pub', instanceId: 'inst-nextcloud', instanceName: 'nextcloud', endpointId: 'web', via: 'public', url: 'https://cloud.example.com/', hostname: 'cloud.example.com', port: 443, protection: 'none', state: 'active', observedAt: now(), note: null, isPrimary: false },
+      { id: 'exp-immich-pub', instanceId: 'inst-immich', instanceName: 'immich', endpointId: 'web', via: 'public', url: 'https://photos.example.com/', hostname: 'photos.example.com', port: 443, protection: 'none', state: 'active', observedAt: now(), note: null, isPrimary: true },
+      { id: 'exp-immich-pub2', instanceId: 'inst-immich', instanceName: 'immich', endpointId: 'web', via: 'public', url: 'https://photos.example.org/', hostname: 'photos.example.org', port: 443, protection: 'basic', state: 'degraded', observedAt: now(), note: 'not reachable: getaddrinfo ENOTFOUND photos.example.org', isPrimary: false },
+      { id: 'exp-ollama-tn', instanceId: 'inst-ollama', instanceName: 'ollama', endpointId: 'web', via: 'tailnet', url: 'https://harbor.harbor.tail123.ts.net:18999/', hostname: 'harbor.harbor.tail123.ts.net', port: 18999, protection: 'none', state: 'active', observedAt: now(), note: null, isPrimary: true },
     ],
     ui: { via: 'tailnet', url: 'https://harbor.harbor.tail123.ts.net', state: 'active', note: null },
   };

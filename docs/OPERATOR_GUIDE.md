@@ -180,7 +180,9 @@ Console pages (sidebar on desktop, bottom tabs on a phone): **Home** (system str
 memory, storage and Docker; your apps as tiles with a plain-words status, Open and a details drawer
 with Start/Stop/Remove/Reinstall and technical details), **App Store** (catalog cards with icon,
 tagline, category chips and search; an app page with Install and the storage choices), **Publishing**
-(every published address, Publish/Withdraw, Harbor on your tailnet), **Platform** (Docker, Cockpit,
+(addresses in three groups: *On the internet* with your domains, broken ones first; *On your tailnet*,
+a compact list under the tailnet hostname with the Harbor console toggle; *Not published*, running apps
+with no address yet), **Platform** (Docker, Cockpit,
 Portainer, Tailscale, proxy with real state and links; Cockpit and Portainer show a **Set up**
 button when absent — one click starts the install as root and the card reports progress),
 **Settings** (session, SSH forwarding line,
@@ -1065,8 +1067,10 @@ harbor unexpose erp --via public --host erp.example.com             # withdraw o
 harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
 ```
 
-In the console, the Publishing page and every running app's drawer have **Publish…** with the same
-options; the Platform page shows Tailscale enrollment and proxy state.
+In the console, the Publishing page (*Publish…* under *Not published*, *Manage* on an app that already
+has an address) and every running app's drawer open the same dialog with the same options. A healthy
+address shows just its link; the state, the reason and the last check appear only when it is not
+*active*; the Platform page shows Tailscale enrollment and proxy state.
 
 Notes:
 
@@ -1165,7 +1169,7 @@ harbor tailscale every-app off                      # stop; nothing is withdrawn
    record for your domain pointing at it. Behind a home router, forward ports 80 and 443 to this machine.
 2. Add the domain in the same page. Harbor resolves it and says *Points here*, *Points elsewhere* (with
    the address it found) or *No DNS record yet*; *Re-check* after DNS has spread.
-3. **Publishing** → *Publish…* on the app → *Public* → pick the domain. Caddy requests the Let's Encrypt
+3. **Publishing** → *Publish…* (or *Manage* when it is already on your tailnet) on the app → *Public* → pick the domain. Caddy requests the Let's Encrypt
    certificate as soon as the address is added and renews it; the address is *pending* for a minute and
    then *active*. Apps without their own login get a generated password unless you opt out.
 

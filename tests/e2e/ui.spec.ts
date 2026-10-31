@@ -355,12 +355,13 @@ test('publish wizard: tailnet address on the tile; public exposure shows one-tim
   await expect(page.getByRole('dialog').getByRole('link', { name: /tail1234\.ts\.net/ })).toHaveCount(0);
   await approve(page, 'Publish');
   await trayDone(page, 'Expose');
-  const published = page.getByRole('region', { name: 'Published addresses' });
-  const row = published.locator('li').filter({ hasText: 'excalidraw-2' });
-  await expect(row).toContainText('tailnet');
-  await expect(row).toContainText('https://harbor-test.tail1234.ts.net:');
+  // decision 189: tailnet addresses sit in their own compact card; the app leaves "Not published"
+  const tailnet = page.getByRole('region', { name: 'On your tailnet' });
+  await expect(tailnet.getByRole('link', { name: /^https:\/\/harbor-test\.tail1234\.ts\.net:/ })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Not published' }).getByRole('button', { name: 'Publish excalidraw-2' })).toHaveCount(0);
+  const published = page.getByRole('region', { name: 'On the internet' });
   // public with basic auth
-  await page.getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  await tailnet.getByRole('button', { name: 'Manage excalidraw-2' }).click();
   const dlg2 = page.getByRole('dialog');
   await dlg2.getByLabel(/Public/).check();
   await dlg2.getByPlaceholder('app.example.com').fill('draw.example.com');
@@ -370,7 +371,7 @@ test('publish wizard: tailnet address on the tile; public exposure shows one-tim
   await expect(page.getByText(/Basic-auth login for https:\/\/draw\.example\.com\/, shown once/)).toBeVisible(); // decision 138
   await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toContainText('basic auth');
   // decision 127: a second domain for the same app, with its own protection
-  await page.getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  await published.getByRole('button', { name: 'Manage excalidraw-2' }).click();
   const dlg3 = page.getByRole('dialog');
   await dlg3.getByRole('button', { name: 'Add another domain', exact: true }).click();
   await expect(dlg3.getByRole('radio', { name: /^Public/ })).toBeChecked();
@@ -392,13 +393,13 @@ test('publish wizard: tailnet address on the tile; public exposure shows one-tim
   await approve(page, 'Withdraw');
   await trayDone(page, 'Unexpose');
   await page.getByRole('link', { name: 'Publishing' }).click();
-  await expect(page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.com' })).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(1);
-  await page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.org' }).getByRole('button', { name: 'Manage' }).click();
+  await expect(page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.com' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(1);
+  await page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.org' }).getByRole('button', { name: 'Manage' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Withdraw draw.example.org', exact: true }).click();
   await approve(page, 'Withdraw');
   await trayDone(page, 'Unexpose');
-  await expect(page.getByRole('region', { name: 'Published addresses' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(0);
 });
 
 test('network: secure addresses card is off by default and explains LAN mode', async ({ page }) => {

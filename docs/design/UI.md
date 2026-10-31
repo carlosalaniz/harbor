@@ -23,7 +23,7 @@ a cloud relay for remote access (Harbor's remote path is the tailnet), hidden "e
 Sidebar (desktop) / bottom tabs (phone)
 ├── Home        system strip · installed apps grid (tiles) · attention list (needs action / degraded)
 ├── App Store   search · category chips · cards (icon, name, tagline) · install page (screenshot strip with tap-to-enlarge, description, *Source code on GitHub* / *Website* links from `presentation.source`/`website`, developer, storage/access, Install) · sections *Apps / Backup places / Your repositories* · catalog line + refresh icon under the title (decision 164)
-├── Publishing  every published address, state, primary marker · Publish/Withdraw · Harbor-on-tailnet toggle
+├── Publishing  On the internet (per app, problems first) · On your tailnet (compact, console toggle) · Not published (decision 189)
 ├── Platform    Docker, Cockpit, Portainer, Tailscale, Proxy cards with real state, links and the exact next step
 └── Settings    session, version, installation id, access instructions (SSH forward line), theme
 Overlay: the queue tray (bottom-right; above the tabs on phones): running item, waiting items with Cancel, finished results (credentials shown once here) — decision 183

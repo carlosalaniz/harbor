@@ -1104,6 +1104,58 @@ label.small {
 .addresses a {
   word-break: break-all;
 }
+/* decision 189: Publishing groups addresses; public rows = icon · name / addresses · Manage */
+.pub-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  align-items: center;
+}
+.pub-name {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+.pub-addrs {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pub-head {
+  align-items: baseline;
+}
+.pub-state {
+  margin: 2px 0 4px;
+}
+.pub-addr a,
+.pub-compact a {
+  overflow-wrap: anywhere;
+}
+.pub-compact {
+  gap: 0;
+  font-size: 14px;
+}
+.pub-compact > li {
+  padding: 6px 0;
+  flex-wrap: nowrap;
+}
+.pub-compact > li > :first-child {
+  min-width: 0;
+}
+.pub-base {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+@media (max-width: 640px) {
+  .pub-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .pub-addrs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
 /* decision 164: screenshots as a scrolling strip; one tap enlarges inside the dialog */
 .gallery {
   margin: 4px 0 14px;
