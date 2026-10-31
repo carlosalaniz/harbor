@@ -399,6 +399,7 @@ export function mockSystem(): SystemDto {
     busyOperationId: null,
     installationId: 'mock-installation',
     managementOrigin: 'http://localhost:5173',
+    unlockNeeded: false,
   };
 }
 

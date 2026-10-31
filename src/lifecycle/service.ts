@@ -642,7 +642,16 @@ export class ApplicationService {
       lan: { enabled: this.ctx.config.lan.enabled, url: this.ctx.config.lan.enabled ? lanUrl(this.ctx.config.lan.port) : null },
       network: { https: this.networkHttps() },
       update: this.ctx.selfUpdate.status(),
+      unlockNeeded: this.unlockNeeded(),
     };
+  }
+  // Decision 190: the machine key is sealed but not in memory (the daemon restarted since the last password),
+  // and something waits on it: an app home that unlocks with it, or a backup place (nightly runs need it).
+  private unlockNeeded(): boolean {
+    const { repo, machineKey } = this.ctx;
+    if (machineKey.unlocked || !repo.setting('security.machineKey')) return false;
+    if (this.ctx.backups?.hasTargets()) return true;
+    return repo.listInstances().some((i) => !i.purgedAt && this.homeRow(i.id)?.metadata?.['machineWrapped'] !== undefined);
   }
   selfUpdateStatus(): SelfUpdateStatusDto {
     return this.ctx.selfUpdate.status();
@@ -2194,19 +2203,7 @@ export class ApplicationService {
         // per-app (Start carries the passphrase, or unlock first). Refuse a
         // locked start here so the drawer can prompt instead of failing deep
         // in the runner.
-        const hs = this.homeState(inst.id);
-        if (hs?.state === 'locked') {
-          // Kernel-locked (or never unlocked this boot): the runner needs a key
-          // it can reach — this boot's held key, or a machine wrapping while
-          // AFU. Otherwise refuse now so the drawer can prompt.
-          const reachable = this.unlockedApps.has(inst.id) || (hs.silentUnlock && this.ctx.machineKey.unlocked);
-          if (!reachable) {
-            // a queued Start stops here as "needs your review" (decision 183): a person resolves it with a passphrase
-            throw personCanResolve(new HarborError('INVALID_STATE', `${inst.name} is locked`, {
-              nextAction: hs.defaultKey ? 'Log in again to unlock apps on this machine, then Start again.' : hs.silentUnlock ? 'Log in again (it unlocks with your Harbor password), or unlock it with its passphrase, then Start again.' : 'Unlock it with its encryption passphrase (or recovery key), then Start again.',
-            }));
-          }
-        }
+        this.refuseUnreachableHome(inst, 'Start');
         changes.push(`Verify release, retained volumes and secrets of "${inst.name}"`, `Start existing containers of project ${inst.project}`, 'Check readiness');
         break;
       }
@@ -2219,6 +2216,7 @@ export class ApplicationService {
         if (!repair && inst.runtime !== 'running') throw new HarborError('INVALID_STATE', `${inst.name} is not running`, { nextAction: 'Start it instead.' });
         const need = this.needsDrive(inst.id);
         if (repair && need) throw new HarborError('DATA_MISSING', `${inst.name} needs its drive: ${need.path} (${need.purpose}) is not the folder it was using (${need.detail})`, { nextAction: 'Re-insert the drive first.' });
+        if (repair) this.refuseUnreachableHome(inst, 'Repair');
         const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
         if (repair) changes.push(`Repair "${inst.name}": it is ${inst.installState.replace('_', ' ')} after its last operation; run revision ${inst.revision} again from its stored release`);
         changes.push(
@@ -2256,6 +2254,7 @@ export class ApplicationService {
       case 'reinstall':
         if (inst.installState !== 'retained') throw new HarborError('INVALID_STATE', `reinstall requires a removed (retained) instance; ${inst.name} is ${inst.installState}`);
         if (!inst.everInstalled) throw new HarborError('INVALID_STATE', `instance ${inst.name} never completed an installation; manual investigation is required`, { nextAction: 'Inspect the instance and its resources manually. Automatic reinstall only applies to previously successful instances.' });
+        this.refuseUnreachableHome(inst, 'reinstall');
         changes.push(`Reinstall ${pkgName} revision ${inst.revision} into "${inst.name}" using its stored release`, 'Verify retained volumes (ownership tokens) and secrets before starting', ...(retainedExposures(this.ctx.repo, inst.id)?.items ?? []).map((x) => `Publish ${exposureUrl(x)} again${x.via === 'tailnet' ? ' (on a fresh tailnet port)' : ''}`), `Recreate containers and network for project ${inst.project}`, ...this.ctx.repo.linksOfConsumer(inst.id).filter((l) => l.state === 'dormant').map((l) => `Re-create link ${l.linkId} (network ${l.networkName}) if its provider is still installed`), 'Check readiness');
         break;
     }
@@ -2289,9 +2288,23 @@ export class ApplicationService {
 
   // Update: same instance (name, ports, volumes, secrets, addresses), new release. New claims get new
   // volumes/secrets/ports; removed claims keep their data (never deleted); images change to the new digests.
+  // A locked encrypted app (kernel-locked, or never unlocked this boot) can only be touched when the runner can
+  // reach a key: this boot's held key, or the machine wrapping while AFU. Otherwise refuse at plan time, so the
+  // console prompts and a queued action waits for a person (decision 183) instead of failing deep in the runner.
+  private refuseUnreachableHome(inst: InstanceRow, verb: string): void {
+    const hs = this.homeState(inst.id);
+    if (hs?.state !== 'locked') return;
+    if (this.unlockedApps.has(inst.id) || (hs.silentUnlock && this.ctx.machineKey.unlocked)) return;
+    throw personCanResolve(new HarborError('INVALID_STATE', `${inst.name} is locked`, {
+      nextAction: hs.defaultKey ? `Log in again to unlock apps on this machine, then ${verb} again.` : hs.silentUnlock ? `Log in again (it unlocks with your Harbor password), or unlock it with its passphrase, then ${verb} again.` : `Unlock it with its encryption passphrase (or recovery key), then ${verb} again.`,
+    }));
+  }
+
   private async updatePlan(req: Extract<PlanRequest, { kind: 'update' }>, inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): Promise<PlanDto> {
     const { repo, ids } = this.ctx;
     if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `update requires an installed app; ${inst.name} is ${inst.installState}`, { nextAction: inst.installState === 'retained' ? 'Reinstall it first, then update.' : 'Fix the app first (Details shows the last error).' });
+    // decision 190: an update deletes the containers first, so a locked app must never get that far
+    this.refuseUnreachableHome(inst, 'update');
     const next = this.ctx.packages.load(inst.packageId);
     if (compareRevisions(next.revision, inst.revision) <= 0) throw new HarborError('INVALID_STATE', `${inst.name} already runs revision ${inst.revision}; the ${next.origin === 'local' ? 'uploaded' : 'built-in'} package is revision ${next.revision}`, { nextAction: next.origin === 'local' ? 'Upload a package with a higher release.revision.' : 'Nothing to do.' });
     const releaseDir = path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release');

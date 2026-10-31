@@ -1656,6 +1656,9 @@ export class OperationRunner {
     }
     const identity = identityFor(this.ctx.installationId, inst.id);
     await this.verifyOwnedVolumes(op, pkg, identity, inst);
+    // decision 190: a retained encrypted app comes back only once its data opens in the kernel
+    const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    if (home) await this.ensureKernelUnlocked(op, inst, home);
     const values = this.readSecrets(pkg, dirs.secrets, sink);
     this.event(op, 'preparing', `verified ${Object.keys(values).length} retained secret(s)`);
     await this.revive(op, inst, sink);
@@ -1862,6 +1865,11 @@ export class OperationRunner {
     const current = loadReleaseSnapshot(dirs.release, inst.packageId);
     const identity = identityFor(this.ctx.installationId, inst.id);
     await this.verifyOwnedVolumes(op, current, identity, inst);
+    // Decision 190: open the data in the kernel BEFORE deleting anything. Live-found on a home server: an update
+    // approved while the app was still locked after a reboot deleted the containers, then neither the new nor the
+    // old revision could mount the encrypted volumes, so the rollback failed too. A locked app now stops here.
+    const home = repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
+    if (home) await this.ensureKernelUnlocked(op, inst, home);
     // keep the old release for rollback (and a record of what ran before)
     rmSync(previousDir, { recursive: true, force: true });
     cpSync(dirs.release, previousDir, { recursive: true });

@@ -519,6 +519,10 @@ export interface SystemDto {
   busyOperationId: string | null;
   installationId: string;
   managementOrigin: string;
+  // Decision 190: Harbor restarted since the last password (BFU) and something waits on this machine's key
+  // (an app home that unlocks with it, or a backup place). A session that outlived the restart shows the
+  // lock screen, which types the password once (POST /v1/account/unlock) instead of logging out and in.
+  unlockNeeded: boolean;
 }
 
 export interface PlatformToolDto {

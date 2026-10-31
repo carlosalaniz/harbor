@@ -270,6 +270,42 @@ test('staying logged in survives a reload; logging out clears it', async ({ page
   expect(await page.evaluate(() => localStorage.getItem('harbor.remember'))).toBeNull();
 });
 
+test('decision 190: after a restart a remembered session lands on the lock screen, and the password unlocks in place', async ({ page }) => {
+  await page.goto('/#/home');
+  await page.getByLabel('Username', { exact: true }).fill(ADMIN.username);
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  await page.getByLabel(/Stay logged in/).check();
+  await page.getByRole('button', { name: 'Log in' }).click();
+  await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
+  // the daemon answers as if it had restarted since that login (its key is in fact open, so the real unlock
+  // call that follows succeeds) until the lock screen's unlock goes through
+  let locked = true;
+  await page.route('**/v1/system', async (route) => {
+    const res = await route.fetch();
+    return route.fulfill({ response: res, json: { ...(await res.json()), unlockNeeded: locked } });
+  });
+  await page.route('**/v1/account/unlock', async (route) => {
+    const res = await route.fetch();
+    if (res.ok()) locked = false;
+    return route.fulfill({ response: res });
+  });
+  await page.reload();
+  // a lock screen, not the login form: the session is still valid, so only the password
+  await expect(page.getByText('Harbor restarted. Enter your password to unlock your apps.')).toBeVisible();
+  await expect(page.getByLabel('Username', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Your apps' })).toHaveCount(0);
+  await page.getByLabel('Password', { exact: true }).fill('not-the-password');
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('password is wrong');
+  await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);
+  await page.getByRole('button', { name: 'Unlock', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
+  // still the same remembered session: nothing was logged out
+  expect(await page.evaluate(() => localStorage.getItem('harbor.remember'))).toBeTruthy();
+  await page.unroute('**/v1/system');
+  await page.unroute('**/v1/account/unlock');
+});
+
 test('app drawer: stop, start, remove (data kept wording) and reinstall', async ({ page }) => {
   await login(page);
   const openDrawer = () => page.getByRole('button', { name: 'Details of excalidraw' }).click();

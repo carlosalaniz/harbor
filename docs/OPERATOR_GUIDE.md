@@ -612,6 +612,14 @@ once). This is deliberate: the unlock key lives behind your login, not on the di
 locked the data is ciphertext — Docker cannot even find the app's folder. Automatic unlock
 without a login (keyfile/TPM) is a 1.0 item, not a beta one — for now, log in once after a reboot.
 
+A browser that stayed logged in (*Stay logged in on this browser*) does not skip this step: after a
+reboot, or any restart of Harbor itself (a Harbor update included), it opens on a **lock screen** that
+asks only for your password, like a phone after a restart. The password unlocks every data-folder app
+and lets the nightly backups run again; your session is kept, so nothing else is logged out. From the
+CLI: `harbor account unlock`. While an app is still locked, Harbor refuses to update, repair or
+reinstall it (it asks for the password first), because those steps would delete its containers and
+then find no readable data to start them on.
+
 **Apps that are not encrypted start on their own.** An app installed on plain Docker volumes (the
 CLI's `--unencrypted`, or anything installed from the CLI before 0.23.0 without `--location`) keeps
 its data readable on disk and starts right after a reboot, before anyone logs in. To tell which is

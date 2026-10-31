@@ -222,6 +222,67 @@ function Login({ onDone, notice }: { onDone: () => void; notice: string | null }
   );
 }
 
+// The lock screen's form (decision 190): the session is still valid, so only the password, which unseals the
+// machine key in place (POST /v1/account/unlock). Wrong passwords count against the login limits.
+function UnlockForm({ onDone, onAuthLost }: { onDone: () => void; onAuthLost: (msg?: string) => void }) {
+  const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.unlockMachine(password);
+      setPassword('');
+      onDone();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) onAuthLost();
+      else setError(err instanceof ApiError ? `${err.message}. ${err.nextAction}` : 'Cannot reach the Harbor daemon.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="auth-card" aria-labelledby="unlock-h">
+      <h2 id="unlock-h" className="visually-hidden">
+        Unlock
+      </h2>
+      <form onSubmit={submit}>
+        <div className="auth-field">
+          <label className="visually-hidden" htmlFor="unlock-password">
+            Password
+          </label>
+          <input
+            id="unlock-password"
+            className="auth-input"
+            name="password"
+            type={show ? 'text' : 'password'}
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            required
+            autoFocus
+          />
+          <button className="auth-eye" type="button" onClick={() => setShow((v) => !v)} aria-label={show ? 'Hide password' : 'Show password'} aria-pressed={show}>
+            {show ? <EyeOffIcon /> : <EyeIcon />}
+          </button>
+        </div>
+        {error && (
+          <p className="error auth-error" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="btn primary auth-submit" type="submit" disabled={busy || !password}>
+          {busy ? 'Unlocking…' : 'Unlock'}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 const NAV: { route: Route; label: string; short: string; icon: (active: boolean) => ReactNode }[] = [
   {
     route: { page: 'home' },
@@ -343,6 +404,16 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
 
   const page = route.page === 'app' ? 'home' : route.page;
   const mock = isMockUi();
+  // Decision 190: Harbor restarted since the last password, so encrypted apps and backups wait for it. A remembered
+  // session lands on the lock screen (like a phone after a reboot) instead of a console whose apps say Locked.
+  if (c.data.system?.unlockNeeded) {
+    return (
+      <main className="login-wrap auth-wrap">
+        <AuthHero sub="Harbor restarted. Enter your password to unlock your apps." />
+        <UnlockForm onDone={() => void c.refresh()} onAuthLost={onAuthLost} />
+      </main>
+    );
+  }
   return (
     <div className="shell">
       {mock && (

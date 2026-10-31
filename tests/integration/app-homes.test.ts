@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto, RecoveryKeyRotationDto, SecurityDto } from '../../src/contracts/api.js';
+import type { FoundAppDto, InstanceDetail, InstanceSummary, PlanDto, RecoveryKeyRotationDto, SecurityDto, SystemDto } from '../../src/contracts/api.js';
 import Database from 'better-sqlite3';
 import { FakeCryptoProvider } from '../../src/storage/crypto-provider.js';
 import { writeZip } from '../../src/packages/zip.js';
@@ -282,6 +282,49 @@ describe('install to an encrypted app home', () => {
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     expect(kernelUnlocked(drivePath)).toBe(true);
     expect((await h.api.instances()).find((i) => i.id === driveInstanceId)!.home).toMatchObject({ state: 'unlocked', sealed: true });
+  });
+
+  // Decision 190 (live-found on an Ubuntu 26.04 home server): after a reboot the remembered console session
+  // showed every app Locked with no hint that a password was needed, and an Update approved in that state deleted
+  // the containers, could not mount the sealed volumes, and failed its rollback too.
+  it('decision 190: after a reboot a remembered session reads unlockNeeded until the password, and a locked app refuses update at plan time', async () => {
+    crypto.open.clear();
+    await h.restart({ login: false });
+    try {
+      expect((await h.api.expect<SystemDto>(200, 'GET', '/v1/system')).unlockNeeded).toBe(true);
+      const inst = (await h.api.instances()).find((i) => i.name === 'defaultkey')!;
+      expect(inst.home).toMatchObject({ state: 'locked', defaultKey: true });
+      const refused = await h.api.expectError(409, 'INVALID_STATE', 'POST', '/v1/plans', { kind: 'update', instanceId: inst.id });
+      expect(refused.error.message).toMatch(/is locked/);
+      expect(refused.error.nextAction).toMatch(/Log in again .* then update again/);
+      // the lock screen types the password once: the key is back, the home opens, the screen goes away
+      expect(await h.api.expect(200, 'POST', '/v1/account/unlock', { password: ADMIN.password })).toEqual({ unlocked: true });
+      expect((await h.api.expect<SystemDto>(200, 'GET', '/v1/system')).unlockNeeded).toBe(false);
+      await until(async () => (await h.api.instances()).find((i) => i.name === 'defaultkey')!.home!.state === 'unlocked', 'default-key home unlocked by the lock screen');
+      expect(kernelUnlocked(inst.home!.path)).toBe(true);
+    } finally {
+      await h.restart();
+    }
+  });
+
+  // Decision 190 (same home server): after the reboot only Vaultwarden came back. Immich and Nextcloud each have a
+  // Redis with no sealed data, which Docker's restart policy had already started, so lock-guard read "running" from
+  // that one container and never started the rest.
+  it('decision 190: lock-guard starts a sealed app after a reboot even when Docker already restarted one of its containers', async () => {
+    const appsDir = path.join(h.userDataDir, 'harbor-apps');
+    const plan = await h.api.plan({ kind: 'install', packageId: 'n8n', name: 'twosvc', location: { dir: path.join(appsDir, 'n8n') } });
+    expect((await h.api.waitOperation((await h.api.submit(plan.id)).operationId)).state).toBe('succeeded');
+    const inst = (await h.api.instances()).find((i) => i.name === 'twosvc')!;
+    const project = h.daemon.ctx.repo.instance(inst.id)!.project;
+    const ours = [...h.fake.containers.values()].filter((c) => c.project === project);
+    expect(ours.length).toBeGreaterThan(1);
+    // the reboot: every container stops and the kernel forgets every key; Docker brings one service back by itself
+    for (const c of ours) await h.fake.stopContainer(c.id, 0);
+    crypto.open.clear();
+    await h.fake.startContainer(ours[0]!.id);
+    await h.restart(); // the login unlocks the home; lock-guard must start the app although one container runs
+    await until(async () => (await h.api.instances()).find((i) => i.id === inst.id)!.runtime === 'running', 'every container of twosvc running again');
+    expect(h.daemon.ctx.repo.listOperations(500).some((o) => o.instanceId === inst.id && o.kind === 'start' && o.actor === 'lock-guard' && o.state === 'succeeded')).toBe(true);
   });
 
   // Decision 183 review R2: the locked refusal comes while the start is PLANNED, so the CLI must read the passphrase

@@ -173,6 +173,10 @@ export class BackupService {
     this.ctx.repo.setSetting(S.apps, all);
   }
 
+  /** Decision 190: a backup place exists, so nightly runs need the machine key. */
+  hasTargets(): boolean {
+    return this.targetsStored().length > 0;
+  }
   private targetsStored(): StoredTarget[] {
     return this.ctx.repo.setting<StoredTarget[]>(S.targets) ?? [];
   }

@@ -66,6 +66,10 @@ export class Observer {
       // Containers still running per instance (by inspection this tick): the
       // drive guard below uses it to decide whether a stop is needed.
       const runningByInstance = new Map<string, boolean>();
+      // Decision 190: every container of the app runs (not just one). After a reboot Docker's restart policy brings
+      // back the services with no sealed data (a Redis cache) while the rest wait for their key, and lock-guard must
+      // not take that one container for a running app.
+      const fullyRunning = new Map<string, boolean>();
       for (const inst of this.ctx.repo.listInstances()) {
         if (inst.activeOperationId) continue;
         if (!ping.available) {
@@ -123,6 +127,7 @@ export class Observer {
         } else this.ctx.notifier.resolve(`app-degraded:${inst.id}`);
         this.ctx.repo.updateInstance(inst.id, { runtime, readiness, observedAt: now });
         runningByInstance.set(inst.id, running > 0);
+        fullyRunning.set(inst.id, present > 0 && running === present);
       }
       this.notifyUpdatesAndDisk();
       this.notifyDevices();
@@ -132,7 +137,7 @@ export class Observer {
       if (ping.available) {
         this.notifyMissingFolders(runningByInstance);
         this.autoStartRecovered(runningByInstance);
-        this.autoStartUnlocked(runningByInstance);
+        this.autoStartUnlocked(fullyRunning);
         await this.checkLinkNames();
         await this.everyAppOnTailnet();
       }
@@ -414,7 +419,7 @@ export class Observer {
   // per (instance, boot): a failed start must not loop, and the Start plan
   // itself re-checks the seal. Same policy switch as the drive guard.
   private readonly unlockStartAttempts = new Set<string>();
-  private autoStartUnlocked(runningByInstance: Map<string, boolean>): void {
+  private autoStartUnlocked(fullyRunning: Map<string, boolean>): void {
     try {
       if ((this.ctx.repo.setting<boolean>('storage.autoStart') ?? true) !== true) return;
       const crypto = this.ctx.crypto;
@@ -422,7 +427,7 @@ export class Observer {
       for (const inst of this.ctx.repo.listInstances()) {
         if (inst.installState !== 'installed' || inst.activeOperationId) continue;
         if (inst.desired !== 'running') continue;
-        if (runningByInstance.get(inst.id) ?? false) continue;
+        if (fullyRunning.get(inst.id) ?? false) continue;
         const home = this.ctx.repo.resources(inst.id).find((r) => r.kind === 'volume' && r.role === '__home__');
         if (!home || home.metadata?.['kernelSealed'] !== true) continue;
         if (crypto.kernelState(home.name) !== 'open') continue;
