@@ -44,6 +44,7 @@ import { MachineKeyHolder } from './auth/machine-holder.js';
 import type { CryptoProvider } from './storage/crypto-provider.js';
 import type { BackupEngine } from './backups/engine.js';
 import type { EgressProvider } from './egress/provider.js';
+import { FakeKernelProvider, RootKernelProvider, type BinderState, type KernelProvider } from './system/kernel.js';
 
 export function productVersion(): string {
   try {
@@ -81,6 +82,8 @@ export interface DaemonOverrides {
   crypto?: CryptoProvider;
   // decision 184: VPN and offline apps (tests: the fake, to inspect what root would load)
   egress?: EgressProvider;
+  // decision 193: the binder driver (tests: the fake, to see a load and to simulate a kernel without it)
+  kernel?: KernelProvider;
   backupEngine?: BackupEngine;
   backupTickMs?: number;
   // decision 168: the keys a downloaded catalog.json.sig must verify with (tests: throwaway keys)
@@ -166,7 +169,8 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const gpu = overrides.gpu ?? (fakeMode ? new FakeGpu() : new HostGpuObserver({ root: '/', runtimes: async () => (await docker.info()).runtimes }));
     // The service needs the ctx and the ctx needs the service (runner secret
     // handoff): build the ctx first with a placeholder, then link both ways.
-    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, gpu, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, catalogUpdates, logBuffer, selfUpdate, notifier, git, machineKey, service: null as unknown as ApplicationService };
+    const kernel = overrides.kernel ?? (fakeMode ? new FakeKernelProvider((['missing', 'loaded'].includes(process.env['HARBOR_DEV_BINDER'] ?? '') ? process.env['HARBOR_DEV_BINDER'] : 'available') as BinderState) : new RootKernelProvider(config.stateDir));
+    const ctx: Ctx = { config, repo, docker, compose, ports: overrides.ports ?? realPortObserver, gpu, kernel, clock, ids, log, installationId: installation.id, version, tailscale, caddy, verify, net, packages, catalogUpdates, logBuffer, selfUpdate, notifier, git, machineKey, service: null as unknown as ApplicationService };
     const service = new ApplicationService(ctx);
     ctx.service = service;
     const runner = new OperationRunner(ctx);

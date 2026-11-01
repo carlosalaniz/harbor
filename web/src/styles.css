@@ -166,6 +166,23 @@ pre.code {
 .mock-banner a {
   color: var(--fg);
 }
+/* decision 193: developer mode is on; never dismissible, above everything like the design-mode line */
+.devmode-banner {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--warn) 22%, var(--bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 60%, var(--line));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.devmode-banner strong {
+  color: var(--warn);
+}
 .sidebar {
   background: var(--bg-2);
   border-right: 1px solid var(--line);

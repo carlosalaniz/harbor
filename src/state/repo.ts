@@ -190,7 +190,7 @@ export interface PlanProposal {
   endpoints: EndpointAllocation[];
   // decision 163: fixed ports published on every interface; permissions the submitter must accept (absent before 0.29.0)
   ports?: { id: string; service: string; protocol: 'udp'; hostPort: number; containerPort: number; purpose: string }[];
-  permissions?: { service: string; permission: 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu' }[];
+  permissions?: { service: string; permission: 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu' | 'privileged' | 'binder' }[];
   // decision 179: the graphics card found at plan time, only when the package grants gpu to a service
   gpu?: GpuDto;
   // decision 165: update plans: fixed ports the current release does not publish yet (accepted like permissions)

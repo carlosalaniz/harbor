@@ -810,6 +810,26 @@ which), and tell the app your public IP or a domain when it asks for its host. I
 without that. Only one VPN server can use a port: Harbor refuses a second app, or anything else on the machine,
 that wants the same one.
 
+### Apps with full control of this machine, and developer mode (since 0.40.0)
+
+A few apps cannot run without full control of this machine. **Android** (redroid) is one: it runs as a
+*privileged* container and needs Android's binder driver in the kernel. Harbor gives these two permissions only to
+apps from its own catalog, the way a phone only trusts its store (decision 193):
+
+| The review says | What it lets the app do |
+|---|---|
+| Full control of this machine | everything: it could read, change or erase anything on this machine |
+| Load Android's binder driver into this machine's kernel | Harbor loads `binder_linux` before the app starts, and again at every boot |
+
+If the kernel has no binder driver, the review refuses with the command to add it (Ubuntu:
+`sudo apt install linux-modules-extra-$(uname -r)`). Harbor never installs system packages itself.
+
+**Developer mode** (Settings → Advanced access, or `harbor developer-mode on`) lets apps you upload or add from
+git ask for these permissions too, for testing a package before it goes into the catalog. It asks for your
+password, and a yellow banner stays on every page while it is on. Turning it off stops nothing: apps already
+installed keep running, the Developer mode card lists the ones with full control that are not from the catalog,
+and Harbor refuses to update or reinstall them until you turn it on again or remove them.
+
 ### GPU (graphics cards)
 
 Local AI apps (Ollama, Open WebUI with its bundled Ollama, and ComfyUI for images) run much faster on a graphics card. Such an app
@@ -1223,6 +1243,8 @@ disks, log tail; never secrets). File it at
 - Apps share one host name in LAN mode (`harbor.local:<port>`). The secure relay keeps their login
   cookies apart (decision 167); plain-http addresses, Tailscale addresses and cookies an app's scripts
   read are not isolated. *HTTPS only* closes the plain-http addresses.
+- Apps from the official catalog may get full control of this machine (`privileged`, decision 193); apps you
+  upload or add from git only while developer mode is on (§4d).
 - Not included: multi-user roles/SSO, community catalogs (there is one official catalog, §4d; your own apps come as uploads or git sources).
 
 ## 9. Uninstall

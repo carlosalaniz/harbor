@@ -21,7 +21,7 @@ import type { SetupService } from '../auth/setup.js';
 import type { BackupService } from '../backups/service.js';
 import type { EgressService } from '../egress/service.js';
 import type { BackupAppPolicyDto, BackupPolicyDto } from '../contracts/api.js';
-import { CATALOG_STATUS_SCHEMA, QUEUEABLE_KINDS, type QueueableKind } from '../contracts/api.js';
+import { CATALOG_STATUS_SCHEMA, DEVELOPER_MODE_SCHEMA, QUEUEABLE_KINDS, type QueueableKind } from '../contracts/api.js';
 import { isLanPeer, lanHostAllowed } from '../system/lan.js';
 import { hostname as osHostname } from 'node:os';
 import { hostFacts } from '../system/metrics.js';
@@ -273,6 +273,29 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     sessions.revokeOthers(req.bearer!);
     return reply.status(204).send();
   });
+
+  // --- developer mode (decision 193)
+  app.get('/v1/system/developer-mode', { preHandler: requireAuth, schema: { description: 'Whether developer mode is on (packages that are not from the official catalog may then ask for the privileged and binder permissions), since when, and which installed apps hold such a permission without coming from the official catalog.', response: { 200: DEVELOPER_MODE_SCHEMA } } }, async () => service.developerModeDto());
+  app.put(
+    '/v1/system/developer-mode',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Turn developer mode on (the administrator password is required, wrong ones count against the login limits) or off (no password). Apps already installed keep running either way; with it off, installs and updates of packages that ask for privileged or binder and are not from the official catalog are refused (UNTRUSTED_SOURCE).',
+        body: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' }, password: { type: 'string', minLength: 1, maxLength: 1024 } } },
+        response: { 200: DEVELOPER_MODE_SCHEMA },
+      },
+    },
+    async (req) => {
+      const b = req.body as { enabled: boolean; password?: string };
+      if (b.enabled && !service.developerModeOn()) {
+        if (!b.password) throw new HarborError('INVALID_REQUEST', 'turning developer mode on needs your password', { nextAction: 'Send it as `password` (CLI: harbor developer-mode on asks for it).' });
+        const who = clientOf(req);
+        await sessions.confirmPassword(b.password, who.id, { local: who.local });
+      }
+      return service.setDeveloperMode(b.enabled, 'operator');
+    },
+  );
 
   // --- reads
   app.get('/v1/system', { preHandler: requireAuth, schema: { description: 'Daemon/Docker availability.' } }, async () => service.system());

@@ -65,7 +65,7 @@ export interface ManifestPort {
   purpose: string;
 }
 // Decision 179: gpu = this machine's graphics card (Harbor renders the device access from host facts)
-export type ManifestPermission = 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu';
+export type ManifestPermission = 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu' | 'privileged' | 'binder';
 // Decision 184: how an app reaches the internet (direct, only through Harbor's VPN tunnel, or not at all)
 export type InternetMode = 'direct' | 'vpn' | 'offline';
 

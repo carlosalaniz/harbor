@@ -4,14 +4,15 @@ import { UUID_RE } from '../contracts/patterns.js';
 import { tagValue } from '../backups/restic.js';
 import { INTERNAL_ACTORS, QUEUEABLE_KINDS, type AppLinkDto, type FixedPortDto, type LinkChoice, type LinkDto, type QueueableKind } from '../contracts/api.js';
 import type { LinkClaim, Manifest, ManifestPermission, ManifestSetting, SecretClaim, SettingValue } from '../contracts/types.js';
-import { fixedPortClaim, fixedPortsOf, newPermissions, PERMISSION_LABEL, permissionDto, permissionsOf } from '../planner/permissions.js';
+import { fixedPortClaim, fixedPortsOf, newPermissions, PERMISSION_LABEL, permissionDto, needsBinder, permissionsOf, untrustedPermissions } from '../planner/permissions.js';
+import { binderInstallHint } from '../system/kernel.js';
 import { gpuChanges, gpuDto, gpuFromRendered, gpuServicesOf } from '../planner/gpu.js';
 import { linkAlias, linkNetworkName, linkValue } from '../planner/links.js';
 import { checkSubmittedSecrets, plannedSecrets } from '../planner/secrets.js';
 import { checkSubmittedSettings, formatSettingValue, installSettingChanges, plannedConfigureSettings, plannedInstallSettings, plannedUpdateSettings, settingDtos } from '../planner/settings.js';
 import { plannedConfigureInternet, plannedInstallInternet, plannedUpdateInternet, packageInternet } from '../planner/internet.js';
 import type { LinkRow, PlannedLink, PlannedSecret } from '../state/repo.js';
-import type { AddSourceResult, CatalogItemDto, CatalogStatusDto, GpuDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, PermissionDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationActionDto, NotificationChannelDto, NotificationsDto, OperationDto, OperationQueueDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, CatalogStatusDto, GpuDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, PermissionDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationActionDto, NotificationChannelDto, NotificationsDto, OperationDto, OperationQueueDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, DeveloperModeDto, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanAppHost, lanNames, lanUrl } from '../system/lan.js';
 import { caPem, ensureTlsCerts, HTTPS_ONLY_SETTING, httpsOnlyOn, lanHttpsHosts, readTlsState, reconcileLanHttps, runtimeLanAccess } from '../system/lan-https.js';
@@ -20,7 +21,7 @@ import { defaultCredentialsOf } from '../packages/catalog.js';
 import { dnsState } from '../system/net.js';
 import { sampleMetrics } from '../system/metrics.js';
 import type { LoadedPackage } from '../contracts/types.js';
-import { compareRevisions, type PackageStore } from '../packages/store.js';
+import { compareRevisions, type LoadedPackageWithOrigin, type PackageStore } from '../packages/store.js';
 import { browserUrlFor, managementOrigin } from '../config.js';
 import { HarborError, personCanResolve } from '../errors.js';
 import { copyNote, identityFor, oneCopyNextAction, ownedVolumeName, proposeName, type InstanceIdentity } from '../planner/identity.js';
@@ -55,6 +56,8 @@ const AUTO_UPDATE_BACKUP_DEADLINE_MS = 6 * 60 * 60_000;
 const AUTO_UPDATE_BACKUP_RETRY_MS = 4 * 60 * 60_000;
 import { TAILNET_POLICY_ACTOR, TailnetAllPolicy } from './tailnet-all.js';
 
+// decision 193: { enabled: true, since } while developer mode is on (absent = off)
+export const DEVELOPER_MODE_SETTING = 'security.developerMode';
 export interface SubmitResult {
   operation: OperationRow;
   created: boolean;
@@ -130,7 +133,7 @@ export class ApplicationService {
     }
     const tree = await this.ctx.git.fetch(url, ref);
     try {
-      const r = await this.ctx.packages.importGitTree(tree, { url, ref, subpath });
+      const r = await this.ctx.packages.importGitTree(tree, { url, ref, subpath, permit: (m) => this.refuseUntrusted(m, 'local', m.metadata.name, {}) });
       const source: Omit<PackageSourceRow, 'createdAt' | 'checkedAt'> = {
         id: this.ctx.ids.uuid(),
         kind: 'git',
@@ -173,7 +176,7 @@ export class ApplicationService {
     if (head.commit !== s.pinnedCommit) {
       const tree = await this.ctx.git.fetch(s.url, s.ref, { commit: head.commit });
       try {
-        await this.ctx.packages.importGitTree(tree, { url: s.url, ref: s.ref, subpath: s.subpath, expectedId: s.packageId });
+        await this.ctx.packages.importGitTree(tree, { url: s.url, ref: s.ref, subpath: s.subpath, expectedId: s.packageId, permit: (m) => this.refuseUntrusted(m, 'local', m.metadata.name, {}) });
         this.ctx.repo.updatePackageSource(id, { pinnedCommit: head.commit, note: null });
         this.ctx.log.info('git source updated', { url: s.url, from: s.pinnedCommit, to: head.commit, actor });
         this.ctx.notifier.notify({ kind: 'source-commit', severity: 'info', title: `New commit for ${s.packageId}`, body: `${s.url.replace(/^https:\/\//, '')} ${s.ref} moved to ${head.commit.slice(0, 12)}. ${s.autoRedeploy ? 'Redeploy starts automatically.' : 'Update the app from its drawer or Home.'}`, dedupeKey: `source-commit:${s.id}:${head.commit}` });
@@ -647,7 +650,53 @@ export class ApplicationService {
       network: { https: this.networkHttps() },
       update: this.ctx.selfUpdate.status(),
       unlockNeeded: this.unlockNeeded(),
+      developerMode: this.developerModeDto(),
     };
+  }
+
+  // ---- developer mode (decision 193): packages that are not from the official catalog may ask for the
+  // trusted-only permissions (privileged, binder). Off by default; the console shows a banner while it is on.
+  developerModeOn(): boolean {
+    return this.ctx.repo.setting<{ enabled?: boolean }>(DEVELOPER_MODE_SETTING)?.enabled === true;
+  }
+  developerModeDto(): DeveloperModeDto {
+    const doc = this.ctx.repo.setting<{ enabled?: boolean; since?: string }>(DEVELOPER_MODE_SETTING);
+    const enabled = doc?.enabled === true;
+    // installed apps that hold a trusted-only permission without coming from the official catalog
+    const untrustedApps: string[] = [];
+    for (const inst of this.ctx.repo.listInstances()) {
+      if (inst.purgedAt || inst.installState === 'retained') continue;
+      try {
+        const snap = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId);
+        if (this.ctx.packages.originOf(inst.packageId) !== 'bundled' && untrustedPermissions(snap.manifest, 'local', false).length) untrustedApps.push(inst.name);
+      } catch {
+        /* no snapshot (never installed): nothing runs with it */
+      }
+    }
+    return { enabled, since: enabled ? (doc?.since ?? null) : null, untrustedApps: untrustedApps.sort() };
+  }
+  setDeveloperMode(enabled: boolean, actor: string): DeveloperModeDto {
+    const was = this.developerModeOn();
+    if (enabled) this.ctx.repo.setSetting(DEVELOPER_MODE_SETTING, { enabled: true, since: was ? (this.developerModeDto().since ?? rfc3339(this.ctx.clock.now())) : rfc3339(this.ctx.clock.now()) });
+    else this.ctx.repo.deleteSetting(DEVELOPER_MODE_SETTING);
+    if (was !== enabled) this.ctx.log.warn(enabled ? 'developer mode turned on: packages from any source may ask for full control of this machine' : 'developer mode turned off', { actor });
+    return this.developerModeDto();
+  }
+  // Decision 193: refuse a package that asks for a trusted-only permission it may not get from where it came from,
+  // and (plans only, never uploads) one that needs a kernel driver this machine does not have
+  private refuseUntrusted(manifest: Manifest, origin: 'bundled' | 'local', what: string, opts: { host?: boolean } = { host: true }): void {
+    if (opts.host && needsBinder(manifest) && this.ctx.kernel?.binder() === 'missing') {
+      const rel = this.ctx.kernel.kernelRelease();
+      throw new HarborError('KERNEL_MODULE_MISSING', `${what} needs Android's binder driver, and this machine's kernel (${rel}) does not have it`, {
+        nextAction: `Install the kernel's extra modules (${binderInstallHint(rel)}), then try again. Harbor never installs system packages itself.`,
+      });
+    }
+    const bad = untrustedPermissions(manifest, origin, this.developerModeOn());
+    if (!bad.length) return;
+    const list = bad.map((p) => `${p.service} ${p.permission}`).join(', ');
+    throw new HarborError('UNTRUSTED_SOURCE', `${what} asks for ${list}, which only apps from the official app catalog may have`, {
+      nextAction: 'Install it from the App Store instead, or, if you trust where this package comes from, turn on developer mode (Settings → Advanced access; CLI: harbor developer-mode on) and try again.',
+    });
   }
   // Decision 190: the machine key is sealed but not in memory (the daemon restarted since the last password),
   // and something waits on it: an app home that unlocks with it, or a backup place (nightly runs need it).
@@ -1534,7 +1583,7 @@ export class ApplicationService {
 
   // ---- your own apps
   async importPackage(zip: Buffer, fileName: string, actor: string): Promise<PackageImportResultDto> {
-    const r = await this.ctx.packages.importZip(zip, { fileName, actor });
+    const r = await this.ctx.packages.importZip(zip, { fileName, actor, permit: (m) => this.refuseUntrusted(m, 'local', m.metadata.name, {}) });
     const updatable = this.ctx.repo
       .listInstances()
       .filter((i) => i.packageId === r.item.id && i.installState !== 'installing' && compareRevisions(r.item.revision, i.revision) > 0)
@@ -1632,6 +1681,7 @@ export class ApplicationService {
       const pkg = this.ctx.packages.load(manifest.packageId);
       // Decision 163/179: the person adopting accepts the package's permissions (gpu included) up front, before
       // anything touches the drive or this machine's records (adopt submits its own plan)
+      this.refuseUntrusted(pkg.manifest, pkg.origin, manifest.displayName);
       const asked = permissionsOf(pkg.manifest);
       if (asked.length && opts?.acceptPermissions !== true) {
         throw new HarborError('PERMISSION_REQUIRED', `${manifest.displayName} asks for permissions you have not accepted: ${asked.map((p) => `${p.service} ${p.permission}`).join(', ')}`, { nextAction: 'Adopt it with them accepted (console: tick the box under Adopt; CLI: harbor adopt --accept-permissions).' });
@@ -1653,6 +1703,7 @@ export class ApplicationService {
       const identity = identityFor(this.ctx.installationId, instanceId);
       const endpoints = await this.allocatePorts(pkg);
       const fixedPorts = await this.checkFixedPorts(pkg.manifest, null);
+      this.refuseUntrusted(pkg.manifest, pkg.origin, pkg.manifest.metadata.name);
       const permissions = permissionsOf(pkg.manifest);
       const gpu = await this.planGpu(pkg.manifest);
       const storage = this.resolveStorage(pkg, identity, {}, instances);
@@ -2063,6 +2114,7 @@ export class ApplicationService {
       const identity = identityFor(this.ctx.installationId, instanceId);
       const endpoints = await this.allocatePorts(pkg);
       const fixedPorts = await this.checkFixedPorts(pkg.manifest, null);
+      this.refuseUntrusted(pkg.manifest, pkg.origin, pkg.manifest.metadata.name);
       const permissions = permissionsOf(pkg.manifest);
       const gpu = await this.planGpu(pkg.manifest);
       // Install location (whole encrypted app on a drive): validated here so a
@@ -2341,6 +2393,7 @@ export class ApplicationService {
     const endpoints = [...kept, ...fresh];
     const fixedPorts = await this.checkFixedPorts(next.manifest, inst.id);
     const heldPorts = new Set(fixedPortsOf(current.manifest).map((p) => p.hostPort));
+    this.refuseUntrusted(next.manifest, next.origin, inst.name);
     const addedPermissions = newPermissions(current.manifest, next.manifest);
     const gpu = await this.planGpu(next.manifest);
     // kept: every secret the instance has, plus optional operator secrets the current release already declared (left empty on purpose)
@@ -2681,7 +2734,7 @@ export class ApplicationService {
     if (!this.ctx.machineKey.unlocked) throw new HarborError('MACHINE_KEY_LOCKED', 'Harbor restarted since your last login, so its key for encrypted apps is locked', { nextAction: 'Type your password to unlock this machine\'s key (the console asks; or run harbor account unlock), then try again.' });
     const point = backups.resolvePoint(req.instanceId, req.runId, req.targetId);
     const pkgId = tagValue(point.snapshot.tags, 'pkg') ?? '';
-    let pkg: LoadedPackage;
+    let pkg: LoadedPackageWithOrigin;
     try {
       pkg = this.ctx.packages.load(pkgId);
     } catch (e) {
@@ -2699,6 +2752,7 @@ export class ApplicationService {
     const identity = identityFor(this.ctx.installationId, instanceId);
     const endpoints = await this.allocatePorts(pkg);
     const fixedPorts = await this.checkFixedPorts(pkg.manifest, null);
+    this.refuseUntrusted(pkg.manifest, pkg.origin, pkg.manifest.metadata.name);
     const permissions = permissionsOf(pkg.manifest);
     const gpu = await this.planGpu(pkg.manifest);
     const storage = this.resolveStorage(pkg, identity, {}, instances);
@@ -3204,6 +3258,11 @@ export class ApplicationService {
     // and git redeploys submit without it, so an update that asks for more stops here and waits for a person.
     // Decision 165: so does an update that opens fixed ports the current release does not publish (a release from
     // a compromised catalog or git source would otherwise open a port to the internet with nobody asked).
+    // Decision 193: developer mode may have been turned off since this plan was made
+    if (plan.proposal.packageId && (plan.proposal.permissions ?? []).length) {
+      const origin = this.ctx.packages.originOf(plan.proposal.packageId);
+      if (origin) this.refuseUntrusted(this.ctx.packages.load(plan.proposal.packageId).manifest, origin, plan.proposal.name, {});
+    }
     const asked = plan.proposal.permissions ?? [];
     const opened = plan.proposal.opensPorts ?? [];
     if ((asked.length || opened.length) && opts.acceptPermissions !== true) {

@@ -1243,6 +1243,25 @@ lock-guard's start; it failed in round 1 without the fix). `app-homes.test.ts` 4
 test waits for lock-guard's start instead of `running` (it had failed 1 of 3). Unit 654 + 2 skipped, e2e 45, lint and
 typecheck clean.
 
+## 3aa. Trusted-only permissions, developer mode, binder (2026-11-01, Harbor 0.40.0, decision 193)
+
+Asked for: a Harbor app running redroid (Android in a container), which needs a privileged container and the binder
+driver. Live evidence: `docs/evidence/live-redroid-2026-11-01/` (harbor-old, kernel 6.8.0-147, the 0.40.0 build).
+
+| Check | Result |
+|---|---|
+| Root step on harbor-old, started as the `harbor` user through polkit | `binder_linux` loaded in 0.4 s, binderfs registered, both `/etc` boot files written, status `ok`; an unknown module refused |
+| redroid 15.0.0-250627 + ws-scrcpy (own GHCR build) + Caddy login, by hand with the package's compose | Android healthy after 16 s; health 200 without login, 401 without/with a wrong login, 200 with it; adb connected; the home screen streams in a browser and takes input |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | clean |
+| `pnpm test` (unit) | 667 passed, 2 skipped (+13 `trusted-permissions.test.ts`; `manifest.test.ts` now refuses `sys-admin` instead of `privileged`) |
+| `pnpm test:integration` | 394 passed, 3 live-Docker skipped (+6 `developer-mode.test.ts`: upload refused, password to turn on, install with privileged rendered and binder loaded first, refused again when off, stale plan refused at approval, official app allowed and a kernel without binder refused) |
+| `pnpm test:e2e` | 46 passed (+1: developer mode on with the password, banner on every page, off) |
+| `catalog:verify` / `catalog:hash --check` (fixtures), `openapi -- --check` | ok / ok / current; harbor-apps with `redroid`: 152 packages ok |
+
+Gate ran locally on Node 24.12.0 (darwin-arm64); CI runs 24.22.1. Not covered live yet: the install through Harbor's
+own plan/approve flow on a real box (harbor-old's CLI session had expired), and the harbor-apps smoke run of `redroid`
+on a GitHub runner (needs 0.40.0 released).
+
 ## 4. Qualified versions
 
 | Component | Version | Source |

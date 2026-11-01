@@ -186,6 +186,8 @@ export function renderCompose(input: RenderInput): RenderedCompose {
     if (perms.includes('net-admin')) def['cap_add'] = ['NET_ADMIN'];
     if (perms.includes('tun')) def['devices'] = ['/dev/net/tun:/dev/net/tun'];
     if (perms.includes('ip-forwarding')) def['sysctls'] = { ...IP_FORWARDING_SYSCTLS };
+    // decision 193: everything at once (all devices, every capability, no seccomp/AppArmor); trusted sources only
+    if (perms.includes('privileged')) def['privileged'] = true;
     // decision 179: the graphics card, from host facts (none: nothing, the app runs on the CPU)
     if (perms.includes('gpu') && input.gpu?.kind === 'nvidia') {
       def['deploy'] = { resources: { reservations: { devices: [{ ...NVIDIA_DEVICE_REQUEST, capabilities: [...NVIDIA_DEVICE_REQUEST.capabilities] }] } } };

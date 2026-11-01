@@ -116,14 +116,15 @@ export class PackageStore {
   }
 
   // ---- uploads
-  async importZip(zip: Buffer, opts: { fileName: string; actor: string }): Promise<ImportResult> {
-    return this.importFiles(readZip(zip), { source: `upload ${opts.fileName} by ${opts.actor}`, allowBuilds: null });
+  // `permit` (decision 193) refuses a manifest before anything is stored (the trusted-only permissions)
+  async importZip(zip: Buffer, opts: { fileName: string; actor: string; permit?: (m: Manifest) => void }): Promise<ImportResult> {
+    return this.importFiles(readZip(zip), { source: `upload ${opts.fileName} by ${opts.actor}`, allowBuilds: null, ...(opts.permit ? { permit: opts.permit } : {}) });
   }
 
   // Git source (decision 80): the harbor/ folder of a fetched repository. Services may declare
   // `build:` (built locally at apply time, pinned by the commit); the revision gets the committer
   // date as a numeric suffix so every commit orders as a newer revision.
-  async importGitTree(tree: GitTree, opts: { url: string; ref: string; subpath: string | null; expectedId?: string }): Promise<ImportResult & { revision: string }> {
+  async importGitTree(tree: GitTree, opts: { url: string; ref: string; subpath: string | null; expectedId?: string; permit?: (m: Manifest) => void }): Promise<ImportResult & { revision: string }> {
     const files = readPackageTree(tree, opts.subpath);
     const manifestRaw = files.get('manifest.yaml');
     if (manifestRaw) {
@@ -138,11 +139,12 @@ export class PackageStore {
       // contexts are written relative to harbor/; they may step up but never out of the fetched tree
       allowBuilds: { commit: tree.commit, contextRoot: path.join(base, 'harbor'), boundary: tree.dir },
       expectedId: opts.expectedId ?? null,
+      ...(opts.permit ? { permit: opts.permit } : {}),
     });
     return { ...r, revision: r.item.id ? r.item.revision : '' };
   }
 
-  private async importFiles(files: Map<string, Buffer>, ctx: { source: string; allowBuilds: { commit: string; contextRoot: string; boundary: string } | null; expectedId?: string | null }): Promise<ImportResult> {
+  private async importFiles(files: Map<string, Buffer>, ctx: { source: string; allowBuilds: { commit: string; contextRoot: string; boundary: string } | null; expectedId?: string | null; permit?: (m: Manifest) => void }): Promise<ImportResult> {
     const notes: string[] = [];
     const need = (name: string) => {
       const b = files.get(name);
@@ -158,6 +160,7 @@ export class PackageStore {
     const needs = missingHarbor(peekMinHarbor(manifestDoc), this.readOpts.harborVersion);
     if (needs) throw needsHarborError(needs, `This package declares release.minHarbor ${needs}. Update Harbor (Settings → Overview) to ${needs} or newer, then add it again.`);
     const manifest = validateManifestShape(manifestDoc, 'manifest.yaml');
+    ctx.permit?.(manifest);
     const id = manifest.metadata.id;
     // An id the operator already owns keeps taking uploads even if the official catalog added it since.
     if (readCatalogIndex(this.bundledDir).packages[id] && !this.localIndex().packages[id]) throw new HarborError('INVALID_PACKAGE', `the id "${id}" belongs to a built-in app`, { nextAction: 'Choose another metadata.id for your package.' });

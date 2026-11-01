@@ -448,6 +448,13 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 75 — trusted-only permissions, developer mode, binder (2026-11-01, 0.40.0) ✅
+- [x] Carlos asked for a redroid app; his answers: a general `privileged` permission, only from the official catalog (like Android's store), a developer mode that bypasses it with a banner, Harbor's root helper loads binder, browser-only access, own ws-scrcpy image on GHCR
+- [x] Decision 193: `privileged` + `binder` permissions (minHarbor 0.40.0); `UNTRUSTED_SOURCE` at upload, plan and approval unless developer mode; `KERNEL_MODULE_MISSING` with the apt line; `harbor-kernel@binder` root oneshot + polkit + boot files; `GET/PUT /v1/system/developer-mode`, `harbor developer-mode`, Settings → Advanced access card, yellow banner
+- [x] Tests and gate (§3aa); live root step + redroid stack on harbor-old (`docs/evidence/live-redroid-2026-11-01/`)
+- [ ] harbor-apps PR `redroid` (ws-scrcpy image workflow, the app, binder pre-step in qualify/updates) qualified by the smoke run after 0.40.0 is released
+- [ ] Live: install Android through Harbor's console on harbor-old (needs `harbor login` there)
+
 ## Phase 74 — lock-guard once per unlock (2026-11-01, 0.39.1) ✅
 - [x] `ci` on 0.39.0 (as on 0.38.0) failed on `harbor start <locked> --passphrase-stdin`; the release job passed, so 0.39.0 published. Cause: lock-guard kept its one start attempt per app for the whole boot (decision 192: now per unlock, reset when the app is locked)
 - [x] Tests: integration `app-homes.test.ts` (+1: two lock/unlock rounds, each followed by lock-guard's start; failed in round 1 without the fix); the decision-190 reboot test waits for lock-guard's start to finish instead of `running` (it failed 1 of 3 local runs); gate below (§3z)

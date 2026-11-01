@@ -1,5 +1,5 @@
 import type { AppBackupsDto, BackupAppPolicyDto, BackupPolicyDto, BackupsOverviewDto, BackupTargetDto, FoundBackupAppDto, SettingValue } from '../../src/contracts/api';
-import type { AddressOptionsDto, ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, OperationQueueDto, QueueableKind, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailnetAllDto, TailscaleLoginDto, UiExposureDto, WidgetDto, LinkDto, CatalogStatusDto, VpnDto } from '../../src/contracts/api';
+import type { AddressOptionsDto, ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, OperationQueueDto, QueueableKind, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailnetAllDto, TailscaleLoginDto, UiExposureDto, WidgetDto, LinkDto, CatalogStatusDto, VpnDto, DeveloperModeDto } from '../../src/contracts/api';
 import { isMockUi, mockApi } from './mock/api';
 
 export class ApiError extends Error {
@@ -211,6 +211,9 @@ const realApi = {
   tailscaleLogout: () => call<void>('POST', '/v1/platform-tools/tailscale/logout', {}),
   // LAN HTTPS (decision 109): local CA + secure addresses, off by default.
   networkHttps: () => call<NetworkHttpsDto>('GET', '/v1/network/https'),
+  // decision 193
+  developerMode: () => call<DeveloperModeDto>('GET', '/v1/system/developer-mode'),
+  setDeveloperMode: (enabled: boolean, password?: string) => call<DeveloperModeDto>('PUT', '/v1/system/developer-mode', password ? { enabled, password } : { enabled }),
   addressOptions: () => call<AddressOptionsDto>('GET', '/v1/network/addresses'),
   // decision 167: httpsOnly omitted = leave HTTPS only as it is
   setNetworkHttps: (enabled: boolean, httpsOnly?: boolean) => call<NetworkHttpsDto>('PUT', '/v1/network/https', httpsOnly === undefined ? { enabled } : { enabled, httpsOnly }),

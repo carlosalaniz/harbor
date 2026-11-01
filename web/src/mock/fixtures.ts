@@ -385,6 +385,10 @@ export function mockQueue(): OperationDto[] {
   ];
 }
 
+function devModeParam(): string | null {
+  return typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('devmode') : null;
+}
+
 export function mockSystem(): SystemDto {
   const t = now();
   return {
@@ -400,6 +404,8 @@ export function mockSystem(): SystemDto {
     installationId: 'mock-installation',
     managementOrigin: 'http://localhost:5173',
     unlockNeeded: false,
+    // decision 193: ?devmode=on previews the banner
+    developerMode: { enabled: devModeParam() === 'on', since: devModeParam() === 'on' ? t : null, untrustedApps: [] },
   };
 }
 

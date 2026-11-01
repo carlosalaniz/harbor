@@ -25,6 +25,7 @@ import type {
   BackupsOverviewDto,
   BackupTargetDto,
   VpnDto,
+  DeveloperModeDto,
 } from '../../../src/contracts/api';
 import {
   mockAppearance,
@@ -84,6 +85,8 @@ function mockTailnetAll(): TailnetAllDto {
 const vpnParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('vpn') : null;
 let vpnTunnel: VpnDto['tunnel'] = vpnParam === 'on' || vpnParam === 'down' ? { name: 'Mullvad Stockholm', endpoint: '185.65.134.82:51820', addresses: ['10.66.12.34/32'], dns: ['10.64.0.1'], dnsFallback: false, mtu: 1420, peerPublicKey: 'MOCKpublicKEYforDESIGNmodeONLYxxxxxxxxxxxA=', setAt: new Date(Date.now() - 86_400_000).toISOString() } : null;
 let vpnAllApps = false;
+// decision 193: the Settings → Advanced access switch flips it, the banner follows
+let devMode: DeveloperModeDto = mockSystem().developerMode;
 function mockVpn(): VpnDto {
   const apps = instances.filter((i) => i.internet.mode !== 'direct' || vpnAllApps).map((i) => ({ instanceId: i.id, name: i.displayName ?? i.name, mode: (i.internet.mode === 'offline' ? 'offline' : 'vpn') as 'vpn' | 'offline' }));
   const state: VpnDto['status']['state'] = !vpnTunnel ? 'off' : vpnParam === 'down' ? 'down' : 'connected';
@@ -273,7 +276,13 @@ export const mockApi = {
   revokeOtherSessions: async (): Promise<void> => {
     await beat(100);
   },
-  system: async (): Promise<SystemDto> => mockSystem(),
+  system: async (): Promise<SystemDto> => ({ ...mockSystem(), developerMode: devMode }),
+  developerMode: async (): Promise<DeveloperModeDto> => devMode,
+  setDeveloperMode: async (enabled: boolean): Promise<DeveloperModeDto> => {
+    await beat(150);
+    devMode = { enabled, since: enabled ? new Date().toISOString() : null, untrustedApps: [] };
+    return devMode;
+  },
   metrics: async (): Promise<SystemMetricsDto> => mockMetrics(),
   // decision 170: each item names its next copy the way the daemon does (package id, else -2, -3…)
   catalog: async (): Promise<CatalogItemDto[]> => {

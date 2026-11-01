@@ -145,13 +145,14 @@ export const MANIFEST_SCHEMA = {
       },
     },
     // Decision 163: per service, from a fixed list Harbor renders itself (compose keeps refusing cap_add/devices/
-    // sysctls); the operator accepts them when approving the plan. Decision 179 adds gpu (Harbor 0.34.0).
+    // sysctls); the operator accepts them when approving the plan. Decision 179 adds gpu (Harbor 0.34.0); decision
+    // 193 adds privileged and binder (Harbor 0.40.0), which only official-catalog apps get unless developer mode is on.
     permissions: {
       type: 'object',
       minProperties: 1,
       maxProperties: 16,
       propertyNames: { pattern: ID_PATTERN },
-      additionalProperties: { type: 'array', minItems: 1, maxItems: 4, uniqueItems: true, items: { enum: ['net-admin', 'tun', 'ip-forwarding', 'gpu'] } },
+      additionalProperties: { type: 'array', minItems: 1, maxItems: 6, uniqueItems: true, items: { enum: ['net-admin', 'tun', 'ip-forwarding', 'gpu', 'privileged', 'binder'] } },
     },
     // Decision 185 (Harbor 0.36.0): how the app reaches the internet unless the operator chooses otherwise
     // (direct, through the VPN, or offline; decision 184). Leaving it out means direct.

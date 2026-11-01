@@ -6,6 +6,7 @@ import type { DaemonConfig } from '../config.js';
 import type { ComposeRunner, DockerAdapter } from '../docker/adapter.js';
 import type { PortObserver } from '../docker/ports.js';
 import type { GpuObserver } from '../system/gpu.js';
+import type { KernelProvider } from '../system/kernel.js';
 import type { Repo } from '../state/repo.js';
 import type { Clock, Ids } from '../util.js';
 import type { TailscaleProvider } from '../exposure/tailscale.js';
@@ -39,6 +40,8 @@ export interface Ctx {
   ports: PortObserver;
   // decision 179: the graphics card apps granted `gpu` get (real host facts in the daemon; FakeGpu in fake mode)
   gpu: GpuObserver;
+  // decision 193: Android's binder driver for apps granted `binder` (root handoff; FakeKernelProvider in fake mode)
+  kernel?: KernelProvider;
   clock: Clock;
   ids: Ids;
   log: Logger;

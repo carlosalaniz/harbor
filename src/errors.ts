@@ -13,6 +13,8 @@ export type ErrorCode =
   | 'DATA_MISSING'
   | 'SECRET_MISSING'
   | 'PERMISSION_REQUIRED'
+  | 'UNTRUSTED_SOURCE'
+  | 'KERNEL_MODULE_MISSING'
   | 'SETTING_INVALID'
   | 'READINESS_TIMEOUT'
   | 'DOCKER_UNAVAILABLE'
@@ -54,6 +56,8 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   DATA_MISSING: 409,
   SECRET_MISSING: 409,
   PERMISSION_REQUIRED: 409,
+  UNTRUSTED_SOURCE: 403,
+  KERNEL_MODULE_MISSING: 409,
   SETTING_INVALID: 400,
   PLAN_EXPIRED: 410,
   PLAN_STALE: 409,
@@ -92,6 +96,8 @@ const EXIT_CODE: Record<ErrorCode, number> = {
   DATA_MISSING: 3,
   SECRET_MISSING: 3,
   PERMISSION_REQUIRED: 3,
+  UNTRUSTED_SOURCE: 3,
+  KERNEL_MODULE_MISSING: 4,
   SETTING_INVALID: 2,
   PLAN_EXPIRED: 3,
   PLAN_STALE: 3,
@@ -159,6 +165,8 @@ function defaultNextAction(code: ErrorCode): string {
     case 'DATA_MISSING': return 'Retained data is missing or replaced; investigate before continuing. Nothing was recreated.';
     case 'SECRET_MISSING': return 'A retained secret file is missing; restore it from your own backup. Nothing was regenerated.';
     case 'PERMISSION_REQUIRED': return 'Review the permissions the plan lists and approve with them accepted.';
+    case 'UNTRUSTED_SOURCE': return 'Install it from the official app catalog, or turn on developer mode (Settings → Advanced access) if you trust where this package comes from.';
+    case 'KERNEL_MODULE_MISSING': return 'Install the kernel module package for the running kernel (sudo apt install linux-modules-extra-$(uname -r)), then try again.';
     case 'SETTING_INVALID': return 'Choose a value the setting allows (the app page and `harbor settings <app>` list each one).';
     case 'READINESS_TIMEOUT': return 'Inspect the instance; resources were kept. Use remove to clean up.';
     case 'DOCKER_UNAVAILABLE': return 'Start Docker Engine and retry.';
@@ -191,5 +199,5 @@ export function personCanResolve<E extends HarborError>(e: E): E {
 export function needsReview(e: unknown): boolean {
   if (!(e instanceof HarborError)) return false;
   if ((e as { personCanResolve?: boolean }).personCanResolve === true) return true;
-  return e.code === 'REVIEW_NEEDED' || e.code === 'SECRET_MISSING' || e.code === 'PERMISSION_REQUIRED' || e.code === 'MACHINE_KEY_LOCKED' || e.code === 'SETTING_INVALID';
+  return e.code === 'REVIEW_NEEDED' || e.code === 'SECRET_MISSING' || e.code === 'PERMISSION_REQUIRED' || e.code === 'UNTRUSTED_SOURCE' || e.code === 'MACHINE_KEY_LOCKED' || e.code === 'SETTING_INVALID';
 }

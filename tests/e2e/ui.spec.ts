@@ -2102,3 +2102,27 @@ test('decision 186: Apps on Tailscale — select all, review, apply; select none
   await page.getByRole('button', { name: /Remote access/ }).click();
   await expect.poll(links, { timeout: 60_000 }).toBe(1);
 });
+
+test('decision 193: developer mode — turning it on asks for the password, a banner stays while it is on, off needs none', async ({ page }) => {
+  await login(page);
+  await page.goto('/#/settings/access');
+  const card = page.locator('section', { has: page.getByRole('heading', { name: 'Developer mode', exact: true }) });
+  const banner = page.locator('.devmode-banner');
+  await expect(banner).toHaveCount(0);
+  await card.getByRole('button', { name: 'Turn on…', exact: true }).click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg).toContainText('full control of this machine');
+  // (a wrong password is covered by tests/integration/developer-mode.test.ts: earlier specs here use up the login limits)
+  await expect(dlg.getByRole('button', { name: 'Turn on developer mode', exact: true })).toBeDisabled();
+  await dlg.getByLabel('Your password', { exact: true }).fill(ADMIN.password);
+  await dlg.getByRole('button', { name: 'Turn on developer mode', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(banner).toContainText('Developer mode is on.');
+  // the banner follows to every page and leads back here
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await expect(banner).toBeVisible();
+  await banner.getByRole('button', { name: 'Turn it off…', exact: true }).click();
+  await card.getByRole('button', { name: 'Turn off', exact: true }).click();
+  await expect(banner).toHaveCount(0);
+  await expect(card.getByRole('button', { name: 'Turn on…', exact: true })).toBeVisible();
+});

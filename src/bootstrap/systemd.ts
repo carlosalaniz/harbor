@@ -3,9 +3,11 @@ import { UNIT_MARKER } from './host.js';
 import { APP_CRYPTO_UNIT_PREFIX } from '../storage/fscrypt.js';
 import { BACKUP_UNIT_PREFIX } from '../backups/step.js';
 import { EGRESS_UNIT_PREFIX } from '../egress/provider.js';
+import { KERNEL_UNIT_PREFIX } from '../system/kernel.js';
 export { BACKUP_UNIT_FILE } from '../backups/step.js';
 export { EGRESS_BOOT_UNIT, EGRESS_UNIT_FILE, VPN_UNIT } from '../egress/provider.js';
 export { APP_CRYPTO_UNIT_FILE } from '../storage/fscrypt.js';
+export { KERNEL_UNIT_FILE } from '../system/kernel.js';
 
 // The unit restarts the daemon, runs it as the dedicated user with Docker group access, and kills
 // only Harbor's own child processes (KillMode=control-group). App containers belong to Docker's
@@ -112,6 +114,12 @@ polkit.addRule(function (action, subject) {
   // VPN and offline apps (decision 184): start harbor-egress@<apply|tunnel-set|tunnel-remove|status>.service
   if (action.id === "org.freedesktop.systemd1.manage-units" &&
       String(action.lookup("unit")).indexOf("${EGRESS_UNIT_PREFIX}") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
+  // Android's binder driver for apps with the binder permission (decision 193): start harbor-kernel@binder.service
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("${KERNEL_UNIT_PREFIX}") === 0 &&
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
@@ -250,6 +258,20 @@ Description=Harbor VPN and offline apps step (%i: apply, tunnel-set, tunnel-remo
 Type=oneshot
 ExecStart=${PRODUCT.paths.opt}/bin/harbor egress-step %i
 TimeoutStartSec=120
+`;
+}
+
+// Decision 193: the daemon starts `harbor-kernel@binder` and BLOCKS on it; the root step loads binder_linux and writes
+// Harbor's modules-load.d/modprobe.d files so systemd-modules-load loads it at every boot, before Docker starts.
+export function kernelStepUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor kernel driver step (%i: load it now and at every boot)
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor kernel-step %i
+TimeoutStartSec=60
 `;
 }
 

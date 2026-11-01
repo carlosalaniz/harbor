@@ -321,6 +321,108 @@
         }
       }
     },
+    "/v1/system/developer-mode": {
+      "get": {
+        "description": "Whether developer mode is on (packages that are not from the official catalog may then ask for the privileged and binder permissions), since when, and which installed apps hold such a permission without coming from the official catalog.",
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "enabled",
+                    "since",
+                    "untrustedApps"
+                  ],
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "since": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "untrustedApps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "description": "Turn developer mode on (the administrator password is required, wrong ones count against the login limits) or off (no password). Apps already installed keep running either way; with it off, installs and updates of packages that ask for privileged or binder and are not from the official catalog are refused (UNTRUSTED_SOURCE).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "enabled"
+                ],
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "enabled",
+                    "since",
+                    "untrustedApps"
+                  ],
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "since": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
+                    },
+                    "untrustedApps": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/system": {
       "get": {
         "description": "Daemon/Docker availability.",

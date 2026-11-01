@@ -10,6 +10,7 @@ import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type In
 import { HARBOR_SUBNET_BLOCK, isHarborSubnet, pickSubnet } from '../planner/subnets.js';
 import { renderCompose, type ConsumerLink } from '../planner/render.js';
 import { gpuChanges, gpuFromRendered, gpuServicesOf } from '../planner/gpu.js';
+import { needsBinder } from '../planner/permissions.js';
 import { linkAlias, linkAliasesDrift, linkExtraNames, linkNetworkLabels, linkValue } from '../planner/links.js';
 import { aliasesOn, linkMembers, ownsLinkNetwork } from './link-members.js';
 import type { NetworkInfo } from '../docker/adapter.js';
@@ -1603,6 +1604,22 @@ export class OperationRunner {
     }
   }
 
+  // Decision 193: an app granted `binder` gets Android's binder driver before any of its containers runs (the root
+  // step also keeps it loaded at every boot, so Docker's own restarts after a reboot find it). Fail closed.
+  private async ensureKernel(op: OperationRow, inst: InstanceRow): Promise<void> {
+    const kernel = this.ctx.kernel;
+    if (!kernel) return;
+    let manifest: Manifest;
+    try {
+      manifest = loadReleaseSnapshot(this.dirs(inst).release, inst.packageId).manifest;
+    } catch {
+      return; // no snapshot: the caller fails on it with its own error
+    }
+    if (!needsBinder(manifest) || kernel.binder() === 'loaded') return;
+    this.event(op, 'starting', "loading Android's binder driver into this machine's kernel (it loads again at every boot)");
+    await kernel.loadBinder();
+  }
+
   // Decision 184: the host rules for this app's internet mode are loaded before any of its containers runs
   // (fail closed: a failed apply fails the operation and nothing starts).
   private needsEgress(inst: InstanceRow): boolean {
@@ -1642,6 +1659,7 @@ export class OperationRunner {
 
   private async upAndRecord(op: OperationRow, inv: { projectDir: string; projectName: string; file: string }, identity: InstanceIdentity, inst: InstanceRow, opts: { forceRecreate?: boolean } = {}): Promise<ContainerInfo[]> {
     try {
+      await this.ensureKernel(op, inst);
       const links = this.hasActiveLinks(inst);
       const egress = this.needsEgress(inst);
       if (links || egress) {
@@ -1770,6 +1788,7 @@ export class OperationRunner {
     await this.ensureLinkNetworks(op, inst);
     await this.syncLinkMembers(op, inst, 'own');
     if (this.needsEgress(inst)) await this.applyEgress(op, inst);
+    await this.ensureKernel(op, inst);
     await this.ctx.compose.start({ projectDir: dirs.runtime, projectName: identity.project, file }, config.startTimeoutMs);
     const containers = await this.recordProjectResources(op, identity, inst);
     await this.syncLinkMembers(op, inst, 'all');
@@ -2240,6 +2259,7 @@ export class OperationRunner {
     await this.ensureLinkNetworks(op, inst);
     await this.syncLinkMembers(op, inst, 'own');
     if (this.needsEgress(inst)) await this.applyEgress(op, inst);
+    await this.ensureKernel(op, inst);
     await this.ctx.compose.start({ projectDir: dirs.runtime, projectName: identity.project, file: path.join(dirs.runtime, 'compose.yaml') }, config.startTimeoutMs);
     const containers = await this.recordProjectResources(op, identity, inst);
     await this.syncLinkMembers(op, inst, 'all');

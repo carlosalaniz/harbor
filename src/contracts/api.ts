@@ -51,7 +51,7 @@ export interface FixedPortDto {
 // Decision 163: a privilege the operator accepts when approving (label: what it lets the app do)
 export interface PermissionDto {
   service: string;
-  permission: 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu';
+  permission: 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu' | 'privileged' | 'binder'; // privileged + binder: decision 193
   label: string;
 }
 // Decision 179: the graphics card this machine offers apps that ask for `gpu` (never group ids or paths).
@@ -523,7 +523,24 @@ export interface SystemDto {
   // (an app home that unlocks with it, or a backup place). A session that outlived the restart shows the
   // lock screen, which types the password once (POST /v1/account/unlock) instead of logging out and in.
   unlockNeeded: boolean;
+  // Decision 193: developer mode lets packages that are not from the official catalog ask for the trusted-only
+  // permissions (privileged, binder); the console shows a banner while it is on.
+  developerMode: DeveloperModeDto;
 }
+
+// GET/PUT /v1/system/developer-mode (decision 193)
+export interface DeveloperModeDto {
+  enabled: boolean;
+  since: string | null; // when it was turned on
+  // installed apps holding a trusted-only permission without coming from the official catalog
+  untrustedApps: string[];
+}
+export const DEVELOPER_MODE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['enabled', 'since', 'untrustedApps'],
+  properties: { enabled: { type: 'boolean' }, since: { type: ['string', 'null'] }, untrustedApps: { type: 'array', items: { type: 'string' } } },
+} as const;
 
 export interface PlatformToolDto {
   id: string;

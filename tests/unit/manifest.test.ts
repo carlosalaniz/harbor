@@ -253,7 +253,8 @@ describe('ports and permissions (decision 163)', () => {
   it('refuses unknown services, protocols, permissions and duplicate host ports', () => {
     expectCode(() => full(single + PORTS.replace('service: web', 'service: nope'), MINIMAL_COMPOSE), 'INVALID_PACKAGE', /unknown service nope/);
     expectCode(() => manifestOf(single + PORTS.replace('protocol: udp', 'protocol: sctp')), 'INVALID_PACKAGE', /protocol/);
-    expectCode(() => manifestOf(single + 'permissions:\n  web: [privileged]\n'), 'INVALID_PACKAGE', /permissions/);
+    // privileged is a permission since decision 193 (trusted sources only); a name Harbor does not know stays refused
+    expectCode(() => manifestOf(single + 'permissions:\n  web: [sys-admin]\n'), 'INVALID_PACKAGE', /permissions/);
     expectCode(() => full(single + 'permissions:\n  nope: [tun]\n', MINIMAL_COMPOSE), 'INVALID_PACKAGE', /unknown service nope/);
     const two = PORTS + '  again:\n    service: web\n    containerPort: 51821\n    hostPort: 51820\n    protocol: udp\n    purpose: Twice\n';
     expectCode(() => full(single + two, MINIMAL_COMPOSE), 'INVALID_PACKAGE', /51820.*twice/);

@@ -122,7 +122,7 @@ const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: 'backups', label: 'Backups', blurb: 'Encrypted copies of your apps, elsewhere' },
   { id: 'appearance', label: 'Appearance', blurb: 'Theme and wallpapers' },
   { id: 'notifications', label: 'Notifications', blurb: 'Reach you when something needs attention' },
-  { id: 'access', label: 'Advanced access', blurb: 'Terminal, SSH forwarding, CLI' },
+  { id: 'access', label: 'Advanced access', blurb: 'Developer mode, terminal, SSH forwarding, CLI' },
   { id: 'troubleshoot', label: 'Troubleshoot', blurb: 'Harbor and app logs' },
   { id: 'about', label: 'About', blurb: 'Version and trust boundary' },
 ];
@@ -2509,6 +2509,7 @@ function Access({ c }: { c: Console }) {
   const [showTerminal, setShowTerminal] = useState(false);
   return (
     <>
+      <DeveloperMode c={c} />
       <section className="card" aria-labelledby="term-h">
         <div className="row between wrap">
           <div>
@@ -2571,6 +2572,87 @@ function Access({ c }: { c: Console }) {
         <p className="muted small">The full list: <code>harbor --help</code>, and the operator guide in the repository.</p>
       </section>
     </>
+  );
+}
+
+// Decision 193: only apps from the official App Store may ask for full control of this machine (privileged,
+// binder). Developer mode lets uploaded and git-source packages ask too; turning it on asks for the password, and
+// the shell shows a banner for as long as it is on.
+function DeveloperMode({ c }: { c: Console }) {
+  const dm = c.data.system?.developerMode;
+  const [asking, setAsking] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const set = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setDeveloperMode(enabled, enabled ? password : undefined);
+      setPassword('');
+      setAsking(false);
+      await c.refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card" aria-labelledby="devmode-h">
+      <div className="row between wrap">
+        <div>
+          <h2 id="devmode-h">Developer mode</h2>
+          <p className="muted small">Some apps need full control of this machine, like Android. Harbor gives it only to apps from the App Store. Developer mode lets apps you upload or add from git ask for it too. Turn it on only while you test a package you trust.</p>
+        </div>
+        {dm?.enabled ? (
+          <button className="btn" onClick={() => void set(false)} disabled={busy}>
+            Turn off
+          </button>
+        ) : (
+          <button className="btn" onClick={() => (setError(null), setAsking(true))} disabled={busy}>
+            Turn on…
+          </button>
+        )}
+      </div>
+      {dm?.enabled && dm.since && <p className="warn small">On since {new Date(dm.since).toLocaleString()}.</p>}
+      {dm && dm.untrustedApps.length > 0 && <p className="small">Installed with full control, not from the App Store: {dm.untrustedApps.join(', ')}</p>}
+      {error && !asking && (
+        <p className="error small" role="alert">
+          {error}
+        </p>
+      )}
+      {asking && (
+        <Dialog title="Turn on developer mode?" onClose={() => setAsking(false)}>
+          <p>Apps you upload or add from git can then ask for full control of this machine: they could read, change or erase anything on it. You still accept each one in its review.</p>
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void set(true);
+            }}
+          >
+            <label>
+              Your password
+              <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </label>
+            {error && (
+              <p className="error small" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="row end">
+              <button className="btn" type="button" onClick={() => setAsking(false)}>
+                Cancel
+              </button>
+              <button className="btn danger" type="submit" disabled={busy || !password}>
+                Turn on developer mode
+              </button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+    </section>
   );
 }
 

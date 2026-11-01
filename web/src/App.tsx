@@ -416,6 +416,16 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   }
   return (
     <div className="shell">
+      {c.data.system?.developerMode?.enabled && (
+        <p className="devmode-banner" role="status">
+          <span>
+            <strong>Developer mode is on.</strong> Apps you upload or add from git can ask for full control of this machine.
+          </span>
+          <button className="btn ghost small" onClick={() => go({ page: 'settings', section: 'access' })}>
+            Turn it off…
+          </button>
+        </p>
+      )}
       {mock && (
         <p className="mock-banner" role="status">
           Design mode — fixtures only, nothing runs. <a href="#/store">Store</a> · <a href="#/settings/appearance">Appearance</a> · <a href="#/settings">Settings</a>

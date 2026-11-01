@@ -13,7 +13,8 @@ import { exec } from './exec.js';
 import { closeLanFirewall } from './firewall.js';
 import { loadConfig } from '../config.js';
 import { gatherHostFacts, UNIT_MARKER, type HostFacts } from './host.js';
-import { POLKIT_RULE_PATH, SELF_UPDATE_UNIT_FILE, TAILSCALE_OPERATOR_UNIT, TOOLS_INSTALL_UNIT, DEVICE_MOUNT_UNIT, APP_CRYPTO_UNIT_FILE, BACKUP_UNIT_FILE, EGRESS_UNIT_FILE, EGRESS_BOOT_UNIT, VPN_UNIT } from './systemd.js';
+import { POLKIT_RULE_PATH, SELF_UPDATE_UNIT_FILE, TAILSCALE_OPERATOR_UNIT, TOOLS_INSTALL_UNIT, DEVICE_MOUNT_UNIT, APP_CRYPTO_UNIT_FILE, BACKUP_UNIT_FILE, EGRESS_UNIT_FILE, EGRESS_BOOT_UNIT, VPN_UNIT, KERNEL_UNIT_FILE } from './systemd.js';
+import { BINDER } from '../system/kernel.js';
 import { removeEgress } from './egress-apply.js';
 
 export interface UninstallOptions {
@@ -45,7 +46,7 @@ export function uninstallPreview(facts: HostFacts, opts: { keepData: boolean }):
     `Remove ${PRODUCT.paths.etc} (daemon config)`,
     opts.keepData ? `Keep ${PRODUCT.paths.var} (state, secrets, release snapshots)` : `Remove ${PRODUCT.paths.var} (state, secrets, release snapshots — apps' data volumes are already gone above)`,
     `Remove ${PRODUCT.paths.data} only if empty (your folders inside it are never deleted)`,
-    `Remove Harbor-owned systemd units (${TAILSCALE_OPERATOR_UNIT}, ${SELF_UPDATE_UNIT_FILE}, ${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}, ${DEVICE_MOUNT_UNIT.replace('.service', '@.service')}, ${APP_CRYPTO_UNIT_FILE}, ${BACKUP_UNIT_FILE}, ${EGRESS_UNIT_FILE}, ${EGRESS_BOOT_UNIT}, ${VPN_UNIT}), the backup tools and their root-only state, the apps' VPN tunnel, firewall table and routing rules, and ${POLKIT_RULE_PATH}`,
+    `Remove Harbor-owned systemd units (${TAILSCALE_OPERATOR_UNIT}, ${SELF_UPDATE_UNIT_FILE}, ${TOOLS_INSTALL_UNIT.replace('.service', '@.service')}, ${DEVICE_MOUNT_UNIT.replace('.service', '@.service')}, ${APP_CRYPTO_UNIT_FILE}, ${BACKUP_UNIT_FILE}, ${EGRESS_UNIT_FILE}, ${EGRESS_BOOT_UNIT}, ${VPN_UNIT}, ${KERNEL_UNIT_FILE}), the backup tools and their root-only state, the apps' VPN tunnel, firewall table and routing rules, the boot-time binder files (${BINDER.loadFile}, ${BINDER.optionsFile}), and ${POLKIT_RULE_PATH}`,
     'LAN mode: delete the ufw rules Harbor added (comment "harbor")',
     `Delete service user ${PRODUCT.serviceUser} and its group (even when Caddy is still a member — otherwise the next install fails at useradd)`,
     'Leave untouched: Docker Engine, Cockpit/Tailscale/Caddy packages, your own folders, non-Harbor Docker objects',
@@ -194,11 +195,22 @@ export async function uninstall(opts: UninstallOptions): Promise<UninstallResult
     if (unitIsOurs(`/etc/systemd/system/${unit}`)) await exec('/usr/bin/systemctl', ['disable', unit], { timeoutMs: 60_000 }).catch(() => undefined);
   }
   await removeEgress(log).catch(() => undefined);
-  for (const unit of [TAILSCALE_OPERATOR_UNIT, SELF_UPDATE_UNIT_FILE, TOOLS_INSTALL_UNIT.replace('.service', '@.service'), DEVICE_MOUNT_UNIT.replace('.service', '@.service'), APP_CRYPTO_UNIT_FILE, BACKUP_UNIT_FILE, EGRESS_UNIT_FILE, EGRESS_BOOT_UNIT, VPN_UNIT]) {
+  for (const unit of [TAILSCALE_OPERATOR_UNIT, SELF_UPDATE_UNIT_FILE, TOOLS_INSTALL_UNIT.replace('.service', '@.service'), DEVICE_MOUNT_UNIT.replace('.service', '@.service'), APP_CRYPTO_UNIT_FILE, BACKUP_UNIT_FILE, EGRESS_UNIT_FILE, EGRESS_BOOT_UNIT, VPN_UNIT, KERNEL_UNIT_FILE]) {
     const p = `/etc/systemd/system/${unit}`;
     if (unitIsOurs(p)) {
       rmSync(p, { force: true });
       removed.push(`systemd unit ${unit}`);
+    }
+  }
+  // decision 193: the boot-time binder files (the driver itself stays loaded until the next reboot)
+  for (const file of [BINDER.loadFile, BINDER.optionsFile]) {
+    try {
+      if (readFileSync(file, 'utf8').startsWith('# Harbor:')) {
+        rmSync(file, { force: true });
+        removed.push(file);
+      }
+    } catch {
+      /* not there */
     }
   }
   if (facts.existing.unit === 'harbor') rmSync(unitPath, { force: true });

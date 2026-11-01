@@ -1517,6 +1517,29 @@ tailscaleCmd
   });
 
 // --- network: secure addresses on the home network (Settings → Network, from the terminal)
+// Decision 193: developer mode (packages from any source may ask for the privileged and binder permissions)
+type DeveloperMode = { enabled: boolean; since: string | null; untrustedApps: string[] };
+const devModeLines = (d: DeveloperMode) =>
+  [
+    d.enabled ? `Developer mode is ON${d.since ? ` (since ${d.since})` : ''}: uploaded and git-source packages may ask for full control of this machine.` : 'Developer mode is off: only apps from the official catalog may ask for full control of this machine (privileged, binder).',
+    ...(d.untrustedApps.length ? [`Installed apps with full control that are not from the official catalog: ${d.untrustedApps.join(', ')}`] : []),
+  ].join('\n');
+program
+  .command('developer-mode [state]')
+  .description('show, or turn on/off, developer mode: lets packages that are not from the official catalog ask for the privileged and binder permissions (turning it on asks for your password)')
+  .option('--stdin', 'read the password from stdin (turning it on)', false)
+  .action(async (state: string | undefined, opts: { stdin: boolean }) => {
+    if (state === undefined) {
+      const d = await client().get<DeveloperMode>('/v1/system/developer-mode');
+      return out(d, () => devModeLines(d));
+    }
+    if (state !== 'on' && state !== 'off') throw new HarborError('INVALID_REQUEST', `expected on or off, got ${state}`);
+    let password: string | undefined;
+    if (state === 'on') password = opts.stdin ? ((await readStdinAll()).split('\n')[0] ?? '') : await promptHidden('Password: ');
+    const d = await client().post<DeveloperMode>('/v1/system/developer-mode', { enabled: state === 'on', ...(password ? { password } : {}) }, {}, 'PUT');
+    out(d, () => devModeLines(d));
+  });
+
 const networkCmd = program.command('network').description('secure addresses on the home network (LAN HTTPS)');
 networkCmd
   .command('https [on|off]')
@@ -1998,6 +2021,14 @@ program
   .action(async (action: string) => {
     const { applyEgressStep } = await import('../bootstrap/egress-apply.js');
     await applyEgressStep(action, (msg) => process.stderr.write(`[egress-step] ${msg}\n`));
+  });
+
+program
+  .command('kernel-step <module>')
+  .description('ROOT, run by harbor-kernel@<module>.service: load a kernel driver an app asked for (binder, decision 193) now and at every boot')
+  .action(async (module: string) => {
+    const { applyKernelStep } = await import('../bootstrap/kernel-apply.js');
+    await applyKernelStep(module, (msg) => process.stderr.write(`[kernel-step] ${msg}\n`));
   });
 
 program

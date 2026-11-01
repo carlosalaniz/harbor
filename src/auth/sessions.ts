@@ -260,6 +260,18 @@ export class SessionService {
     await this.unlockMachineKey(password);
     return { unlocked: this.machineKey?.unlocked ?? false };
   }
+  // Decision 193: a sensitive switch (developer mode) asks for the password again. Like unlock: wrong passwords count
+  // against the login limits and the error is not a 401, so the console keeps its session.
+  async confirmPassword(password: string, client: string, opts: { local?: boolean } = {}): Promise<void> {
+    const nowMs = this.clock.now().getTime();
+    const admin = this.repo.administrator();
+    if (!admin) throw new HarborError('STATE_UNAVAILABLE', 'no administrator enrolled');
+    const giveBack = this.reserve(client, opts.local === true, nowMs, 'too many wrong passwords');
+    if (!(await verifyPassword(password, { hash: admin.passwordHash, salt: admin.salt, params: admin.params }))) {
+      throw new HarborError('INVALID_REQUEST', 'password is wrong', { nextAction: 'Type your Harbor password again.' });
+    }
+    giveBack();
+  }
   /** Confirm the operator's password before a sensitive account action. */
   async verifyAdminPassword(password: string): Promise<void> {
     const admin = this.repo.administrator();

@@ -76,6 +76,9 @@ permissions:                     # optional (0.29.0, decision 163): per service,
                                  # (and an update that adds one); update-all and auto-update skip such updates.
                                  # gpu (0.34.0, decision 179; set release.minHarbor: "0.34.0") = this machine's
                                  # graphics card, e.g. `ollama: [gpu]`: see "The gpu permission" below.
+                                 # privileged + binder (0.40.0, decision 193; set release.minHarbor: "0.40.0") =
+                                 # full control of this machine / Android's binder driver: OFFICIAL CATALOG ONLY,
+                                 # see "Trusted-only permissions" below.
 health:
   endpoint: web
   path: /                        # must answer before any account exists; a published address of this
@@ -265,6 +268,20 @@ graphics, display or video encoding yet). An image that uses integrated Intel/AM
 its own switch for it (Ollama: `OLLAMA_IGPU_ENABLE: "1"`). `devices`, `deploy`, `runtime`, `group_add`, `gpus` and `device_cgroup_rules`
 stay refused in `compose.yaml`. The operator accepts `gpu` like the other permissions, also on a machine without a
 card. AMD ROCm (`/dev/kfd` + a `:rocm` image) is not supported yet.
+
+**Trusted-only permissions** (Harbor 0.40.0, decision 193; set `release.minHarbor: "0.40.0"`). Two permissions are
+granted only to apps from the official catalog (carlosalaniz/harbor-apps, signed); an uploaded zip or a git source
+that asks for one is refused (`UNTRUSTED_SOURCE`) unless the operator turned on developer mode (Settings → Advanced
+access, `harbor developer-mode on`), which shows a banner on every page while it is on. Test such a package that way,
+then propose it to harbor-apps.
+
+| Permission | Harbor renders | Use it for |
+|---|---|---|
+| `privileged` | `privileged: true` on that service: every device and capability, no seccomp or AppArmor. The review says *Full control of this machine*. | software that cannot run otherwise (redroid). Never as a shortcut for a device or capability the other permissions cover. |
+| `binder` | nothing in Compose. Before any container of the app starts, Harbor's root step loads `binder_linux` (`devices=binder,hwbinder,vndbinder`) and keeps it loaded at every boot. A kernel without the module refuses the plan with `KERNEL_MODULE_MISSING` and the apt line (Ubuntu: `linux-modules-extra-$(uname -r)`). | Android containers (redroid; they mount binderfs themselves, so they also need `privileged`). |
+
+`privileged` stays refused as a `compose.yaml` key: only the permission renders it, and the operator accepts it in
+the review like every other permission (an update that adds it waits for a person).
 
 `healthcheck: {disable: true}` (Harbor 0.28.4, decision 162; set `release.minHarbor: "0.28.4"`) switches off a check the
 image carries. Use it when the image's own check cannot pass in your setup or takes longer than Harbor waits: Harbor
