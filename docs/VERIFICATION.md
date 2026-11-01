@@ -1259,8 +1259,9 @@ driver. Live evidence: `docs/evidence/live-redroid-2026-11-01/` (harbor-old, ker
 | `catalog:verify` / `catalog:hash --check` (fixtures), `openapi -- --check` | ok / ok / current; harbor-apps with `redroid`: 152 packages ok |
 
 Gate ran locally on Node 24.12.0 (darwin-arm64); CI runs 24.22.1. Not covered live yet: the install through Harbor's
-own plan/approve flow on a real box (harbor-old's CLI session had expired), and the harbor-apps smoke run of `redroid`
-on a GitHub runner (needs 0.40.0 released).
+own plan/approve flow on a real box (harbor-old's CLI session had expired). The harbor-apps smoke run of `redroid` (Harbor
+0.40.0's engine on a GitHub runner, Ubuntu 24.04.5, Docker 28.0.4, kernel 7.0.0-1017-azure with `binder_linux` in its base
+modules) passed: install, healthy, settled (PR #26).
 
 ## 4. Qualified versions
 

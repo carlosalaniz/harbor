@@ -452,7 +452,8 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] Carlos asked for a redroid app; his answers: a general `privileged` permission, only from the official catalog (like Android's store), a developer mode that bypasses it with a banner, Harbor's root helper loads binder, browser-only access, own ws-scrcpy image on GHCR
 - [x] Decision 193: `privileged` + `binder` permissions (minHarbor 0.40.0); `UNTRUSTED_SOURCE` at upload, plan and approval unless developer mode; `KERNEL_MODULE_MISSING` with the apt line; `harbor-kernel@binder` root oneshot + polkit + boot files; `GET/PUT /v1/system/developer-mode`, `harbor developer-mode`, Settings → Advanced access card, yellow banner
 - [x] Tests and gate (§3aa); live root step + redroid stack on harbor-old (`docs/evidence/live-redroid-2026-11-01/`)
-- [ ] harbor-apps PR `redroid` (ws-scrcpy image workflow, the app, binder pre-step in qualify/updates) qualified by the smoke run after 0.40.0 is released
+- [x] harbor-apps PR #26 `redroid` (ws-scrcpy image workflow, the app, binder step in qualify/updates): smoke passed on a GitHub runner (kernel 7.0.0-1017-azure loads `binder_linux` from its base modules; it has no `-extra` package), qualification recorded; v0.40.0 released (the release job's first run hit the known `lan-https` Caddy-reject timing flake, the rerun passed)
+- [ ] Merge PR #26 (publishes the first privileged app to every box): Carlos's call
 - [ ] Live: install Android through Harbor's console on harbor-old (needs `harbor login` there)
 
 ## Phase 74 — lock-guard once per unlock (2026-11-01, 0.39.1) ✅
