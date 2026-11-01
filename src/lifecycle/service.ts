@@ -1289,6 +1289,7 @@ export class ApplicationService {
     const crypto = this.ctx.crypto;
     if (sealed && crypto) await crypto.lockApp({ instanceId: inst.id, home: home.name });
     this.lockApp(inst.id);
+    for (const fn of this.lockListeners) fn(inst.id);
     this.ctx.log.info('app locked', { instanceId: inst.id, sealed });
     return this.summaryOf(inst.id);
   }
@@ -1887,6 +1888,11 @@ export class ApplicationService {
   // Background actors with one-attempt memories (observer guards) forget them for an app whose item was cancelled.
   onOperationCancelled(fn: (instanceId: string) => void): void {
     this.cancelListeners.push(fn);
+  }
+  // …and for an app locked again: its next unlock is a new chance for lock-guard's one start.
+  private lockListeners: ((instanceId: string) => void)[] = [];
+  onAppLocked(fn: (instanceId: string) => void): void {
+    this.lockListeners.push(fn);
   }
   cancelOperation(id: string, actor: string): OperationDto {
     const op = this.ctx.repo.operation(id);

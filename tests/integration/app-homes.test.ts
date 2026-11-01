@@ -384,8 +384,9 @@ presentation:
     crypto.open.clear();
     await h.fake.startContainer(ours[0]!.id);
     await h.restart(); // the login unlocks the home; lock-guard must start the app although one container runs
-    await until(async () => (await h.api.instances()).find((i) => i.id === inst.id)!.runtime === 'running', 'every container of twosvc running again');
-    expect(h.daemon.ctx.repo.listOperations(500).some((o) => o.instanceId === inst.id && o.kind === 'start' && o.actor === 'lock-guard' && o.state === 'succeeded')).toBe(true);
+    // wait for lock-guard's start to finish, not just for `running`: the containers run before its readiness check ends
+    await until(async () => h.daemon.ctx.repo.listOperations(500).some((o) => o.instanceId === inst.id && o.kind === 'start' && o.actor === 'lock-guard' && o.state === 'succeeded'), "lock-guard's start of twosvc");
+    expect((await h.api.instances()).find((i) => i.id === inst.id)!.runtime).toBe('running');
   });
 
   // Decision 183 review R2: the locked refusal comes while the start is PLANNED, so the CLI must read the passphrase
@@ -455,6 +456,22 @@ presentation:
     const ops = h.daemon.ctx.repo.listOperations(500).filter((o) => o.instanceId === driveInstanceId);
     expect(ops.filter((o) => o.state === 'failed').length).toBe(failedBefore); // no second start failed next to Harbor's own
     expect(ops.some((o) => o.kind === 'start' && o.actor === 'lock-guard' && o.state === 'succeeded')).toBe(true);
+  });
+
+  // Lock-guard tries once per unlock, not once per boot: locking the app again starts a new cycle. It used to
+  // remember the app for the whole boot, so a second lock and unlock never started it (and the CLI test above
+  // failed on CI whenever an observer tick had spent that one attempt earlier).
+  it('lock-guard starts the app again after a second lock and unlock in the same boot', async () => {
+    const lockGuardStarts = () => h.daemon.ctx.repo.listOperations(500).filter((o) => o.instanceId === driveInstanceId && o.kind === 'start' && o.actor === 'lock-guard' && o.state === 'succeeded').length;
+    for (let round = 0; round < 2; round++) {
+      const stop = await h.api.plan({ kind: 'stop', instanceId: driveInstanceId });
+      expect((await h.api.waitOperation((await h.api.submit(stop.id)).operationId)).state).toBe('succeeded');
+      await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/lock`, {});
+      h.daemon.ctx.repo.updateInstance(driveInstanceId, { desired: 'running' }); // as after a reboot: locked, meant to run
+      const before = lockGuardStarts();
+      await h.api.expect<InstanceSummary>(200, 'POST', `/v1/instances/${driveInstanceId}/unlock`, { passphrase: PASS });
+      await until(async () => lockGuardStarts() > before && (await h.api.instances()).find((i) => i.id === driveInstanceId)!.runtime === 'running', `lock-guard start, round ${round + 1}`, 15_000);
+    }
   });
 });
 

@@ -1237,6 +1237,12 @@ subnetted` (30 bridge networks; 14 empty leftovers of stacks that had moved onto
 
 Gate ran locally on Node 24.12.0 (darwin-arm64); CI runs 24.22.1. Not covered live yet: the production box after its update.
 
+**0.39.1 (decision 192, lock-guard once per unlock):** `ci` on 0.39.0 failed on `harbor start <locked> --passphrase-stdin`
+(the release job passed). Integration 388 passed, 3 skipped (+1: two lock/unlock rounds in one boot, each followed by
+lock-guard's start; it failed in round 1 without the fix). `app-homes.test.ts` 4/4 clean runs after the decision-190 reboot
+test waits for lock-guard's start instead of `running` (it had failed 1 of 3). Unit 654 + 2 skipped, e2e 45, lint and
+typecheck clean.
+
 ## 4. Qualified versions
 
 | Component | Version | Source |

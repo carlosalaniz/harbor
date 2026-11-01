@@ -38,6 +38,8 @@ export class Observer {
   ) {
     // decision 183: an item cancelled for an app frees the guards' one-attempt memories of it, so a guard may act again
     service.onOperationCancelled((instanceId) => this.forgetAttempts(instanceId));
+    // locked again: the next unlock may start it again (lock-guard's attempt is per unlock, not per boot)
+    service.onAppLocked((instanceId) => this.unlockStartAttempts.delete(instanceId));
   }
 
   forgetAttempts(instanceId: string): void {
@@ -416,8 +418,9 @@ export class Observer {
   // every sealed home is locked, so desired-running apps are down (Docker
   // cannot even resolve their bind paths) until the first login unlocks the
   // default-key homes (or the operator unlocks a custom one). One attempt
-  // per (instance, boot): a failed start must not loop, and the Start plan
-  // itself re-checks the seal. Same policy switch as the drive guard.
+  // per (instance, unlock): a failed start must not loop, and the Start plan
+  // itself re-checks the seal; locking the app again (service.onAppLocked)
+  // starts a new cycle. Same policy switch as the drive guard.
   private readonly unlockStartAttempts = new Set<string>();
   private autoStartUnlocked(fullyRunning: Map<string, boolean>): void {
     try {

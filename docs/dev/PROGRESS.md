@@ -448,6 +448,10 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 74 — lock-guard once per unlock (2026-11-01, 0.39.1) ✅
+- [x] `ci` on 0.39.0 (as on 0.38.0) failed on `harbor start <locked> --passphrase-stdin`; the release job passed, so 0.39.0 published. Cause: lock-guard kept its one start attempt per app for the whole boot (decision 192: now per unlock, reset when the app is locked)
+- [x] Tests: integration `app-homes.test.ts` (+1: two lock/unlock rounds, each followed by lock-guard's start; failed in round 1 without the fix); the decision-190 reboot test waits for lock-guard's start to finish instead of `running` (it failed 1 of 3 local runs); gate below (§3z)
+
 ## Phase 73 — Harbor picks network subnets (2026-11-01, 0.39.0) ✅
 - [x] Found live: installing Khoj on the production box failed with Docker's `all predefined address pools have been fully subnetted` (30 bridge networks: 15 Harbor's, 14 empty leftovers of stacks moved onto Harbor). Any new install would have failed there
 - [x] Decision 191: new app networks (Compose file `ipam`) and new link networks (`docker network create --subnet`) get a /24 from `10.200.0.0/13`, skipping every Docker network's subnet and every range the machine routes or sits on (`NetProvider.hostRanges`: `/proc/net/route` + interfaces). Existing networks keep their subnet; one Docker picked keeps a file without `ipam` (Compose 5.1 would recreate it otherwise). Full block = `OPERATION_FAILED` with what to remove
