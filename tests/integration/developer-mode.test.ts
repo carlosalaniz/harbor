@@ -105,6 +105,10 @@ describe('developer mode and the trusted-only permissions (decision 193)', () =>
     // still listed, so the operator knows what holds full control
     expect((await h.api.expect<DeveloperModeDto>(200, 'GET', '/v1/system/developer-mode')).untrustedApps).toEqual([inst.name]);
     await h.api.expectError(403, 'UNTRUSTED_SOURCE', 'POST', '/v1/packages', zip('droid', '2', ['privileged', 'binder']));
+    // a restart keeps an installed app going; putting a removed one back is an install again, so it is refused
+    expect((await h.api.run({ kind: 'restart', instanceId: inst.id })).op.state).toBe('succeeded');
+    expect((await h.api.run({ kind: 'remove', instanceId: inst.id })).op.state).toBe('succeeded');
+    await h.api.expectError(403, 'UNTRUSTED_SOURCE', 'POST', '/v1/plans', { kind: 'reinstall', instanceId: inst.id });
     expect((await h.api.run({ kind: 'purge', instanceId: inst.id })).op.state).toBe('succeeded');
     await h.api.expectError(403, 'UNTRUSTED_SOURCE', 'POST', '/v1/plans', { kind: 'install', packageId: 'droid' });
   });

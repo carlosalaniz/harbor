@@ -448,6 +448,11 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 76 — reinstall checks the source too (2026-11-01, 0.40.1) ✅
+- [x] Found live on harbor-old (uploaded redroid, developer mode turned off again): Reinstall after Remove rebuilt the app from its stored release without the decision-193 check. Now refused with `UNTRUSTED_SOURCE`; start, stop, restart and repair still keep an installed app going
+- [x] Live on harbor-old: the upload refused with developer mode off; on, plan → approve refused without `--accept-permissions` → installed in 15 s on the sealed (fscrypt) Harbor data folder; Android booted on the encrypted volume, privileged, adb connected, 401 without the login; the screen streams through Harbor's own address
+- [x] Tests: integration `developer-mode.test.ts` (restart allowed, reinstall refused); unit 667 + 2, integration 394 + 3
+
 ## Phase 75 — trusted-only permissions, developer mode, binder (2026-11-01, 0.40.0) ✅
 - [x] Carlos asked for a redroid app; his answers: a general `privileged` permission, only from the official catalog (like Android's store), a developer mode that bypasses it with a banner, Harbor's root helper loads binder, browser-only access, own ws-scrcpy image on GHCR
 - [x] Decision 193: `privileged` + `binder` permissions (minHarbor 0.40.0); `UNTRUSTED_SOURCE` at upload, plan and approval unless developer mode; `KERNEL_MODULE_MISSING` with the apt line; `harbor-kernel@binder` root oneshot + polkit + boot files; `GET/PUT /v1/system/developer-mode`, `harbor developer-mode`, Settings → Advanced access card, yellow banner

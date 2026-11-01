@@ -2317,6 +2317,8 @@ export class ApplicationService {
         if (inst.installState !== 'retained') throw new HarborError('INVALID_STATE', `reinstall requires a removed (retained) instance; ${inst.name} is ${inst.installState}`);
         if (!inst.everInstalled) throw new HarborError('INVALID_STATE', `instance ${inst.name} never completed an installation; manual investigation is required`, { nextAction: 'Inspect the instance and its resources manually. Automatic reinstall only applies to previously successful instances.' });
         this.refuseUnreachableHome(inst, 'reinstall');
+        // decision 193: putting a removed app back is an install again (its stored release; any source but the catalog)
+        this.refuseUntrusted(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId).manifest, this.ctx.packages.originOf(inst.packageId) ?? 'local', inst.name, {});
         changes.push(`Reinstall ${pkgName} revision ${inst.revision} into "${inst.name}" using its stored release`, 'Verify retained volumes (ownership tokens) and secrets before starting', ...(retainedExposures(this.ctx.repo, inst.id)?.items ?? []).map((x) => `Publish ${exposureUrl(x)} again${x.via === 'tailnet' ? ' (on a fresh tailnet port)' : ''}`), `Recreate containers and network for project ${inst.project}`, ...this.ctx.repo.linksOfConsumer(inst.id).filter((l) => l.state === 'dormant').map((l) => `Re-create link ${l.linkId} (network ${l.networkName}) if its provider is still installed`), 'Check readiness');
         break;
     }
