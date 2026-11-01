@@ -321,6 +321,80 @@
         }
       }
     },
+    "/v1/instances/{id}/login/reveal": {
+      "post": {
+        "description": "The passwords of an app's Harbor logins (decision 194), for the drawer's Show. Needs the administrator password (wrong ones count against the login limits and answer 422). Turning a login on or off and setting a new password go through a configure plan (`login`).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-7][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "logins"
+                  ],
+                  "properties": {
+                    "logins": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "endpoint",
+                          "password"
+                        ],
+                        "properties": {
+                          "endpoint": {
+                            "type": "string"
+                          },
+                          "password": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/system/developer-mode": {
       "get": {
         "description": "Whether developer mode is on (packages that are not from the official catalog may then ask for the privileged and binder permissions), since when, and which installed apps hold such a permission without coming from the official catalog.",
@@ -2989,6 +3063,28 @@
                           "offline",
                           "default"
                         ]
+                      },
+                      "login": {
+                        "type": "object",
+                        "maxProperties": 8,
+                        "propertyNames": {
+                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                        },
+                        "additionalProperties": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "minProperties": 1,
+                          "properties": {
+                            "on": {
+                              "type": "boolean"
+                            },
+                            "password": {
+                              "enum": [
+                                true
+                              ]
+                            }
+                          }
+                        }
                       }
                     }
                   },
@@ -3212,7 +3308,14 @@
                         "type": "object",
                         "maxProperties": 16,
                         "propertyNames": {
-                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                          "anyOf": [
+                            {
+                              "pattern": "^[a-z][a-z0-9-]{0,62}$"
+                            },
+                            {
+                              "pattern": "^harbor\\.login\\.[a-z][a-z0-9-]{0,62}$"
+                            }
+                          ]
                         },
                         "additionalProperties": {
                           "type": "string",

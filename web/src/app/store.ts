@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { InternetMode, LinkChoice, SettingValue } from '../../../src/contracts/api';
+import type { InternetMode, LinkChoice, LoginChange, SettingValue } from '../../../src/contracts/api';
 import type { AppearanceDto, CatalogItemDto, InstallMainAddress, ExposureDto, InstanceSummary, NotificationsDto, OperationDto, OperationQueueDto, PlanDto, PlanRequest, PlatformToolDto, QueueableKind, SystemDto, SystemMetricsDto, UiExposureDto } from '../../../src/contracts/api';
 import { ApiError, api, newIdempotencyKey } from '../api';
 import { REFRESH_MS, alreadyQueued, clearFinished as withoutPlainFinished, isFinal, isQueueable, keepFinished, queuePollMs, reviewHasValues } from './queue';
@@ -21,7 +21,7 @@ export type Action =
   // decisions 125/126/180: replace typed-in secrets (values asked in the review dialog), change link providers
   // and/or settings (the new values, from the app page's Settings → Change…)
   // decision 184: internet access (a mode, or 'default' to follow the package again)
-  | { kind: 'configure'; instance: InstanceSummary; secrets?: string[]; links?: Record<string, LinkChoice | null>; settings?: Record<string, SettingValue>; internet?: InternetMode | 'default' }
+  | { kind: 'configure'; instance: InstanceSummary; secrets?: string[]; links?: Record<string, LinkChoice | null>; settings?: Record<string, SettingValue>; internet?: InternetMode | 'default'; login?: Record<string, LoginChange> }
   | { kind: 'start' | 'stop' | 'restart' | 'remove' | 'reinstall' | 'purge' | 'update' | 'seal'; instance: InstanceSummary }
   | { kind: 'expose'; instance: InstanceSummary; via: 'tailnet' | 'public' | 'proxy'; hostname: string; protection: 'none' | 'basic'; makePrimary: boolean; proxyFrom?: string }
   // decision 127: hostname names one of several public names (withdraw it / make it the main address)
@@ -42,7 +42,7 @@ export function planRequestFor(a: Action): PlanRequest {
       // with the submission (see submitPassphraseFor).
       return { kind: 'install', packageId: a.packageId, ...(a.name ? { name: a.name } : {}), ...(a.storage && Object.keys(a.storage).length ? { storage: a.storage } : {}), ...(a.location ? { location: a.location } : {}), ...(a.main ? { main: a.main } : {}), ...(a.links && Object.keys(a.links).length ? { links: a.links } : {}), ...(a.internet ? { internet: a.internet } : {}), ...(a.tailnet !== undefined ? { tailnet: a.tailnet } : {}) };
     case 'configure':
-      return { kind: 'configure', instanceId: a.instance.id, ...(a.secrets?.length ? { secrets: a.secrets } : {}), ...(a.links && Object.keys(a.links).length ? { links: a.links } : {}), ...(a.settings && Object.keys(a.settings).length ? { settings: a.settings } : {}), ...(a.internet ? { internet: a.internet } : {}) };
+      return { kind: 'configure', instanceId: a.instance.id, ...(a.secrets?.length ? { secrets: a.secrets } : {}), ...(a.links && Object.keys(a.links).length ? { links: a.links } : {}), ...(a.settings && Object.keys(a.settings).length ? { settings: a.settings } : {}), ...(a.internet ? { internet: a.internet } : {}), ...(a.login && Object.keys(a.login).length ? { login: a.login } : {}) };
     case 'expose':
       return { kind: 'expose', instanceId: a.instance.id, via: a.via, ...(a.via === 'public' ? { hostname: a.hostname, protection: a.protection } : {}), ...(a.via === 'proxy' ? { hostname: a.hostname, proxyFrom: a.proxyFrom ?? '' } : {}), makePrimary: a.makePrimary };
     case 'unexpose':

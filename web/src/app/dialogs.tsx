@@ -19,6 +19,73 @@ export function linkCandidates(link: { packages: string[] | null }, instances: I
   return instances.filter((i) => i.id !== selfId && i.installState === 'installed' && (!link.packages || link.packages.includes(i.packageId)));
 }
 
+// decision 194: 24 characters from the browser's CSPRNG (getRandomValues works on plain-http LAN pages too)
+function generatedPassword(): string {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (b) => abc[b % abc.length]).join('');
+}
+
+// Decision 194: Show password asks for the Harbor password first, then shows the app's login passwords.
+function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSummary; title: string; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [logins, setLogins] = useState<{ endpoint: string; password: string }[] | null>(null);
+  return (
+    <Dialog title={`Password of ${title}`} onClose={onClose}>
+      {logins ? (
+        <>
+          {logins.map((l) => (
+            <div key={l.endpoint} className="cmd">
+              <pre className="code wrap" aria-label={`Password${logins.length > 1 ? ` (${l.endpoint})` : ''}`}>
+                {l.password}
+              </pre>
+              <Copy text={l.password} />
+            </div>
+          ))}
+          <div className="row end">
+            <button className="btn primary" onClick={onClose}>
+              Done
+            </button>
+          </div>
+        </>
+      ) : (
+        <form
+          className="stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setBusy(true);
+            setError(null);
+            api.revealAppLogins(inst.id, password).then(
+              (r) => setLogins(r.logins),
+              (err: unknown) => setError(err instanceof Error ? err.message : String(err)),
+            ).finally(() => setBusy(false));
+          }}
+        >
+          <label>
+            Your Harbor password
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
+          </label>
+          {error && (
+            <p className="error small" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="row end">
+            <button className="btn" type="button" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" type="submit" disabled={busy || !password}>
+              Show
+            </button>
+          </div>
+        </form>
+      )}
+    </Dialog>
+  );
+}
+
 // Operator-provided secrets (decision 125): one password-style field per value the plan asks for.
 function SecretFields({ plan, values, onChange }: { plan: PlanDto; values: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
   const [shown, setShown] = useState<Record<string, boolean>>({});
@@ -47,10 +114,25 @@ function SecretFields({ plan, values, onChange }: { plan: PlanDto; values: Recor
             <button className="btn ghost" type="button" onClick={() => setShown({ ...shown, [s.id]: !shown[s.id] })} aria-label={shown[s.id] ? `Hide ${s.id}` : `Show ${s.id}`}>
               {shown[s.id] ? 'Hide' : 'Show'}
             </button>
+            {s.id.startsWith('harbor.login.') && (
+              // decision 194: a strong one, shown so it can be copied before approving
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={() => {
+                  onChange({ ...values, [s.id]: generatedPassword() });
+                  setShown({ ...shown, [s.id]: true });
+                }}
+              >
+                Generate
+              </button>
+            )}
           </span>
         </label>
       ))}
-      <p className="muted small">Kept on this machine as a secret of the app (like the ones Harbor generates); never shown again, never in logs.</p>
+      <p className="muted small">
+        {asked.every((s) => s.id.startsWith('harbor.login.')) ? "Kept on this machine as a secret of the app; the app's drawer shows it again after you type your Harbor password." : 'Kept on this machine as a secret of the app (like the ones Harbor generates); never shown again, never in logs.'}
+      </p>
     </fieldset>
   );
 }
@@ -146,7 +228,7 @@ export function PlanDialog({ c }: { c: Console }) {
   const needsPermission = plan ? (plan.permissions.length > 0 || opensPorts.length > 0) && !permissionsAccepted : false;
   const settingProblem = chosenSettings.problem;
   const typed = Object.fromEntries(Object.entries(secretValues).filter(([id, v]) => v !== '' || plan?.secrets.find((s) => s.id === id)?.ask === 'optional' && plan.kind === 'configure'));
-  const title = plan ? (plan.kind === 'install' && pending.kind === 'restore-app' ? 'Review restore' : plan.kind === 'configure' && internetOnly(plan) ? 'Review internet access' : `Review ${verb(plan.kind)}`) : `Planning ${pending.kind === 'restore-app' ? 'restore' : verb(pending.kind)}…`;
+  const title = plan ? (plan.kind === 'install' && pending.kind === 'restore-app' ? 'Review restore' : plan.kind === 'configure' && internetOnly(plan) ? 'Review internet access' : pending.kind === 'configure' && pending.login ? 'Review login' : `Review ${verb(plan.kind)}`) : `Planning ${pending.kind === 'restore-app' ? 'restore' : verb(pending.kind)}…`;
   const appName = plan ? (c.data.catalog.find((i) => i.id === plan.packageId)?.name ?? plan.name) : '';
   const displayName = plan ? (plan.name === plan.packageId ? appName : `${appName} (${plan.name})`) : '';
   const approveLabel = !plan ? '…' : plan.kind === 'remove' ? 'Remove (keep data)' : plan.kind === 'purge' ? 'Delete everything' : plan.kind === 'install' ? (pending.kind === 'restore-app' ? 'Restore here' : 'Install') : plan.kind === 'restore' ? 'Restore now' : plan.kind === 'update' ? 'Update now' : plan.kind === 'expose' ? 'Publish' : plan.kind === 'unexpose' ? 'Withdraw' : plan.kind === 'reconfigure' ? 'Switch' : plan.kind === 'configure' ? 'Apply' : plan.kind === 'seal' ? 'Encrypt now' : plan.kind === 'move' ? 'Move now' : capitalize(plan.kind);
@@ -1682,6 +1764,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
   const [locking, setLocking] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false); // decision 180
   const [internetOpen, setInternetOpen] = useState(false); // decision 184
+  const [revealOpen, setRevealOpen] = useState(false); // decision 194
   const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need && !locked;
   // decision 183: a busy app (its install included) still offers what makes sense after its operations; it queues
   const gate = appActionGates(inst, ops);
@@ -1999,6 +2082,49 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
               }}
             />
           )}
+        </>
+      )}
+      {!retained && detail?.login && detail.login.length > 0 && (
+        // decision 194: Harbor's login in front of the app; on/off and a new password go through the review
+        <>
+          <h4>Login</h4>
+          <ul className="addresses">
+            {detail.login.map((l) => {
+              const which = detail.login!.length > 1 ? ` (${l.endpoint})` : '';
+              const busy = inst.installState !== 'installed';
+              return (
+                <li key={l.endpoint}>
+                  <Pill tone={l.on ? 'ok' : 'muted'}>{l.on ? 'asks for a password' : 'open'}</Pill>{' '}
+                  <span className="muted small">
+                    {l.locked === 'required' ? 'This app always asks for its password first.' : l.locked === 'never' ? "Not possible for this app: its own apps and sync clients need to reach it directly." : l.on ? 'Every address asks for the password first.' : 'Anyone who reaches its addresses can open it.'}
+                  </span>
+                  <span className="row">
+                    {l.locked === null && l.on && (
+                      <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, login: { [l.endpoint]: { on: false } } })} aria-label={`Turn off the login of ${appLabel(inst, instances)}${which}`}>
+                        Turn off
+                      </button>
+                    )}
+                    {l.locked === null && !l.on && (
+                      <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, login: { [l.endpoint]: { on: true, ...(l.hasPassword ? {} : { password: true as const }) } } })} aria-label={`Turn on a login for ${appLabel(inst, instances)}${which}`}>
+                        Turn on…
+                      </button>
+                    )}
+                    {l.locked !== 'never' && (l.on || l.hasPassword) && (
+                      <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, login: { [l.endpoint]: { password: true } } })} aria-label={`Change the password of ${appLabel(inst, instances)}${which}`}>
+                        Change password…
+                      </button>
+                    )}
+                    {l.hasPassword && (
+                      <button className="btn small ghost" onClick={() => setRevealOpen(true)} aria-label={`Show the password of ${appLabel(inst, instances)}${which}`}>
+                        Show password…
+                      </button>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          {revealOpen && <RevealLoginDialog inst={inst} title={appLabel(inst, instances)} onClose={() => setRevealOpen(false)} />}
         </>
       )}
       {!retained && (inst.links.length > 0 || inst.linkedBy.length > 0) && (

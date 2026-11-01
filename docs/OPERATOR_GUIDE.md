@@ -810,6 +810,27 @@ which), and tell the app your public IP or a domain when it asks for its host. I
 without that. Only one VPN server can use a port: Harbor refuses a second app, or anything else on the machine,
 that wants the same one.
 
+### A Harbor login in front of an app (since 0.41.0)
+
+Many apps have no login of their own: anyone who can reach their address can use them. Harbor can put its own login
+page in front of any of them (decision 194):
+
+1. Open the app's drawer → **Login** → **Turn on…**.
+2. Type a password, or press **Generate**, then **Apply** in the review.
+
+From then on every address of the app (this machine, your network, Tailscale, the internet) first shows a Harbor page
+that asks for that password. A browser stays signed in for 30 days. Scripts can send it as a basic-auth password
+(`curl -u any:<password> …`).
+
+- **Show password…** shows it again after you type your Harbor password.
+- **Change password…** sets a new one; every browser has to sign in again.
+- **Turn off** opens the app again; Harbor keeps the password for next time.
+- Some apps always have it (the package requires it, like Android); their password is made at install and shown
+  once, and the drawer shows it again later. Some apps cannot have it, because their own phone or desktop apps would
+  stop syncing; the drawer says so.
+- Command line: `harbor app-login <app>` (status), `on` / `off`, `--generate` or `--password-stdin` for a new password,
+  `--show` to print it.
+
 ### Apps with full control of this machine, and developer mode (since 0.40.0)
 
 A few apps cannot run without full control of this machine. **Android** (redroid) is one: it runs as a

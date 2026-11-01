@@ -1263,6 +1263,21 @@ own plan/approve flow on a real box (harbor-old's CLI session had expired). The 
 0.40.0's engine on a GitHub runner, Ubuntu 24.04.5, Docker 28.0.4, kernel 7.0.0-1017-azure with `binder_linux` in its base
 modules) passed: install, healthy, settled (PR #26).
 
+## 3ab. Harbor's app login (2026-11-01, Harbor 0.41.0, decision 194)
+
+Live evidence: `docs/evidence/live-app-login-2026-11-01/` (harbor-old: turned on and off on ComfyUI, browser login with
+its WebSocket UI through the gate).
+
+| Check | Result |
+|---|---|
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | clean |
+| `pnpm test` (unit) | 676 passed, 2 skipped (+9 `gate.test.ts`: login page, script vs browser 401, cookie, basic auth, status-only health, WebSockets, sessions, next paths, limiter) |
+| `pnpm test:integration` | 402 passed, 3 live-Docker skipped (+8 `app-login.test.ts`: on with a password, gate renders and publishes, restart keeps it, reveal needs the Harbor password, new password new key, off keeps the password, required/never, api refused) |
+| `pnpm test:e2e` | 47 passed (+1: drawer → Login → Turn on… → Generate → Apply → Show password… → Turn off) |
+| `catalog:verify` / `catalog:hash --check` (fixtures), `openapi -- --check` | ok / ok / current |
+
+Gate ran locally on Node 24.12.0 (darwin-arm64); CI runs 24.22.1.
+
 ## 4. Qualified versions
 
 | Component | Version | Source |

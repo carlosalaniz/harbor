@@ -2126,3 +2126,77 @@ test('decision 193: developer mode — turning it on asks for the password, a ba
   await expect(banner).toHaveCount(0);
   await expect(card.getByRole('button', { name: 'Turn on…', exact: true })).toBeVisible();
 });
+
+test("decision 194: Harbor's app login — turn it on with a generated password, show it with the Harbor password, turn it off", async ({ page }) => {
+  const { writeZip } = await import('../../src/packages/zip.js');
+  const manifest = `apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: gate-e2e
+  name: Gate E2E
+  description: An app to put a login in front of
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: false
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 30
+ui:
+  primaryEndpoint: web
+`;
+  await login(page);
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'Add your own app' }).click();
+  const up = page.getByRole('dialog', { name: 'Your own app' });
+  await up.getByLabel('Package zip file').setInputFiles({ name: 'gate-e2e.zip', mimeType: 'application/zip', buffer: writeZip({ 'manifest.yaml': manifest, 'compose.yaml': 'services:\n  web:\n    image: nginx:1.27-alpine\n' }, { folder: 'gate-e2e' }) });
+  await expect(up).toContainText('Gate E2E is in your App Store');
+  await up.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('tab', { name: 'Your apps' }).click();
+  await page.locator('.tile.store').filter({ hasText: 'Gate E2E' }).getByRole('button', { name: 'Install Gate E2E', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Install Gate E2E now' }).click();
+  await page.getByRole('dialog', { name: 'Review install' }).getByRole('button', { name: 'Install', exact: true }).click();
+  await trayDone(page, 'Install');
+  await dismissRecovery(page);
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of gate-e2e', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Gate E2E' });
+  await expect(drawer.getByRole('heading', { name: 'Login', exact: true })).toBeVisible();
+  await expect(drawer).toContainText('Anyone who reaches its addresses can open it.');
+  await drawer.getByRole('button', { name: 'Turn on a login for Gate E2E', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Review login' });
+  await expect(review).toContainText("Put Harbor's login in front of gate-e2e");
+  await expect(review.getByRole('button', { name: 'Apply', exact: true })).toBeDisabled(); // no password yet
+  await review.getByRole('button', { name: 'Generate', exact: true }).click();
+  const generated = await review.getByLabel('Value for harbor.login.web', { exact: true }).inputValue();
+  expect(generated).toMatch(/^[A-Za-z0-9]{24}$/);
+  await review.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /^Gate E2E.*settings applied$/ }).first()).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'Details of gate-e2e', exact: true }).click();
+  await expect(drawer).toContainText('Every address asks for the password first.', { timeout: 15_000 });
+  // Show password asks for the Harbor password first
+  await drawer.getByRole('button', { name: 'Show the password of Gate E2E', exact: true }).click();
+  const show = page.getByRole('dialog', { name: 'Password of Gate E2E' });
+  await show.getByLabel('Your Harbor password', { exact: true }).fill(ADMIN.password);
+  await show.getByRole('button', { name: 'Show', exact: true }).click();
+  await expect(show.getByLabel('Password', { exact: true })).toHaveText(generated);
+  await show.getByRole('button', { name: 'Done', exact: true }).click();
+  // off again: no password needed, the password is kept
+  await drawer.getByRole('button', { name: 'Turn off the login of Gate E2E', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Review login' }).getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.getByRole('button', { name: 'Details of gate-e2e', exact: true }).click();
+  await expect(drawer).toContainText('Anyone who reaches its addresses can open it.', { timeout: 30_000 });
+});

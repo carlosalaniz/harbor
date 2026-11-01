@@ -54,6 +54,13 @@ endpoints:
                                  # (secure LAN, Tailscale or a domain) and the store says so before install
     kind: web                    # web (default) | api: machine-facing (an MCP gateway, a document server):
                                  # addresses to copy, no Open button (decision 141). Put it on ui.primaryEndpoint.
+    # login: required            # optional (Harbor 0.41.0, decision 194; set release.minHarbor: "0.41.0"): Harbor's
+                                 # app login in front of this endpoint. required = on from the install (password
+                                 # generated, shown once, changeable in the drawer; the operator cannot turn it off):
+                                 # for an app with no login of its own that must never be open. never = the operator
+                                 # cannot turn it on: the app's own clients send their own Authorization header (sync
+                                 # clients, WebDAV, mobile apps). Absent = the operator's switch, off by default. Not
+                                 # allowed with kind: api (API endpoints are never gated). See "Harbor's app login".
     # cookies: shared            # optional (Harbor 0.32.0, decision 167): writing the key at all needs
                                  # release.minHarbor: "0.32.0" (older Harbors refuse unknown keys).
                                  # isolated (default) = over the secure LAN address Harbor's relay renames and
@@ -268,6 +275,19 @@ graphics, display or video encoding yet). An image that uses integrated Intel/AM
 its own switch for it (Ollama: `OLLAMA_IGPU_ENABLE: "1"`). `devices`, `deploy`, `runtime`, `group_add`, `gpus` and `device_cgroup_rules`
 stay refused in `compose.yaml`. The operator accepts `gpu` like the other permissions, also on a machine without a
 card. AMD ROCm (`/dev/kfd` + a `:rocm` image) is not supported yet.
+
+**Harbor's app login** (Harbor 0.41.0, decision 194). Any web endpoint can sit behind a Harbor login page: Harbor runs a
+small proxy (`harbor_gate_<endpoint>`, never name a service like that) that publishes the endpoint's port, asks for
+the app's password on a Harbor page, keeps the browser signed in with a cookie, and passes everything else through
+(WebSockets included). What the app sees: the same requests minus Harbor's own cookie (and minus `Authorization` when a
+script signed in with basic auth), plus `X-Forwarded-For/-Proto/-Host`. Harbor's readiness probe reaches your
+`health.path` through it without a login (the gate answers with your status code and no body). So:
+
+- An app with **no login of its own** that must never be open (a remote desktop, a device console): `login: required`.
+  Do not ship your own auth proxy for it.
+- An app whose **own clients** cannot show a web page (Nextcloud's sync clients, WebDAV, an app's mobile API on the same
+  endpoint): `login: never`.
+- Everything else: leave it out; the operator decides.
 
 **Trusted-only permissions** (Harbor 0.40.0, decision 193; set `release.minHarbor: "0.40.0"`). Two permissions are
 granted only to apps from the official catalog (carlosalaniz/harbor-apps, signed); an uploaded zip or a git source

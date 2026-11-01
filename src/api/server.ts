@@ -274,6 +274,26 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     return reply.status(204).send();
   });
 
+  // --- Harbor's app login (decision 194): the passwords only come back to someone who types the Harbor password again
+  app.post(
+    '/v1/instances/:id/login/reveal',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: "The passwords of an app's Harbor logins (decision 194), for the drawer's Show. Needs the administrator password (wrong ones count against the login limits and answer 422). Turning a login on or off and setting a new password go through a configure plan (`login`).",
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } },
+        body: { type: 'object', additionalProperties: false, required: ['password'], properties: { password: { type: 'string', minLength: 1, maxLength: 1024 } } },
+        response: { 200: { type: 'object', additionalProperties: false, required: ['logins'], properties: { logins: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['endpoint', 'password'], properties: { endpoint: { type: 'string' }, password: { type: 'string' } } } } } } },
+      },
+    },
+    async (req, reply) => {
+      const who = clientOf(req);
+      await sessions.confirmPassword((req.body as { password: string }).password, who.id, { local: who.local });
+      void reply.header('cache-control', 'no-store');
+      return { logins: service.revealAppLogins((req.params as { id: string }).id) };
+    },
+  );
+
   // --- developer mode (decision 193)
   app.get('/v1/system/developer-mode', { preHandler: requireAuth, schema: { description: 'Whether developer mode is on (packages that are not from the official catalog may then ask for the privileged and binder permissions), since when, and which installed apps hold such a permission without coming from the official catalog.', response: { 200: DEVELOPER_MODE_SCHEMA } } }, async () => service.developerModeDto());
   app.put(
@@ -1020,6 +1040,9 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 settings: SETTING_VALUES,
                 // decision 184: internet access, or default to follow the package's own again
                 internet: { enum: ['direct', 'vpn', 'offline', 'default'] },
+                // decision 194: Harbor's app login per endpoint: on/off, and/or a new password (its value comes with the
+                // submission, under the secret id harbor.login.<endpoint>)
+                login: { type: 'object', maxProperties: 8, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, minProperties: 1, properties: { on: { type: 'boolean' }, password: { const: true } } } },
               },
             },
             {
@@ -1061,7 +1084,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
         headers: { type: 'object', properties: { 'idempotency-key': { type: 'string', pattern: IDEMPOTENCY_KEY_RE.source } }, required: ['idempotency-key'] },
         body: {
           oneOf: [
-            { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 }, secrets: { type: 'object', maxProperties: 16, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'string', maxLength: 4096 } }, settings: SETTING_VALUES, acceptPermissions: { type: 'boolean', description: 'Decision 163: true accepts the permissions the plan lists (required when it lists any).' } } },
+            { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 }, secrets: { type: 'object', maxProperties: 16, propertyNames: { anyOf: [{ pattern: ID_PATTERN }, { pattern: '^harbor\\.login\\.[a-z][a-z0-9-]{0,62}$' }] }, additionalProperties: { type: 'string', maxLength: 4096 } }, settings: SETTING_VALUES, acceptPermissions: { type: 'boolean', description: 'Decision 163: true accepts the permissions the plan lists (required when it lists any).' } } },
             { type: 'object', additionalProperties: false, required: ['action'], properties: { action: { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: [...QUEUEABLE_KINDS] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } } } },
           ],
         },

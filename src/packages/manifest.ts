@@ -32,6 +32,8 @@ export function validateManifestReferences(manifest: Manifest, compose: ComposeS
   const endpointIds = Object.keys(manifest.endpoints);
   for (const [id, ep] of Object.entries(manifest.endpoints)) {
     if (!(ep.service in manifest.deployment.services)) problems.push(`endpoints.${id}.service references unknown service ${ep.service}`);
+    // decision 194: an API endpoint is never gated (its clients send their own Authorization header)
+    if (ep.login === 'required' && ep.kind === 'api') problems.push(`endpoints.${id}: login: required cannot be used on an api endpoint`);
   }
   const requireEndpoint = (ref: string, where: string) => {
     if (!endpointIds.includes(ref)) problems.push(`${where} references unknown endpoint ${ref}`);

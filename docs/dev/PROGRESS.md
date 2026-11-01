@@ -448,6 +448,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 77 — Harbor's app login (2026-11-01, 0.41.0) ✅
+- [x] Carlos: Harbor must be able to change the Caddy-served passwords and put one on any app. His choices: per app + packages may require it; one login per app; type or generate, shown again later; packages may rule it out (`never`); a pretty Harbor page
+- [x] Decision 194: `gate/gate.mjs` on pinned `node:24-alpine`, one `harbor_gate_<endpoint>` per gated endpoint; configure `login`; `POST /v1/instances/:id/login/reveal`; `harbor app-login`; drawer Login section + review Generate; manifest `endpoints.<id>.login: required|never` (minHarbor 0.41.0)
+- [x] Tests and gate (§3ab); live on harbor-old with ComfyUI (`docs/evidence/live-app-login-2026-11-01/`)
+- [x] harbor-apps PR #26: Android uses `login: required` instead of its own Caddy proxy (minHarbor 0.41.0)
+
 ## Phase 76 — reinstall checks the source too (2026-11-01, 0.40.1) ✅
 - [x] Found live on harbor-old (uploaded redroid, developer mode turned off again): Reinstall after Remove rebuilt the app from its stored release without the decision-193 check. Now refused with `UNTRUSTED_SOURCE`; start, stop, restart and repair still keep an installed app going
 - [x] Live on harbor-old: the upload refused with developer mode off; on, plan → approve refused without `--accept-permissions` → installed in 15 s on the sealed (fscrypt) Harbor data folder; Android booted on the encrypted volume, privileged, adb connected, 401 without the login; the screen streams through Harbor's own address

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // pnpm package — build the relocatable Ubuntu x86-64 release archive:
 //   release/harbor-<version>-linux-x64.tar.gz  (+ SHA256SUMS, + SHA256SUMS.sig when a signing key is given)
-// Contents: bin/ launchers, dist/ (compiled daemon+CLI+bootstrap), web/ (built UI), catalog/,
+// Contents: bin/ launchers, dist/ (compiled daemon+CLI+bootstrap), web/ (built UI), gate/ (app login), catalog/,
 // targets/, node/ (official Node.js linux-x64 runtime, checksum-verified), node_modules/ (production
 // deps, hoisted, with better-sqlite3's shipped linux-x64 prebuild), docs/, package.json, release.json.
 // No npm/pnpm/compilation happens on the destination host.
@@ -126,6 +126,7 @@ const catalogIndex = extractCatalog(stageCatalog, fetched, catalogLibs);
 const catalogIds = Object.keys(catalogIndex.packages);
 for (const id of catalogIds) catalogLib.loadPackage(stageCatalog, id); // every seeded package loads exactly as the daemon loads it
 cpSync(path.join(ROOT, 'targets'), path.join(stage, 'targets'), { recursive: true }); // backup place packages (decision 152)
+cpSync(path.join(ROOT, 'gate'), path.join(stage, 'gate'), { recursive: true }); // the app login gate (decision 194), bind-mounted into its container
 cpSync(path.join(ROOT, 'release-assets', 'bin'), path.join(stage, 'bin'), { recursive: true });
 for (const b of readdirSync(path.join(stage, 'bin'))) chmodSync(path.join(stage, 'bin', b), 0o755);
 mkdirSync(path.join(stage, 'docs'), { recursive: true });

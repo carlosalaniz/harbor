@@ -121,6 +121,10 @@ export const MANIFEST_SCHEMA = {
           // decision 167 (0.32.0): isolated (default) = the LAN HTTPS relay tags and signs the endpoint's HttpOnly
           // cookies so no other app on the machine receives them; shared = its cookies pass unchanged
           cookies: { enum: ['isolated', 'shared'] },
+          // decision 194 (Harbor 0.41.0): Harbor's app login in front of this endpoint. required = always on (the
+          // operator cannot turn it off); never = the operator cannot turn it on (the app's own clients send their own
+          // Authorization header: sync clients, WebDAV). Absent = the operator's switch, off by default.
+          login: { enum: ['required', 'never'] },
         },
       },
     },

@@ -223,6 +223,21 @@ export interface LinkDto extends AppLinkDto {
   consumer: { instanceId: string; name: string };
 }
 // A provider for one link, chosen at install / configure / update (CLI: --link <id>=<instance>[/<endpoint>]).
+// decision 194: a configure plan's change to Harbor's app login of one endpoint (password: a new one comes with the
+// submission as secret `harbor.login.<endpoint>`)
+export interface LoginChange {
+  on?: boolean;
+  password?: true;
+}
+
+// decision 194: one endpoint's app login, as the drawer shows it (the password itself only through /login/reveal)
+export interface AppLoginDto {
+  endpoint: string;
+  on: boolean;
+  locked: 'required' | 'never' | null;
+  hasPassword: boolean;
+}
+
 export interface LinkChoice {
   instanceId: string;
   endpointId?: string;
@@ -348,6 +363,8 @@ export interface InstanceDetail extends InstanceSummary {
   // different one: Restart uses the one found now). Decision 181: also true with kind none + NVIDIA_REBOOT_NEEDED when
   // the containers still have the NVIDIA card from before the driver update (a Restart before the reboot drops it)
   gpu?: GpuDto & { inUse: boolean };
+  // decision 194: Harbor's app login of each web endpoint (absent on a removed app)
+  login?: AppLoginDto[];
 }
 
 export interface StorageDto {
@@ -600,7 +617,7 @@ export type PlanRequest =
   // links: a provider per link id, or null to unlink an optional one
   // decision 180: settings: new values by setting id (a value equal to the default removes the override)
   // internet (decision 184): a mode, or 'default' to follow the package again
-  | { kind: 'configure'; instanceId: string; secrets?: string[]; links?: Record<string, LinkChoice | null>; settings?: Record<string, SettingValue>; internet?: InternetMode | 'default' }
+  | { kind: 'configure'; instanceId: string; secrets?: string[]; links?: Record<string, LinkChoice | null>; settings?: Record<string, SettingValue>; internet?: InternetMode | 'default'; login?: Record<string, LoginChange> }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean; proxyFrom?: string }
   // decision 127: hostname picks one of several public names (required when there are several)
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string }

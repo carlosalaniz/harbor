@@ -354,7 +354,14 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
         this.containers.set(c.id, c);
         net.containerIds.push(c.id);
       }
-      // Compose recreates a container whose configuration changed; the fake keeps its id and syncs in place.
+      // Compose recreates a container whose configuration changed; the fake keeps its id and syncs in place
+      // (image and published ports included: a running one gives its old ports back first, like a recreate does).
+      if (recreate) {
+        if (c.state === 'running') await this.unlisten(c.id);
+        c.image = def.image;
+        c.ports = (def.ports ?? []).map((p) => ({ hostIp: p.host_ip, hostPort: Number(p.published), containerPort: p.target, ...(p.protocol === 'udp' ? { protocol: 'udp' as const } : {}) }));
+        if (c.state === 'running' && !opts.noStart) await this.listen(c);
+      }
       c.configHash = hash;
       c.env = { ...(def.environment ?? {}) };
       const wanted = new Map<string, string[]>([[net.id, []]]);

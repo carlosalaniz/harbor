@@ -9,6 +9,7 @@ import { linkValue } from './links.js';
 import { driDevice, NVIDIA_DEVICE_REQUEST } from './gpu.js';
 import { effectiveSettings, settingBindingValue } from './settings.js';
 import { renderedDns } from '../egress/rules.js';
+import { GATE_DIR, GATE_PORT, gateService, gateServiceDef, type GateRender } from './gate.js';
 
 // Decision 126: an active link where this instance is the consumer: its bound services get the provider's
 // address. Decision 171: link networks never appear in a Compose file (Compose would add every service
@@ -54,6 +55,9 @@ export interface RenderInput {
   // decision 191: the /24 Harbor chose for the app's network (absent = a network made before 0.39.0, which keeps
   // the subnet Docker gave it, or a prospective model)
   subnet?: string;
+  // decision 194: Harbor's app login in front of these endpoints (the gate publishes their ports instead)
+  gates?: GateRender[];
+  gateDir?: string;
 }
 
 export interface RenderedCompose {
@@ -105,6 +109,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
   const services: Record<string, unknown> = {};
 
   const endpointById = new Map(endpoints.map((e) => [e.id, e]));
+  const gated = new Map((input.gates ?? []).map((g) => [g.endpointId, g]));
   const consumerLinks = input.consumerLinks ?? [];
   const settingValues = effectiveSettings(manifest, input.settingOverrides ?? {});
 
@@ -161,7 +166,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
     generatedEnv[service] = generated.sort();
 
     const ports: Record<string, unknown>[] = endpoints
-      .filter((e) => e.service === service)
+      .filter((e) => e.service === service && !gated.has(e.id))
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((e) => ({ target: e.containerPort, published: String(e.hostPort), host_ip: input.bindHost ?? '127.0.0.1', protocol: 'tcp', mode: 'host' }));
     // decision 163: fixed ports go on every interface whatever the LAN setting (a tunnel port is useless on loopback)
@@ -209,6 +214,19 @@ export function renderCompose(input: RenderInput): RenderedCompose {
       });
     }
     services[service] = def;
+  }
+
+  // decision 194: one gate per gated endpoint, publishing that endpoint's port; the app service keeps only its network
+  for (const g of [...gated.values()].sort((a, b) => a.endpointId.localeCompare(b.endpointId))) {
+    const ep = endpointById.get(g.endpointId);
+    if (!ep) throw new Error(`login gate for unallocated endpoint ${g.endpointId}`);
+    const def = gateServiceDef(g, {
+      appName: manifest.metadata.name,
+      labels,
+      ports: [{ target: GATE_PORT, published: String(ep.hostPort), host_ip: input.bindHost ?? '127.0.0.1', protocol: 'tcp', mode: 'host' }],
+      gateDir: input.gateDir ?? GATE_DIR,
+    });
+    services[gateService(g.endpointId)] = def;
   }
 
   const volumes: Record<string, unknown> = {};

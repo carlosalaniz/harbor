@@ -153,7 +153,7 @@ export function settingsFile(stateDir: string, instanceId: string): string {
   return path.join(instanceDir(stateDir, instanceId), SETTINGS_FILE);
 }
 
-function readSettingsDoc(stateDir: string, instanceId: string): { values?: unknown; internet?: unknown } | null {
+function readSettingsDoc(stateDir: string, instanceId: string): { values?: unknown; internet?: unknown; login?: unknown } | null {
   let raw: string;
   try {
     raw = readFileSync(settingsFile(stateDir, instanceId), 'utf8');
@@ -161,7 +161,7 @@ function readSettingsDoc(stateDir: string, instanceId: string): { values?: unkno
     return null;
   }
   try {
-    const doc = JSON.parse(raw) as { values?: unknown; internet?: unknown };
+    const doc = JSON.parse(raw) as { values?: unknown; internet?: unknown; login?: unknown };
     return doc && typeof doc === 'object' ? doc : null;
   } catch {
     return null;
@@ -184,15 +184,24 @@ export function readInternetChoice(stateDir: string, instanceId: string): Intern
   return v === 'direct' || v === 'vpn' || v === 'offline' ? v : null;
 }
 
-function writeSettingsDoc(stateDir: string, instanceId: string, values: Record<string, SettingValue>, internet: InternetMode | null): void {
+// Decision 194: the operator's app-login switches (endpoint -> on) live here too, so backups and restores carry them.
+export function readLoginChoices(stateDir: string, instanceId: string): Record<string, boolean> {
+  const v = readSettingsDoc(stateDir, instanceId)?.login;
+  const out: Record<string, boolean> = {};
+  if (v && typeof v === 'object') for (const [k, on] of Object.entries(v as Record<string, unknown>)) if (on === true) out[k] = true;
+  return out;
+}
+
+function writeSettingsDoc(stateDir: string, instanceId: string, values: Record<string, SettingValue>, internet: InternetMode | null, login: Record<string, boolean> = readLoginChoices(stateDir, instanceId)): void {
   const file = settingsFile(stateDir, instanceId);
-  if (!Object.keys(values).length && internet === null) {
+  const logins = Object.fromEntries(Object.entries(login).filter(([, on]) => on).sort(([a], [b]) => a.localeCompare(b)));
+  if (!Object.keys(values).length && internet === null && !Object.keys(logins).length) {
     rmSync(file, { force: true });
     return;
   }
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const sorted = Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
-  writeDurable(file, JSON.stringify({ format: 1, values: sorted, ...(internet ? { internet } : {}) }, null, 2) + '\n', 0o644, false);
+  writeDurable(file, JSON.stringify({ format: 1, values: sorted, ...(internet ? { internet } : {}), ...(Object.keys(logins).length ? { login: logins } : {}) }, null, 2) + '\n', 0o644, false);
   chmodSync(file, 0o644); // UMask=0077 masks the open() mode
 }
 
@@ -203,6 +212,10 @@ export function writeSettingOverrides(stateDir: string, instanceId: string, valu
 
 export function writeInternetChoice(stateDir: string, instanceId: string, choice: InternetMode | null): void {
   writeSettingsDoc(stateDir, instanceId, readSettingOverrides(stateDir, instanceId), choice);
+}
+
+export function writeLoginChoices(stateDir: string, instanceId: string, login: Record<string, boolean>): void {
+  writeSettingsDoc(stateDir, instanceId, readSettingOverrides(stateDir, instanceId), readInternetChoice(stateDir, instanceId), login);
 }
 
 // The raw bytes (backups carry the file as it is; null = no overrides).

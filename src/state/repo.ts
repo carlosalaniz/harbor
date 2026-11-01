@@ -212,6 +212,8 @@ export interface PlanProposal {
   internet?: PlanInternetDto;
   // configure: the internet choice is the only change (nothing is re-rendered or restarted)
   internetOnly?: boolean;
+  // decision 194: configure: the app-login switches after this plan, and the endpoints that get a new password
+  login?: { choices: Record<string, boolean>; newPasswords: string[] };
   // decision 186: install: Also on Tailscale, recorded by the install operation (absent = the policy decides)
   tailnet?: boolean;
   changes: string[];

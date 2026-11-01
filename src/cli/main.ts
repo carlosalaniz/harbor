@@ -1,5 +1,5 @@
 import { Command, Option } from 'commander';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { AppBackupsDto, BackupPolicyDto, BackupsOverviewDto, BackupTargetDto, FoundAppDto, FoundBackupAppDto, HostStorageDto, LinkChoice, LinkDto, TailnetAllDto } from '../contracts/api.js';
 import { defaultInstallLocation } from '../storage/install-location.js';
 import { validatePackageFolder } from '../packages/validate-folder.js';
@@ -604,6 +604,41 @@ program
     const settings = typedSettings(inst.settings ?? [], readSetFlags(opts.set), inst.name);
     const plan = await planWhenFree(api, { kind: 'configure', instanceId: inst.id, ...(Object.keys(secrets).length ? { secrets: Object.keys(secrets) } : {}), ...(Object.keys(links).length ? { links } : {}), ...(Object.keys(settings).length ? { settings } : {}), ...(opts.internet !== undefined ? { internet: internetFlag(opts.internet, true) } : {}) });
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, secrets });
+  });
+
+// Decision 194: Harbor's app login in front of an app's web endpoint
+program
+  .command('app-login <instance> [state]')
+  .description("Harbor's login in front of an app (decision 194): show it, turn it on or off, set a new password (--password-stdin or --generate), or show the passwords (asks for your Harbor password)")
+  .option('--endpoint <id>', 'which web endpoint (default: the only one, or the app\'s main one)')
+  .option('--password-stdin', 'read the new password from stdin', false)
+  .option('--generate', 'make a new random password and print it once', false)
+  .option('--show', "print the app's login passwords (asks for your Harbor password)", false)
+  .option('--yes', 'approve the shown plan non-interactively', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, state: string | undefined, opts: { endpoint?: string; passwordStdin: boolean; generate: boolean; show: boolean; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const inst = await api.get<InstanceDetail>(`/v1/instances/${(await resolveInstance(api, ref)).id}`);
+    const logins = inst.login ?? [];
+    if (opts.show) {
+      const password = await promptHidden('Your Harbor password: ');
+      const r = await api.post<{ logins: { endpoint: string; password: string }[] }>(`/v1/instances/${inst.id}/login/reveal`, { password });
+      return out(r, () => (r.logins.length ? r.logins.map((l) => `${inst.name}${logins.length > 1 ? ` (${l.endpoint})` : ''}: ${l.password}`).join('\n') : `${inst.name} has no login password yet.`));
+    }
+    if (state === undefined && !opts.passwordStdin && !opts.generate) {
+      return out(logins, () => (logins.length ? table([['ENDPOINT', 'LOGIN', 'PASSWORD'], ...logins.map((l) => [l.endpoint, `${l.on ? 'on' : 'off'}${l.locked === 'required' ? ' (the app requires it)' : l.locked === 'never' ? ' (not possible for this app)' : ''}`, l.hasPassword ? 'set' : '-'])]) : `${inst.name} has no web endpoint Harbor's login can go in front of.`));
+    }
+    if (state !== undefined && state !== 'on' && state !== 'off') throw new HarborError('INVALID_REQUEST', `expected on or off, got ${state}`);
+    if (opts.passwordStdin && opts.generate) throw new HarborError('INVALID_REQUEST', 'use --password-stdin or --generate, not both');
+    const endpoint = opts.endpoint ?? (logins.length === 1 ? logins[0]!.endpoint : (logins.find((l) => l.endpoint === inst.primaryEndpoint)?.endpoint ?? logins[0]?.endpoint));
+    if (!endpoint) throw new HarborError('INVALID_REQUEST', `${inst.name} has no web endpoint Harbor's login can go in front of`);
+    let password: string | null = null;
+    if (opts.passwordStdin) password = ((await readStdinAll()).split('\n')[0] ?? '').trim();
+    if (opts.generate) password = randomBytes(18).toString('base64url');
+    const change: { on?: boolean; password?: true } = { ...(state ? { on: state === 'on' } : {}), ...(password ? { password: true as const } : {}) };
+    const plan = await planWhenFree(api, { kind: 'configure', instanceId: inst.id, login: { [endpoint]: change } });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, secrets: password ? { [`harbor.login.${endpoint}`]: password } : {} });
+    if (opts.generate && password) process.stdout.write(`New password for ${inst.name}: ${password}\n`);
   });
 
 program
