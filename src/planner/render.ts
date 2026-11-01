@@ -51,6 +51,9 @@ export interface RenderInput {
   // decision 180: the operator's stored setting overrides (absent/empty = every setting at the release default;
   // an override the release does not allow falls back to the default)
   settingOverrides?: Record<string, SettingValue>;
+  // decision 191: the /24 Harbor chose for the app's network (absent = a network made before 0.39.0, which keeps
+  // the subnet Docker gave it, or a prospective model)
+  subnet?: string;
 }
 
 export interface RenderedCompose {
@@ -216,7 +219,7 @@ export function renderCompose(input: RenderInput): RenderedCompose {
   const model: Record<string, unknown> = {
     name: identity.project,
     services,
-    networks: { default: { name: defaultNetworkName(identity), driver: 'bridge', labels: { ...labels, [LABELS.kind]: 'network' } } },
+    networks: { default: { name: defaultNetworkName(identity), driver: 'bridge', labels: { ...labels, [LABELS.kind]: 'network' }, ...(input.subnet ? { ipam: { config: [{ subnet: input.subnet }] } } : {}) } },
   };
   if (Object.keys(volumes).length) model['volumes'] = volumes;
   if (input.lanRelay) model['x-harbor'] = { lanAccess: 'relay' };

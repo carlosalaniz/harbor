@@ -163,8 +163,8 @@ export class DockerodeAdapter implements DockerAdapter {
     }
   }
 
-  async createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean }): Promise<NetworkInfo> {
-    const created = await this.docker.createNetwork({ Name: name, Driver: 'bridge', Internal: opts.internal, Labels: labels, CheckDuplicate: true });
+  async createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean; subnet?: string }): Promise<NetworkInfo> {
+    const created = await this.docker.createNetwork({ Name: name, Driver: 'bridge', Internal: opts.internal, Labels: labels, CheckDuplicate: true, ...(opts.subnet ? { IPAM: { Driver: 'default', Config: [{ Subnet: opts.subnet }] } } : {}) });
     const info = await this.inspectNetwork(created.id);
     if (!info) throw new Error(`network ${name} vanished right after it was created`);
     return info;

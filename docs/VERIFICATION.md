@@ -1220,6 +1220,23 @@ Contributor pull request carlosalaniz/harbor#4 (0xDonPepe), merged with one foll
 
 Gate ran locally on Node 24.22.1 (darwin-arm64), as CI does. Not covered live by us yet: a reboot of harbor-old.
 
+## 3z. Harbor picks network subnets (2026-11-01, Harbor 0.39.0, decision 191)
+
+Found live on the production box: a Khoj install failed at `compose up` with `all predefined address pools have been fully
+subnetted` (30 bridge networks; 14 empty leftovers of stacks that had moved onto Harbor).
+
+| Check | Result |
+|---|---|
+| Compose behaviour, by hand | Compose 2.29.2 (harbor-old) and 5.1.0 (Docker Desktop; production runs 5.1.1): a file naming a subnet makes the network with it and `up` again keeps it; a file without one leaves a Docker-picked network alone; `docker network create --internal --subnet` works. Adding a subnet to an existing network without one: 2.29 ignores it, **5.1 recreates the network and its containers**, so Harbor never does that |
+| `pnpm lint`, `pnpm typecheck`, `pnpm build` | clean |
+| `pnpm test` (unit) | 654 passed, 2 skipped (+8 in `subnets.test.ts`) |
+| `pnpm test:integration` | 387 passed, 3 live-Docker skipped (+5 in `subnets.test.ts`: install, restart keeps it, host ranges skipped, a pre-0.39 network keeps a file without `ipam`, block full; link network subnet in `links-names.test.ts`; `vpn`/`addresses` follow the new range) |
+| `HARBOR_LIVE_DOCKER_SOCKET=… live-docker.test.ts` (Docker Desktop, Engine 29.2.1, Compose 5.1.0) | 3 passed: Excalidraw's real network is a Harbor /24, unchanged across stop/start, chosen again after remove + reinstall (dev loop, not host evidence) |
+| `pnpm test:e2e` | 45 passed |
+| `catalog:verify` / `catalog:hash --check` (fixtures), `openapi -- --check` | ok / ok / current |
+
+Gate ran locally on Node 24.12.0 (darwin-arm64); CI runs 24.22.1. Not covered live yet: the production box after its update.
+
 ## 4. Qualified versions
 
 | Component | Version | Source |

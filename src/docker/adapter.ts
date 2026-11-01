@@ -93,7 +93,8 @@ export interface DockerAdapter {
   removeNetwork(id: string): Promise<void>;
   // App links (decision 126): Harbor creates the link network itself (internal: no route out, no published
   // ports), attaches the other side live (so the provider is not restarted), and detaches before removal.
-  createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean }): Promise<NetworkInfo>;
+  // `subnet` (decision 191): the /24 Harbor chose; Docker refuses one that overlaps another network.
+  createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean; subnet?: string }): Promise<NetworkInfo>;
   connectNetwork(networkId: string, containerId: string, aliases: string[]): Promise<void>;
   disconnectNetwork(networkId: string, containerId: string): Promise<void>;
   // Host ports published by any container on this engine (for allocation conflict checks).

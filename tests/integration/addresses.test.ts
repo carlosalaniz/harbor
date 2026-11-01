@@ -63,7 +63,7 @@ describe('app addresses: hook, restart, HTTPS main address', () => {
     expect(addrs).toContain(`localhost:${port}`);
     expect(addrs).toContain(new URL(app.endpoints[0]!.urls.lan!).host); // <hostname>.local:<port>
     expect(addrs).toContain(`harbor.local:${port}`);
-    expect(x.env['HARBOR_PROXIES']).toMatch(/^172\.30\.\d+\.1$/); // the app network's gateway
+    expect(x.env['HARBOR_PROXIES']).toMatch(/^10\.20[0-7]\.\d+\.1$/); // the app network's gateway (decision 191: Harbor's block)
     expect(x.env['HARBOR_URL']).toBe(app.endpoints[0]!.urls.lan);
     expect(r.op.events.map((e) => e.message)).toContain('after-start hook finished');
   });

@@ -14,6 +14,7 @@ import { enrollAdministrator } from '../../src/maintenance.js';
 import { systemClock, systemIds } from '../../src/util.js';
 import { ADMIN, Api, REPO_CATALOG, freePort } from './harness.js';
 import { LABELS } from '../../src/naming.js';
+import { isHarborSubnet } from '../../src/planner/subnets.js';
 import type { InstanceDetail } from '../../src/contracts/api.js';
 import { DockerodeAdapter } from '../../src/docker/dockerode-adapter.js';
 import { ComposeCli } from '../../src/docker/compose-cli.js';
@@ -99,17 +100,23 @@ describe.skipIf(!enabled)('live Docker (explicit opt-in engine)', () => {
     expect(c.HostConfig.RestartPolicy?.Name).toBe('unless-stopped');
     expect(c.NetworkSettings.Ports['80/tcp']).toEqual([{ HostIp: '127.0.0.1', HostPort: String(inst.endpoints[0]!.hostPort) }]);
     expect(Object.keys(c.NetworkSettings.Networks)).toEqual([`hb_${inst.id.replace(/-/g, '')}_default`]);
+    // decision 191: the real engine made the app network on a /24 from Harbor's block, not from its own pools
+    const subnetOf = async () => (await docker.getNetwork(`hb_${inst.id.replace(/-/g, '')}_default`).inspect()).IPAM?.Config?.map((x) => x.Subnet) ?? [];
+    const [subnet] = await subnetOf();
+    expect(isHarborSubnet(subnet!)).toBe(true);
     const createdAt = c.Created;
 
     expect((await api.run({ kind: 'stop', instanceId: inst.id })).op.state).toBe('succeeded');
     expect((await docker.getContainer(containers[0]!.Id).inspect()).State.Running).toBe(false);
     expect((await api.run({ kind: 'start', instanceId: inst.id })).op.state).toBe('succeeded');
     expect((await docker.getContainer(containers[0]!.Id).inspect()).Created).toBe(createdAt); // not recreated
+    expect(await subnetOf()).toEqual([subnet]); // the file names the same subnet: Compose keeps the network
     expect((await api.run({ kind: 'remove', instanceId: inst.id })).op.state).toBe('succeeded');
     expect(await docker.listContainers({ all: true, filters: JSON.stringify({ label: [`${LABELS.instance}=${inst.id}`] }) })).toHaveLength(0);
     expect((await api.run({ kind: 'reinstall', instanceId: inst.id })).op.state).toBe('succeeded');
     const detail = await api.expect<InstanceDetail>(200, 'GET', `/v1/instances/${inst.id}`);
     expect(detail.resources.filter((r) => r.kind === 'container' && r.present)).toHaveLength(1);
+    expect(isHarborSubnet((await subnetOf())[0]!)).toBe(true); // remove dropped the network; reinstall chose again
   }, 600_000);
 
   it('installs BentoPDF alongside without recreating Excalidraw', async () => {

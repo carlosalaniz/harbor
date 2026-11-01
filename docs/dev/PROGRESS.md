@@ -448,6 +448,12 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 73 — Harbor picks network subnets (2026-11-01, 0.39.0) ✅
+- [x] Found live: installing Khoj on the production box failed with Docker's `all predefined address pools have been fully subnetted` (30 bridge networks: 15 Harbor's, 14 empty leftovers of stacks moved onto Harbor). Any new install would have failed there
+- [x] Decision 191: new app networks (Compose file `ipam`) and new link networks (`docker network create --subnet`) get a /24 from `10.200.0.0/13`, skipping every Docker network's subnet and every range the machine routes or sits on (`NetProvider.hostRanges`: `/proc/net/route` + interfaces). Existing networks keep their subnet; one Docker picked keeps a file without `ipam` (Compose 5.1 would recreate it otherwise). Full block = `OPERATION_FAILED` with what to remove
+- [x] Tests: unit `subnets.test.ts` (+8: picking, overlaps, `/proc/net/route`, block exhaustion, render); integration `subnets.test.ts` (+5: install, restart keeps it, host ranges skipped, a pre-0.39 network untouched, block full) + link network subnet in `links-names.test.ts`; `vpn`/`addresses` expectations follow the new range; gate below (§3z)
+- [ ] Live: update the production box to 0.39.0, then install Khoj there
+
 ## Phase 72 — lock screen after a restart (2026-10-31, 0.38.0) ✅
 - [x] PR #4 (0xDonPepe, decision 190): a remembered session opens on a password-only lock screen while the machine key is sealed and something waits on it (`SystemDto.unlockNeeded`; `POST /v1/account/unlock`); update, repair and reinstall refuse a locked app at plan time and the runner opens the data before deleting containers; lock-guard starts a sealed app unless every container runs. Contributor's live run: two reboots of an Ubuntu 26.04 home server (Immich, Nextcloud, Vaultwarden)
 - [x] Follow-up: renumbered 189 → 190 (0.37.2 took 189); automatic updates and redeploy-on-commit skip a locked app before marking the revision as tried (it was lost for good before); the update comment back above `updatePlan`

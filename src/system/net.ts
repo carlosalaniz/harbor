@@ -1,5 +1,8 @@
 import { promises as dns } from 'node:dns';
+import { readFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
+import { networkInterfaces } from 'node:os';
+import { routesFromProcNetRoute } from '../planner/subnets.js';
 
 // Network facts for the public-publishing wizard: this machine's public address and what a hostname
 // resolves to. Real implementation asks two public "what is my IP" services over HTTPS (nothing
@@ -7,6 +10,9 @@ import { request as httpsRequest } from 'node:https';
 export interface NetProvider {
   publicIp(): Promise<{ v4: string | null; v6: string | null; error: string | null }>;
   resolve(hostname: string): Promise<{ a: string[]; aaaa: string[]; error: string | null }>;
+  // decision 191: the IPv4 ranges this machine routes or sits on (LAN, VPN, Tailscale), which a new app network
+  // must not overlap. Read locally (/proc/net/route + the interfaces); nothing leaves the machine.
+  hostRanges(): Promise<string[]>;
 }
 
 function getText(url: string, family: 4 | 6, timeoutMs = 6000): Promise<string> {
@@ -38,17 +44,26 @@ export class RealNet implements NetProvider {
     if (!Array.isArray(a)) return { a: [], aaaa: [], error: a.error };
     return { a, aaaa: Array.isArray(aaaa) ? aaaa : [], error: null };
   }
+  async hostRanges(): Promise<string[]> {
+    const routes = await readFile('/proc/net/route', 'utf8').then(routesFromProcNetRoute, () => [] as string[]); // not Linux (dev): none
+    const ifaces = Object.values(networkInterfaces()).flatMap((list) => (list ?? []).filter((a) => a.family === 'IPv4' && !a.internal && a.cidr).map((a) => a.cidr!));
+    return [...new Set([...routes, ...ifaces])];
+  }
 }
 
 export class FakeNet implements NetProvider {
   ip: { v4: string | null; v6: string | null; error: string | null } = { v4: '203.0.113.10', v6: null, error: null };
   records = new Map<string, { a: string[]; aaaa: string[] }>();
+  ranges: string[] = ['192.168.1.0/24'];
   async publicIp() {
     return { ...this.ip };
   }
   async resolve(hostname: string) {
     const r = this.records.get(hostname);
     return r ? { ...r, error: null } : { a: [], aaaa: [], error: null };
+  }
+  async hostRanges() {
+    return [...this.ranges];
   }
 }
 

@@ -112,7 +112,7 @@ describe('VPN and offline apps (decision 184)', () => {
     const project = `hb_${quiet.id.replace(/-/g, '')}`;
     const lines = h.fake.log.slice(mark).filter((l) => l.startsWith(`up ${project}`) || l.startsWith('egress apply'));
     expect(lines).toEqual([`up ${project} --no-start`, `egress apply ${quiet.id}:offline`, `up ${project}`]);
-    expect(egress.state?.apps).toEqual([{ instanceId: quiet.id, mode: 'offline', subnets: [expect.stringMatching(/^172\.30\.\d+\.0\/24$/)] }]);
+    expect(egress.state?.apps).toEqual([{ instanceId: quiet.id, mode: 'offline', subnets: [expect.stringMatching(/^10\.20[0-7]\.\d+\.0\/24$/)] }]);
     expect(op.events.map((e) => e.message)).toContain(`${plan.name} is offline: it can be reached, but it opens no connection to the internet, your network or other apps`);
     expect(quiet.internet).toEqual({ mode: 'offline', choice: null, packageDefault: 'offline', allApps: false });
     expect(settingsDoc(quiet.id)).toBeNull(); // follows the package: nothing stored

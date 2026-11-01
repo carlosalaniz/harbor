@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type ExecResult, type NetworkInfo, type VolumeInfo } from './adapter.js';
 import type { Clock } from '../util.js';
 import { rfc3339 } from '../util.js';
+import { subnetsOverlap } from '../planner/subnets.js';
 
 // In-memory Docker for unit/integration/UI tests. The fake Compose runner interprets the
 // *generated* compose file (the same bytes the real CLI would receive), creates fake
@@ -72,6 +73,12 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
   private nextSubnet(prefix: '172.29' | '172.30'): { gateway: string; subnet: string } {
     const n = this.netSeq++ % 250;
     return { gateway: `${prefix}.${n}.1`, subnet: `${prefix}.${n}.0/24` };
+  }
+  // decision 191: a subnet Harbor chose, refused like Docker does when another network has it already
+  private chosenSubnet(subnet: string, name: string): { gateway: string; subnet: string } {
+    const clash = [...this.networks.values()].find((n) => (n.subnets ?? []).some((s) => subnetsOverlap(s, subnet)));
+    if (clash) throw Object.assign(new Error(`invalid pool request: Pool overlaps with other one on this address space (${name} vs ${clash.name})`), { statusCode: 403 });
+    return { gateway: subnet.replace(/\.0\/24$/, '.1'), subnet };
   }
   readonly listeners = new Map<string, Server>(); // container id -> server
   behaviour: FakeBehaviour = {};
@@ -181,10 +188,10 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     this.log.push(`network rm ${n.name}`);
   }
   readonly internal = new Set<string>(); // network ids created with internal: true
-  async createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean }): Promise<NetworkInfo> {
+  async createNetwork(name: string, labels: Record<string, string>, opts: { internal: boolean; subnet?: string }): Promise<NetworkInfo> {
     this.assertUp();
     if ([...this.networks.values()].some((n) => n.name === name)) throw Object.assign(new Error(`network with name ${name} already exists`), { statusCode: 409 });
-    const ipam = this.nextSubnet('172.29');
+    const ipam = opts.subnet ? this.chosenSubnet(opts.subnet, name) : this.nextSubnet('172.29');
     const net: NetworkInfo = { id: this.id('n'), name, labels: { ...labels }, containerIds: [], gateways: [ipam.gateway], subnets: [ipam.subnet] };
     this.networks.set(net.id, net);
     if (opts.internal) this.internal.add(net.id);
@@ -293,7 +300,7 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const doc = parseYaml(text) as {
       services: Record<string, { image: string; labels?: Record<string, string>; ports?: { target: number; published: string; host_ip: string; protocol?: string }[]; volumes?: { source: string }[]; environment?: Record<string, string>; networks?: string[] | Record<string, { aliases?: string[] } | null> }>;
       volumes?: Record<string, { name?: string; external?: boolean }>;
-      networks?: Record<string, { name?: string; labels?: Record<string, string>; external?: boolean }>;
+      networks?: Record<string, { name?: string; labels?: Record<string, string>; external?: boolean; ipam?: { config?: { subnet?: string }[] } }>;
     };
     // External networks (decision 126 link networks) must exist, exactly like Compose demands.
     for (const [, n] of Object.entries(doc.networks ?? {})) {
@@ -312,7 +319,13 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const netName = doc.networks?.['default']?.name ?? `${inv.projectName}_default`;
     let net = [...this.networks.values()].find((n) => n.name === netName);
     if (!net) {
-      const ipam = this.nextSubnet('172.30');
+      const chosen = doc.networks?.['default']?.ipam?.config?.[0]?.subnet;
+      let ipam: { gateway: string; subnet: string };
+      try {
+        ipam = chosen ? this.chosenSubnet(chosen, netName) : this.nextSubnet('172.30');
+      } catch (e) {
+        throw new ComposeError(`docker compose up failed: ${(e as Error).message}`, { command: ['up'], exitCode: 1, stderrTail: (e as Error).message, timedOut: false });
+      }
       net = { id: this.id('n'), name: netName, labels: { ...(doc.networks?.['default']?.labels ?? {}), 'com.docker.compose.project': inv.projectName, 'com.docker.compose.network': 'default' }, containerIds: [], gateways: [ipam.gateway], subnets: [ipam.subnet] };
       this.networks.set(net.id, net);
     }

@@ -7,6 +7,7 @@ import { ComposeError, type ContainerInfo } from '../docker/adapter.js';
 import { LABELS } from '../naming.js';
 import { renderedDns } from '../egress/rules.js';
 import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type InstanceIdentity } from '../planner/identity.js';
+import { HARBOR_SUBNET_BLOCK, isHarborSubnet, pickSubnet } from '../planner/subnets.js';
 import { renderCompose, type ConsumerLink } from '../planner/render.js';
 import { gpuChanges, gpuFromRendered, gpuServicesOf } from '../planner/gpu.js';
 import { linkAlias, linkAliasesDrift, linkExtraNames, linkNetworkLabels, linkValue } from '../planner/links.js';
@@ -606,7 +607,8 @@ export class OperationRunner {
     const gpu = gpuServices.length ? (keepGpu ?? (await this.ctx.gpu.detect())) : undefined;
     // decision 180: the operator's setting overrides, read from the instance directory on every render
     const settingOverrides = settingsOf(pkg.manifest).length ? readSettingOverrides(this.ctx.config.stateDir, inst.id) : {};
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, volumeNames, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: bind.bindHost, lanRelay: bind.lanRelay, provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages, consumerLinks, ...(gpu ? { gpu } : {}), settingOverrides, internet: this.ctx.egress?.modeOf(inst, pkg.manifest) ?? 'direct' });
+    const subnet = await this.appSubnet(op, identity);
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, volumeNames, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: bind.bindHost, lanRelay: bind.lanRelay, provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages, consumerLinks, ...(gpu ? { gpu } : {}), settingOverrides, internet: this.ctx.egress?.modeOf(inst, pkg.manifest) ?? 'direct', ...(subnet ? { subnet } : {}) });
     if (gpu && !keepGpu) this.event(op, 'preparing', gpuChanges(pkg.manifest, gpu).join('; '));
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
@@ -926,10 +928,34 @@ export class OperationRunner {
       if (existing.id !== l.networkId) repo.upsertLink({ ...l, networkId: existing.id });
       return existing;
     }
-    const created = await docker.createNetwork(l.networkName, linkNetworkLabels(identityFor(this.ctx.installationId, l.consumerInstanceId), l.linkId, l.providerInstanceId ?? ''), { internal: true });
+    const subnet = await this.freeSubnet(l.networkName);
+    const created = await docker.createNetwork(l.networkName, linkNetworkLabels(identityFor(this.ctx.installationId, l.consumerInstanceId), l.linkId, l.providerInstanceId ?? ''), { internal: true, subnet });
     repo.upsertLink({ ...l, networkId: created.id });
-    this.event(op, 'preparing', `created the private link network ${l.networkName} (internal: no route out, nothing published)`);
+    this.event(op, 'preparing', `created the private link network ${l.networkName} on ${subnet} (internal: no route out, nothing published)`);
     return created;
+  }
+
+  // Decision 191: a /24 from Harbor's own block for a network Harbor is about to make, never from Docker's default
+  // pools (about 30 networks, often full of other stacks' leftovers). Skips every subnet in use by a Docker network
+  // and every range this machine routes; the serial queue means nothing else picks one meanwhile.
+  private async freeSubnet(networkName: string): Promise<string> {
+    const { docker, net } = this.ctx;
+    const taken = [...(await docker.listNetworks()).flatMap((n) => n.subnets ?? []), ...(await net.hostRanges())];
+    const subnet = pickSubnet(taken);
+    if (!subnet) throw new HarborError('OPERATION_FAILED', `no free address range for network ${networkName}: all ${HARBOR_SUBNET_BLOCK} subnets are in use or overlap this machine's networks`, { nextAction: 'Remove Docker networks nothing uses any more (docker network ls; docker network rm <name>), or check that no VPN routes all of 10.200.0.0/13, then try again.' });
+    return subnet;
+  }
+
+  // The subnet the app's network gets in its Compose file: an existing network keeps what it has (a Harbor /24 is
+  // named again so the file matches it; one Docker picked before 0.39.0 is left out, exactly as before), a missing
+  // one gets a fresh Harbor /24.
+  private async appSubnet(op: OperationRow, identity: InstanceIdentity): Promise<string | undefined> {
+    const name = defaultNetworkName(identity);
+    const existing = await this.ctx.docker.inspectNetwork(name);
+    if (existing) return (existing.subnets ?? []).find(isHarborSubnet);
+    const subnet = await this.freeSubnet(name);
+    this.event(op, 'preparing', `the app network will use ${subnet}`);
+    return subnet;
   }
 
   private async ensureLinkNetworks(op: OperationRow, inst: InstanceRow): Promise<void> {

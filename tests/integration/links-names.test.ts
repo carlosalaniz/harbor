@@ -5,6 +5,7 @@ import { parse as parseYaml, stringify as yamlStringify } from 'yaml';
 import type { InstanceSummary, PackageImportResultDto } from '../../src/contracts/api.js';
 import { writeZip } from '../../src/packages/zip.js';
 import { projectNameFor } from '../../src/naming.js';
+import { isHarborSubnet } from '../../src/planner/subnets.js';
 import { startHarness, type Harness } from './harness.js';
 
 // Decision 171: names on a link network. Compose gives every service it attaches its own service name as a
@@ -128,6 +129,8 @@ describe('link networks carry only the names Harbor gives (decision 171)', () =>
     expect(networkNamed(net).containerIds).not.toContain(containerNamed(`${projectNameFor(shadow.id)}-web-1`).id);
     // the address the consumer gets is unchanged
     expect(h.fake.envOf(consumerDb)?.['DOCS_BASE_URL']).toBe('http://docs-link:3010');
+    // decision 191: the link network's subnet comes from Harbor's block too
+    expect(isHarborSubnet(networkNamed(net).subnets[0]!)).toBe(true);
     // neither Compose file mentions the link network, so Compose never names anything on it
     expect(runtime(shadow.id)).not.toContain(net);
     expect(runtime(docs.id)).not.toContain(net);
