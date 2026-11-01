@@ -2088,7 +2088,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
         // decision 194: Harbor's login in front of the app; on/off and a new password go through the review
         <>
           <h4>Login</h4>
-          <ul className="addresses">
+          <ul className="logins">
             {detail.login.map((l) => {
               const which = detail.login!.length > 1 ? ` (${l.endpoint})` : '';
               const busy = inst.installState !== 'installed';

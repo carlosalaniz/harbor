@@ -1110,7 +1110,8 @@ label.small {
 .actions {
   margin: 6px 0 4px;
 }
-.addresses {
+.addresses,
+.logins {
   list-style: none;
   margin: 0;
   padding: 0;
