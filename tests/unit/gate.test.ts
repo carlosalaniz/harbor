@@ -117,6 +117,16 @@ describe('the app login gate (decision 194)', () => {
     expect((await send('GET', '/health?x=1')).status).toBe(401);
   });
 
+  it('the readiness path is still the app for a browser (an app whose health path is / itself)', async () => {
+    expect((await send('GET', '/health', browser)).status).toBe(303);
+    // signed in, it is proxied as it is (the probe would come in as user-agent harbor-gate)
+    for (const headers of [browser, { accept: '*/*' }]) {
+      const r = await send('GET', '/health', { ...headers, cookie: await signIn() });
+      expect(r.status).toBe(204);
+      expect(seen.at(-1)!.headers['user-agent']).not.toBe('harbor-gate');
+    }
+  });
+
   it('passes WebSockets through once signed in, and refuses them otherwise', async () => {
     const cookie = await signIn();
     const handshake = (headers: string) =>

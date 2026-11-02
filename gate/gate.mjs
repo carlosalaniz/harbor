@@ -254,26 +254,26 @@ export function createGate(env, opts = {}) {
       return res.end();
     }
 
-    // Harbor's readiness probe: the app's status code, never its body
-    if (healthPath && url.pathname === healthPath && !url.search && (req.method === 'GET' || req.method === 'HEAD')) {
-      const probe = httpRequest({ host: upstream.hostname, port: upstream.port || 80, path: healthPath, method: 'GET', headers: { host: req.headers['host'] ?? upstream.host, 'user-agent': 'harbor-gate' }, timeout: 10_000 }, (up) => {
-        up.resume();
-        res.writeHead(up.statusCode ?? 502, { 'cache-control': 'no-store', 'content-length': '0' });
-        res.end();
-      });
-      probe.on('timeout', () => probe.destroy(new Error('timeout')));
-      probe.on('error', () => {
-        if (!res.headersSent) res.writeHead(502, { 'content-length': '0' });
-        res.end();
-      });
-      return probe.end();
-    }
-
     const how = authed(req);
     if (!how) {
       if (wantsPage(req)) {
         res.writeHead(303, { location: `${PREFIX}/login?next=${encodeURIComponent(safeNext(url.pathname + url.search))}`, 'cache-control': 'no-store' });
         return res.end();
+      }
+      // Harbor's readiness probe: the app's status code, never its body. Only for a request that is neither signed in
+      // nor a page visit, since the health path may be the app's own page (/)
+      if (healthPath && url.pathname === healthPath && !url.search && (req.method === 'GET' || req.method === 'HEAD')) {
+        const probe = httpRequest({ host: upstream.hostname, port: upstream.port || 80, path: healthPath, method: 'GET', headers: { host: req.headers['host'] ?? upstream.host, 'user-agent': 'harbor-gate' }, timeout: 10_000 }, (up) => {
+          up.resume();
+          res.writeHead(up.statusCode ?? 502, { 'cache-control': 'no-store', 'content-length': '0' });
+          res.end();
+        });
+        probe.on('timeout', () => probe.destroy(new Error('timeout')));
+        probe.on('error', () => {
+          if (!res.headersSent) res.writeHead(502, { 'content-length': '0' });
+          res.end();
+        });
+        return probe.end();
       }
       // a browser's fetch gets no challenge (that would pop the browser's own dialog); a script does
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', ...(req.headers['sec-fetch-mode'] ? {} : { 'www-authenticate': `Basic realm="${app.replace(/["\\]/g, '')}", charset="UTF-8"` }) });

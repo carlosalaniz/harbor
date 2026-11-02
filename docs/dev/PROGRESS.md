@@ -448,6 +448,10 @@ Decisions: [docs/DECISIONS.md](docs/DECISIONS.md). Live evidence: [docs/VERIFICA
 - [x] harbor-apps CI: bundle (read-only) and publish (write, no checkout) split, notes via jq from the summary, toolchain per Harbor checkout (engines + packageManager), plan fails clearly when the latest release has no `catalog:plan`
 - [ ] Live: harbor-apps CI on per-version proofs (needs 0.28.2 released and latest); a published app declaring `0.28.2` seen as unavailable on 0.28.0/0.28.1
 
+## Phase 78 — the login page with a health path of / (2026-11-01, 0.41.1) ✅
+- [x] Found live on harbor-old (Android revision 2, `login: required`, health path `/`): every visit to the app got an empty 200, signed in or not. The gate answered its readiness shortcut before checking the login; now a signed-in request is proxied and a page visit goes to the login first, and only what is left (Harbor's probe) gets the status-only answer
+- [x] Tests: unit `gate.test.ts` (+1: a browser on the health path is sent to the login, and signed in it reaches the app; failed without the fix); unit 677 + 2, integration 402 + 3, e2e 47
+
 ## Phase 77 — Harbor's app login (2026-11-01, 0.41.0) ✅
 - [x] Carlos: Harbor must be able to change the Caddy-served passwords and put one on any app. His choices: per app + packages may require it; one login per app; type or generate, shown again later; packages may rule it out (`never`); a pretty Harbor page
 - [x] Decision 194: `gate/gate.mjs` on pinned `node:24-alpine`, one `harbor_gate_<endpoint>` per gated endpoint; configure `login`; `POST /v1/instances/:id/login/reveal`; `harbor app-login`; drawer Login section + review Generate; manifest `endpoints.<id>.login: required|never` (minHarbor 0.41.0)
