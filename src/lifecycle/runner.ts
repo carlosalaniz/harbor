@@ -11,7 +11,7 @@ import { HARBOR_SUBNET_BLOCK, isHarborSubnet, pickSubnet } from '../planner/subn
 import { renderCompose, type ConsumerLink } from '../planner/render.js';
 import { gpuChanges, gpuFromRendered, gpuServicesOf } from '../planner/gpu.js';
 import { needsBinder } from '../planner/permissions.js';
-import { gateCookieName, gatedEndpoints, gatePasswordHash, gateService, GATE_PORT, loginKeySecret, loginPasswordSecret, type GateRender } from '../planner/gate.js';
+import { appLoginOf, gateCookieName, gatedEndpoints, gatePasswordHash, gateService, GATE_PORT, LOGIN_KEY_SECRET, LOGIN_PASSWORD_SECRET, type GateRender } from '../planner/gate.js';
 import { linkAlias, linkAliasesDrift, linkExtraNames, linkNetworkLabels, linkValue } from '../planner/links.js';
 import { aliasesOn, linkMembers, ownsLinkNetwork } from './link-members.js';
 import type { NetworkInfo } from '../docker/adapter.js';
@@ -23,7 +23,7 @@ import { protectorFor } from '../storage/crypto-provider.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import type { HostGpu, LoadedPackage, Manifest } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/repo.js';
-import { ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, readOperatorSecret, readSecret, readSettingOverrides, readSettingsBytes, removeSecret, secretExists, SETTINGS_FILE, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose, writeSettingOverrides, writeSettingsBytes, readRuntimeModel, readInternetChoice, writeInternetChoice, readLoginChoices, writeLoginChoices } from './instance-dir.js';
+import { adoptLegacyLogin, ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, loginSecretId, readOperatorSecret, readSecret, readSettingOverrides, readSettingsBytes, removeSecret, secretExists, SETTINGS_FILE, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose, writeSettingOverrides, writeSettingsBytes, readRuntimeModel, readInternetChoice, writeInternetChoice, readLoginChoices, writeLoginChoices } from './instance-dir.js';
 import { applySettingValues, formatSettingValue, settingsOf } from '../planner/settings.js';
 import type { SettingValue } from '../contracts/types.js';
 import { waitReady } from './readiness.js';
@@ -33,7 +33,7 @@ import { TAILNET_POLICY_ACTOR } from './tailnet-all.js';
 import type { VolumeImport } from '../storage/fscrypt.js';
 import { renderCaddyConfig, type CaddyLanConsole, type CaddyLanHttps, type CaddyRoute } from '../exposure/caddy.js';
 import { LAN_PEER_RANGES, lanAppHost, lanHostnames, lanNames, localSubnets, machineAddresses } from '../system/lan.js';
-import { HTTPS_SETTING, httpsOnlyOn, lanHttpsHosts, readTlsState, runtimeLanAccess } from '../system/lan-https.js';
+import { HTTPS_SETTING, httpsOnlyOn, lanHttpsHosts, readTlsState, reconcileTailnetRelays, runtimeLanAccess, tailnetServeTarget } from '../system/lan-https.js';
 import { splitOneTime } from '../state/one-time.js';
 import { packageVersionOf } from '../packages/version.js';
 import type { ExposureRow, PrimaryExposure } from '../state/repo.js';
@@ -631,26 +631,35 @@ export class OperationRunner {
     return file;
   }
 
-  // Decision 194: the app-login gates of this render. A login the package requires gets its password the first time
-  // (shown once in the operation's result); one the operator turned on has the password they gave.
+  // Decision 195: the app's one password, made by Harbor when the package requires it or the install / Add a domain
+  // asked for it (shown once in the operation's result; the app page shows it again).
+  private generateLogin(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow): void {
+    const dirs = this.dirs(inst);
+    if (loginSecretId(dirs.secrets, pkg.manifest) !== null) return;
+    const value = this.ctx.ids.token(18).toString('base64url');
+    writeOperatorSecret(dirs.secrets, LOGIN_PASSWORD_SECRET, value, { replace: false });
+    this.freshLogins.push({ id: LOGIN_PASSWORD_SECRET, label: `${pkg.manifest.metadata.name} password`, value });
+    this.event(op, 'preparing', `generated the password of ${inst.name} (shown once when this finishes; the app page shows it again)`);
+  }
+
+  // Decision 194/195: the gates of this render: one per endpoint behind the app's one login, same password and key.
   private gatesFor(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow): GateRender[] {
     const on = gatedEndpoints(pkg.manifest, readLoginChoices(this.ctx.config.stateDir, inst.id));
     if (!on.length) return [];
     const dirs = this.dirs(inst);
+    adoptLegacyLogin(dirs.secrets, pkg.manifest);
+    if (!secretExists(dirs.secrets, LOGIN_PASSWORD_SECRET)) {
+      if (appLoginOf(pkg.manifest, {})?.locked !== 'required') throw new HarborError('SECRET_MISSING', `${inst.name} has no password yet`, { nextAction: 'Set one: app page → Access → Change password, or `harbor app-login <app> --password-stdin`.' });
+      this.generateLogin(op, pkg, inst);
+    }
+    generateSecretOnce(dirs.secrets, LOGIN_KEY_SECRET, this.ctx.ids);
+    const password = readOperatorSecret(dirs.secrets, LOGIN_PASSWORD_SECRET);
+    const key = readOperatorSecret(dirs.secrets, LOGIN_KEY_SECRET);
+    const passwordHash = gatePasswordHash(password, key);
     return on.map((ep) => {
       const alloc = inst.endpoints.find((e) => e.id === ep);
       if (!alloc) throw new HarborError('STATE_CHANGED', `endpoint ${ep} is not allocated`);
-      if (!secretExists(dirs.secrets, loginPasswordSecret(ep))) {
-        if (pkg.manifest.endpoints[ep]?.login !== 'required') throw new HarborError('SECRET_MISSING', `the login of ${inst.name} (${ep}) has no password`, { nextAction: 'Set one: app drawer → Login → Change password, or `harbor app-login <app> --password-stdin`.' });
-        const value = this.ctx.ids.token(18).toString('base64url');
-        writeOperatorSecret(dirs.secrets, loginPasswordSecret(ep), value, { replace: false });
-        this.freshLogins.push({ id: loginPasswordSecret(ep), label: `${pkg.manifest.metadata.name} password${Object.keys(pkg.manifest.endpoints).length > 1 ? ` (${ep})` : ''}`, value });
-        this.event(op, 'preparing', `generated the password of ${inst.name}'s login (shown once when this finishes; the drawer shows it again)`);
-      }
-      generateSecretOnce(dirs.secrets, loginKeySecret(ep), this.ctx.ids);
-      const password = readOperatorSecret(dirs.secrets, loginPasswordSecret(ep));
-      const key = readOperatorSecret(dirs.secrets, loginKeySecret(ep));
-      return { endpointId: ep, service: alloc.service, containerPort: alloc.containerPort, cookieName: gateCookieName(inst.id, ep), passwordHash: gatePasswordHash(password, key), cookieKey: key, healthPath: pkg.manifest.health.endpoint === ep ? pkg.manifest.health.path : null };
+      return { endpointId: ep, service: alloc.service, containerPort: alloc.containerPort, cookieName: gateCookieName(inst.id), passwordHash, cookieKey: key, healthPath: pkg.manifest.health.endpoint === ep ? pkg.manifest.health.path : null };
     });
   }
 
@@ -752,7 +761,10 @@ export class OperationRunner {
         if (repo.exposureByAddress(x.via, x.hostname, port) || (x.via !== 'tailnet' && repo.exposures().some((e) => e.via !== 'tailnet' && e.hostname === x.hostname))) throw new Error('another app uses this address now');
         const id = ids.uuid();
         repo.insertExposure({ id, instanceId: inst.id, endpointId: x.endpointId, via: x.via, hostname: x.hostname, port, protection: x.protection, state: 'pending', note: 'published again by Reinstall', proxyFrom: x.proxyFrom });
-        if (x.via === 'tailnet') await this.ctx.tailscale.serve(port, `http://127.0.0.1:${alloc.hostPort}`);
+        if (x.via === 'tailnet') {
+          await reconcileTailnetRelays(this.ctx);
+          await this.ctx.tailscale.serve(port, tailnetServeTarget(alloc.hostPort));
+        }
         restored.push(repo.exposure(id)!);
         this.event(op, 'publishing', `${exposureUrl({ ...x, port })} published again`);
       } catch (e) {
@@ -777,7 +789,9 @@ export class OperationRunner {
     if (e.via === 'tailnet') {
       const inst = this.ctx.repo.instance(e.instanceId);
       const alloc = inst?.endpoints.find((a) => a.id === e.endpointId);
-      await this.ctx.tailscale.unserve(e.port, `http://127.0.0.1:${alloc?.hostPort ?? e.port}`);
+      const want = tailnetServeTarget(alloc?.hostPort ?? e.port);
+      const served = (await this.ctx.tailscale.serveEntries().catch(() => [])).find((x) => x.port === e.port)?.target ?? want;
+      await this.ctx.tailscale.unserve(e.port, served);
     } else {
       this.ctx.repo.updateExposure(e.id, { state: 'removing' });
       await this.reconcileCaddy(op, []);
@@ -793,6 +807,8 @@ export class OperationRunner {
     if (!alloc) throw new HarborError('STATE_CHANGED', `endpoint ${x.endpointId} is not allocated`);
     if (repo.exposureByAddress(x.via, x.hostname, x.port)) throw new HarborError('NAME_CONFLICT', `${exposureUrl(x)} is already used by another exposure`);
     const dirs = this.dirs(inst);
+    // decision 195: Add a domain asked for the app's password: the login goes up before the address exists
+    if (plan.proposal.login?.generate) await this.turnOnGeneratedLogin(op, plan, inst, sink);
     let credentials: { username: string; password: string } | null = null;
     if (x.protection === 'basic') {
       const created = generateSecretOnce(dirs.secrets, this.basicSecretId(x.endpointId), ids);
@@ -809,8 +825,9 @@ export class OperationRunner {
       // Decision 118: the operator's proxy terminates TLS and forwards here; Harbor runs nothing for it.
       this.event(op, 'publishing', `your proxy at ${x.proxyFrom} forwards https://${x.hostname}/ to this machine's port ${alloc.hostPort}`);
     } else if (x.via === 'tailnet') {
-      const target = `http://127.0.0.1:${alloc.hostPort}`;
+      const target = tailnetServeTarget(alloc.hostPort);
       try {
+        await reconcileTailnetRelays(this.ctx); // decision 196: the relay answers before tailscale points at it
         await this.ctx.tailscale.serve(x.port, target);
       } catch (e) {
         // nothing serves it: no record either, or the app would look published (decision 177 reads that record).
@@ -820,7 +837,7 @@ export class OperationRunner {
         repo.deleteExposure(exposureId);
         throw e;
       }
-      this.event(op, 'publishing', `tailscale serve --https=${x.port} -> 127.0.0.1:${alloc.hostPort}`);
+      this.event(op, 'publishing', `tailscale serve --https=${x.port} -> Harbor's cookie firewall -> 127.0.0.1:${alloc.hostPort}`);
     } else {
       await this.reconcileCaddy(op, sink);
     }
@@ -911,6 +928,24 @@ export class OperationRunner {
 
   // Re-render with the new base URL and recreate only if the package has configuration bindings.
   // primaryHost (decision 127): with primary public, the hostname that is the main one (null = the first published).
+  private async turnOnGeneratedLogin(op: OperationRow, plan: PlanRow, inst: InstanceRow, sink: string[]): Promise<void> {
+    const { repo } = this.ctx;
+    const dirs = this.dirs(inst);
+    const pkg = loadReleaseSnapshot(dirs.release, inst.packageId);
+    writeLoginChoices(this.ctx.config.stateDir, inst.id, plan.proposal.login!.choices);
+    this.generateLogin(op, pkg, inst);
+    if (inst.desired !== 'running') return; // its next start renders the login
+    await this.engineOrThrow();
+    const identity = identityFor(this.ctx.installationId, inst.id);
+    const values = this.readSecrets(pkg, dirs.secrets, sink);
+    const file = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, values, inst.primaryExposure);
+    this.event(op, 'reconfiguring', `putting the password in front of ${inst.name}`);
+    repo.updateInstance(inst.id, { runtime: 'starting' });
+    const containers = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file }, identity, inst);
+    await this.checkReadiness(op, pkg, inst, containers);
+    repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
+  }
+
   private async applyPrimary(op: OperationRow, inst: InstanceRow, primary: PrimaryExposure, sink: string[], primaryHost: string | null = null): Promise<void> {
     const { repo } = this.ctx;
     const dirs = this.dirs(inst);
@@ -1239,7 +1274,7 @@ export class OperationRunner {
     if (plan.proposal.settingValues && Object.keys(plan.proposal.settingValues).length) this.storeSettings(op, pkg.manifest, plan.proposal.settingValues);
     // decision 194: app-login switches; a new password gets a new cookie key (every browser signs in again)
     if (plan.proposal.login) {
-      for (const ep of plan.proposal.login.newPasswords) removeSecret(dirs.secrets, loginKeySecret(ep));
+      if (plan.proposal.login.newPassword) removeSecret(dirs.secrets, LOGIN_KEY_SECRET);
       writeLoginChoices(this.ctx.config.stateDir, inst.id, plan.proposal.login.choices);
     }
     // decision 184: internet access. The containers carry the resolver of their mode, so a running app is re-created
@@ -1307,6 +1342,11 @@ export class OperationRunner {
     if (!plan.proposal.restore && Object.keys(this.chosenSettings).length) this.storeSettings(op, pkg.manifest, this.chosenSettings);
     // decision 184: the internet access chosen in the review (a restore brought back the one it had instead)
     if (!plan.proposal.restore && plan.proposal.internet?.choice) writeInternetChoice(this.ctx.config.stateDir, inst.id, plan.proposal.internet.choice);
+    // decision 195: the password chosen on the install page (a restore brought back the login it had instead)
+    if (!plan.proposal.restore && plan.proposal.login?.generate) {
+      writeLoginChoices(this.ctx.config.stateDir, inst.id, plan.proposal.login.choices);
+      this.generateLogin(op, pkg, inst);
+    }
     // decision 186: Also on Tailscale; the policy publishes it once it runs (its own operation, after this one)
     if (plan.proposal.tailnet !== undefined) this.ctx.service.tailnetAll.installChoice(inst.id, plan.proposal.tailnet);
     await this.applyPlannedLinks(op, inst, plan.proposal.links ?? [], sink);

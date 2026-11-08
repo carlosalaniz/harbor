@@ -10,7 +10,7 @@ export function eventDto(e: EventRow): EventDto {
   return { cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message };
 }
 
-export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; lanSecureHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home']; links?: InstanceSummary['links']; linkedBy?: InstanceSummary['linkedBy']; operatorSecrets?: InstanceSummary['operatorSecrets']; settings?: InstanceSummary['settings']; hiddenFromHome?: boolean; apiOnly?: boolean; ports?: InstanceSummary['ports']; version?: string | null; internet?: InstanceSummary['internet'] } = { icon: null, category: 'other' }): InstanceSummary {
+export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; login?: InstanceSummary['login']; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; lanSecureHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home']; links?: InstanceSummary['links']; linkedBy?: InstanceSummary['linkedBy']; operatorSecrets?: InstanceSummary['operatorSecrets']; settings?: InstanceSummary['settings']; hiddenFromHome?: boolean; apiOnly?: boolean; ports?: InstanceSummary['ports']; version?: string | null; internet?: InstanceSummary['internet'] } = { icon: null, category: 'other' }): InstanceSummary {
   return {
     id: i.id,
     name: i.name,
@@ -42,6 +42,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     operatorSecrets: look.operatorSecrets ?? [],
     ...(look.settings?.length ? { settings: look.settings } : {}),
     hiddenFromHome: look.hiddenFromHome ?? false,
+    ...(look.login ? { login: look.login } : {}),
     apiOnly: look.apiOnly ?? false,
     internet: look.internet ?? { mode: 'direct', choice: null, packageDefault: 'direct', allApps: false },
   };

@@ -15,35 +15,54 @@ export const GATE_DIR = fileURLToPath(new URL('../../gate/', import.meta.url));
 
 // underscores never occur in a package's service ids (ID_PATTERN), so this name is always free
 export const gateService = (endpointId: string): string => `harbor_gate_${endpointId.replace(/-/g, '_')}`;
-// secret file names: dots never occur in a package's secret ids, so these cannot collide with them
-export const loginPasswordSecret = (endpointId: string): string => `harbor.login.${endpointId}`;
-export const loginKeySecret = (endpointId: string): string => `harbor.login.${endpointId}.key`;
-// one cookie per app and endpoint: apps on one host name share cookies across ports
-export const gateCookieName = (instanceId: string, endpointId: string): string => `harbor_gate_${instanceId.replace(/-/g, '').slice(0, 12)}_${endpointId.replace(/-/g, '_')}`;
+// Decision 195: one password per app. Secret file names: dots never occur in a package's secret ids, so these cannot
+// collide with them.
+export const LOGIN_PASSWORD_SECRET = 'harbor.login';
+export const LOGIN_KEY_SECRET = 'harbor.login.key';
+// 0.41's one password per endpoint: read until the app's next render adopts them (instance-dir.adoptLegacyLogin)
+export const legacyLoginPasswordSecret = (endpointId: string): string => `harbor.login.${endpointId}`;
+export const legacyLoginKeySecret = (endpointId: string): string => `harbor.login.${endpointId}.key`;
+// one cookie per app (its pages share a host name, so signing in once covers them); apps on one host name share
+// cookies across ports, so the name carries the instance
+export const gateCookieName = (instanceId: string): string => `harbor_gate_${instanceId.replace(/-/g, '').slice(0, 12)}`;
 
 export type LoginLock = 'required' | 'never' | null;
-export interface EndpointLogin {
-  endpoint: string;
+// Decision 195: the app's one login. `endpoints` are the web endpoints behind it, `open` the ones the package rules out
+// (`login: never`: their own clients send their own Authorization header).
+export interface AppLogin {
   on: boolean;
-  // the package decides: required = always on, never = cannot be turned on; null = the operator's switch
+  // the package decides: required = always on, never = no endpoint can have it; null = the operator's switch
   locked: LoginLock;
+  endpoints: string[];
+  open: string[];
 }
 
-// Pure: every web endpoint and whether it asks for a login. API endpoints are never gated (their clients send their
-// own Authorization headers) and are left out.
-export function loginsOf(manifest: Manifest, choices: Record<string, boolean>): EndpointLogin[] {
-  return Object.entries(manifest.endpoints)
+// Pure. API endpoints are never gated (their clients send their own Authorization headers) and are left out; null =
+// the app has no web endpoint at all. One endpoint marked required puts the login in front of every endpoint that
+// allows it. `choices` is the stored switch doc: any endpoint switched on (0.41 stored one per endpoint) means on.
+export function appLoginOf(manifest: Manifest, choices: Record<string, boolean>): AppLogin | null {
+  const web = Object.entries(manifest.endpoints)
     .filter(([, e]) => e.kind !== 'api')
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([id, e]) => {
-      const locked: LoginLock = e.login === 'required' ? 'required' : e.login === 'never' ? 'never' : null;
-      return { endpoint: id, on: locked === 'required' ? true : locked === 'never' ? false : choices[id] === true, locked };
-    });
+    .sort(([a], [b]) => a.localeCompare(b));
+  if (!web.length) return null;
+  const endpoints = web.filter(([, e]) => e.login !== 'never').map(([id]) => id);
+  const open = web.filter(([, e]) => e.login === 'never').map(([id]) => id);
+  if (!endpoints.length) return { on: false, locked: 'never', endpoints, open };
+  if (web.some(([, e]) => e.login === 'required')) return { on: true, locked: 'required', endpoints, open };
+  return { on: Object.values(choices).some(Boolean), locked: null, endpoints, open };
 }
 export function gatedEndpoints(manifest: Manifest, choices: Record<string, boolean>): string[] {
-  return loginsOf(manifest, choices)
-    .filter((l) => l.on)
-    .map((l) => l.endpoint);
+  const login = appLoginOf(manifest, choices);
+  return login?.on ? login.endpoints : [];
+}
+// the stored form of the switch
+export function loginChoices(login: AppLogin, on: boolean): Record<string, boolean> {
+  return on ? Object.fromEntries(login.endpoints.map((e) => [e, true])) : {};
+}
+
+// Packages with their own onboarding or a Harbor-provisioned admin manage their own accounts (n8n, Nextcloud)
+export function packageHasOwnLogin(manifest: Manifest): boolean {
+  return manifest.setup !== undefined || manifest.provisionedCredentials !== undefined;
 }
 
 // The hash handed to the gate (format gate/gate.mjs verifies). The salt comes from the cookie key, so the same

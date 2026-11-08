@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -89,11 +89,14 @@ async function installFromStore(page: Page, pkgName: string) {
   // Every install goes through the install page (decision 148: one Storage
   // summary, defaults accepted) and continues to plan review.
   const wiz = page.getByRole('dialog');
-  await expect(wiz.getByRole('region', { name: 'Storage' })).toBeVisible();
+  await expect(wiz.getByRole('region', { name: 'Where it lives' })).toBeVisible();
   await wiz.getByRole('button', { name: `Install ${pkgName} now` }).click();
 }
 
 test.describe.configure({ mode: 'serial' });
+
+// decision 198: the app page has four tabs
+const tab = (scope: Locator, name: string) => scope.getByRole('tab', { name, exact: true }).click();
 
 test('login rejects bad credentials without revealing which field is wrong', async ({ page }) => {
   await page.goto('/');
@@ -193,20 +196,20 @@ test('store app page, install with plan review, progress tray, Open link; duplic
   const about = page.getByRole('dialog');
   // Decision 148: plain summaries — stored encrypted on this machine (no media folder, no drive),
   // reachable only here (loopback), and what happens after Install.
-  await expect(about.getByRole('region', { name: 'Storage' })).toContainText('This machine');
-  await expect(about).toContainText('Encrypted — unlocks automatically when you sign in');
-  await expect(about.getByRole('region', { name: 'Access' })).toContainText('Only you, on this machine');
+  await expect(about.getByRole('region', { name: 'Where it lives' })).toContainText('This machine');
+  await expect(about).toContainText('Encrypted, unlocks when you sign in');
+  await expect(about.getByRole('region', { name: 'Who can reach it' })).toContainText('Only you, on this machine');
   await expect(about).toContainText(/After install/);
-  await expect(about.getByRole('group', { name: 'Main address' })).toHaveCount(0);
+  await expect(about.getByRole('group', { name: 'Opens first at' })).toHaveCount(0);
   await about.getByRole('button', { name: 'How the encryption works' }).click();
   await expect(about).toContainText("Linux's built-in encryption");
   // the technical details wait behind Advanced
-  await about.getByText('Advanced: name, passphrase, folders, technical details').click();
+  await about.getByText('More options: name, passphrase, folders, technical details').click();
   await expect(about.locator('code.path')).toContainText('excalidraw/excalidraw');
   await expect(about.getByRole('link', { name: 'Website ↗' })).toHaveAttribute('href', 'https://excalidraw.com');
   // Main address (decision 116) behind Change: only what is set up — this machine, plus the (fake) tailnet; full URLs, no ellipsis.
   await about.getByRole('button', { name: 'Change who can reach Excalidraw' }).click();
-  await expect(about.getByRole('group', { name: 'Main address' })).toBeVisible();
+  await expect(about.getByRole('group', { name: 'Opens first at' })).toBeVisible();
   await expect(about.getByRole('radio', { name: 'This machine only' })).toBeChecked();
   await expect(about.getByRole('radio', { name: /^Tailscale — https:\/\/[^…]+$/ })).toBeEnabled();
   await about.getByRole('button', { name: 'Install Excalidraw now' }).click();
@@ -331,7 +334,9 @@ test('app drawer: stop, start, remove (data kept wording) and reinstall', async 
   await expect(page.getByRole('link', { name: 'Open excalidraw' })).toBeVisible();
 
   await openDrawer();
+  await tab(page.getByRole('dialog'), 'Settings');
   await page.getByRole('dialog').getByRole('button', { name: 'Remove excalidraw' }).click();
+  await page.getByRole('dialog', { name: 'Remove excalidraw' }).getByRole('button', { name: 'Review removing excalidraw' }).click();
   const dlg = page.getByRole('dialog');
   await expect(dlg).toContainText(/retained/i);
   await dlg.getByRole('button', { name: 'Remove (keep data)' }).click();
@@ -358,12 +363,15 @@ test('second package installs on a distinct port; drawer shows owned resources',
   const hrefs = await page.getByRole('link', { name: /^Open / }).evaluateAll((els) => els.map((e) => (e as { href: string }).href));
   expect(new Set(hrefs).size).toBe(2);
   await page.getByRole('button', { name: 'Details of bentopdf' }).click();
-  const d = page.getByRole('dialog');
-  await d.getByText('Technical details').click();
+  const drawerOf = page.getByRole('dialog', { name: /bentopdf|BentoPDF/ }).first();
+  await tab(drawerOf, 'Settings');
+  await drawerOf.getByRole('button', { name: 'Technical details of bentopdf' }).click();
+  const d = page.getByRole('dialog', { name: /^Technical details/ });
   await expect(d).toContainText('Owned resources');
   await expect(d).toContainText('container');
   await expect(d).toContainText(/hb_[0-9a-f]{32}-web-1/);
-  await d.getByRole('button', { name: 'Close', exact: true }).click();
+  await d.getByRole('button', { name: 'Close dialog', exact: true }).click();
+  await drawerOf.getByRole('button', { name: 'Close dialog', exact: true }).click();
 });
 
 test('logout returns to login and the API rejects the old token', async ({ page }) => {
@@ -375,64 +383,72 @@ test('logout returns to login and the API rejects the old token', async ({ page 
   expect(res.status()).toBe(401);
 });
 
-test('publish wizard: tailnet address on the tile; public exposure shows one-time credentials; withdraw works', async ({ page }) => {
+test('publishing: the Tailscale switch of an app; Add a domain asks for its one password; several domains; withdraw', async ({ page }) => {
   await login(page);
   await installFromStore(page, 'Excalidraw'); // fresh instance for this test → excalidraw-2
   await approve(page, 'Install');
   await trayDone(page, 'Install');
   await dismissRecovery(page);
-  await page.getByRole('link', { name: 'Publishing' }).click();
-  await page.getByRole('button', { name: 'Publish excalidraw-2' }).click();
-  const dlg = page.getByRole('dialog');
-  await expect(dlg).toContainText('keeps listening on 127.0.0.1');
-  await dlg.getByRole('button', { name: 'Publish', exact: true }).click(); // tailnet is the default path
+  // decision 198: Tailscale is the app's own switch
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of excalidraw-2' }).click();
+  let drawer = page.getByRole('dialog');
+  await tab(drawer, 'Access');
+  await drawer.getByRole('checkbox', { name: 'excalidraw-2 on Tailscale', exact: true }).click();
   // the review shows the address as text, not a link: nothing answers there until it is approved (decision 186)
   await expect(page.getByRole('dialog')).toContainText('(once you approve)');
   await expect(page.getByRole('dialog').getByRole('link', { name: /tail1234\.ts\.net/ })).toHaveCount(0);
   await approve(page, 'Publish');
   await trayDone(page, 'Expose');
-  // decision 189: tailnet addresses sit in their own compact card; the app leaves "Not published"
+  await page.getByRole('link', { name: 'Publishing' }).click();
+  // decision 189: tailnet addresses sit in their own compact card
   const tailnet = page.getByRole('region', { name: 'On your tailnet' });
   await expect(tailnet.getByRole('link', { name: /^https:\/\/harbor-test\.tail1234\.ts\.net:/ })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Not published' }).getByRole('button', { name: 'Publish excalidraw-2' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'No domain yet' }).getByRole('button', { name: 'Publish excalidraw-2' })).toHaveCount(0);
   const published = page.getByRole('region', { name: 'On the internet' });
-  // public with basic auth
+  // decision 195: Add a domain puts the app's one password up first, no basic auth
   await tailnet.getByRole('button', { name: 'Manage excalidraw-2' }).click();
-  const dlg2 = page.getByRole('dialog');
-  await dlg2.getByLabel(/Public/).check();
-  await dlg2.getByPlaceholder('app.example.com').fill('draw.example.com');
-  await dlg2.getByRole('button', { name: 'Publish', exact: true }).click();
+  const manage = page.getByRole('dialog', { name: 'Addresses of excalidraw-2' });
+  await manage.getByRole('button', { name: 'Add a domain…', exact: true }).click();
+  const dom = page.getByRole('dialog', { name: 'Add a domain to excalidraw-2' });
+  await dom.getByLabel('Domain', { exact: true }).fill('draw.example.com');
+  await dom.getByLabel('Domain', { exact: true }).blur();
+  await expect(dom.getByRole('status', { name: 'DNS check' })).toContainText(/Not pointing here yet|Points somewhere else|Points to this machine|Not checked yet/);
+  await expect(dom.getByRole('checkbox', { name: 'Ask for a password first', exact: true })).toBeChecked();
+  await dom.getByRole('button', { name: 'Review…', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('Harbor makes one and shows it once');
   await approve(page, 'Publish');
   await trayDone(page, 'Expose');
-  await expect(page.getByText(/Basic-auth login for https:\/\/draw\.example\.com\/, shown once/)).toBeVisible(); // decision 138
-  await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toContainText('basic auth');
-  // decision 127: a second domain for the same app, with its own protection
+  await expect(page.getByText(/excalidraw password|Excalidraw password/).first()).toBeVisible();
+  await dismissRecovery(page).catch(() => undefined);
+  await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toContainText('password');
+  // decision 127: a second domain for the same app
   await published.getByRole('button', { name: 'Manage excalidraw-2' }).click();
-  const dlg3 = page.getByRole('dialog');
-  await dlg3.getByRole('button', { name: 'Add another domain', exact: true }).click();
-  await expect(dlg3.getByRole('radio', { name: /^Public/ })).toBeChecked();
-  await dlg3.getByPlaceholder('app.example.com').fill('draw.example.org');
-  await dlg3.getByLabel('Protection').selectOption('none');
-  await dlg3.getByRole('button', { name: 'Publish', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Addresses of excalidraw-2' }).getByRole('button', { name: 'Add a domain…', exact: true }).click();
+  const dom2 = page.getByRole('dialog', { name: 'Add a domain to excalidraw-2' });
+  await dom2.getByLabel('Domain', { exact: true }).fill('draw.example.org');
+  await dom2.getByRole('button', { name: 'Review…', exact: true }).click();
   await approve(page, 'Publish');
   await trayDone(page, 'Expose');
   await expect(published.locator('li').filter({ hasText: 'draw.example.com' })).toHaveCount(1);
   await expect(published.locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(1);
-  // the tile on Home shows the same addresses in the drawer
+  // the app page lists every address
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of excalidraw-2' }).click();
-  await expect(page.getByRole('dialog').locator('.addresses')).toContainText('https://draw.example.com/');
-  await expect(page.getByRole('dialog').locator('.addresses')).toContainText('https://draw.example.org/');
-  await page.getByRole('dialog').getByRole('button', { name: 'Publish excalidraw-2' }).click();
+  drawer = page.getByRole('dialog');
+  await tab(drawer, 'Access');
+  await expect(drawer.locator('.address-card')).toContainText('https://draw.example.com/');
+  await expect(drawer.locator('.address-card')).toContainText('https://draw.example.org/');
+  await drawer.getByRole('button', { name: 'Manage the addresses of excalidraw-2' }).click();
   // each public name has its own Withdraw; removing one keeps the other
-  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw draw.example.com', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Addresses of excalidraw-2' }).getByRole('button', { name: 'Withdraw draw.example.com', exact: true }).click();
   await approve(page, 'Withdraw');
   await trayDone(page, 'Unexpose');
   await page.getByRole('link', { name: 'Publishing' }).click();
   await expect(page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.com' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(1);
   await page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.org' }).getByRole('button', { name: 'Manage' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Withdraw draw.example.org', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Addresses of excalidraw-2' }).getByRole('button', { name: 'Withdraw draw.example.org', exact: true }).click();
   await approve(page, 'Withdraw');
   await trayDone(page, 'Unexpose');
   await expect(page.getByRole('region', { name: 'On the internet' }).locator('li').filter({ hasText: 'draw.example.org' })).toHaveCount(0);
@@ -522,7 +538,7 @@ test('install page: a wrong-filesystem drive offers Format, not Mount or a passp
   // (decision 106): the Harbor recovery key is what opens it elsewhere.
   await expect(where.locator('.choice-main strong').first()).toHaveText('USB20FD', { timeout: 30_000 });
   await expect(where).toContainText('Unplug the drive and BentoPDF pauses');
-  await where.getByText('Advanced: name, passphrase, folders, technical details').click();
+  await where.getByText('More options: name, passphrase, folders, technical details').click();
   await expect(where.getByRole('button', { name: 'Use my own passphrase instead…' })).toBeVisible();
   await expect(where.getByLabel('Encryption passphrase for this app')).toHaveCount(0);
   await expect(where.getByRole('button', { name: 'Install BentoPDF' })).toBeEnabled();
@@ -544,7 +560,7 @@ test('install page: bring your own folder validates the path in the plan and mou
   await page.getByRole('button', { name: 'About Jellyfin' }).click();
   const about = page.getByRole('dialog');
   // decision 148: an own folder is an Advanced exception, labeled as not encrypted
-  await about.getByText('Advanced: name, passphrase, folders, technical details').click();
+  await about.getByText('More options: name, passphrase, folders, technical details').click();
   await about.getByLabel(/Keep your media library in a folder of my own \(not encrypted\)/).check();
   // typed path (advanced) that does not exist
   await about.getByRole('button', { name: 'Choose folder for Your media library' }).click();
@@ -558,7 +574,7 @@ test('install page: bring your own folder validates the path in the plan and mou
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
   await page.getByRole('button', { name: 'About Jellyfin' }).click();
   const again = page.getByRole('dialog');
-  await again.getByText('Advanced: name, passphrase, folders, technical details').click();
+  await again.getByText('More options: name, passphrase, folders, technical details').click();
   await again.getByLabel(/in a folder of my own/).check();
   // the picker: go to the Harbor data folder, create a folder, use it
   await again.getByRole('button', { name: 'Choose folder for Your media library' }).click();
@@ -571,8 +587,8 @@ test('install page: bring your own folder validates the path in the plan and mou
   const chosen = (await picker2.locator('code.path').textContent())!.trim();
   await picker2.getByRole('button', { name: 'Use this folder' }).click();
   await expect(again.locator('.folder-choice code.path')).toHaveText(chosen);
-  await expect(again.getByRole('region', { name: 'Storage' })).toContainText('(not encrypted)');
-  await expect(again.getByRole('region', { name: 'Storage' })).toContainText('Encrypted, except your media library (your folder)');
+  await expect(again.getByRole('region', { name: 'Where it lives' })).toContainText('(not encrypted)');
+  await expect(again.getByRole('region', { name: 'Where it lives' })).toContainText('Encrypted, except your media library (your folder)');
   folder = chosen;
   await again.getByRole('button', { name: 'Install Jellyfin now' }).click();
   const plan = page.getByRole('dialog');
@@ -584,8 +600,9 @@ test('install page: bring your own folder validates the path in the plan and mou
   await dismissRecovery(page);
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of jellyfin' }).click();
-  const d = page.getByRole('dialog');
-  await d.getByText('Technical details').click();
+  await tab(page.getByRole('dialog'), 'Settings');
+  await page.getByRole('dialog').getByRole('button', { name: 'Technical details of jellyfin' }).click();
+  const d = page.getByRole('dialog', { name: /^Technical details/ });
   await expect(d).toContainText('bind');
   await expect(d).toContainText(folder);
 });
@@ -737,14 +754,17 @@ test('full uninstall: typed confirmation, data deleted, name free again', async 
   await page.getByRole('button', { name: 'Details of memos' }).click();
   const d = page.getByRole('dialog');
   // The setup hint opens the app at the same address as the Open button (decision 115).
-  await expect(d.getByText('Finish setup inside the app:')).toBeVisible();
-  const opens = await d.getByRole('link', { name: 'Open memos', exact: true }).evaluateAll((els) => els.map((e) => (e as { href: string }).href));
+  await expect(d.getByRole('heading', { name: 'Finish setup inside the app', exact: true })).toBeVisible();
+  const opens = await d.getByRole('link', { name: /^Open (memos|main page)$/ }).evaluateAll((els) => els.map((e) => (e as { href: string }).href));
   expect(opens).toHaveLength(2);
   expect(new Set(opens).size).toBe(1);
-  await d.getByText('Uninstall completely…').click();
-  const del = d.getByRole('button', { name: 'Uninstall memos completely' });
+  await tab(d, 'Settings');
+  await d.getByRole('button', { name: 'Remove memos', exact: true }).click();
+  const rm = page.getByRole('dialog', { name: 'Remove memos' });
+  await rm.getByRole('radio', { name: 'Delete everything', exact: true }).check();
+  const del = rm.getByRole('button', { name: 'Uninstall memos completely' });
   await expect(del).toBeDisabled();
-  await d.getByLabel('Type memos to confirm').fill('memos');
+  await rm.getByLabel('Type memos to confirm').fill('memos');
   await expect(del).toBeEnabled();
   await del.click();
   const plan = page.getByRole('dialog');
@@ -775,10 +795,9 @@ test('public addresses wizard: public IP, add and check a domain, use it in the 
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Publishing' }).click();
   await page.getByRole('button', { name: 'Publish memos' }).click();
   const dlg = page.getByRole('dialog');
-  await dlg.getByLabel(/Public/).check();
-  await dlg.getByLabel('Domain').selectOption('photos.example.com');
-  await expect(dlg).toContainText("Let's Encrypt automatically");
-  await dlg.getByRole('button', { name: 'Close', exact: true }).click();
+  await dlg.getByLabel('Domain', { exact: true }).fill('photos.example.com');
+  await expect(dlg.getByRole('status', { name: 'DNS check' })).toContainText('Not pointing here yet');
+  await dlg.getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Forget photos.example.com' }).isVisible().catch(() => false);
   // palette
   await page.keyboard.press('Meta+k');
@@ -797,6 +816,7 @@ test('public addresses wizard: public IP, add and check a domain, use it in the 
 test('customize an app: name and emoji icon show on the launcher and in search; picture icon is served', async ({ page }) => {
   await login(page);
   await page.getByRole('button', { name: 'Details of memos' }).click();
+  await tab(page.getByRole('dialog'), 'Settings');
   await page.getByRole('dialog').getByRole('button', { name: 'Customize memos' }).click();
   const dlg = page.getByRole('dialog', { name: 'Customize Memos' });
   await dlg.getByLabel('Name on the launcher').fill('Notes');
@@ -805,7 +825,7 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await dlg.getByRole('option', { name: 'Colour #ff9f0a' }).click();
   await dlg.getByRole('button', { name: 'Save' }).click();
   await expect(page.getByRole('dialog', { name: 'Notes' })).toBeVisible(); // the drawer follows the new name
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close dialog', exact: true }).click();
   const tile = page.locator('.icon-tile[data-instance="memos"]');
   await expect(tile).toContainText('Notes');
   await expect(tile.locator('.glyph-icon')).toHaveText('📝');
@@ -816,12 +836,14 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await page.keyboard.press('Escape');
   // picture icon
   await page.getByRole('button', { name: 'Details of memos' }).click();
+  await tab(page.getByRole('dialog'), 'Settings');
   await page.getByRole('dialog').getByRole('button', { name: 'Customize memos' }).click();
   const dlg2 = page.getByRole('dialog', { name: 'Customize Memos' });
   await dlg2.getByRole('radio', { name: 'My picture' }).click();
   await dlg2.getByLabel('Icon picture file').setInputFiles({ name: 'icon.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhQGAWjR9awAAAABJRU5ErkJggg==', 'base64') });
   await dlg2.getByRole('button', { name: 'Save' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dlg2).toHaveCount(0);
+  await page.getByRole('dialog').getByRole('button', { name: 'Close dialog', exact: true }).click();
   const img = tile.locator('img.appicon');
   await expect(img).toHaveAttribute('src', /\/v1\/instances\/[0-9a-f-]+\/icon\?v=/);
   const res = await page.request.get((await img.getAttribute('src'))!);
@@ -829,27 +851,32 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   expect(res.headers()['content-type']).toBe('image/png');
   // back to the app's own icon and name
   await page.getByRole('button', { name: 'Details of memos' }).click();
+  await tab(page.getByRole('dialog'), 'Settings');
   await page.getByRole('dialog').getByRole('button', { name: 'Customize memos' }).click();
   const dlg3 = page.getByRole('dialog', { name: 'Customize Memos' });
   await dlg3.getByLabel('Name on the launcher').fill('');
   await dlg3.getByRole('radio', { name: "App's icon" }).click();
   await dlg3.getByRole('button', { name: 'Save' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dlg3).toHaveCount(0);
+  await page.getByRole('dialog').getByRole('button', { name: 'Close dialog', exact: true }).click();
   await expect(tile).toContainText('Memos');
   // decision 131: Hide from Home — out of the launcher, behind a quiet "1 hidden app", and back
   await page.getByRole('button', { name: 'Details of memos' }).click();
-  await page.getByRole('dialog').getByLabel('Hide memos from Home', { exact: true }).check();
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await tab(page.getByRole('dialog'), 'Settings');
+  await page.getByRole('dialog').getByLabel('Show memos on Home', { exact: true }).uncheck();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close dialog', exact: true }).click();
   const launcher = page.locator('.icons[aria-label="Installed apps"]');
   await expect(launcher.locator('.icon-tile[data-instance="memos"]')).toHaveCount(0);
   await page.getByText('1 hidden app', { exact: true }).click();
   await page.locator('.retained-list .icon-tile[data-instance="memos"]').getByRole('button', { name: 'Details of memos' }).click();
-  await page.getByRole('dialog').getByLabel('Hide memos from Home', { exact: true }).uncheck();
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await tab(page.getByRole('dialog'), 'Settings');
+  await page.getByRole('dialog').getByLabel('Show memos on Home', { exact: true }).check();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close dialog', exact: true }).click();
   await expect(launcher.locator('.icon-tile[data-instance="memos"]')).toHaveCount(1);
   // decision 143: an encrypted app's passphrase — to my own, then back to Harbor's own key
   await page.getByRole('button', { name: 'Details of memos', exact: true }).click();
   const drawer = page.getByRole('dialog');
+  await tab(drawer, 'Data');
   await drawer.getByText('Change passphrase…', { exact: true }).click();
   await drawer.getByRole('radio', { name: 'My own passphrase' }).check();
   await drawer.getByLabel('New passphrase for memos', { exact: true }).fill('memos own passphrase');
@@ -867,7 +894,7 @@ test('customize an app: name and emoji icon show on the launcher and in search; 
   await drawer.getByText('Move to…', { exact: true }).click();
   await expect(drawer.getByText(/Lives at .*harbor-apps\/memos\/memos/)).toBeVisible();
   await expect(drawer.getByText(/No other place can hold it right now|Choose a place…/).first()).toBeVisible();
-  await drawer.getByRole('button', { name: 'Close', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Close dialog', exact: true }).click();
 });
 
 test('arrange the launcher: drag an icon to the front, the order survives a reload; keyboard arranging works', async ({ page }) => {
@@ -991,7 +1018,7 @@ ${notes ? `  releaseNotes: ${JSON.stringify(notes)}\n` : ''}`;
   await expect(card.locator('.store-ver')).toHaveText('v1.1'); // decision 174: the app's own version, on its own
   await card.getByRole('button', { name: 'Install Hello E2E', exact: true }).click();
   const wiz = page.getByRole('dialog');
-  await expect(wiz.getByRole('region', { name: 'Storage' })).toBeVisible();
+  await expect(wiz.getByRole('region', { name: 'Where it lives' })).toBeVisible();
   await wiz.getByRole('button', { name: 'Install Hello E2E now' }).click();
   const plan = page.getByRole('dialog');
   await expect(plan).toContainText('your own uploaded app');
@@ -1121,10 +1148,11 @@ links:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of gateway-e2e' }).click();
   const drawer = page.getByRole('dialog');
-  await expect(drawer).toContainText('Links');
-  await expect(drawer).toContainText('linked');
+  await tab(drawer, 'Settings');
+  await expect(drawer.getByRole('heading', { name: 'Connected apps', exact: true })).toBeVisible();
+  await expect(drawer).toContainText('Linked to');
   await expect(drawer).toContainText('http://docs-link:3010');
-  await expect(drawer).toContainText('set, never shown');
+  await expect(drawer).toContainText('Set, never shown');
   await expect(drawer).not.toContainText('tok-FIXTURE-e2e-123');
   await expect(drawer.getByRole('button', { name: 'Change api-token' })).toBeVisible();
   await drawer.getByRole('button', { name: 'Close' }).last().click();
@@ -1298,7 +1326,7 @@ test('backups: add a place, back an encrypted app up, restore it in place, delet
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of memos', exact: true }).click();
   const drawer = page.getByRole('dialog');
-  await drawer.locator('summary', { hasText: /^Backups/ }).click();
+  await tab(drawer, 'Data');
   await drawer.getByLabel('Back up memos to Another disk').check();
   await drawer.getByLabel('Back up memos every night').check();
   await drawer.getByRole('button', { name: 'Back up memos now' }).click();
@@ -1317,7 +1345,7 @@ test('backups: add a place, back an encrypted app up, restore it in place, delet
   await trayDone(page, 'Restore');
   await page.getByRole('button', { name: 'Details of memos', exact: true }).click();
   const after = page.getByRole('dialog');
-  await after.locator('summary', { hasText: /^Backups/ }).click();
+  await tab(after, 'Data');
   await expect(after).toContainText('before the last restore', { timeout: 15_000 });
   await after.getByRole('button', { name: 'Delete it' }).click();
   await expect(after).not.toContainText('before the last restore', { timeout: 15_000 });
@@ -1411,6 +1439,7 @@ ui:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of tunnel-e2e' }).click();
   const drawer = page.getByRole('dialog');
+  await tab(drawer, 'Access');
   await expect(drawer.getByRole('heading', { name: 'Ports' })).toBeVisible();
   await expect(drawer).toContainText(`forward UDP ${port} on your router`);
 });
@@ -1473,10 +1502,11 @@ ui:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of gpu-e2e', exact: true }).click();
   const drawer = page.getByRole('dialog');
+  await tab(drawer, 'Settings');
   await expect(drawer.getByRole('heading', { name: 'Graphics card', exact: true })).toBeVisible();
   // decision 181: a working NVIDIA card is named with its running driver (the review above stays short)
   await expect(drawer).toContainText('NVIDIA GeForce RTX 3090 (driver 595.99.02, in use)');
-  await drawer.getByRole('button', { name: 'Close', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Close dialog', exact: true }).click();
   await page.getByRole('link', { name: 'Settings' }).click();
   await expect(page.locator('.device-facts')).toContainText('Graphics card');
   await expect(page.locator('.device-facts')).toContainText('NVIDIA GeForce RTX 3090 (driver 595.99.02)');
@@ -1575,11 +1605,11 @@ settings:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of tuning-e2e', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Tuning E2E' });
-  await expect(drawer.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
-  const list = drawer.locator('.settings-list');
-  await expect(list).toContainText('Context length (tokens) 16384');
-  await expect(list).toContainText('Flash attention on');
-  await expect(list).toContainText('Memory cache precision Full (default)');
+  await tab(drawer, 'Settings');
+  const list = drawer.getByRole('region', { name: 'App options' });
+  await expect(list).toContainText(/Context length \(tokens\)\s*16384/);
+  await expect(list).toContainText(/Flash attention\s*on/);
+  await expect(list).toContainText(/Memory cache precision\s*Full\s*default/);
   // Change… → the form → Review → the normal review dialog → Apply
   await drawer.getByRole('button', { name: 'Change the settings of tuning-e2e', exact: true }).click();
   const form = page.getByRole('dialog', { name: 'Settings of Tuning E2E' });
@@ -1596,9 +1626,10 @@ settings:
   await expect(page.getByRole('heading', { name: /settings applied$/ })).toBeVisible({ timeout: 30_000 });
   // the drawer closed when the review opened; the app page shows the new values
   await page.getByRole('button', { name: 'Details of tuning-e2e', exact: true }).click();
-  await expect(list).toContainText('Memory cache precision Half', { timeout: 15_000 });
-  await expect(list).toContainText('Context length (tokens) 8192 (default)');
-  await drawer.getByRole('button', { name: 'Close', exact: true }).last().click();
+  await tab(drawer, 'Settings');
+  await expect(list).toContainText(/Memory cache precision\s*Half/, { timeout: 15_000 });
+  await expect(list).toContainText(/Context length \(tokens\)\s*8192\s*default/);
+  await drawer.getByRole('button', { name: 'Close dialog', exact: true }).last().click();
 });
 
 test('decision 170: a one-copy app shows only Open once installed, on its card and its page', async ({ page }) => {
@@ -1620,7 +1651,9 @@ test('decision 170: a one-copy app shows only Open once installed, on its card a
   // the daemon would refuse
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of tunnel-e2e', exact: true }).click();
+  await tab(page.getByRole('dialog'), 'Settings');
   await page.getByRole('dialog').getByRole('button', { name: 'Remove tunnel-e2e', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Remove tunnel-e2e' }).getByRole('button', { name: 'Review removing tunnel-e2e', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Remove (keep data)' }).click();
   await trayDone(page, 'Remove');
   await page.getByRole('link', { name: 'App Store' }).click();
@@ -1653,7 +1686,7 @@ test('decision 170: Store cards for 0, 1 and 2 copies; the second copy says so, 
   const first = page.getByRole('dialog');
   await expect(first.getByRole('note', { name: 'Another copy' })).toHaveCount(0);
   // a bad name typed under Advanced says why Install is greyed out (no silent dead button)
-  await first.getByText('Advanced: name, passphrase, folders, technical details', { exact: true }).click();
+  await first.getByText('More options: name, passphrase, folders, technical details', { exact: true }).click();
   const optional = first.getByLabel('Instance name for FreshRSS', { exact: true });
   await optional.fill('Bad_Name');
   await expect(first.getByRole('alert').filter({ hasText: 'Use lowercase letters' })).toBeVisible();
@@ -1816,12 +1849,15 @@ test.describe('queue', () => {
     await page.getByRole('button', { name: 'Details of uptime-kuma', exact: true }).click();
     let drawer = page.getByRole('dialog');
     await expect(drawer.getByRole('status', { name: 'Queue for uptime-kuma' })).toContainText('Installing…');
-    await expect(drawer.getByRole('button', { name: 'Customize uptime-kuma', exact: true })).toBeEnabled();
     // an installing app offers what makes sense after its install; each queues behind it
-    for (const name of ['Stop uptime-kuma', 'Restart uptime-kuma', 'Remove uptime-kuma']) await expect(drawer.getByRole('button', { name, exact: true })).toBeEnabled();
-    await drawer.getByText('Uninstall completely…').click();
-    await drawer.getByLabel('Type uptime-kuma to confirm', { exact: true }).fill('uptime-kuma');
-    await drawer.getByRole('button', { name: 'Uninstall uptime-kuma completely', exact: true }).click();
+    for (const name of ['Stop uptime-kuma', 'Restart uptime-kuma']) await expect(drawer.getByRole('button', { name, exact: true })).toBeEnabled();
+    await tab(drawer, 'Settings');
+    await expect(drawer.getByRole('button', { name: 'Customize uptime-kuma', exact: true })).toBeEnabled();
+    await drawer.getByRole('button', { name: 'Remove uptime-kuma', exact: true }).click();
+    const removeKuma = page.getByRole('dialog', { name: 'Remove uptime-kuma' });
+    await removeKuma.getByRole('radio', { name: 'Delete everything', exact: true }).check();
+    await removeKuma.getByLabel('Type uptime-kuma to confirm', { exact: true }).fill('uptime-kuma');
+    await removeKuma.getByRole('button', { name: 'Uninstall uptime-kuma completely', exact: true }).click();
     let ask = page.getByRole('dialog');
     await expect(ask.getByRole('heading', { name: 'Queue: Uninstall Uptime Kuma', exact: true })).toBeVisible();
     await expect(ask).toContainText('Harbor is installing Uptime Kuma right now. Harbor will uninstall it as soon as that finishes');
@@ -1835,7 +1871,9 @@ test.describe('queue', () => {
 
     await page.getByRole('button', { name: 'Details of n8n', exact: true }).click();
     drawer = page.getByRole('dialog');
-    for (const name of ['Stop n8n', 'Restart n8n', 'Remove n8n', 'Customize n8n']) await expect(drawer.getByRole('button', { name, exact: true })).toBeEnabled();
+    for (const name of ['Stop n8n', 'Restart n8n']) await expect(drawer.getByRole('button', { name, exact: true })).toBeEnabled();
+    await tab(drawer, 'Settings');
+    for (const name of ['Remove n8n', 'Customize n8n']) await expect(drawer.getByRole('button', { name, exact: true })).toBeEnabled();
 
     // a reviewed plan for another app is approved at once and waits its turn
     await drawer.getByRole('button', { name: 'Restart n8n', exact: true }).click();
@@ -1916,8 +1954,7 @@ test('decision 177: every app on Tailscale — the switch asks first, lists the 
   await approve(page, 'Install');
   await trayDone(page, 'Install');
   await dismissRecovery(page);
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Remote access/ }).click();
+  await page.getByRole('link', { name: 'Publishing' }).click();
   await expect(page.getByRole('heading', { name: 'Every app on Tailscale' })).toBeVisible();
   const toggle = page.getByRole('checkbox', { name: 'Give every app a Tailscale address', exact: true });
   await expect(toggle).not.toBeChecked();
@@ -1932,16 +1969,12 @@ test('decision 177: every app on Tailscale — the switch asks first, lists the 
   // the drawer's own switch: off keeps that app off the tailnet
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: /^Details of / }).first().click();
+  await tab(page.getByRole('dialog'), 'Access');
   const sw = page.getByRole('dialog').getByRole('checkbox', { name: /on Tailscale$/ });
-  await expect(sw).toBeChecked();
-  await sw.uncheck();
-  await expect(page.getByRole('dialog')).toContainText('Kept off');
-  await sw.check();
   await expect(sw).toBeChecked();
   await page.keyboard.press('Escape');
   // turning it off asks nothing and withdraws nothing
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Remote access/ }).click();
+  await page.getByRole('link', { name: 'Publishing' }).click();
   await page.getByRole('checkbox', { name: 'Give every app a Tailscale address', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: 'Give every app a Tailscale address', exact: true })).not.toBeChecked();
 });
@@ -2021,8 +2054,9 @@ network:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of quiet-e2e', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Quiet E2E' });
-  await expect(drawer.getByRole('heading', { name: 'Internet', exact: true })).toBeVisible();
-  await expect(drawer).toContainText("Offline · the app's default");
+  await tab(drawer, 'Access');
+  await expect(drawer.getByRole('heading', { name: 'What this app can reach', exact: true })).toBeVisible();
+  await expect(drawer).toContainText('Offline');
   await drawer.getByRole('button', { name: 'Change how Quiet E2E reaches the internet', exact: true }).click();
   const pick = page.getByRole('dialog', { name: 'Internet for Quiet E2E' });
   await expect(pick.getByRole('button', { name: 'Review', exact: true })).toBeDisabled();
@@ -2033,8 +2067,8 @@ network:
   await plan.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByRole('heading', { name: /settings applied$/ })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Details of quiet-e2e', exact: true }).click();
-  await expect(drawer).toContainText('Through the VPN · your choice', { timeout: 15_000 });
-  await drawer.getByRole('button', { name: 'Close', exact: true }).last().click();
+  await expect(drawer).toContainText('Through the VPN', { timeout: 15_000 });
+  await drawer.getByRole('button', { name: 'Close dialog', exact: true }).last().click();
   // every app through the VPN asks first; the Apps card lists who goes through it
   await page.getByRole('link', { name: 'Settings' }).click();
   await page.getByRole('button', { name: /^VPN Send your apps/ }).click();
@@ -2058,8 +2092,7 @@ network:
 // After decision 177's test (which turns the policy off again): the bulk list works on whatever apps exist.
 test('decision 186: Apps on Tailscale — select all, review, apply; select none withdraws; Also on Tailscale at install', async ({ page }) => {
   await login(page);
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Remote access/ }).click();
+  await page.getByRole('link', { name: 'Publishing' }).click();
   await expect(page.getByRole('heading', { name: 'Apps on Tailscale', exact: true })).toBeVisible();
   const list = page.getByRole('list', { name: 'Apps on Tailscale', exact: true });
   const boxes = list.getByRole('checkbox');
@@ -2090,6 +2123,7 @@ test('decision 186: Apps on Tailscale — select all, review, apply; select none
   await page.getByRole('link', { name: 'App Store' }).click();
   await page.getByRole('button', { name: 'Install Excalidraw', exact: true }).or(page.getByRole('button', { name: 'Add another copy of Excalidraw', exact: true })).click();
   const wiz = page.getByRole('dialog');
+  await wiz.getByRole('button', { name: 'Change who can reach Excalidraw' }).click();
   const also = wiz.getByRole('checkbox', { name: 'Also on Tailscale', exact: true });
   await expect(also).not.toBeChecked();
   await also.check();
@@ -2098,8 +2132,7 @@ test('decision 186: Apps on Tailscale — select all, review, apply; select none
   await approve(page, 'Install');
   await expect(page.locator('aside.tray').getByRole('heading', { name: /^Excalidraw \(excalidraw-\d+\) is ready$/ }).first()).toBeVisible({ timeout: 30_000 });
   await dismissRecovery(page);
-  await page.getByRole('link', { name: 'Settings' }).click();
-  await page.getByRole('button', { name: /Remote access/ }).click();
+  await page.getByRole('link', { name: 'Publishing' }).click();
   await expect.poll(links, { timeout: 60_000 }).toBe(1);
 });
 
@@ -2174,19 +2207,21 @@ ui:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of gate-e2e', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Gate E2E' });
-  await expect(drawer.getByRole('heading', { name: 'Login', exact: true })).toBeVisible();
+  await tab(drawer, 'Access');
+  await expect(drawer.getByRole('heading', { name: 'Password', exact: true })).toBeVisible();
   await expect(drawer).toContainText('Anyone who reaches its addresses can open it.');
-  await drawer.getByRole('button', { name: 'Turn on a login for Gate E2E', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Turn on a password for Gate E2E', exact: true }).click();
   const review = page.getByRole('dialog', { name: 'Review login' });
-  await expect(review).toContainText("Put Harbor's login in front of gate-e2e");
+  await expect(review).toContainText("Ask for gate-e2e's password first");
   await expect(review.getByRole('button', { name: 'Apply', exact: true })).toBeDisabled(); // no password yet
   await review.getByRole('button', { name: 'Generate', exact: true }).click();
-  const generated = await review.getByLabel('Value for harbor.login.web', { exact: true }).inputValue();
+  const generated = await review.getByLabel('Value for harbor.login', { exact: true }).inputValue();
   expect(generated).toMatch(/^[A-Za-z0-9]{24}$/);
   await review.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByRole('heading', { name: /^Gate E2E.*settings applied$/ }).first()).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Details of gate-e2e', exact: true }).click();
-  await expect(drawer).toContainText('Every address asks for the password first.', { timeout: 15_000 });
+  await tab(drawer, 'Access');
+  await expect(drawer).toContainText('One password for this whole app', { timeout: 15_000 });
   // Show password asks for the Harbor password first
   await drawer.getByRole('button', { name: 'Show the password of Gate E2E', exact: true }).click();
   const show = page.getByRole('dialog', { name: 'Password of Gate E2E' });
@@ -2195,8 +2230,9 @@ ui:
   await expect(show.getByLabel('Password', { exact: true })).toHaveText(generated);
   await show.getByRole('button', { name: 'Done', exact: true }).click();
   // off again: no password needed, the password is kept
-  await drawer.getByRole('button', { name: 'Turn off the login of Gate E2E', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Turn off the password of Gate E2E', exact: true }).click();
   await page.getByRole('dialog', { name: 'Review login' }).getByRole('button', { name: 'Apply', exact: true }).click();
   await page.getByRole('button', { name: 'Details of gate-e2e', exact: true }).click();
+  await tab(drawer, 'Access');
   await expect(drawer).toContainText('Anyone who reaches its addresses can open it.', { timeout: 30_000 });
 });

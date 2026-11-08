@@ -1,3 +1,4 @@
+import { tailnetServeTarget } from '../../src/system/lan-https.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { InstanceLogsDto, LogsDto, SecurityDto, SystemDto, TotpSetupDto } from '../../src/contracts/api.js';
 import { totpCode } from '../../src/auth/totp.js';
@@ -80,7 +81,7 @@ describe('tailnet addresses survive a Tailscale logout/login', () => {
     h.tailscale.statusValue = { ...h.tailscale.statusValue!, dnsName: 'harbor-renamed.tail1234.ts.net' };
     const until = Date.now() + 8000;
     while (Date.now() < until && !h.tailscale.entries.some((e) => e.port === port)) await new Promise((r) => setTimeout(r, 200));
-    expect(h.tailscale.entries.some((e) => e.port === port && e.target === `http://127.0.0.1:${hostPort}`)).toBe(true);
+    expect(h.tailscale.entries.some((e) => e.port === port && e.target === tailnetServeTarget(hostPort))).toBe(true);
     const detail = await h.api.expect<{ events: { message: string }[]; endpoints: { urls: { tailnet?: string } }[] }>(200, 'GET', `/v1/instances/${inst.id}`);
     expect(detail.events.map((e) => e.message).join('\n')).toMatch(/tailnet address restored after Tailscale reconnected/);
     expect(detail.endpoints[0]!.urls.tailnet).toContain('harbor-renamed.tail1234.ts.net');

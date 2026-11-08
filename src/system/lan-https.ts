@@ -16,7 +16,7 @@
 // :80 console redirects to https and apps re-render on 127.0.0.1 (the relay is then their only way in).
 import { execFile } from 'node:child_process';
 import { X509Certificate } from 'node:crypto';
-import { request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+import { createServer as createHttpServer, request as httpRequest, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import type { Socket } from 'node:net';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -66,6 +66,20 @@ export function securePortOffset(): number {
   const raw = Number(process.env['HARBOR_LAN_HTTPS_OFFSET'] ?? LAN_HTTPS_PORT_OFFSET);
   return Number.isSafeInteger(raw) && raw >= 1 && raw <= 60000 ? raw : LAN_HTTPS_PORT_OFFSET;
 }
+
+// Decision 196: tailnet addresses reach an app through a loopback relay on P + OFFSET, so they get the same cookie
+// firewall as the secure LAN addresses (`tailscale serve` terminates TLS and forwards here).
+export const TAILNET_RELAY_PORT_OFFSET = 10000;
+export function tailnetRelayOffset(): number {
+  const raw = Number(process.env['HARBOR_TAILNET_RELAY_OFFSET'] ?? TAILNET_RELAY_PORT_OFFSET);
+  return Number.isSafeInteger(raw) && raw >= 1 && raw <= 60000 ? raw : TAILNET_RELAY_PORT_OFFSET;
+}
+export function tailnetRelayPort(hostPort: number): number {
+  const offset = tailnetRelayOffset();
+  // a configured port range near the top of the port space counts down instead
+  return hostPort + offset <= 65535 ? hostPort + offset : hostPort - offset;
+}
+export const tailnetServeTarget = (hostPort: number): string => `http://127.0.0.1:${tailnetRelayPort(hostPort)}`;
 
 export function lanHttpsPort(hostPort: number): number {
   const p = hostPort + securePortOffset();
@@ -329,6 +343,8 @@ interface Relay {
   policy(securePort: number): PortPolicy;
   isolatedNames(tag: string): ReadonlySet<string>;
   learned(ep: RelayEndpoint, r: ReturnType<typeof rewriteSetCookies>): void;
+  // decision 196: behind `tailscale serve`, which already states the real peer, scheme and host: headers pass as they are
+  readonly passThrough: boolean;
 }
 
 const FORBIDDEN_BODY = 'Refused: this request came from another app on this Harbor.\n';
@@ -337,7 +353,7 @@ const FORBIDDEN_BODY = 'Refused: this request came from another app on this Harb
 // name the app now holds signed. A `shared` endpoint gets no shadow check: the names its instance's isolated
 // endpoints set are not its own (they share the jar's untagged names on purpose).
 function filteredHeaders(req: IncomingMessage, targetPort: number, pol: PortPolicy, relay: Relay): { headers: Record<string, string | string[] | undefined>; untagged: ReadonlySet<string> } {
-  const headers = forwardHeaders(req, targetPort);
+  const headers = relay.passThrough ? { ...req.headers } : forwardHeaders(req, targetPort);
   if (!pol) return { headers, untagged: new Set() };
   const isolated = pol.ep.cookies === 'isolated';
   const f = filterCookieHeader(req.headers.cookie, { tag: isolated ? pol.ep.tag : null, key: pol.key, ...(isolated ? { isolatedNames: relay.isolatedNames(pol.ep.tag) } : {}) });
@@ -407,7 +423,7 @@ function rawHead(statusLine: string, rawHeaders: string[], cookies?: (v: string[
   return out + '\r\n';
 }
 
-function proxyUpgrade(server: HttpsServer, targetPort: number, securePort: number, relay: Relay): void {
+function proxyUpgrade(server: HttpsServer | HttpServer, targetPort: number, securePort: number, relay: Relay): void {
   server.on('upgrade', (req: IncomingMessage, socket, head: Buffer) => {
     const sock = socket as Socket;
     sock.on('error', () => sock.destroy());
@@ -440,15 +456,15 @@ function proxyUpgrade(server: HttpsServer, targetPort: number, securePort: numbe
 
 // server.close() waits for every socket, upgraded WebSockets included (they
 // never finish on their own): track them so close ends them too.
-function shut(server: HttpsServer, done?: () => void): void {
+function shut(server: HttpsServer | HttpServer, done?: () => void): void {
   server.close(() => done?.());
-  for (const s of (server as HttpsServer & { harborSockets?: Set<Socket> }).harborSockets ?? []) s.destroy();
+  for (const s of (server as (HttpsServer | HttpServer) & { harborSockets?: Set<Socket> }).harborSockets ?? []) s.destroy();
 }
 
-function track(server: HttpsServer): HttpsServer {
+function track<S extends HttpsServer | HttpServer>(server: S, event: 'secureConnection' | 'connection' = 'secureConnection'): S {
   const sockets = new Set<Socket>();
-  (server as HttpsServer & { harborSockets?: Set<Socket> }).harborSockets = sockets;
-  server.on('secureConnection', (s: Socket) => {
+  (server as S & { harborSockets?: Set<Socket> }).harborSockets = sockets;
+  (server as HttpServer).on(event as 'connection', (s: Socket) => {
     sockets.add(s);
     s.on('close', () => sockets.delete(s));
   });
@@ -456,7 +472,8 @@ function track(server: HttpsServer): HttpsServer {
 }
 
 export class LanHttpsServers implements Relay {
-  private servers = new Map<number, HttpsServer>();
+  private servers = new Map<number, HttpsServer | HttpServer>();
+  constructor(readonly passThrough = false) {}
   private relayPolicy: RelayPolicy | null = null;
   private names = new Map<string, Set<string>>(); // tag -> names the app set HttpOnly since the daemon started
   private warnedOversize = new Set<string>();
@@ -504,6 +521,20 @@ export class LanHttpsServers implements Relay {
     proxyUpgrade(server, targetPort, securePort, this);
     await listen(server, securePort);
     this.servers.set(securePort, server);
+  }
+  // Decision 196: plain http on loopback only; `tailscale serve` is its one client.
+  async ensureTailnetProxy(relayPort: number, targetPort: number): Promise<void> {
+    if (this.servers.has(relayPort)) return;
+    const server = track(createHttpServer(proxyHandler(targetPort, relayPort, this)), 'connection');
+    proxyUpgrade(server, targetPort, relayPort, this);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ host: '127.0.0.1', port: relayPort }, () => {
+        server.removeListener('error', reject);
+        resolve();
+      });
+    });
+    this.servers.set(relayPort, server);
   }
   dropExcept(wanted: Set<number>): void {
     for (const [port, s] of this.servers) {
@@ -613,6 +644,65 @@ export function relayEndpoints(ctx: Pick<Ctx, 'config' | 'repo'>): { bySecurePor
     }
   }
   return { bySecurePort, portTags };
+}
+
+// Decision 196: the relay behind each tailnet address: the same cookie tag and mode as the app's secure LAN port, and
+// the tailnet ports join the cross-app guard's map (every tailnet address shares the node's one name).
+export function tailnetRelayEndpoints(ctx: Pick<Ctx, 'config' | 'repo'>): { byRelayPort: Map<number, { endpoint: RelayEndpoint; target: number }>; portTags: Map<number, string> } {
+  const byRelayPort = new Map<number, { endpoint: RelayEndpoint; target: number }>();
+  const portTags = new Map(relayEndpoints(ctx).portTags);
+  for (const e of ctx.repo.exposures()) {
+    if (e.via !== 'tailnet') continue;
+    const i = ctx.repo.instance(e.instanceId);
+    const alloc = i?.endpoints.find((x) => x.id === e.endpointId);
+    if (!i || !alloc || i.purgedAt) continue;
+    const tag = cookieTag(i.id);
+    portTags.set(e.port, tag);
+    let relayPort: number;
+    try {
+      relayPort = tailnetRelayPort(alloc.hostPort);
+    } catch {
+      continue;
+    }
+    const modes = endpointCookieModes(ctx.config.stateDir, i.id);
+    byRelayPort.set(relayPort, { endpoint: { tag, cookies: modes[e.endpointId] ?? 'isolated', label: i.displayName ?? i.name }, target: alloc.hostPort });
+  }
+  return { byRelayPort, portTags };
+}
+
+export function tailnetRelaySignature(ctx: Pick<Ctx, 'config' | 'repo'>): string {
+  const { byRelayPort, portTags } = tailnetRelayEndpoints(ctx);
+  return JSON.stringify({ relays: [...byRelayPort].map(([p, r]) => `${p}:${r.target}:${r.endpoint.tag}:${r.endpoint.cookies}`).sort(), tags: [...portTags].map(([p, t]) => `${p}:${t}`).sort(), key: cookieKeyState(ctx.config.stateDir) });
+}
+
+// Decision 196: fail closed like the LAN relays: without the firewall's key a tailnet address answers nothing.
+export async function reconcileTailnetRelays(ctx: Ctx): Promise<void> {
+  const servers = ctx.tailnetRelays;
+  if (!servers) return;
+  const { byRelayPort, portTags } = tailnetRelayEndpoints(ctx);
+  if (!byRelayPort.size) {
+    await servers.closeAll();
+    return;
+  }
+  let key: Buffer;
+  try {
+    key = loadCookieKey(ctx.config.stateDir);
+  } catch (e) {
+    ctx.log.warn(`Tailscale app addresses are closed: the cookie firewall key is unusable (${(e as Error).message})`);
+    servers.setPolicy(null);
+    await servers.closeAll();
+    return;
+  }
+  servers.warn = (m) => ctx.log.warn(m);
+  servers.setPolicy({ key, bySecurePort: new Map([...byRelayPort].map(([p, r]) => [p, r.endpoint])), portTags });
+  for (const [port, r] of byRelayPort) {
+    try {
+      await servers.ensureTailnetProxy(port, r.target);
+    } catch (err) {
+      ctx.log.warn(`Tailscale relay :${port} failed: ${(err as Error).message}`);
+    }
+  }
+  servers.dropExcept(new Set(byRelayPort.keys()));
 }
 
 // Desired HTTPS surface from state: console 443 + one proxy per LAN-bound endpoint of

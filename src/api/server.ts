@@ -235,7 +235,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
       schema: {
         description: 'Create the first administrator (setup code from the installer required), optionally name the machine, and get a session. Refused once an administrator exists.',
         security: [],
-        body: { type: 'object', additionalProperties: false, required: ['code', 'username', 'password'], properties: { code: { type: 'string', minLength: 6, maxLength: 8 }, username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, deviceName: { type: 'string', maxLength: 80 }, displayName: { type: 'string', maxLength: 80 } } },
+        body: { type: 'object', additionalProperties: false, required: ['code', 'username', 'password'], properties: { code: { type: 'string', minLength: 6, maxLength: 8 }, username: { type: 'string', minLength: 1, maxLength: 64 }, password: { type: 'string', minLength: 1, maxLength: 256 }, deviceName: { type: 'string', maxLength: 80 }, displayName: { type: 'string', maxLength: 80 }, everyAppOnTailscale: { type: 'boolean' } } },
       },
     },
     async (req, reply) => reply.status(201).send(await setup.claim(req.body as SetupRequest, clientOf(req).id)),
@@ -280,17 +280,17 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     {
       preHandler: requireAuth,
       schema: {
-        description: "The passwords of an app's Harbor logins (decision 194), for the drawer's Show. Needs the administrator password (wrong ones count against the login limits and answer 422). Turning a login on or off and setting a new password go through a configure plan (`login`).",
+        description: "The app's one password (decisions 194-195), for the app page's Show. Needs the administrator password (wrong ones count against the login limits and answer 422). Turning the login on or off and setting a new password go through a configure plan.",
         params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } },
         body: { type: 'object', additionalProperties: false, required: ['password'], properties: { password: { type: 'string', minLength: 1, maxLength: 1024 } } },
-        response: { 200: { type: 'object', additionalProperties: false, required: ['logins'], properties: { logins: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['endpoint', 'password'], properties: { endpoint: { type: 'string' }, password: { type: 'string' } } } } } } },
+        response: { 200: { type: 'object', additionalProperties: false, required: ['password'], properties: { password: { type: ['string', 'null'] } } } },
       },
     },
     async (req, reply) => {
       const who = clientOf(req);
       await sessions.confirmPassword((req.body as { password: string }).password, who.id, { local: who.local });
       void reply.header('cache-control', 'no-store');
-      return { logins: service.revealAppLogins((req.params as { id: string }).id) };
+      return { password: service.revealAppLogin((req.params as { id: string }).id) };
     },
   );
 
@@ -932,8 +932,11 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
   app.get('/v1/exposures/tailnet-all', { preHandler: requireAuth, schema: { description: 'The every-app Tailscale policy: on/off, whether Tailscale can publish right now (status off | waiting | on, with the reason), the apps kept off the tailnet, and where each app stands (published, pending, waiting, failed, excluded).' } }, async () => service.tailnetAll.status());
   app.put(
     '/v1/exposures/tailnet-all',
-    { preHandler: requireAuth, schema: { description: 'Turn the every-app Tailscale policy on (each app without a tailnet address gets one through its own expose plan, actor tailnet-policy, one at a time) or off (existing addresses stay; withdraw them per app). Turning it on is refused (UNSUPPORTED_CAPABILITY) while Tailscale is not ready.', body: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } } } },
-    async (req) => service.tailnetAll.setEnabled((req.body as { enabled: boolean }).enabled),
+    { preHandler: requireAuth, schema: { description: 'Turn the every-app Tailscale policy on (each app without a tailnet address gets one through its own expose plan, actor tailnet-policy, one at a time) or off (existing addresses stay; withdraw them per app). Turning it on is refused (UNSUPPORTED_CAPABILITY) while Tailscale is not ready.', body: { type: 'object', additionalProperties: false, minProperties: 1, maxProperties: 1, properties: { enabled: { type: 'boolean' }, dismissOffer: { const: true } } } } },
+    async (req) => {
+      const body = req.body as { enabled?: boolean; dismissOffer?: true };
+      return body.dismissOffer ? service.tailnetAll.dismissOffer() : service.tailnetAll.setEnabled(body.enabled === true);
+    },
   );
   app.put(
     '/v1/instances/:id/tailnet-all',
@@ -1007,6 +1010,8 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 internet: { enum: ['direct', 'vpn', 'offline'] },
                 // decision 186: Also on Tailscale (omitted = what Every app on Tailscale says)
                 tailnet: { type: 'boolean' },
+                // decision 195: ask for the app's one password first (Harbor makes it and shows it once)
+                login: { type: 'boolean' },
               },
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: ['start', 'stop', 'restart', 'remove', 'reinstall', 'purge'] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
@@ -1040,9 +1045,9 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 settings: SETTING_VALUES,
                 // decision 184: internet access, or default to follow the package's own again
                 internet: { enum: ['direct', 'vpn', 'offline', 'default'] },
-                // decision 194: Harbor's app login per endpoint: on/off, and/or a new password (its value comes with the
-                // submission, under the secret id harbor.login.<endpoint>)
-                login: { type: 'object', maxProperties: 8, propertyNames: { pattern: ID_PATTERN }, additionalProperties: { type: 'object', additionalProperties: false, minProperties: 1, properties: { on: { type: 'boolean' }, password: { const: true } } } },
+                // decision 195: the app's one login: on/off, and/or a new password (its value comes with the submission,
+                // under the secret id harbor.login)
+                login: { type: 'object', additionalProperties: false, minProperties: 1, properties: { on: { type: 'boolean' }, password: { const: true } } },
               },
             },
             {
@@ -1059,6 +1064,8 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 makePrimary: { type: 'boolean' },
                 // via proxy (decision 118): the LAN address your own reverse proxy connects from
                 proxyFrom: { type: 'string', minLength: 2, maxLength: 64 },
+                // decision 195: put the app's one password in front first (Harbor makes it and shows it once)
+                login: { type: 'boolean' },
               },
             },
             { type: 'object', additionalProperties: false, required: ['kind', 'instanceId', 'via'], properties: { kind: { const: 'unexpose' }, instanceId: { type: 'string', pattern: UUID_PATTERN }, endpointId: { type: 'string', pattern: ID_PATTERN }, via: { enum: ['tailnet', 'public', 'proxy'] }, hostname: { type: 'string', minLength: 1, maxLength: 253 } } },
@@ -1084,7 +1091,7 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
         headers: { type: 'object', properties: { 'idempotency-key': { type: 'string', pattern: IDEMPOTENCY_KEY_RE.source } }, required: ['idempotency-key'] },
         body: {
           oneOf: [
-            { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 }, secrets: { type: 'object', maxProperties: 16, propertyNames: { anyOf: [{ pattern: ID_PATTERN }, { pattern: '^harbor\\.login\\.[a-z][a-z0-9-]{0,62}$' }] }, additionalProperties: { type: 'string', maxLength: 4096 } }, settings: SETTING_VALUES, acceptPermissions: { type: 'boolean', description: 'Decision 163: true accepts the permissions the plan lists (required when it lists any).' } } },
+            { type: 'object', additionalProperties: false, required: ['planId'], properties: { planId: { type: 'string', pattern: UUID_PATTERN }, passphrase: { type: 'string', minLength: 1, maxLength: 256 }, secrets: { type: 'object', maxProperties: 16, propertyNames: { anyOf: [{ pattern: ID_PATTERN }, { pattern: '^harbor\\.login$' }] }, additionalProperties: { type: 'string', maxLength: 4096 } }, settings: SETTING_VALUES, acceptPermissions: { type: 'boolean', description: 'Decision 163: true accepts the permissions the plan lists (required when it lists any).' } } },
             { type: 'object', additionalProperties: false, required: ['action'], properties: { action: { type: 'object', additionalProperties: false, required: ['kind', 'instanceId'], properties: { kind: { enum: [...QUEUEABLE_KINDS] }, instanceId: { type: 'string', pattern: UUID_PATTERN } } } } },
           ],
         },

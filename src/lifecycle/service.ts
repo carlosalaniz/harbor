@@ -6,7 +6,7 @@ import { INTERNAL_ACTORS, QUEUEABLE_KINDS, type AppLinkDto, type FixedPortDto, t
 import type { LinkClaim, Manifest, ManifestPermission, ManifestSetting, SecretClaim, SettingValue } from '../contracts/types.js';
 import { fixedPortClaim, fixedPortsOf, newPermissions, PERMISSION_LABEL, permissionDto, needsBinder, permissionsOf, untrustedPermissions } from '../planner/permissions.js';
 import { binderInstallHint } from '../system/kernel.js';
-import { loginPasswordSecret, loginsOf } from '../planner/gate.js';
+import { appLoginOf, LOGIN_PASSWORD_SECRET, loginChoices, packageHasOwnLogin } from '../planner/gate.js';
 import { gpuChanges, gpuDto, gpuFromRendered, gpuServicesOf } from '../planner/gpu.js';
 import { linkAlias, linkNetworkName, linkValue } from '../planner/links.js';
 import { checkSubmittedSecrets, plannedSecrets } from '../planner/secrets.js';
@@ -49,7 +49,7 @@ import { ONE_TIME_TTL_MS } from '../state/one-time.js';
 import type { ExposureDto, ExposureVia } from '../contracts/api.js';
 import { HOSTNAME_RE, exposureUrl, mainPublicExposure } from '../exposure/urls.js';
 import { retainedExposures } from './retained-exposures.js';
-import { instanceDir, loadReleaseSnapshot, readLoginChoices, readOperatorSecret as readOperatorSecretFile, readRuntimeModel, readSettingOverrides, secretExists } from './instance-dir.js';
+import { instanceDir, loadReleaseSnapshot, loginSecretId, readLoginChoices, readOperatorSecret as readOperatorSecretFile, readRuntimeModel, readSettingOverrides, secretExists } from './instance-dir.js';
 import { packageVersionOf } from '../packages/version.js';
 
 // Decision 176: an automatic update waits for its backup this long, and after a failed backup tries again this much later.
@@ -656,22 +656,38 @@ export class ApplicationService {
   }
 
   // ---- Harbor's app login (decision 194)
-  appLogins(row: InstanceRow): AppLoginDto[] {
+  // Decision 198: what the app keeps, for the app page: the manifest's words, and the folder when it is the operator's.
+  private appStorage(row: InstanceRow): NonNullable<InstanceDetail['storage']> {
     try {
       const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, row.id), 'release'), row.packageId);
-      const secrets = path.join(instanceDir(this.ctx.config.stateDir, row.id), 'secrets');
-      return loginsOf(pkg.manifest, readLoginChoices(this.ctx.config.stateDir, row.id)).map((l) => ({ ...l, hasPassword: secretExists(secrets, loginPasswordSecret(l.endpoint)) }));
+      const binds = this.ctx.repo.resources(row.id).filter((r) => r.kind === 'bind');
+      return (pkg.manifest.storage ?? []).map((c) => {
+        const bind = binds.find((b) => b.role === c.composeVolume);
+        return { id: c.id, purpose: c.purpose, path: bind?.name ?? null, readOnly: (bind?.metadata as { readOnly?: boolean } | null | undefined)?.readOnly === true };
+      });
     } catch {
       return [];
     }
   }
-  // The passwords of an app's logins, for the drawer's Show (the caller checked the administrator's password)
-  revealAppLogins(id: string): { endpoint: string; password: string }[] {
+
+  appLogin(row: InstanceRow): AppLoginDto | null {
+    try {
+      const pkg = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, row.id), 'release'), row.packageId);
+      const login = appLoginOf(pkg.manifest, readLoginChoices(this.ctx.config.stateDir, row.id));
+      if (!login) return null;
+      const secrets = path.join(instanceDir(this.ctx.config.stateDir, row.id), 'secrets');
+      return { ...login, hasPassword: loginSecretId(secrets, pkg.manifest) !== null, ownLogin: packageHasOwnLogin(pkg.manifest) };
+    } catch {
+      return null;
+    }
+  }
+  // The app's password, for the app page's Show (the caller checked the administrator's password)
+  revealAppLogin(id: string): string | null {
     const row = this.instanceRow(id);
-    const secrets = path.join(instanceDir(this.ctx.config.stateDir, row.id), 'secrets');
-    return this.appLogins(row)
-      .filter((l) => l.hasPassword)
-      .map((l) => ({ endpoint: l.endpoint, password: readOperatorSecretFile(secrets, loginPasswordSecret(l.endpoint)) }));
+    const dir = instanceDir(this.ctx.config.stateDir, row.id);
+    const secrets = path.join(dir, 'secrets');
+    const secret = loginSecretId(secrets, loadReleaseSnapshot(path.join(dir, 'release'), row.packageId).manifest);
+    return secret ? readOperatorSecretFile(secrets, secret) : null;
   }
 
   // ---- developer mode (decision 193): packages that are not from the official catalog may ask for the
@@ -1016,7 +1032,8 @@ export class ApplicationService {
     const choice = this.ctx.repo.setting<Record<string, boolean>>('home.hidden')?.[i.id];
     // decision 180: effective values (the operator's overrides, else the installed release's defaults)
     const settings = meta.settings.length ? settingDtos({ settings: meta.settings }, readSettingOverrides(this.ctx.config.stateDir, i.id)) : [];
-    return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}) };
+    const login = i.installState === 'retained' ? null : this.appLogin(i);
+    return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(login ? { login } : {}), ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}) };
   }
 
   private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets'] } {
@@ -1834,7 +1851,7 @@ export class ApplicationService {
       events: this.ctx.repo.eventsForInstance(row.id, 50).map((e) => ({ cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message })),
       lastError: lastOp?.errorCode ? { code: lastOp.errorCode, message: lastOp.errorMessage ?? '', nextAction: lastOp.nextAction ?? '' } : null,
       ...(gpu ? { gpu } : {}),
-      ...(row.installState !== 'retained' ? { login: this.appLogins(row) } : {}),
+      ...(row.installState !== 'retained' ? { storage: this.appStorage(row) } : {}),
     };
   }
 
@@ -2180,7 +2197,7 @@ export class ApplicationService {
       const mainWarnings: string[] = [];
       let mainExposure: PlanProposal['exposure'];
       if (req.main) {
-        const t = await this.exposureTarget(req.main.via, mainEndpoint, pkg, pkg.manifest.metadata.name, req.main.via === 'public' ? { hostname: req.main.hostname, gated: pkg.manifest.endpoints[mainEndpoint.id]?.login === 'required' } : {}, mainWarnings, endpoints.map((e) => e.hostPort));
+        const t = await this.exposureTarget(req.main.via, mainEndpoint, pkg, pkg.manifest.metadata.name, req.main.via === 'public' ? { hostname: req.main.hostname, gated: req.login === true || appLoginOf(pkg.manifest, {})?.locked === 'required' } : {}, mainWarnings, endpoints.map((e) => e.hostPort));
         if (repo.exposureByAddress(req.main.via, t.hostname, t.port)) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.main.via, hostname: t.hostname, port: t.port })} is already used by another app`);
         mainExposure = { endpointId: mainEndpoint.id, via: req.main.via, hostname: t.hostname, port: t.port, protection: t.protection, makePrimary: true };
       } else if (requiresHttps(pkg) && this.ctx.config.lan.enabled && !this.httpsEnabled()) {
@@ -2190,6 +2207,7 @@ export class ApplicationService {
       const alsoTailnet = mainExposure?.via === 'tailnet' ? undefined : req.tailnet;
       const tailnet = await this.tailnetAll.installNote(alsoTailnet);
       const internetPlan = plannedInstallInternet(pkg.manifest, proposed.name, req.internet, this.internetContext());
+      const installLogin = req.login ? this.generatedLogin(pkg.manifest, pkg.manifest.metadata.name, {}) : null;
       const proposal: PlanProposal = {
         packageId: pkg.id,
         revision: pkg.revision,
@@ -2206,11 +2224,13 @@ export class ApplicationService {
         ...(pkg.manifest.settings?.length ? { settings: plannedInstallSettings(pkg.manifest) } : {}),
         internet: internetPlan.internet,
         ...(alsoTailnet !== undefined ? { tailnet: alsoTailnet } : {}),
+        ...(installLogin ? { login: installLogin.proposal } : {}),
         changes: [
           `Install ${pkg.manifest.metadata.name} (${pkg.id} revision ${pkg.revision}) as instance "${proposed.name}"`,
           `Create Compose project ${identity.project} with a private bridge network`,
           ...endpoints.map((e) => `Publish endpoint ${e.id}: 127.0.0.1:${e.hostPort} -> ${e.service}:${e.containerPort}`),
           ...requiredLoginChanges(pkg.manifest),
+          ...(installLogin?.changes ?? []),
           ...this.fixedPortChanges(fixedPorts, permissions),
           ...(gpu ? gpuChanges(pkg.manifest, gpu) : []),
           ...(location
@@ -2531,7 +2551,7 @@ export class ApplicationService {
       links,
       ...(settingPlan?.settings.length ? { settings: settingPlan.settings, settingValues: settingPlan.values } : {}),
       ...(internetPlan ? { internet: internetPlan.internet, internetOnly: !othersChange } : {}),
-      ...(loginPlan ? { login: { choices: loginPlan.choices, newPasswords: loginPlan.newPasswords } } : {}),
+      ...(loginPlan ? { login: { choices: loginPlan.choices, newPassword: loginPlan.newPassword } } : {}),
       changes: [
         ...(loginPlan?.changes ?? []),
         ...wanted.map((id) => `Replace the stored value of ${id} with the one you provide (kept as a retained secret, never shown)`),
@@ -2548,36 +2568,37 @@ export class ApplicationService {
     return this.plan(plan.id);
   }
 
-  // Decision 194: a configure plan's app-login changes. Turning a login on needs a password (a new one, or the one kept
-  // from before); the package's required/never cannot be overridden; a new password signs every browser out.
-  private plannedLogin(manifest: Manifest, inst: InstanceRow, req: Record<string, LoginChange>): { choices: Record<string, boolean>; newPasswords: string[]; secrets: PlannedSecret[]; changes: string[] } {
-    const current = readLoginChoices(this.ctx.config.stateDir, inst.id);
-    const logins = new Map(loginsOf(manifest, current).map((l) => [l.endpoint, l]));
+  // Decision 195: a configure plan's change to the app's one login. Turning it on needs a password (a new one, or the
+  // one kept from before); the package's required/never cannot be overridden; a new password signs every browser out.
+  private plannedLogin(manifest: Manifest, inst: InstanceRow, change: LoginChange): { choices: Record<string, boolean>; newPassword: boolean; secrets: PlannedSecret[]; changes: string[] } {
+    const stored = readLoginChoices(this.ctx.config.stateDir, inst.id);
+    const login = appLoginOf(manifest, stored);
+    if (!login) throw new HarborError('INVALID_REQUEST', `${inst.name} has only API endpoints: their clients send their own login, so Harbor's login cannot go in front of them`);
+    if (login.locked === 'never') throw new HarborError('INVALID_REQUEST', `${inst.name}'s package says Harbor's login cannot go in front of it (its own apps and sync clients would stop working)`);
+    if (change.on === false && login.locked === 'required') throw new HarborError('INVALID_REQUEST', `${inst.name}'s package requires Harbor's login`, { nextAction: 'Change its password instead.' });
     const secretsDir = path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'secrets');
-    const choices = { ...current };
-    const newPasswords: string[] = [];
+    const willBeOn = change.on ?? login.on;
     const secrets: PlannedSecret[] = [];
     const changes: string[] = [];
-    for (const [ep, change] of Object.entries(req)) {
-      const l = logins.get(ep);
-      if (!l) throw new HarborError('INVALID_REQUEST', manifest.endpoints[ep] ? `${ep} is an API endpoint: its clients send their own login, so Harbor's login cannot go in front of it` : `${inst.name} has no endpoint ${ep}`);
-      if (change.on !== undefined && l.locked === 'required' && !change.on) throw new HarborError('INVALID_REQUEST', `${inst.name}'s package requires the login in front of ${ep}`, { nextAction: 'Change its password instead.' });
-      if (change.on && l.locked === 'never') throw new HarborError('INVALID_REQUEST', `${inst.name}'s package says Harbor's login cannot go in front of ${ep} (its own apps and sync clients would stop working)`);
-      const willBeOn = change.on ?? l.on;
-      if (change.password) {
-        newPasswords.push(ep);
-        secrets.push({ id: loginPasswordSecret(ep), source: 'operator', prompt: `New password for ${inst.name}${logins.size > 1 ? ` (${ep})` : ''}`, optional: false, minLength: 8, maxLength: 128, ask: 'required' });
-        changes.push(`Set a new password for ${inst.name}'s login${logins.size > 1 ? ` (${ep})` : ''}; every browser signed in with the old one has to sign in again`);
-      }
-      if (change.on !== undefined && change.on !== l.on) {
-        if (change.on && !change.password && !secretExists(secretsDir, loginPasswordSecret(ep))) throw new HarborError('INVALID_REQUEST', `turning on the login of ${inst.name} needs a password`, { nextAction: 'Give one with it (console: type or generate it; CLI: --password-stdin or --generate).' });
-        choices[ep] = change.on;
-        changes.push(change.on ? `Put Harbor's login in front of ${inst.name}${logins.size > 1 ? ` (${ep})` : ''}: every address asks for its password first; ${inst.name} restarts once (its port moves to the login)` : `Remove Harbor's login from ${inst.name}${logins.size > 1 ? ` (${ep})` : ''}: anyone who reaches its addresses can open it (the password is kept); ${inst.name} restarts once`);
-      }
-      if (!willBeOn && change.password) changes.push(`The login stays off; the new password is used when it is turned on`);
+    if (change.password) {
+      secrets.push({ id: LOGIN_PASSWORD_SECRET, source: 'operator', prompt: `New password for ${inst.name}`, optional: false, minLength: 8, maxLength: 128, ask: 'required' });
+      changes.push(`Set a new password for ${inst.name}; every browser signed in with the old one has to sign in again`);
     }
-    for (const k of Object.keys(choices)) if (!choices[k]) delete choices[k];
-    return { choices, newPasswords, secrets, changes };
+    if (change.on !== undefined && change.on !== login.on) {
+      if (change.on && !change.password && loginSecretId(secretsDir, manifest) === null) throw new HarborError('INVALID_REQUEST', `turning on the password of ${inst.name} needs a password`, { nextAction: 'Give one with it (console: type or generate it; CLI: --password-stdin or --generate).' });
+      changes.push(change.on ? `Ask for ${inst.name}'s password first: every address shows Harbor's login page; ${inst.name} restarts once (its port moves to the login)` : `Stop asking for ${inst.name}'s password: anyone who reaches its addresses can open it; ${inst.name} restarts once`);
+    }
+    if (!willBeOn && change.password) changes.push('The password stays off; the new one is used when it is turned on');
+    return { choices: login.locked === 'required' ? stored : loginChoices(login, willBeOn), newPassword: change.password === true, secrets, changes };
+  }
+
+  // Decision 195: a login Harbor turns on while installing or adding a domain. Null = nothing to do (already on, or no
+  // password can go in front of this app); `login: false`/absent never gets here.
+  private generatedLogin(manifest: Manifest, name: string, stored: Record<string, boolean>): { proposal: NonNullable<PlanProposal['login']>; changes: string[] } | null {
+    const login = appLoginOf(manifest, stored);
+    if (!login || login.locked === 'never') throw new HarborError('INVALID_REQUEST', `Harbor's login cannot go in front of ${name} (its own apps and sync clients would stop working)`);
+    if (login.on) return null;
+    return { proposal: { choices: loginChoices(login, true), newPassword: false, generate: true }, changes: [`Ask for ${name}'s password first: Harbor makes one and shows it once when this finishes`] };
   }
 
   // Storage claims: managed Docker volumes by default; claims the manifest marks `external` may (or must)
@@ -2644,7 +2665,7 @@ export class ApplicationService {
       port = 443;
       // packages with their own onboarding or a Harbor-provisioned admin manage their own accounts (n8n, Nextcloud)
       // decision 194: an endpoint behind Harbor's app login has one too
-      const packageHasOwnAuth = pkg.manifest.setup !== undefined || pkg.manifest.provisionedCredentials !== undefined || req.gated === true;
+      const packageHasOwnAuth = packageHasOwnLogin(pkg.manifest) || req.gated === true;
       protection = req.protection ?? (packageHasOwnAuth ? 'none' : 'basic');
       if (protection === 'none' && !packageHasOwnAuth) warnings.push(`${pkgName} has no login of its own; without basic-auth protection anyone who reaches ${hostname} can use it.`);
       const known = repo.domain(hostname);
@@ -3041,7 +3062,10 @@ export class ApplicationService {
     } else if (sameVia.length) throw new HarborError('INVALID_STATE', `${inst.name}/${endpointId} is already exposed via ${req.via}`, { nextAction: 'Unexpose it first to change hostname or protection.' });
     if (req.via === 'public' && req.hostname && repo.exposures().some((x) => x.via === 'proxy' && x.hostname === req.hostname)) throw new HarborError('NAME_CONFLICT', `https://${req.hostname}/ is already recorded as an address on your own proxy`);
     const endpoint = pkg.manifest.endpoints[endpointId]!;
-    const { hostname, port, protection } = await this.exposureTarget(req.via, alloc, pkg, pkgName, { ...req, gated: this.appLogins(inst).some((l) => l.endpoint === alloc.id && l.on) }, base.warnings);
+    const currentLogin = this.appLogin(inst);
+    const exposeLogin = req.login ? this.generatedLogin(pkg.manifest, inst.name, readLoginChoices(this.ctx.config.stateDir, inst.id)) : null;
+    if (exposeLogin) base.login = exposeLogin.proposal;
+    const { hostname, port, protection } = await this.exposureTarget(req.via, alloc, pkg, pkgName, { ...req, gated: req.login === true || Boolean(currentLogin?.on && currentLogin.endpoints.includes(alloc.id)) }, base.warnings);
     const taken = repo.exposureByAddress(req.via, hostname, port);
     if (taken) throw new HarborError('NAME_CONFLICT', `${exposureUrl({ via: req.via, hostname, port })} is already used by another exposure`);
     if (endpoint.browserContext === 'ordinary') base.warnings.push('This endpoint is declared for ordinary browser contexts; it will still be served over HTTPS.');
@@ -3056,6 +3080,7 @@ export class ApplicationService {
       req.via === 'proxy'
         ? `Record https://${hostname}/ as an address of "${inst.name}" served by your proxy at ${req.proxyFrom}; trust forwarded headers from that address only`
         : `Publish "${inst.name}" endpoint ${endpointId} at ${exposureUrl(base.exposure)} via ${req.via === 'public' ? 'Caddy (Let\'s Encrypt certificate)' : 'tailscale serve (tailnet certificate)'} -> 127.0.0.1:${alloc.hostPort}`,
+      ...(exposeLogin ? [...exposeLogin.changes, `${inst.name} restarts once (its port moves to the login)`] : []),
       ...(protection === 'basic' ? ['Generate retained basic-auth credentials (shown once when the operation completes)'] : []),
       ...(req.makePrimary ? [hasBaseUrlBindings ? 'Make it the primary address and recreate containers with the new base URL' : 'Make it the primary address'] : []),
       'Verify the address answers over HTTPS before marking it active',
@@ -3483,7 +3508,5 @@ export function notificationActions(kind: string, instanceId: string | null): No
 
 // Decision 194: what an install/adopt/restore review says about the logins the package requires
 function requiredLoginChanges(manifest: Manifest): string[] {
-  return loginsOf(manifest, {})
-    .filter((l) => l.on)
-    .map((l) => `Put Harbor's login in front of ${l.endpoint === manifest.ui.primaryEndpoint ? manifest.metadata.name : `${manifest.metadata.name} (${l.endpoint})`}: every address asks for its password first (generated now, shown after install and in the app's drawer)`);
+  return appLoginOf(manifest, {})?.locked === 'required' ? [`Ask for ${manifest.metadata.name}'s password first at every address (generated now, shown after install and on the app page)`] : [];
 }

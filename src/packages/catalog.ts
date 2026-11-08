@@ -1,3 +1,4 @@
+import { appLoginOf, packageHasOwnLogin } from '../planner/gate.js';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { CATALOG_INDEX_SCHEMA, RELEASE_FILES } from '../contracts/release.schema.js';
@@ -126,6 +127,7 @@ export interface CatalogItem {
   reason: string | null;
   qualification: 'passed' | 'blocked' | 'pending' | 'invalid';
   requiresHttps: boolean;
+  login: { locked: 'required' | 'never' | null; ownLogin: boolean } | null;
   presentation: { tagline: string | null; category: string; icon: string | null; gallery: string[]; developer: string | null; website: string | null; source: string | null; releaseNotes: string | null; sizeHint: string | null; hasWidget: boolean };
   defaultCredentials: { username: string; password: string; note: string | null } | null;
   setup: boolean;
@@ -163,6 +165,7 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         reason: null,
         qualification: pkg.release.qualification.status,
         requiresHttps: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.httpsRequired === true,
+        login: catalogLogin(pkg.manifest),
         presentation: presentationOf(pkg),
         defaultCredentials: defaultCredentialsOf(pkg.manifest),
         setup: Boolean(pkg.manifest.setup),
@@ -194,6 +197,7 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         reason: e instanceof HarborError ? e.message : 'invalid package',
         qualification: 'invalid',
         requiresHttps: false,
+        login: null,
         presentation: peek ? { ...presentationOf(peek), icon: null, gallery: [] } : { tagline: null, category: 'other', icon: null, gallery: [], developer: null, website: null, source: null, releaseNotes: null, sizeHint: null, hasWidget: false },
         defaultCredentials: null,
         setup: false,
@@ -217,4 +221,10 @@ export function presentationOf(pkg: LoadedPackage): CatalogItem['presentation'] 
 
 export function defaultCredentialsOf(m: Manifest): CatalogItem['defaultCredentials'] {
   return m.defaultCredentials ? { username: m.defaultCredentials.username, password: m.defaultCredentials.password, note: m.defaultCredentials.note ?? null } : null;
+}
+
+// decision 195: what the install page says about the app's one login
+function catalogLogin(manifest: Manifest): { locked: 'required' | 'never' | null; ownLogin: boolean } | null {
+  const login = appLoginOf(manifest, {});
+  return login ? { locked: login.locked, ownLogin: packageHasOwnLogin(manifest) } : null;
 }

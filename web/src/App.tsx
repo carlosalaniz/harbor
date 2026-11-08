@@ -3,7 +3,8 @@ import type { CatalogItemDto, InstanceDetail, InstanceSummary, NotificationsDto,
 import { ApiError, api, forgetToken, hasToken, restoreRemembered } from './api';
 import { Copy, EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
 import { EyeIcon, EyeOffIcon, Mark } from './app/icons';
-import { AppDrawer, CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog } from './app/dialogs';
+import { AppDrawer } from './app/AppDrawer';
+import { CustomizeDialog, InstallWizard, PlanDialog, PublishWizard, UploadPackageDialog, type PublishMode } from './app/dialogs';
 import { Home } from './app/pages/Home';
 import { Notifications } from './app/pages/Notifications';
 import { NotificationActions } from './app/NotificationActions';
@@ -369,6 +370,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
   }, []);
   const [drawer, setDrawer] = useState<InstanceSummary | null>(null);
   const [publishing, setPublishing] = useState<InstanceSummary | null>(null);
+  const [publishMode, setPublishMode] = useState<PublishMode>('domain');
   const [palette, setPalette] = useState(false);
   const [customizing, setCustomizing] = useState<InstanceSummary | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -503,7 +505,13 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             onUpload={() => setUploading(true)}
           />
         )}
-        {page === 'publishing' && <Publishing c={c} onPublish={setPublishing} />}
+        {page === 'publishing' && <Publishing
+            c={c}
+            onPublish={(i, mode = 'domain') => {
+              setPublishMode(mode);
+              setPublishing(i);
+            }}
+          />}
         {page === 'platform' && <Platform c={c} />}
         {page === 'notifications' && <Notifications c={c} onOpenApp={(id) => setDrawer(c.data.instances.find((i) => i.id === id) ?? null)} />}
         {page === 'settings' && <Settings c={c} initialSection={route.page === 'settings' ? route.section : undefined} onSection={(s) => go(s ? { page: 'settings', section: s } : { page: 'settings' })} />}
@@ -560,7 +568,10 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
             setDrawer(null);
             void c.start(a);
           }}
-          onPublish={() => setPublishing(liveDrawer)}
+          onPublish={(mode) => {
+            setPublishMode(mode);
+            setPublishing(liveDrawer);
+          }}
           onCustomize={() => setCustomizing(liveDrawer)}
           onChanged={(updated) => c.patchData((d) => ({ ...d, instances: d.instances.map((i) => (i.id === updated.id ? updated : i)) }))}
           instances={c.data.instances}
@@ -582,6 +593,7 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
           inst={livePublishing}
           exposures={c.data.exposures.filter((e) => e.instanceId === livePublishing.id)}
           tools={c.data.tools}
+          mode={publishMode}
           onClose={() => setPublishing(null)}
           onStart={(a) => {
             setPublishing(null);

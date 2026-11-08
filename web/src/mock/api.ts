@@ -79,7 +79,7 @@ function mockTailnetAll(): TailnetAllDto {
       const state: TailnetAllDto['apps'][number]['state'] = ex ? 'published' : tailnetAll.except.includes(i.id) ? 'excluded' : i.runtime === 'running' ? 'pending' : 'waiting';
       return { instanceId: i.id, name: i.displayName ?? i.name, state, url: ex?.url ?? null, note: state === 'waiting' ? 'stopped; it gets its address when it runs' : state === 'pending' ? 'gets its address at the next check' : null };
     });
-  return { enabled: tailnetAll.enabled, status: tailnetAll.enabled ? 'on' : 'off', reason: null, nextAction: null, except: tailnetAll.except, asked: [], apps };
+  return { enabled: tailnetAll.enabled, status: tailnetAll.enabled ? 'on' : 'off', reason: null, nextAction: null, except: tailnetAll.except, asked: [], apps, offer: false };
 }
 // decision 184: the apps' VPN. ?vpn=on shows a connected tunnel, ?vpn=down one that stopped answering.
 const vpnParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('vpn') : null;
@@ -223,8 +223,6 @@ const detailFor = (inst: InstanceSummary): InstanceDetail => ({
   events: [],
   lastError: null,
   ...(GPU_APPS.has(inst.packageId) ? { gpu: { ...mockHost().gpu!, inUse: mockHost().gpu!.kind !== 'none' } } : {}),
-  // decision 194: the first app has its login on, the others can turn one on
-  login: [{ endpoint: inst.endpoints[0]?.id ?? 'web', on: inst.id === instances[0]?.id, locked: null, hasPassword: inst.id === instances[0]?.id }],
 });
 
 // Backups (decisions 149–154): two places, one app on, a week of restore points.
@@ -300,10 +298,10 @@ export const mockApi = {
     return mockCatalogMode() === 'new' ? { ...st, serial: st.serial + 1, commit: '8a1d0e6c2f95', createdAt: new Date().toISOString() } : st;
   },
   instances: async (): Promise<InstanceSummary[]> => instances,
-  revealAppLogins: async (_id: string, password: string) => {
+  revealAppLogin: async (_id: string, password: string) => {
     await beat(150);
     if (!password) throw new Error('password is wrong');
-    return { logins: [{ endpoint: 'web', password: 'mock-gate-password-1234' }] };
+    return { password: 'mock-gate-password-1234' };
   },
   instance: async (id: string): Promise<InstanceDetail> => {
     const inst = instances.find((i) => i.id === id) ?? instances[0]!;
@@ -346,6 +344,7 @@ export const mockApi = {
     await beat();
   },
   tailnetAll: async (): Promise<TailnetAllDto> => mockTailnetAll(),
+  dismissTailnetOffer: async () => mockTailnetAll(),
   setTailnetAll: async (enabled: boolean): Promise<TailnetAllDto> => {
     await beat();
     tailnetAll = { ...tailnetAll, enabled };
@@ -361,12 +360,10 @@ export const mockApi = {
     const inst = req.instanceId ? (instances.find((i) => i.id === req.instanceId) ?? instances[0]!) : instances[0]!;
     const p = planFor(req.kind, req.instanceId ?? inst.id, req.packageId ?? inst.packageId, req.name ?? inst.name);
     // decision 194: a new login password is asked in the review, like an operator secret
-    const login = (req as { login?: Record<string, { on?: boolean; password?: true }> }).login;
+    const login = (req as { login?: { on?: boolean; password?: true } }).login;
     if (req.kind === 'configure' && login) {
-      for (const [ep, ch] of Object.entries(login)) {
-        if (ch.password) p.secrets = [...p.secrets, { id: `harbor.login.${ep}`, state: 'existing' as const, source: 'operator' as const, prompt: `New password for ${inst.name}`, optional: false, minLength: 8, maxLength: 128, ask: 'required' }];
-        if (ch.on !== undefined) p.changes = [...p.changes, ch.on ? `Put Harbor's login in front of ${inst.name}: every address asks for its password first` : `Remove Harbor's login from ${inst.name}: anyone who reaches its addresses can open it (the password is kept)`];
-      }
+      if (login.password) p.secrets = [...p.secrets, { id: 'harbor.login', state: 'existing' as const, source: 'operator' as const, prompt: `New password for ${inst.name}`, optional: false, minLength: 8, maxLength: 128, ask: 'required' as const }];
+      if (login.on !== undefined) p.changes = [...p.changes, login.on ? `Ask for ${inst.name}'s password first: every address shows Harbor's login page` : `Stop asking for ${inst.name}'s password`];
     }
     // decision 180: a configure plan lists each setting it changes, "old -> new"
     if (req.kind === 'configure' && req.settings) {

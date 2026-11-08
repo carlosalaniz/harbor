@@ -1,17 +1,16 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { DomainsDto, HostStorageDto, InstallCandidateDto, TailnetAllDto } from '../../../src/contracts/api';
-import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
+import type { DomainsDto, HostStorageDto, InstallCandidateDto } from '../../../src/contracts/api';
+import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceSummary, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
-import { AppBackupsPanel } from './pages/Backups';
-import { AppIcon, Copy, Dialog, EventList, FolderPicker, InstanceIcon, OpenCopy, Pill, RecoveryCard, StatusPill, UpdateButton, appLabel, copiesOf, endpointUrlHere, openUrl, outdatedCopy } from './components';
+import { AppIcon, Copy, Dialog, FolderPicker, InstanceIcon, OpenCopy, Pill, RecoveryCard, StatusPill, UpdateButton, appLabel, copiesOf, endpointUrlHere, outdatedCopy } from './components';
 import { defaultCopyName, installView, nameProblem } from './copies';
-import { categoryLabel, fmtBytes, fmtTime, fmtVersion, updateLine } from './format';
-import { gpuAppText, gpuReviewText } from './gpu-text';
+import { categoryLabel, fmtTime, fmtVersion, updateLine } from './format';
+import { gpuReviewText } from './gpu-text';
 import { DriveIcon, GlobeIcon, LockIcon, PeopleIcon } from './icons';
-import { INTERNET_CHOICES, internetHint, internetLabel, internetSummary, type InternetMode } from './internet-text';
+import { INTERNET_CHOICES, internetHint, internetLabel, type InternetMode } from './internet-text';
 import type { Action, Console } from './store';
-import { DOING, VERB, appActionGates, appQueueLine, capitalize as cap, isRunning, notCancellableReason, whoOf } from './queue';
-import { SettingFields, SettingsDialog } from './settings-fields';
+import { DOING, VERB, capitalize as cap, isRunning, notCancellableReason, whoOf } from './queue';
+import { SettingFields } from './settings-fields';
 import { changedValues, draftOf, optionsSummary, settingText, type SettingDraft } from './setting-draft';
 
 // App links (decision 126): installed apps that can satisfy one link of a package.
@@ -27,23 +26,21 @@ function generatedPassword(): string {
 }
 
 // Decision 194: Show password asks for the Harbor password first, then shows the app's login passwords.
-function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSummary; title: string; onClose: () => void }) {
+export function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSummary; title: string; onClose: () => void }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [logins, setLogins] = useState<{ endpoint: string; password: string }[] | null>(null);
+  const [shown, setShown] = useState<string | null>(null);
   return (
     <Dialog title={`Password of ${title}`} onClose={onClose}>
-      {logins ? (
+      {shown !== null ? (
         <>
-          {logins.map((l) => (
-            <div key={l.endpoint} className="cmd">
-              <pre className="code wrap" aria-label={`Password${logins.length > 1 ? ` (${l.endpoint})` : ''}`}>
-                {l.password}
-              </pre>
-              <Copy text={l.password} />
-            </div>
-          ))}
+          <div className="cmd">
+            <pre className="code wrap" aria-label="Password">
+              {shown}
+            </pre>
+            <Copy text={shown} />
+          </div>
           <div className="row end">
             <button className="btn primary" onClick={onClose}>
               Done
@@ -57,8 +54,8 @@ function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSummary; ti
             e.preventDefault();
             setBusy(true);
             setError(null);
-            api.revealAppLogins(inst.id, password).then(
-              (r) => setLogins(r.logins),
+            api.revealAppLogin(inst.id, password).then(
+              (r) => setShown(r.password ?? ''),
               (err: unknown) => setError(err instanceof Error ? err.message : String(err)),
             ).finally(() => setBusy(false));
           }}
@@ -114,7 +111,7 @@ function SecretFields({ plan, values, onChange }: { plan: PlanDto; values: Recor
             <button className="btn ghost" type="button" onClick={() => setShown({ ...shown, [s.id]: !shown[s.id] })} aria-label={shown[s.id] ? `Hide ${s.id}` : `Show ${s.id}`}>
               {shown[s.id] ? 'Hide' : 'Show'}
             </button>
-            {s.id.startsWith('harbor.login.') && (
+            {s.id === 'harbor.login' && (
               // decision 194: a strong one, shown so it can be copied before approving
               <button
                 className="btn ghost"
@@ -131,7 +128,7 @@ function SecretFields({ plan, values, onChange }: { plan: PlanDto; values: Recor
         </label>
       ))}
       <p className="muted small">
-        {asked.every((s) => s.id.startsWith('harbor.login.')) ? "Kept on this machine as a secret of the app; the app's drawer shows it again after you type your Harbor password." : 'Kept on this machine as a secret of the app (like the ones Harbor generates); never shown again, never in logs.'}
+        {asked.every((s) => s.id === 'harbor.login') ? "Kept on this machine as a secret of the app; the app's drawer shows it again after you type your Harbor password." : 'Kept on this machine as a secret of the app (like the ones Harbor generates); never shown again, never in logs.'}
       </p>
     </fieldset>
   );
@@ -607,8 +604,10 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
   const mainBlocked = addr !== null && !mainChoices.some((m) => m.ok);
   const main = mainSel === 'tailnet' ? { via: 'tailnet' as const } : mainSel?.startsWith('public:') ? { via: 'public' as const, hostname: mainSel.slice('public:'.length) } : undefined;
   const offerTailnet = Boolean(addr?.tailnet) && mainSel !== 'tailnet';
+  // Decision 197: a new Harbor has the policy on, so its apps join Tailscale; "Not now" on an existing one is respected.
   const alsoTailnet = tailnetPick ?? tailnetPolicyOn;
   const tailnetReq = offerTailnet && tailnetPick !== null && tailnetPick !== tailnetPolicyOn ? { tailnet: tailnetPick } : {};
+  const [askPassword, setAskPassword] = useState(false); // decision 195
   const external = item.claims.filter((c) => c.external);
   const missingRequired = external.some((c) => c.external!.required && !(folders[c.id] ?? '').trim());
   const storage = Object.fromEntries(Object.entries(folders).filter(([, v]) => v.trim()).map(([k, v]) => [k, { hostPath: v.trim() }]));
@@ -818,10 +817,13 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
   // decision 157: the headline names what is NOT encrypted as soon as an own folder is ticked
   const plainParts = external.filter((c) => c.id in folders || c.external!.required).map((c) => c.purpose.charAt(0).toLowerCase() + c.purpose.slice(1));
   const singlePlace = candidates !== null && drives.length === 0 && !formattedDrive;
-  const reach = !addr || addr.local.kind === 'loopback' ? 'Only you, on this machine' : 'Devices on your home network';
-  const reachUrl = addr && addr.local.kind !== 'loopback' ? `${addr.local.kind}://${addr.local.host}` : null;
-  const alsoOn = mainSel === 'tailnet' && addr?.tailnet ? `Also your Tailscale devices, at https://${addr.tailnet.hostname}` : mainSel?.startsWith('public:') ? `Also anyone on the internet, at https://${mainSel.slice('public:'.length)}` : null;
-  const nextStep = item.setup ? `After install you'll create your ${item.name} account.` : item.defaultCredentials ? 'After install, sign in with the default login above.' : `After install, ${item.name} is ready to open.`;
+  const onTs = Boolean(addr?.tailnet) && (mainSel === 'tailnet' || alsoTailnet);
+  const reachBase = !addr || addr.local.kind === 'loopback' ? 'This machine' : 'Your home network';
+  const reach = mainSel?.startsWith('public:') ? (onTs ? `${reachBase}, Tailscale and the internet` : `${reachBase} and the internet`) : onTs ? `${reachBase} and Tailscale` : reachBase === 'This machine' ? 'Only you, on this machine' : reachBase;
+  const reachLine = [addr && addr.local.kind !== 'loopback' ? `${addr.local.kind}://${addr.local.host}` : null, onTs && addr?.tailnet ? `https://${addr.tailnet.hostname}` : null, mainSel?.startsWith('public:') ? `https://${mainSel.slice('public:'.length)}` : null].filter(Boolean).join(' · ');
+  const hasPassword = item.login?.locked === 'required' || askPassword;
+  // decision 195: an app behind Harbor's password has no account to create at the door
+  const nextStep = hasPassword ? `After install, copy its password${item.setup ? ', then finish setup inside the app' : ''}.` : item.setup ? `After install you'll create your ${item.name} account.` : item.defaultCredentials ? 'After install, sign in with the default login above.' : `After install, ${item.name} is ready to open.`;
   const formatButton = (d: HostStorageDto['devices'][number]) => (
     <button
       type="button"
@@ -1003,7 +1005,7 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
           {item.defaultCredentials && <DefaultLogin creds={item.defaultCredentials} />}
           <section className="install-section" aria-labelledby={`${sectionId}-storage`}>
             <h3 className="section-kicker" id={`${sectionId}-storage`}>
-              Storage
+              Where it lives
             </h3>
             <div className="choice">
               <span className="choice-icon">
@@ -1015,18 +1017,8 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
                   {storeFree}
                 </p>
                 {item.presentation.sizeHint && <p className="muted small">Needs {item.presentation.sizeHint.charAt(0).toLowerCase() + item.presentation.sizeHint.slice(1)}</p>}
-              </div>
-              <button className="btn ghost small" type="button" aria-expanded={changing.storage} aria-controls={`${sectionId}-where`} aria-label={`Change where ${item.name} is stored`} onClick={() => setChanging({ ...changing, storage: !changing.storage })}>
-                {changing.storage ? 'Done' : 'Change'}
-              </button>
-            </div>
-            <div className="choice">
-              <span className="choice-icon">
-                <LockIcon />
-              </span>
-              <div className="choice-text">
-                <p className="choice-main">
-                  {plainParts.length ? `Encrypted, except ${plainParts.join(' and ')} (your folder)` : customPass ? 'Encrypted with your own passphrase' : 'Encrypted — unlocks automatically when you sign in'}{' '}
+                <p className="muted small">
+                  {plainParts.length ? `Encrypted, except ${plainParts.join(' and ')} (your folder)` : customPass ? 'Encrypted with your own passphrase' : 'Encrypted, unlocks when you sign in'}{' '}
                   <button className="btn ghost small" type="button" aria-expanded={howOpen} onClick={() => setHowOpen(!howOpen)} aria-label="How the encryption works">
                     How?
                   </button>
@@ -1039,6 +1031,9 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
                   </p>
                 )}
               </div>
+              <button className="btn ghost small" type="button" aria-expanded={changing.storage} aria-controls={`${sectionId}-where`} aria-label={`Change where ${item.name} is stored`} onClick={() => setChanging({ ...changing, storage: !changing.storage })}>
+                {changing.storage ? 'Done' : 'Change'}
+              </button>
             </div>
             {ownFolders.map((c) => (
               <p key={c.id} className="muted small">
@@ -1133,7 +1128,7 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
           </section>
           <section className="install-section" aria-labelledby={`${sectionId}-access`}>
             <h3 className="section-kicker" id={`${sectionId}-access`}>
-              Access
+              Who can reach it
             </h3>
             <div className="choice">
               <span className="choice-icon">
@@ -1142,11 +1137,15 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
               <div className="choice-text">
                 <p className="choice-main">
                   <strong>{reach}</strong>
-                  {reachUrl ? <span className="url"> · {reachUrl}</span> : null}
                 </p>
-                <p className="muted small">{alsoOn ? <span className="url">{alsoOn}</span> : 'You can share it on Tailscale or your own domain later.'}</p>
+                {reachLine ? <p className="muted small url">{reachLine}</p> : null}
+                {addr && !addr.tailnet ? (
+                  <p className="muted small">
+                    Tailscale is not connected. <a href="#/settings/remote">Connect it</a> to reach your apps from anywhere.
+                  </p>
+                ) : null}
               </div>
-              {mainChoices.length > 1 && (
+              {(mainChoices.length > 1 || offerTailnet) && (
                 <button className="btn ghost small" type="button" aria-expanded={changing.access} aria-controls={`${sectionId}-main`} aria-label={`Change who can reach ${item.name}`} onClick={() => setChanging({ ...changing, access: !changing.access })}>
                   {changing.access ? 'Done' : 'Change'}
                 </button>
@@ -1159,8 +1158,8 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
             )}
             {changing.access && (
               <fieldset className="storage-choices" id={`${sectionId}-main`}>
-                <legend>Main address</legend>
-                <p className="muted small">Where {item.name} opens first, and the address it puts in links it sends. Tailscale or a domain also shares it there.</p>
+                <legend>Opens first at</legend>
+                <p className="muted small">The address {item.name} puts in links it sends. Tailscale or a domain also shares it there.</p>
                 {mainChoices.map((m) => (
                   <label key={m.id} className="check url" title={m.ok ? undefined : 'Needs HTTPS'}>
                     <input type="radio" name="main-address" checked={mainSel === m.id} disabled={!m.ok} onChange={() => setMainPick(m.id)} /> {m.label}
@@ -1169,11 +1168,33 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
                 ))}
               </fieldset>
             )}
-            {offerTailnet && addr?.tailnet && (
+            {changing.access && offerTailnet && addr?.tailnet && (
               <label className="check small">
-                <input type="checkbox" checked={alsoTailnet} onChange={(e) => setTailnetPick(e.target.checked)} aria-label="Also on Tailscale" /> Also on Tailscale — your tailnet devices get their own address at https://{addr.tailnet.hostname}
+                <input type="checkbox" checked={alsoTailnet} onChange={(e) => setTailnetPick(e.target.checked)} aria-label="Also on Tailscale" /> Also on Tailscale — your tailnet devices get their own address
                 {tailnetPolicyOn && !alsoTailnet ? <span className="muted"> · kept off although every app gets one</span> : null}
               </label>
+            )}
+            {item.login && item.login.locked !== 'never' && (
+              <div className="choice">
+                <span className="choice-icon">
+                  <LockIcon />
+                </span>
+                <div className="choice-text">
+                  {item.login.locked === 'required' ? (
+                    <>
+                      <p className="choice-main">
+                        <strong>One password for the whole app</strong>
+                      </p>
+                      <p className="muted small">This app requires it. Harbor makes one and shows it after install.</p>
+                    </>
+                  ) : (
+                    <label className="check">
+                      <input type="checkbox" checked={askPassword} onChange={(e) => setAskPassword(e.target.checked)} aria-label="Ask for a password first" /> <strong>Ask for a password first</strong>
+                      <span className="muted small block">{item.login.ownLogin ? `${item.name} has its own login, so this would ask twice.` : 'One password for the whole app, at every address.'} Harbor makes one and shows it after install.</span>
+                    </label>
+                  )}
+                </div>
+              </div>
             )}
             <div className="choice">
               <span className="choice-icon">
@@ -1235,7 +1256,7 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
             </fieldset>
           )}
           <details className="advanced">
-            <summary>Advanced: name, passphrase, folders, technical details</summary>
+            <summary>More options: name, passphrase, folders, technical details</summary>
             <div className="advanced-body">
               {!copyMode && (
                 <label className="small">
@@ -1342,7 +1363,7 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
             <button
               className="btn primary"
               disabled={item.availability !== 'available' || nameBlocked || mainBlocked || missingRequired || missingLink || locationMissingPass || locationBlocked || (place === 'local' && !locationDir) || (place === 'external' && !locationDir && !formattedDrive)}
-              onClick={() => onStart({ kind: 'install', packageId: item.id, name: nameTrim, storage, ...(main ? { main } : {}), ...tailnetReq, ...(Object.keys(links).length ? { links } : {}), ...(internetPick !== internetDefault ? { internet: internetPick } : {}), ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
+              onClick={() => onStart({ kind: 'install', packageId: item.id, name: nameTrim, storage, ...(main ? { main } : {}), ...tailnetReq, ...(askPassword ? { login: true } : {}), ...(Object.keys(links).length ? { links } : {}), ...(internetPick !== internetDefault ? { internet: internetPick } : {}), ...(locationDir ? (customPass ? { location: { dir: locationDir, passphrase } } : { location: { dir: locationDir } }) : formattedDrive && driveDir ? (customPass ? { location: { dir: `${driveDir}/${item.id}`, passphrase } } : { location: { dir: `${driveDir}/${item.id}` } }) : {}) })}
               aria-label={`Install ${item.name} now`}
               title={nameError ? nameError : locationBlocked ? (locationNeedsFormat ? 'This drive needs formatting as ext4 first' : 'Mount the drive before installing') : locationMissingPass ? 'The encryption passphrase needs 8+ characters' : undefined}
             >
@@ -1382,92 +1403,204 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
   );
 }
 
-export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { inst: InstanceSummary; exposures: ExposureDto[]; tools: PlatformToolDto[]; onClose: () => void; onStart: (a: Action) => void }) {
-  const [via, setVia] = useState<'tailnet' | 'public' | 'proxy'>('tailnet');
+// Decision 198: Add a domain (one dialog: the name, the DNS record to create, a live check), your own proxy, and the
+// list of an app's addresses. Tailscale lives on the app's own switch and on the Publishing page.
+export type PublishMode = 'domain' | 'proxy' | 'manage';
+const HOST_RE = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+function suggestedDomain(items: DomainsDto['items'], name: string): string {
+  const parent = [...items].reverse().map((d) => d.hostname.split('.')).find((p) => p.length >= 3 && !(p.length === 3 && p[1]!.length <= 3))?.slice(1).join('.');
+  return parent ? `${name}.${parent}` : '';
+}
+export function PublishWizard({ inst, exposures, tools, mode: startMode = 'domain', onClose, onStart }: { inst: InstanceSummary; exposures: ExposureDto[]; tools: PlatformToolDto[]; mode?: PublishMode; onClose: () => void; onStart: (a: Action) => void }) {
+  const [mode, setMode] = useState<PublishMode>(startMode);
   const [proxyFrom, setProxyFrom] = useState('');
   const [hostname, setHostname] = useState('');
   const [domains, setDomains] = useState<DomainsDto | null>(null);
-  const [customHost, setCustomHost] = useState(false);
-  useEffect(() => {
-    api.domains().then(setDomains, () => setDomains(null));
-  }, []);
-  const freeDomains = (domains?.items ?? []).filter((d) => !d.usedBy);
-  const [protection, setProtection] = useState<'none' | 'basic'>('basic');
+  const [checking, setChecking] = useState(false);
+  const [dnsError, setDnsError] = useState<string | null>(null);
   const [makePrimary, setMakePrimary] = useState(false);
-  const ts = tools.find((t) => t.id === 'tailscale');
+  const login = inst.login;
+  const canAsk = Boolean(login && login.locked === null && !login.on);
+  const [askPassword, setAskPassword] = useState(Boolean(login && !login.ownLogin));
+  useEffect(() => {
+    api.domains().then(
+      (d) => {
+        setDomains(d);
+        setHostname((h) => h || (startMode === 'domain' ? suggestedDomain(d.items, inst.name) : ''));
+      },
+      () => setDomains(null),
+    );
+  }, [inst.id, inst.name, startMode]);
   const px = tools.find((t) => t.id === 'proxy');
   const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
-  // decision 127: public may carry several hostnames; tailnet and your own proxy stay one each
-  const has = (v: 'tailnet' | 'public' | 'proxy') => v !== 'public' && exposures.some((e) => e.via === v);
-  const publicCount = exposures.filter((e) => e.via === 'public').length;
-  const hostInput = useRef<HTMLInputElement | HTMLSelectElement | null>(null);
-  // 'proxy' (decision 118): your own reverse proxy; Harbor runs nothing for it, so there is no provider to check.
-  const providerOk = via === 'proxy' ? true : via === 'tailnet' ? ts?.installationState === 'installed' : px?.installationState === 'installed';
+  const known = domains?.items.find((d) => d.hostname === hostname) ?? null;
+  const validHost = HOST_RE.test(hostname);
+  const proxyReady = px?.installationState === 'installed';
+  const has = exposures.some((e) => e.via === 'proxy');
+  const taken = known?.usedBy && known.usedBy.instanceId !== inst.id ? known.usedBy.instanceName : null;
+  const check = async () => {
+    if (!validHost) return;
+    setChecking(true);
+    setDnsError(null);
+    try {
+      if (known) await api.checkDomain(hostname);
+      else await api.addDomain(hostname);
+      setDomains(await api.domains());
+    } catch (e) {
+      setDnsError(e instanceof ApiError ? `${e.message}. ${e.nextAction ?? ''}`.trim() : String(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+  const recordValue = domains?.publicIp.v4 ?? domains?.publicIp.v6 ?? null;
+  const recordType = domains?.publicIp.v4 ? 'A' : 'AAAA';
+  const title = mode === 'manage' ? `Addresses of ${inst.name}` : mode === 'proxy' ? `Use your own proxy for ${inst.name}` : `Add a domain to ${inst.name}`;
   return (
-    <Dialog title={`Publish ${inst.name}`} onClose={onClose}>
-      <p className="muted small">The app keeps listening on 127.0.0.1. Publishing adds an HTTPS address in front of the same port.</p>
-      <ul className="plain">
-        {exposures.map((e) => (
-          <li key={e.id} className="row between">
-            <span>
-              <Pill tone="info">{e.via}</Pill>{' '}
-              <a href={e.url} target="_blank" rel="noopener noreferrer">
-                {e.url}
-              </a>{' '}
-              <Pill tone={e.state === 'active' ? 'ok' : e.state === 'degraded' ? 'warn' : 'busy'}>{e.state}</Pill>
-              {e.isPrimary && <span className="muted small"> primary</span>}
-              {e.note && <span className="muted small"> · {e.note}</span>}
-            </span>
-            <span className="row">
-              {!e.isPrimary && e.state === 'active' && e.via !== 'proxy' && (
-                <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: e.via as 'tailnet' | 'public', ...(e.via === 'public' ? { hostname: e.hostname } : {}) })} aria-label={e.via === 'public' ? `Make ${e.hostname} primary` : `Make ${e.via} primary`}>
-                  Make primary
+    <Dialog title={title} onClose={onClose}>
+      {mode === 'manage' && (
+        <>
+          <ul className="plain">
+            {exposures.map((e) => (
+              <li key={e.id} className="row between">
+                <span>
+                  <Pill tone="info">{e.via === 'tailnet' ? 'Tailscale' : e.via === 'public' ? 'Domain' : 'Your proxy'}</Pill>{' '}
+                  <a href={e.url} target="_blank" rel="noopener noreferrer">
+                    {e.url}
+                  </a>{' '}
+                  {e.state !== 'active' && <Pill tone={e.state === 'degraded' ? 'warn' : 'busy'}>{e.state}</Pill>}
+                  {e.isPrimary && <span className="muted small"> main</span>}
+                  {e.protection === 'basic' && <span className="muted small"> · basic auth</span>}
+                  {e.note && <span className="muted small"> · {e.note}</span>}
+                </span>
+                <span className="row">
+                  {!e.isPrimary && e.state === 'active' && e.via !== 'proxy' && (
+                    <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: e.via as 'tailnet' | 'public', ...(e.via === 'public' ? { hostname: e.hostname } : {}) })} aria-label={e.via === 'public' ? `Make ${e.hostname} primary` : `Make ${e.via} primary`}>
+                      Make main
+                    </button>
+                  )}
+                  <button className="btn danger" onClick={() => onStart({ kind: 'unexpose', instance: inst, via: e.via, ...(e.via === 'public' ? { hostname: e.hostname } : {}) })} aria-label={e.via === 'public' ? `Withdraw ${e.hostname}` : `Withdraw ${e.via} address`}>
+                    Withdraw
+                  </button>
+                </span>
+              </li>
+            ))}
+            {primary && primary.primary !== 'loopback' && (
+              <li className="row between">
+                <span>
+                  <Pill tone="muted">Home</Pill> {primary.urls.loopback}
+                </span>
+                <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: 'loopback' })} aria-label="Make the home address primary">
+                  Make main
                 </button>
-              )}
-              <button className="btn danger" onClick={() => onStart({ kind: 'unexpose', instance: inst, via: e.via, ...(e.via === 'public' ? { hostname: e.hostname } : {}) })} aria-label={e.via === 'public' ? `Withdraw ${e.hostname}` : `Withdraw ${e.via} address`}>
-                Withdraw
-              </button>
-            </span>
-          </li>
-        ))}
-        {primary && primary.primary !== 'loopback' && (
-          <li className="row between">
-            <span>
-              <Pill tone="muted">loopback</Pill> {primary.urls.loopback}
-            </span>
-            <button className="btn ghost" onClick={() => onStart({ kind: 'reconfigure', instance: inst, primary: 'loopback' })}>
-              Make primary
+              </li>
+            )}
+          </ul>
+          <div className="row end">
+            <button className="btn" onClick={onClose}>
+              Close
             </button>
-          </li>
-        )}
-        {publicCount > 0 && (
-          <li className="row end">
             <button
-              className="btn ghost"
+              className="btn primary"
               onClick={() => {
-                setVia('public');
-                setHostname('');
-                setTimeout(() => hostInput.current?.focus(), 0);
+                setMode('domain');
+                setHostname(suggestedDomain(domains?.items ?? [], inst.name));
               }}
             >
-              Add another domain
+              Add a domain…
             </button>
-          </li>
-        )}
-      </ul>
-      <h3>Add an address</h3>
-      <div className="row wrap">
-        <label className="check">
-          <input type="radio" name="via" checked={via === 'tailnet'} onChange={() => setVia('tailnet')} /> Tailnet (private{ts?.facts?.['dnsName'] ? `, ${String(ts.facts['dnsName'])}` : ''})
-        </label>
-        <label className="check">
-          <input type="radio" name="via" checked={via === 'public'} onChange={() => setVia('public')} /> Public (Caddy, Let&apos;s Encrypt)
-        </label>
-        <label className="check">
-          <input type="radio" name="via" checked={via === 'proxy'} onChange={() => setVia('proxy')} /> Your own proxy (Nginx Proxy Manager, Traefik…)
-        </label>
-      </div>
-      {via === 'proxy' && (
+          </div>
+        </>
+      )}
+      {mode === 'domain' && (
+        <>
+          {!proxyReady && <p className="warn">{px?.note ?? 'The public proxy is not set up.'}</p>}
+          <label className="small">
+            Domain
+            <input value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} onBlur={() => void (validHost && !known ? check() : undefined)} placeholder="app.example.com" aria-label="Domain" autoComplete="off" spellCheck={false} />
+          </label>
+          {taken && (
+            <p className="warn small" role="alert">
+              {taken} already uses this domain.
+            </p>
+          )}
+          {validHost && !taken && (
+            <section className="dns-card" aria-label="DNS check" role="status">
+              {known?.dns.state === 'points_here' ? (
+                <>
+                  <strong className="ok-text">Points to this machine</strong>
+                  <p className="muted small">Harbor gets the HTTPS certificate on its own.</p>
+                </>
+              ) : (
+                <>
+                  <strong className="warn">{known?.dns.state === 'points_elsewhere' ? 'Points somewhere else' : known?.dns.state === 'no_record' ? 'Not pointing here yet' : 'Not checked yet'}</strong>
+                  {recordValue ? (
+                    <>
+                      <p className="small">Add this record where you manage the domain. If this machine is behind a router, also forward ports 80 and 443 to it.</p>
+                      <table className="dns-record">
+                        <thead>
+                          <tr>
+                            <th scope="col">Type</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>{recordType}</td>
+                            <td>{hostname}</td>
+                            <td>
+                              {recordValue} <Copy text={recordValue} />
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </>
+                  ) : (
+                    <p className="warn small">Harbor could not detect this machine's public address{domains?.publicIp.error ? ` (${domains.publicIp.error})` : ''}. Find it in your router or from your provider.</p>
+                  )}
+                </>
+              )}
+              <div className="row">
+                <button className="btn small" type="button" disabled={checking} onClick={() => void check()}>
+                  {checking ? 'Checking…' : known ? 'Check again' : 'Check'}
+                </button>
+              </div>
+            </section>
+          )}
+          {dnsError && (
+            <p className="error small" role="alert">
+              {dnsError}
+            </p>
+          )}
+          {login && login.on && <p className="muted small">The internet gets this app's one password first{login.locked === 'required' ? ' (always on)' : ''}.</p>}
+          {canAsk && (
+            <label className="check">
+              <input type="checkbox" checked={askPassword} onChange={(e) => setAskPassword(e.target.checked)} aria-label="Ask for a password first" /> Ask for a password first
+              <span className="muted small block">
+                {login!.ownLogin ? `${inst.name} has its own login, so this would ask twice.` : `${inst.name} has no login of its own.`} {login!.hasPassword ? 'Uses the password it already has.' : 'Harbor makes one and shows it once.'} {inst.name} restarts once.
+              </span>
+            </label>
+          )}
+          <label className="check">
+            <input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} aria-label="Make this the main address" /> Make this the main address
+            <span className="muted small block">Links the app sends will use it.</span>
+          </label>
+          <div className="row between wrap">
+            <button className="btn ghost" onClick={() => setMode('proxy')}>
+              Use my own proxy instead
+            </button>
+            <span className="row">
+              <button className="btn" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="btn primary" disabled={!proxyReady || !validHost || Boolean(taken)} onClick={() => onStart({ kind: 'expose', instance: inst, via: 'public', hostname, protection: 'none', makePrimary, ...(canAsk && askPassword ? { login: true } : {}) })}>
+                Review…
+              </button>
+            </span>
+          </div>
+        </>
+      )}
+      {mode === 'proxy' && (
         <>
           <label className="small">
             Hostname your proxy serves
@@ -1478,62 +1611,18 @@ export function PublishWizard({ inst, exposures, tools, onClose, onStart }: { in
             <input value={proxyFrom} onChange={(e) => setProxyFrom(e.target.value.trim())} placeholder="192.168.0.20" aria-label="Your proxy's LAN address" />
           </label>
           <p className="muted small">
-            Your proxy keeps the certificate and forwards to this machine on port {primary?.hostPort ?? '…'} (turn WebSockets on). Harbor tells the app about the hostname and trusts forwarded headers only from
-            that address.
+            Your proxy keeps the certificate and forwards to this machine on port {primary?.hostPort ?? '…'} (turn WebSockets on). Harbor tells the app about the hostname and trusts forwarded headers only from that address.
           </p>
+          <div className="row end">
+            <button className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={has || !hostname || !proxyFrom} onClick={() => onStart({ kind: 'expose', instance: inst, via: 'proxy', hostname, protection: 'none', makePrimary: false, proxyFrom })}>
+              {has ? 'Already on your proxy' : 'Review…'}
+            </button>
+          </div>
         </>
       )}
-      {!providerOk && <p className="warn">{via === 'tailnet' ? ts?.note ?? 'Tailscale is not set up.' : px?.note ?? 'The public proxy is not set up.'}</p>}
-      {via === 'public' && (
-        <>
-          {freeDomains.length > 0 && !customHost ? (
-            <label className="small">
-              Domain (registered under Settings → Public addresses)
-              <select ref={(el) => void (hostInput.current = el)} value={hostname} onChange={(e) => (e.target.value === '__other' ? (setCustomHost(true), setHostname('')) : setHostname(e.target.value))} aria-label="Domain">
-                <option value="">Choose a domain…</option>
-                {freeDomains.map((d) => (
-                  <option key={d.hostname} value={d.hostname}>
-                    {d.hostname} — {d.dns.state === 'points_here' ? 'points here ✓' : d.dns.state === 'no_record' ? 'no DNS record yet' : d.dns.state === 'points_elsewhere' ? 'points elsewhere' : 'not checked'}
-                  </option>
-                ))}
-                <option value="__other">Another hostname…</option>
-              </select>
-            </label>
-          ) : (
-            <label className="small">
-              Hostname you control (its DNS record must point at this machine)
-              <input ref={(el) => void (hostInput.current = el)} value={hostname} onChange={(e) => setHostname(e.target.value.trim().toLowerCase())} placeholder="app.example.com" />
-              <span className="muted small">
-                Tip: register it under <a href="#/settings/public">Settings → Public addresses</a> first and Harbor checks the DNS for you.
-              </span>
-            </label>
-          )}
-          <p className="muted small">
-            The HTTPS certificate comes from Let's Encrypt automatically once the domain points here; nothing to upload.
-            {publicCount > 0 && ' This adds another domain: the current ones keep working, and each name gets its own certificate.'}
-          </p>
-          <label className="small">
-            Protection
-            <select value={protection} onChange={(e) => setProtection(e.target.value as 'none' | 'basic')}>
-              <option value="basic">Basic auth (generated credentials, shown once)</option>
-              <option value="none">None (the app&apos;s own login only)</option>
-            </select>
-          </label>
-        </>
-      )}
-      {via !== 'proxy' && (
-        <label className="check">
-          <input type="checkbox" checked={makePrimary} onChange={(e) => setMakePrimary(e.target.checked)} /> make it the primary address (apps that embed their URL are reconfigured)
-        </label>
-      )}
-      <div className="row end">
-        <button className="btn" onClick={onClose}>
-          Close
-        </button>
-        <button className="btn primary" disabled={!providerOk || has(via) || (via !== 'tailnet' && !hostname) || (via === 'proxy' && !proxyFrom)} onClick={() => onStart({ kind: 'expose', instance: inst, via, hostname, protection, makePrimary: via !== 'proxy' && makePrimary, proxyFrom })}>
-          {has(via) ? `Already published via ${via}` : 'Publish'}
-        </button>
-      </div>
     </Dialog>
   );
 }
@@ -1572,13 +1661,13 @@ export function UnlockForm({ inst, onUnlocked, onError }: { inst: InstanceSummar
 }
 
 // Decision 145: move an encrypted app to another place that can hold apps (data folder, an ext4 drive).
-function MovePanel({ inst, current, onMove }: { inst: InstanceSummary; current: string; onMove: (dir: string) => void }) {
+export function MovePanel({ inst, current, onMove }: { inst: InstanceSummary; current: string; onMove: (dir: string) => void }) {
   const [cands, setCands] = useState<HostStorageDto['installCandidates'] | null>(null);
   const [pick, setPick] = useState('');
   const load = () => api.hostStorage().then((s) => setCands(s.installCandidates), () => setCands([]));
   const options = (cands ?? []).filter((c) => c.eligible && !current.startsWith(`${c.dir}/`));
   return (
-    <details className="danger-zone" onToggle={(e) => (e.target as HTMLDetailsElement).open && cands === null && void load()}>
+    <details className="quiet-panel" onToggle={(e) => (e.target as HTMLDetailsElement).open && cands === null && void load()}>
       <summary className="small">Move to…</summary>
       <p className="small muted">
         Lives at <code className="path">{current}</code>. Moving copies its data sealed (never as plaintext on a disk) and keeps its passphrase and recovery words. It is down during the copy.
@@ -1607,7 +1696,7 @@ function MovePanel({ inst, current, onMove }: { inst: InstanceSummary; current: 
 }
 
 // Decision 143: change how an encrypted app opens. Its data is not re-encrypted: the app key is wrapped anew.
-function PassphrasePanel({ inst, defaultKey: given, onChanged }: { inst: InstanceSummary; defaultKey: boolean; onChanged: ((i: InstanceSummary) => void) | undefined }) {
+export function PassphrasePanel({ inst, defaultKey: given, onChanged }: { inst: InstanceSummary; defaultKey: boolean; onChanged: ((i: InstanceSummary) => void) | undefined }) {
   // follows the server, and our own change at once (the drawer's detail poll lags a few seconds)
   const [defaultKey, setDefaultKey] = useState(given);
   useEffect(() => setDefaultKey(given), [given]);
@@ -1621,7 +1710,7 @@ function PassphrasePanel({ inst, defaultKey: given, onChanged }: { inst: Instanc
   const mismatch = mode === 'own' && again.length > 0 && next !== again;
   const ready = mode === 'harbor' ? !defaultKey : next.length >= 8 && next === again;
   return (
-    <details className="danger-zone">
+    <details className="quiet-panel">
       <summary className="small">Change passphrase…</summary>
       <p className="small muted">{defaultKey ? "It opens with Harbor's own key now and unlocks when you log in." : 'It opens with its own passphrase now.'} Changing this re-wraps its key; the data itself is not copied or re-encrypted.</p>
       <fieldset className="storage-choices">
@@ -1678,7 +1767,7 @@ function PassphrasePanel({ inst, defaultKey: given, onChanged }: { inst: Instanc
 }
 
 // Decision 184: Direct, Through the VPN, Offline, or back to the app's own default; Review makes a configure plan.
-function InternetDialog({ inst, title, onClose, onReview }: { inst: InstanceSummary; title: string; onClose: () => void; onReview: (m: InternetMode | 'default') => void }) {
+export function InternetDialog({ inst, title, onClose, onReview }: { inst: InstanceSummary; title: string; onClose: () => void; onReview: (m: InternetMode | 'default') => void }) {
   const current: InternetMode | 'default' = inst.internet.choice ?? 'default';
   const [pick, setPick] = useState<InternetMode | 'default'>(current);
   const def = inst.internet.packageDefault;
@@ -1714,591 +1803,6 @@ function InternetDialog({ inst, title, onClose, onReview }: { inst: InstanceSumm
           </button>
         </div>
       </form>
-    </Dialog>
-  );
-}
-
-export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPublish, onCustomize, onChanged, instances = [], catalog = [] }: { inst: InstanceSummary; exposures: ExposureDto[]; ops?: OperationDto[]; onClose: () => void; onAction: (a: Action) => void; onPublish: () => void; onCustomize: () => void; onChanged?: (i: InstanceSummary) => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[] }) {
-  const [relink, setRelink] = useState<Record<string, string>>({});
-  const upd = inst.updateAvailable;
-  const [detail, setDetail] = useState<InstanceDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmPurge, setConfirmPurge] = useState('');
-  const [purgeOpen, setPurgeOpen] = useState(false);
-  const [autoUpdate, setAutoUpdate] = useState(inst.autoUpdate);
-  const [adopting, setAdopting] = useState(false);
-  const [adoptMsg, setAdoptMsg] = useState<string | null>(null);
-  useEffect(() => setAutoUpdate(inst.autoUpdate), [inst.id, inst.autoUpdate]);
-  const [hiddenFromHome, setHiddenFromHome] = useState(inst.hiddenFromHome);
-  useEffect(() => setHiddenFromHome(inst.hiddenFromHome), [inst.id, inst.hiddenFromHome]);
-  // decision 177: the app's switch of "every app gets a Tailscale address" (shown while the policy is on, and while
-  // Tailscale is ready with it off, so an app can be kept off before the policy is turned on)
-  const [tailnetAll, setTailnetAll] = useState<TailnetAllDto | null>(null);
-  useEffect(() => {
-    let live = true;
-    api.tailnetAll().then(
-      (p) => live && setTailnetAll(p),
-      () => live && setTailnetAll(null),
-    );
-    return () => {
-      live = false;
-    };
-  }, [inst.id]);
-  useEffect(() => {
-    let live = true;
-    const load = () => api.instance(inst.id).then((d) => live && (setDetail(d), setAdoptMsg(null)), (e: Error) => live && setError(e.message));
-    void load();
-    const t = setInterval(() => void load(), 5000);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, [inst.id]);
-  const need = detail?.needsDrive ?? inst.needsDrive;
-  const home = detail?.home ?? inst.home;
-  const primary = inst.endpoints.find((e) => e.id === inst.primaryEndpoint) ?? inst.endpoints[0];
-  const retained = inst.installState === 'retained';
-  const locked = home?.state === 'locked';
-  const lockable = Boolean(home && home.sealed && home.state === 'unlocked' && !retained && inst.installState === 'installed');
-  const canLock = lockable && inst.runtime === 'stopped';
-  const [locking, setLocking] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false); // decision 180
-  const [internetOpen, setInternetOpen] = useState(false); // decision 184
-  const [revealOpen, setRevealOpen] = useState(false); // decision 194
-  const canOpen = inst.installState === 'installed' && inst.runtime === 'running' && !need && !locked;
-  // decision 183: a busy app (its install included) still offers what makes sense after its operations; it queues
-  const gate = appActionGates(inst, ops);
-  const canStart = gate.start && !need;
-  return (
-    <Dialog title={appLabel(inst, instances)} onClose={onClose} wide>
-      <div className="app-head">
-        <InstanceIcon inst={inst} size={72} />
-        <div>
-          <p className="lead">
-            {inst.packageName} <span className="muted small">· {inst.name} · {inst.version ? `${fmtVersion(inst.version)} · ` : ''}rev {inst.revision}</span>
-          </p>
-          <StatusPill inst={inst} />
-          <span className="muted small"> · observed {fmtTime(inst.observedAt)}</span>
-          {ops.length > 0 && (
-            // decision 183: the app is busy; its buttons still work and queue behind this
-            <p className="muted small" role="status" aria-label={`Queue for ${inst.name}`}>
-              {appQueueLine(ops)}
-            </p>
-          )}
-          {inst.usage && (
-            <p className="muted small" aria-label="Resource usage">
-              CPU {inst.usage.cpuPercent}% · {fmtBytes(inst.usage.memoryBytes)} memory
-            </p>
-          )}
-          <p className="muted small" aria-label="Encryption">
-            {home ? (
-              <>
-                Encrypted: yes — sealed at <code className="path">{home.path}</code>
-              </>
-            ) : (
-              'Encrypted: no — plain Docker volumes, readable on disk; starts on its own after a reboot'
-            )}
-          </p>
-          {!home && inst.installState === 'installed' && (
-            <button className="btn small" onClick={() => onAction({ kind: 'seal', instance: inst })} aria-label={`Encrypt ${inst.name}`} title="Move its data into a sealed home on this machine (Harbor's own key, unlocks when you log in)">
-              Encrypt this app…
-            </button>
-          )}
-        </div>
-      </div>
-      {locked && !retained && (
-        <div className="update-banner needs-drive" role="status">
-          <div>
-            <strong>Locked</strong>
-            <p className="muted small">
-              This app lives sealed at <code className="path">{home!.path}</code>
-              {home!.sealed ? ': its files are ciphertext on the disk right now — nothing on this machine can read them, Docker included.' : '.'}{' '}
-              {home!.defaultKey ? (
-                <>Log in again to unlock it silently.</>
-              ) : home!.silentUnlock ? (
-                <>Its passphrase is your Harbor password: logging in again unlocks it, or type the passphrase (or the 12-word recovery key) below. A reboot locks it again.</>
-              ) : (
-                <>Type the app passphrase (or the 12-word recovery key) to unlock it for this boot. A reboot locks it again.</>
-              )}
-            </p>
-          </div>
-          {!home!.defaultKey && (
-            <UnlockForm
-              inst={inst}
-              onUnlocked={() => {
-                setError(null);
-                void api.instance(inst.id).then(setDetail, (e: Error) => setError(e.message));
-              }}
-              onError={setError}
-            />
-          )}
-        </div>
-      )}
-      {home && home.sealed === false && !locked && !retained && (
-        <p className="muted small" role="status">
-          Not sealed yet: this app was installed before Harbor sealed data in the kernel. Its next Start seals the existing data in place (one-time, verified, rolled back if it fails).
-        </p>
-      )}
-      {need && !retained && (
-        <div className="update-banner needs-drive" role="alert">
-          <div>
-            <strong>Needs its drive</strong>
-            <p className="muted small">
-              <code className="path">{need.path}</code> ({need.purpose}) is not the folder this app was using: {need.detail} Re-insert the drive or restore the folder with its marker at the same path, then start the app.
-            </p>
-          </div>
-          <div className="row wrap">
-            <button
-              className="btn"
-              disabled={adopting || inst.runtime === 'running' || inst.runtime === 'starting'}
-              onClick={() => {
-                setAdopting(true);
-                setAdoptMsg(null);
-                void api
-                  .adoptDrive(inst.id, need.purpose)
-                  .then(() => setAdoptMsg('Folder accepted as the new home. You can start the app now.'))
-                  .catch((e: Error) => setAdoptMsg(e.message))
-                  .finally(() => setAdopting(false));
-              }}
-              aria-label={`Accept the current folder as the new home for ${inst.name}`}
-              title={inst.runtime === 'running' || inst.runtime === 'starting' ? 'Stop the app first' : 'Stamp the current folder with a new identity and use it from now on'}
-            >
-              {adopting ? 'Accepting…' : 'Use this folder instead'}
-            </button>
-          </div>
-          {adoptMsg && (
-            <p className="small" role="status">
-              {adoptMsg}
-            </p>
-          )}
-        </div>
-      )}
-      {upd && !retained && (
-        <div className="update-banner" role="status">
-          <div>
-            <strong>Update available</strong>
-            <span className="muted small">
-              {' '}
-              {updateLine(inst, upd)}
-              {upd.releaseNotes ? ` · ${upd.releaseNotes}` : ''}
-            </span>
-            <p className="muted small">Your data, addresses and ports stay. If the new version does not start, Harbor puts the current one back.</p>
-          </div>
-          <button className="btn primary" disabled={!gate.update} onClick={() => onAction({ kind: 'update', instance: inst })} aria-label={`Update ${inst.name}`}>
-            Update
-          </button>
-        </div>
-      )}
-      {!retained && inst.installState === 'installed' && (
-        <label className="row auto-upd">
-          <input
-            type="checkbox"
-            checked={autoUpdate}
-            onChange={(e) => {
-              setAutoUpdate(e.target.checked); // optimistic; the poll corrects on failure
-              void api.setAutoUpdate(inst.id, e.target.checked).catch(() => setAutoUpdate(!e.target.checked));
-            }}
-            aria-label={`Automatic updates for ${inst.name}`}
-          />
-          <span className="muted small">Update this app automatically when a new version arrives. Harbor backs it up first if it has a backup place, and puts the current version back if the new one does not start.</span>
-        </label>
-      )}
-      {!retained && (
-        <label className="row auto-upd">
-          <input
-            type="checkbox"
-            checked={hiddenFromHome}
-            onChange={(e) => {
-              setHiddenFromHome(e.target.checked);
-              void api.setInstanceAppearance(inst.id, { hidden: e.target.checked }).then((u) => onChanged?.(u), () => setHiddenFromHome(!e.target.checked));
-            }}
-            aria-label={`Hide ${inst.name} from Home`}
-          />
-          <span className="muted small">Hide from Home (for helpers without a page of their own; it stays in the App Store and Platform)</span>
-        </label>
-      )}
-      <div className="row wrap actions">
-        {canOpen && primary && !inst.apiOnly && (
-          <a className="btn primary" href={openUrl(inst) ?? primary.urls.loopback} target="_blank" rel="noopener noreferrer" aria-label={`Open ${inst.name}`}>
-            Open
-          </a>
-        )}
-        {canOpen && (
-          <button className="btn" onClick={onPublish} aria-label={`Publish ${inst.name}`}>
-            Publish…
-          </button>
-        )}
-        {!retained && (
-          <button className="btn" onClick={onCustomize} aria-label={`Customize ${inst.name}`}>
-            Customize…
-          </button>
-        )}
-        {canStart && (
-          <button className="btn" onClick={() => onAction({ kind: 'start', instance: inst })} aria-label={`Start ${inst.name}`}>
-            Start
-          </button>
-        )}
-        {gate.restart && (
-          <button className="btn" onClick={() => onAction({ kind: 'restart', instance: inst })} aria-label={`Restart ${inst.name}`} title="Restart with the current addresses, for example after changing network settings">
-            Restart
-          </button>
-        )}
-        {(inst.installState === 'needs_action' || inst.installState === 'failed') && inst.hasRetainedData && !need && (
-          <button className="btn primary" onClick={() => onAction({ kind: 'restart', instance: inst })} aria-label={`Repair ${inst.name}`} title="Run it again from its stored release: re-render, recreate the containers, check it answers. Data, ports and addresses stay.">
-            Repair
-          </button>
-        )}
-        {gate.stop && (
-          <button className="btn" onClick={() => onAction({ kind: 'stop', instance: inst })} aria-label={`Stop ${inst.name}`}>
-            Stop
-          </button>
-        )}
-        {lockable && (
-          <button
-            className="btn"
-            disabled={locking || !canLock}
-            onClick={() => {
-              setLocking(true);
-              setError(null);
-              void api
-                .lockApp(inst.id)
-                .then((s) => setDetail((d) => (d ? { ...d, home: s.home } : d)))
-                .catch((e: Error) => setError(e.message))
-                .finally(() => setLocking(false));
-            }}
-            aria-label={`Lock ${inst.name}`}
-            title={canLock ? "Evict the key from the kernel: the app's files become unreadable until the next unlock" : 'Stop the app first — its files are open while it runs'}
-          >
-            {locking ? 'Locking…' : 'Lock'}
-          </button>
-        )}
-        {gate.remove && (
-          <button className="btn danger" onClick={() => onAction({ kind: 'remove', instance: inst })} aria-label={`Remove ${inst.name}`}>
-            Remove
-          </button>
-        )}
-        {retained && inst.hasRetainedData && (
-          <button className="btn" onClick={() => onAction({ kind: 'reinstall', instance: inst })} aria-label={`Reinstall ${inst.name}`}>
-            Reinstall
-          </button>
-        )}
-      </div>
-      {primary && !retained && (
-        <>
-          <h4>Addresses</h4>
-          <ul className="addresses">
-            {(['loopback', 'tailnet', 'public'] as const).map((via) => {
-              const url = primary.urls[via];
-              if (!url) return null;
-              const ex = exposures.find((e) => e.via === via && (via !== 'public' || e.url === url));
-              return (
-                <li key={via}>
-                  <Pill tone={via === 'loopback' ? 'muted' : ex?.state === 'active' ? 'ok' : ex?.state === 'degraded' ? 'warn' : 'busy'}>{via}</Pill>{' '}
-                  <a href={url} target="_blank" rel="noopener noreferrer">
-                    {url}
-                  </a>
-                  <Copy text={url} />
-                  {primary.primary === via && <span className="muted small"> primary</span>}
-                </li>
-              );
-            })}
-            {/* decision 127: the endpoint's other public names (urls.public is the main one) */}
-            {exposures
-              .filter((e) => e.via === 'public' && e.endpointId === primary.id && e.url !== primary.urls.public)
-              .map((e) => (
-                <li key={e.id}>
-                  <Pill tone={e.state === 'active' ? 'ok' : e.state === 'degraded' ? 'warn' : 'busy'}>public</Pill>{' '}
-                  <a href={e.url} target="_blank" rel="noopener noreferrer">
-                    {e.url}
-                  </a>
-                  <Copy text={e.url} />
-                </li>
-              ))}
-          </ul>
-          {tailnetAll && (tailnetAll.enabled || !tailnetAll.reason) && (
-            <label className="row auto-upd">
-              <input
-                type="checkbox"
-                checked={!tailnetAll.except.includes(inst.id)}
-                onChange={(e) => {
-                  const included = e.target.checked;
-                  setTailnetAll({ ...tailnetAll, except: included ? tailnetAll.except.filter((x) => x !== inst.id) : [...tailnetAll.except, inst.id] }); // optimistic
-                  void api.setTailnetAllIncluded(inst.id, included).then(setTailnetAll, (err: Error) => (setError(err.message), setTailnetAll(tailnetAll)));
-                }}
-                aria-label={`${inst.name} on Tailscale`}
-              />
-              <span className="muted small">
-                On Tailscale: {tailnetAll.enabled ? 'every app gets an address on your tailnet' : 'whether it gets an address if you turn on Every app on Tailscale'} (Settings → Remote access).{' '}
-                {tailnetAll.except.includes(inst.id) ? (primary.urls.tailnet ? 'Kept off from now on; its current address stays until you withdraw it with Publish….' : 'Kept off: Harbor does not give it an address.') : primary.urls.tailnet ? 'Switch off to keep it off from now on (its current address stays until you withdraw it).' : tailnetAll.enabled ? 'It gets its address while it runs.' : 'It would get one.'}
-              </span>
-            </label>
-          )}
-        </>
-      )}
-      {!retained && inst.ports.length > 0 && (
-        // decision 163: fixed ports have no address to open; say which port to forward on the router
-        <>
-          <h4>Ports</h4>
-          <ul className="addresses">
-            {inst.ports.map((x) => (
-              <li key={x.id}>
-                <Pill tone="muted">{x.protocol}</Pill> <strong>{x.hostPort}</strong> <span className="muted small">· {x.purpose} · open on every network of this machine; to reach it from outside, forward {x.protocol.toUpperCase()} {x.hostPort} on your router to this machine</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {!retained && detail?.gpu && (
-        // decision 179: which graphics card the app gets on this machine, and the next step when it cannot
-        <>
-          <h4>Graphics card</h4>
-          <p className="small">
-            {gpuAppText(detail.gpu)}
-          </p>
-        </>
-      )}
-      {!retained && (
-        // decision 184: how the app reaches the internet; Change… picks another, then the review (a running app restarts)
-        <>
-          <h4>Internet</h4>
-          <p className="small">
-            <strong>{internetSummary(inst.internet).label}</strong> <span className="muted">· {internetSummary(inst.internet).why}</span>
-            <br />
-            <span className="muted">{internetHint(inst.internet.mode)}</span>
-          </p>
-          <div className="row">
-            <button className="btn small" disabled={inst.installState !== 'installed'} onClick={() => setInternetOpen(true)} aria-label={`Change how ${appLabel(inst, instances)} reaches the internet`}>
-              Change…
-            </button>
-          </div>
-          {internetOpen && (
-            <InternetDialog
-              inst={inst}
-              title={`Internet for ${appLabel(inst, instances)}`}
-              onClose={() => setInternetOpen(false)}
-              onReview={(internet) => {
-                setInternetOpen(false);
-                onAction({ kind: 'configure', instance: inst, internet });
-              }}
-            />
-          )}
-        </>
-      )}
-      {!retained && detail?.login && detail.login.length > 0 && (
-        // decision 194: Harbor's login in front of the app; on/off and a new password go through the review
-        <>
-          <h4>Login</h4>
-          <ul className="logins">
-            {detail.login.map((l) => {
-              const which = detail.login!.length > 1 ? ` (${l.endpoint})` : '';
-              const busy = inst.installState !== 'installed';
-              return (
-                <li key={l.endpoint}>
-                  <Pill tone={l.on ? 'ok' : 'muted'}>{l.on ? 'asks for a password' : 'open'}</Pill>{' '}
-                  <span className="muted small">
-                    {l.locked === 'required' ? 'This app always asks for its password first.' : l.locked === 'never' ? "Not possible for this app: its own apps and sync clients need to reach it directly." : l.on ? 'Every address asks for the password first.' : 'Anyone who reaches its addresses can open it.'}
-                  </span>
-                  <span className="row">
-                    {l.locked === null && l.on && (
-                      <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, login: { [l.endpoint]: { on: false } } })} aria-label={`Turn off the login of ${appLabel(inst, instances)}${which}`}>
-                        Turn off
-                      </button>
-                    )}
-                    {l.locked === null && !l.on && (
-                      <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, login: { [l.endpoint]: { on: true, ...(l.hasPassword ? {} : { password: true as const }) } } })} aria-label={`Turn on a login for ${appLabel(inst, instances)}${which}`}>
-                        Turn on…
-                      </button>
-                    )}
-                    {l.locked !== 'never' && (l.on || l.hasPassword) && (
-                      <button className="btn small" disabled={busy} onClick={() => onAction({ kind: 'configure', instance: inst, login: { [l.endpoint]: { password: true } } })} aria-label={`Change the password of ${appLabel(inst, instances)}${which}`}>
-                        Change password…
-                      </button>
-                    )}
-                    {l.hasPassword && (
-                      <button className="btn small ghost" onClick={() => setRevealOpen(true)} aria-label={`Show the password of ${appLabel(inst, instances)}${which}`}>
-                        Show password…
-                      </button>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          {revealOpen && <RevealLoginDialog inst={inst} title={appLabel(inst, instances)} onClose={() => setRevealOpen(false)} />}
-        </>
-      )}
-      {!retained && (inst.links.length > 0 || inst.linkedBy.length > 0) && (
-        <>
-          <h4>Links</h4>
-          <ul className="addresses">
-            {inst.links.map((l) => {
-              const claim = catalog.find((x) => x.id === inst.packageId)?.links.find((x) => x.id === l.id);
-              const cands = linkCandidates({ packages: claim?.packages ?? null }, instances, inst.id);
-              const pick = relink[l.id] ?? l.provider?.instanceId ?? cands[0]?.id ?? '';
-              return (
-                <li key={l.id}>
-                  <Pill tone={l.state === 'active' ? 'ok' : l.optional ? 'muted' : 'warn'}>{l.state === 'active' ? 'linked' : l.state === 'dormant' ? 'paused' : 'needs a provider'}</Pill> {l.purpose}
-                  {l.provider ? (
-                    <>
-                      {' '}
-                      → <strong>{l.provider.name}</strong> at <code>{l.url}</code>
-                    </>
-                  ) : (
-                    <span className="muted small"> {l.note ? `(${l.note})` : ''}</span>
-                  )}
-                  {inst.installState === 'installed' && cands.length > 0 && (
-                    <span className="row">
-                      <select value={pick} onChange={(e) => setRelink({ ...relink, [l.id]: e.target.value })} aria-label={`New provider for ${l.id}`}>
-                        {cands.map((i) => (
-                          <option key={i.id} value={i.id}>
-                            {appLabel(i)} ({i.name})
-                          </option>
-                        ))}
-                      </select>
-                      <button className="btn small" disabled={!pick || (pick === l.provider?.instanceId && l.state === 'active')} onClick={() => onAction({ kind: 'configure', instance: inst, links: { [l.id]: { instanceId: pick } } })} aria-label={`Link ${l.id} to the chosen app`}>
-                        {l.provider ? 'Change' : 'Link'}
-                      </button>
-                      {l.optional && l.provider && (
-                        <button className="btn small ghost" onClick={() => onAction({ kind: 'configure', instance: inst, links: { [l.id]: null } })} aria-label={`Unlink ${l.id}`}>
-                          Unlink
-                        </button>
-                      )}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-            {inst.linkedBy.map((b) => (
-              <li key={`${b.instanceId}-${b.linkId}`} className="muted small">
-                {b.name} reaches this app privately through its link “{b.linkId}”
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {!retained && inst.operatorSecrets.length > 0 && (
-        <>
-          <h4>Values you provided</h4>
-          <ul className="addresses">
-            {inst.operatorSecrets.map((s) => (
-              <li key={s.id}>
-                {s.prompt} <span className="muted small">· {s.set ? 'set, never shown' : 'not set'}</span>{' '}
-                <button className="btn small" disabled={inst.installState !== 'installed'} onClick={() => onAction({ kind: 'configure', instance: inst, secrets: [s.id] })} aria-label={`Change ${s.id}`}>
-                  Change…
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      {!retained && inst.settings && inst.settings.length > 0 && (
-        // decision 180: the app's settings with their current values; Change… opens the form, then the plan
-        <>
-          <h4>Settings</h4>
-          <ul className="addresses settings-list">
-            {inst.settings.map((x) => (
-              <li key={x.id}>
-                {x.label} <strong>{settingText(x, x.value)}</strong>
-                {!x.overridden ? <span className="muted small"> (default)</span> : null}
-              </li>
-            ))}
-          </ul>
-          <div className="row">
-            <button className="btn small" disabled={inst.installState !== 'installed'} onClick={() => setSettingsOpen(true)} aria-label={`Change the settings of ${inst.name}`}>
-              Change…
-            </button>
-          </div>
-          {settingsOpen && (
-            <SettingsDialog
-              inst={inst}
-              title={`Settings of ${appLabel(inst, instances)}`}
-              onClose={() => setSettingsOpen(false)}
-              onReview={(values) => {
-                setSettingsOpen(false);
-                onAction({ kind: 'configure', instance: inst, settings: values });
-              }}
-            />
-          )}
-        </>
-      )}
-      {!retained && <AppBackupsPanel inst={inst} onAction={onAction} />}
-      {home && !retained && !locked && <PassphrasePanel inst={inst} defaultKey={Boolean(home.defaultKey)} onChanged={onChanged} />}
-      {home && !retained && !locked && inst.installState === 'installed' && <MovePanel inst={inst} current={home.path} onMove={(dir) => onAction({ kind: 'move', instance: inst, dir })} />}
-      {detail?.defaultCredentials && !retained && <DefaultLogin creds={detail.defaultCredentials} />}
-      {retained && <p className="muted">Removed. Data volumes and secrets are retained; Reinstall restores the exact same release.</p>}
-      {gate.purge && (
-        <details className="danger-zone" open={purgeOpen} onToggle={(e) => setPurgeOpen((e.target as HTMLDetailsElement).open)}>
-          <summary className="small">Uninstall completely…</summary>
-          <p className="small">
-            Deletes {inst.packageName}'s containers, <strong>its data</strong>, secrets and stored release, and frees the name. Folders of yours stay untouched. There is no undo.
-          </p>
-          <label className="small">
-            <span>
-              Type <code>{inst.name}</code> to confirm
-            </span>
-            <input value={confirmPurge} onChange={(e) => setConfirmPurge(e.target.value)} aria-label={`Type ${inst.name} to confirm`} autoComplete="off" />
-          </label>
-          <button className="btn danger" disabled={confirmPurge.trim() !== inst.name} onClick={() => onAction({ kind: 'purge', instance: inst })} aria-label={`Uninstall ${inst.name} completely`}>
-            Delete app and its data
-          </button>
-        </details>
-      )}
-      {error && <p className="error">{error}</p>}
-      {detail && (
-        <>
-          {detail.setup && (
-            <p className="setup">
-              <strong>Finish setup inside the app:</strong> {detail.setup.instructions}{' '}
-              {/* Same address rule as the Open button: the server's browserUrl is loopback, unreachable from a LAN browser. */}
-              <a href={openUrl(inst, inst.endpoints.find((e) => e.id === detail.setup!.endpointId)) ?? detail.setup.browserUrl} target="_blank" rel="noopener noreferrer">
-                Open {inst.name}
-              </a>
-              <br />
-              <span className="muted small">Harbor did not create any account in this application; a green status only means it answers HTTP.</span>
-            </p>
-          )}
-          {detail.lastError && (
-            <p className="error">
-              {detail.lastError.code}: {detail.lastError.message}
-              <br />
-              <span className="muted">Next: {detail.lastError.nextAction}</span>
-            </p>
-          )}
-          <details>
-            <summary>Technical details</summary>
-            <dl className="kv">
-              <dt>Install</dt>
-              <dd>{inst.installState}</dd>
-              <dt>Desired</dt>
-              <dd>{inst.desired}</dd>
-              <dt>Runtime</dt>
-              <dd>{inst.runtime}</dd>
-              <dt>Readiness</dt>
-              <dd>{inst.readiness}</dd>
-              <dt>Instance id</dt>
-              <dd>
-                <code>{inst.id}</code>
-              </dd>
-            </dl>
-            <h4>Owned resources</h4>
-            <ul>
-              {detail.resources.map((r) => (
-                <li key={`${r.kind}-${r.role}`}>
-                  <code>{r.kind}</code> {r.role}: {r.name} {r.present === null ? '(unknown)' : r.present ? '' : '(absent)'}
-                </li>
-              ))}
-              {detail.resources.length === 0 && <li className="muted">none recorded</li>}
-            </ul>
-            <h4>Recent events</h4>
-            <EventList events={detail.events.slice(-10) as OperationDto['events']} />
-          </details>
-        </>
-      )}
-      <div className="row end">
-        <button className="btn" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Dialog>
   );
 }

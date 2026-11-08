@@ -9,7 +9,7 @@ import { exposureCheck, exposureUrl } from '../exposure/urls.js';
 import type { Manifest } from '../contracts/types.js';
 import { renderCaddyConfig } from '../exposure/caddy.js';
 import { caddyLanConsole, caddyLanHttps, caddyRoutesFromState, caddySignature } from './runner.js';
-import { httpsOnlyOn } from '../system/lan-https.js';
+import { httpsOnlyOn, reconcileTailnetRelays, tailnetServeTarget } from '../system/lan-https.js';
 import { HarborError } from '../errors.js';
 import { compareRevisions } from '../packages/store.js';
 import { sampleDisk } from '../system/metrics.js';
@@ -27,6 +27,7 @@ export class Observer {
   private caddyApplied: string | null = null;
   private caddyRejected: { sig: string; at: number } | null = null; // config Caddy refused: re-sent only after a pause
   private lanHttpsApplied: string | null = null;
+  private tailnetRelaysApplied: string | null = null;
   private lastSourceCheck = 0;
   private lastDevices: string | null = null;
   constructor(
@@ -144,6 +145,7 @@ export class Observer {
         await this.everyAppOnTailnet();
       }
       await this.reconcileLanHttps();
+      await this.reconcileTailnetRelays();
       if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
         this.lastSourceCheck = Date.now();
         await this.service.checkAllSources();
@@ -583,7 +585,8 @@ export class Observer {
       const inst = this.ctx.repo.instance(e.instanceId);
       if (!inst || inst.activeOperationId) continue;
       const alloc = inst.endpoints.find((x) => x.id === e.endpointId);
-      const target = `http://127.0.0.1:${alloc?.hostPort ?? e.port}`;
+      // decision 196: through the loopback relay; addresses published before 0.42.0 are moved onto it just below
+      const target = tailnetServeTarget(alloc?.hostPort ?? e.port);
       const fixes: string[] = [];
       // Decision 133, one-time move: addresses published before 0.23.0 shared the app's own port number,
       // which clashes with the app's LAN listener and blocks its next container recreate. New one first,
@@ -607,8 +610,17 @@ export class Observer {
       }
       if (!entries.some((x) => x.port === e.port && x.target === target)) {
         try {
-          await this.ctx.tailscale.serve(e.port, target);
-          fixes.push('serve entry re-applied');
+          const stale = entries.find((x) => x.port === e.port);
+          await reconcileTailnetRelays(this.ctx); // the relay answers before tailscale points at it
+          // that awaited: an operation may have taken or dropped this address meanwhile
+          if (!this.ctx.repo.exposure(e.id) || this.ctx.repo.instance(e.instanceId)?.activeOperationId) continue;
+          // an entry with another target: replace it in place; a CLI that refuses that gets it dropped first
+          await this.ctx.tailscale.serve(e.port, target).catch(async (err: Error) => {
+            if (!stale) throw err;
+            await this.ctx.tailscale.unserve(e.port, stale.target);
+            await this.ctx.tailscale.serve(e.port, target);
+          });
+          fixes.push(stale ? 'moved behind the cookie firewall' : 'serve entry re-applied');
         } catch (err) {
           this.ctx.log.warn(`could not re-apply tailnet serve for port ${e.port}: ${(err as Error).message}`);
           continue;
@@ -637,6 +649,18 @@ export class Observer {
       this.lanHttpsApplied = want;
     } catch (e) {
       this.ctx.log.warn(`LAN HTTPS reconcile failed: ${(e as Error).message}`);
+    }
+  }
+
+  private async reconcileTailnetRelays(): Promise<void> {
+    const { tailnetRelaySignature, reconcileTailnetRelays } = await import('../system/lan-https.js');
+    const want = tailnetRelaySignature(this.ctx);
+    if (want === this.tailnetRelaysApplied) return;
+    try {
+      await reconcileTailnetRelays(this.ctx);
+      this.tailnetRelaysApplied = want;
+    } catch (e) {
+      this.ctx.log.warn(`Tailscale relay reconcile failed: ${(e as Error).message}`);
     }
   }
 

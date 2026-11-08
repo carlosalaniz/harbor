@@ -39,6 +39,7 @@ export function mockCatalog(): CatalogItemDto[] {
     reason: null,
     qualification: 'passed',
     requiresHttps: false,
+    login: { locked: null, ownLogin: false },
     presentation: {
       tagline: description,
       category: 'productivity',
@@ -220,6 +221,7 @@ export function mockInstances(): InstanceSummary[] {
     linkedBy: [],
     operatorSecrets: [],
     hiddenFromHome: false,
+    login: { on: false, locked: null, hasPassword: false, endpoints: ['web'], open: [], ownLogin: false },
     apiOnly: false,
     ports: [],
     internet: { mode: 'direct' as const, choice: null, packageDefault: 'direct' as const, allApps: false },

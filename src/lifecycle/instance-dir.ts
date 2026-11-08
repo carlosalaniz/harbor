@@ -1,6 +1,7 @@
+import { LOGIN_KEY_SECRET, LOGIN_PASSWORD_SECRET, legacyLoginKeySecret, legacyLoginPasswordSecret } from '../planner/gate.js';
 import { chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
-import type { InternetMode, LoadedPackage, SettingValue } from '../contracts/types.js';
+import type { InternetMode, LoadedPackage, Manifest, SettingValue } from '../contracts/types.js';
 import { UUID_RE } from '../contracts/patterns.js';
 import { HarborError } from '../errors.js';
 import { loadPackageDir } from '../packages/catalog.js';
@@ -131,6 +132,30 @@ export function readOperatorSecret(secretsDir: string, secretId: string): string
   const value = readFileSync(file, 'utf8');
   if (!value) throw new HarborError('SECRET_MISSING', `secret ${secretId} is empty for this instance`);
   return value;
+}
+
+// Decision 195: which secret holds the app's one login password: the current one, else the password 0.41 kept for its
+// main endpoint, else any other endpoint's. null = none yet.
+export function loginSecretId(secretsDir: string, manifest: Manifest): string | null {
+  if (secretExists(secretsDir, LOGIN_PASSWORD_SECRET)) return LOGIN_PASSWORD_SECRET;
+  const legacy = [manifest.ui.primaryEndpoint, ...Object.keys(manifest.endpoints).sort()].map(legacyLoginPasswordSecret);
+  return legacy.find((id) => secretExists(secretsDir, id)) ?? null;
+}
+
+// Decision 195: move an app that still has one password per endpoint to the one app password (at its next render, so
+// the file and the running gates change together). The main endpoint's password wins; the others stop working.
+export function adoptLegacyLogin(secretsDir: string, manifest: Manifest): void {
+  const id = loginSecretId(secretsDir, manifest);
+  if (id && id !== LOGIN_PASSWORD_SECRET) {
+    const legacyKey = `${id}.key`;
+    if (secretExists(secretsDir, legacyKey)) writeOperatorSecret(secretsDir, LOGIN_KEY_SECRET, readOperatorSecret(secretsDir, legacyKey), { replace: true });
+    writeOperatorSecret(secretsDir, LOGIN_PASSWORD_SECRET, readOperatorSecret(secretsDir, id), { replace: true });
+  }
+  if (!secretExists(secretsDir, LOGIN_PASSWORD_SECRET)) return;
+  for (const ep of Object.keys(manifest.endpoints)) {
+    removeSecret(secretsDir, legacyLoginPasswordSecret(ep));
+    removeSecret(secretsDir, legacyLoginKeySecret(ep));
+  }
 }
 
 export function removeSecret(secretsDir: string, secretId: string): void {

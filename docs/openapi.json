@@ -87,6 +87,9 @@
                   "displayName": {
                     "type": "string",
                     "maxLength": 80
+                  },
+                  "everyAppOnTailscale": {
+                    "type": "boolean"
                   }
                 }
               }
@@ -323,7 +326,7 @@
     },
     "/v1/instances/{id}/login/reveal": {
       "post": {
-        "description": "The passwords of an app's Harbor logins (decision 194), for the drawer's Show. Needs the administrator password (wrong ones count against the login limits and answer 422). Turning a login on or off and setting a new password go through a configure plan (`login`).",
+        "description": "The app's one password (decisions 194-195), for the app page's Show. Needs the administrator password (wrong ones count against the login limits and answer 422). Turning the login on or off and setting a new password go through a configure plan.",
         "requestBody": {
           "required": true,
           "content": {
@@ -365,27 +368,14 @@
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "logins"
+                    "password"
                   ],
                   "properties": {
-                    "logins": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "endpoint",
-                          "password"
-                        ],
-                        "properties": {
-                          "endpoint": {
-                            "type": "string"
-                          },
-                          "password": {
-                            "type": "string"
-                          }
-                        }
-                      }
+                    "password": {
+                      "type": [
+                        "null",
+                        "string"
+                      ]
                     }
                   }
                 }
@@ -2568,12 +2558,16 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "enabled"
-                ],
+                "minProperties": 1,
+                "maxProperties": 1,
                 "properties": {
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "dismissOffer": {
+                    "enum": [
+                      true
+                    ]
                   }
                 }
               }
@@ -2857,6 +2851,9 @@
                       },
                       "tailnet": {
                         "type": "boolean"
+                      },
+                      "login": {
+                        "type": "boolean"
                       }
                     }
                   },
@@ -3066,23 +3063,16 @@
                       },
                       "login": {
                         "type": "object",
-                        "maxProperties": 8,
-                        "propertyNames": {
-                          "pattern": "^[a-z][a-z0-9-]{0,62}$"
-                        },
-                        "additionalProperties": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "minProperties": 1,
-                          "properties": {
-                            "on": {
-                              "type": "boolean"
-                            },
-                            "password": {
-                              "enum": [
-                                true
-                              ]
-                            }
+                        "additionalProperties": false,
+                        "minProperties": 1,
+                        "properties": {
+                          "on": {
+                            "type": "boolean"
+                          },
+                          "password": {
+                            "enum": [
+                              true
+                            ]
                           }
                         }
                       }
@@ -3135,6 +3125,9 @@
                         "type": "string",
                         "minLength": 2,
                         "maxLength": 64
+                      },
+                      "login": {
+                        "type": "boolean"
                       }
                     }
                   },
@@ -3313,7 +3306,7 @@
                               "pattern": "^[a-z][a-z0-9-]{0,62}$"
                             },
                             {
-                              "pattern": "^harbor\\.login\\.[a-z][a-z0-9-]{0,62}$"
+                              "pattern": "^harbor\\.login$"
                             }
                           ]
                         },

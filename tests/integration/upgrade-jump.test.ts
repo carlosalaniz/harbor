@@ -1,3 +1,4 @@
+import { tailnetServeTarget } from '../../src/system/lan-https.js';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -306,9 +307,9 @@ describe.each(['v0.35.0', 'v0.22.1', 'v0.19.1'])('upgrade jump from Harbor %s st
     const appPort = exca.endpoints[0]!.hostPort;
     // The fresh fakes start empty, like a provider that lost its config: the observer re-applies both.
     await until(async () => caddy.routes().includes('notes.example.com'), 'the public route on Caddy');
-    await until(async () => tailscale.entries.some((e) => e.target === `http://127.0.0.1:${appPort}`), 'the tailnet serve entry');
+    await until(async () => tailscale.entries.some((e) => e.target === tailnetServeTarget(appPort)), 'the tailnet serve entry');
     const old = meta.exposures.find((e) => e.via === 'tailnet')!;
-    const entry = tailscale.entries.find((e) => e.target === `http://127.0.0.1:${appPort}`)!;
+    const entry = tailscale.entries.find((e) => e.target === tailnetServeTarget(appPort))!;
     const now = (await api.expect<{ items: ExposureDto[] }>(200, 'GET', '/v1/exposures')).items.find((e) => e.id === old.id)!;
     if (old.port === appPort) {
       // Before 0.23.0 a tailnet address shared the app's own port: decision 133 moves it to its own port once.

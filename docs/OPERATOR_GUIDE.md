@@ -810,26 +810,31 @@ which), and tell the app your public IP or a domain when it asks for its host. I
 without that. Only one VPN server can use a port: Harbor refuses a second app, or anything else on the machine,
 that wants the same one.
 
-### A Harbor login in front of an app (since 0.41.0)
+### One password in front of an app (since 0.41.0, one per app since 0.42.0)
 
 Many apps have no login of their own: anyone who can reach their address can use them. Harbor can put its own login
-page in front of any of them (decision 194):
+page in front of any of them (decisions 194–195):
 
-1. Open the app's drawer → **Login** → **Turn on…**.
+1. Open the app → **Access** → **Password** → **Turn on…**.
 2. Type a password, or press **Generate**, then **Apply** in the review.
 
-From then on every address of the app (this machine, your network, Tailscale, the internet) first shows a Harbor page
-that asks for that password. A browser stays signed in for 30 days. Scripts can send it as a basic-auth password
-(`curl -u any:<password> …`).
+You can also tick **Ask for a password first** on the install page, or when you add a domain. Harbor then makes the
+password and shows it once.
 
-- **Show password…** shows it again after you type your Harbor password.
-- **Change password…** sets a new one; every browser has to sign in again.
+It is one password for the whole app. Every page of the app and every address (this machine, your network, Tailscale,
+the internet) first shows a Harbor page that asks for it. A browser stays signed in for 30 days. Scripts can send it as
+a basic-auth password (`curl -u any:<password> …`).
+
+- **Show…** shows it again after you type your Harbor password.
+- **Change…** sets a new one; every browser has to sign in again.
 - **Turn off** opens the app again; Harbor keeps the password for next time.
 - Some apps always have it (the package requires it, like Android); their password is made at install and shown
-  once, and the drawer shows it again later. Some apps cannot have it, because their own phone or desktop apps would
-  stop syncing; the drawer says so.
+  once, and the app page shows it again later. Some apps cannot have it, or keep one page open, because their own
+  phone or desktop apps would stop syncing; the app page says so.
+- **An app that had a different password per page before 0.42.0** keeps its main page's password. The others stop
+  working at its next restart.
 - Command line: `harbor app-login <app>` (status), `on` / `off`, `--generate` or `--password-stdin` for a new password,
-  `--show` to print it.
+  `--show` to print it. `harbor install <app> --app-password` turns it on at install.
 
 ### Apps with full control of this machine, and developer mode (since 0.40.0)
 
@@ -1117,8 +1122,7 @@ harbor unexpose erp --via public --host erp.example.com             # withdraw o
 harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
 ```
 
-In the console, the Publishing page (*Publish…* under *Not published*, *Manage* on an app that already
-has an address) and every running app's drawer open the same dialog with the same options. A healthy
+In the console, **Add a domain…** and **Manage…** are on the app's **Access** tab and on the Publishing page. A healthy
 address shows just its link; the state, the reason and the last check appear only when it is not
 *active*; the Platform page shows Tailscale enrollment and proxy state.
 
@@ -1130,7 +1134,7 @@ Notes:
   addresses unless you opt out; the credentials are shown once and retained as an instance secret
   (`/var/lib/harbor/instances/<uuid>/secrets/exposure-basic-<endpoint>`).
 - **One app, several domains** (decision 127): publish the same app again with another `--host`
-  (console: *Publish…* → **Add another domain**). Each domain gets its own Caddy route, its own
+  (console: **Add a domain…** again). Each domain gets its own Caddy route, its own
   Let's Encrypt certificate and its own protection; a domain is used by one app only. The app's hook
   (Nextcloud's trusted domains, `HARBOR_ADDRESSES`) gets all of them; the base URL apps embed is the
   **main** one — the first domain published, or the one you pick with `harbor primary <app> public
@@ -1151,20 +1155,18 @@ Notes:
   the new address; an app whose main address is the tailnet one should be restarted so its links follow.
 - The Harbor UI is loopback and tailnet only; the API refuses any public exposure of it.
 
-### Every app on Tailscale (since 0.33.0)
+### Every app on Tailscale (since 0.33.0; on by default for a new Harbor since 0.42.0)
 
-Publishing on the tailnet is one app at a time by default: an address on your tailnet can be reached
-from every device on it, including people you share the tailnet with, so Harbor never opens an app wider
-than you asked. When the tailnet is only your own devices, **Settings → Remote access → Every app on
-Tailscale** gives every app its own tailnet address instead (decision 177):
+An address on your tailnet can be reached from every device on it, including people you share the tailnet with.
+**A new Harbor** gives every app its own tailnet address as soon as Tailscale is connected. **A Harbor that already has
+apps** asks once on the **Publishing** page; *Not now* leaves them as they are. The switch is **Publishing → Every app
+on Tailscale** (decisions 177, 197):
 
 - **Turning it on** shows the apps that will get an address and asks first ("any device on your tailnet
   can reach it"). It is refused, with the step to take, while Tailscale is not ready (not installed, not
   logged in, offline, or HTTPS certificates off in the Tailscale admin console).
-- **Know what it shares**: every app's address uses this machine's one tailnet name (one port each), so
-  your browser shares the apps' cookies between them. The cookie firewall that keeps apps apart on secure
-  home addresses (`https://harbor.local:<port>`) does not cover tailnet addresses. Publish only apps you
-  trust side by side, or keep the others off (below).
+- **Cookies stay apart** (since 0.42.0): every address uses this machine's one tailnet name (one port each), so Harbor
+  sends them through the same cookie firewall as secure home addresses, and one app cannot read another's login cookies.
 - Harbor then publishes each app without a tailnet address, **one at a time**, each through its own
   ordinary *Publish* operation (you see them in the tray; the actor is `tailnet-policy`). Only an app that
   is running and answering gets one; a stopped, busy, installing or broken app gets its address once it
@@ -1174,12 +1176,8 @@ Tailscale** gives every app its own tailnet address instead (decision 177):
   app whose first visitor creates the owner account (or that ships a default login), the review warns
   that this page is reachable from your tailnet as soon as it runs: create the account right after
   install, or switch it off in its drawer while it installs.
-- **Keep one app off**: switch **On Tailscale** off in its drawer (under its addresses; shown whenever
-  Tailscale is ready, so you can keep an app off before turning the policy on). That only stops Harbor
-  from giving it an address; an address it already has stays until you withdraw it with
-  *Publish… → Withdraw*. Withdrawing an app's main tailnet address by hand, with the policy on or off,
-  also keeps that app off from then on (the review says so). Switch it back on to let Harbor publish it
-  again.
+- **Keep one app off**: open the app → **Access** → switch **On Tailscale** off. If it has an address, the review
+  withdraws it, and Harbor keeps the app off from then on. Switch it back on to let Harbor publish it again.
 - **If one fails** (no free port, Tailscale refused it), Harbor tries **once per start** of Harbor, shows
   it as *failed* in Remote access with the reason, and leaves one notification for that app. *Try again*
   in Remote access lets Harbor try once more at its next check (within seconds, once no other operation
@@ -1191,14 +1189,14 @@ Tailscale** gives every app its own tailnet address instead (decision 177):
 
 ### Choosing apps for Tailscale in bulk, and at install (since 0.37.0)
 
-- **Settings → Remote access → Apps on Tailscale** lists every app with a checkbox: ticked = it has a
+- **Publishing → Apps on Tailscale** lists every app with a checkbox: ticked = it has a
   tailnet address. Tick or untick apps (or use **Select all** / **Select none**), then **Review N changes**:
   the dialog lists the apps that get an address (with the address each will have) and the ones that lose
   theirs, plus any app that cannot change and why (for example *no free port left*). **Apply** sends them
   all to the queue; each is its own operation in the tray. Unticking an app also keeps it off when Every
   app on Tailscale is on; ticking one that was kept off includes it again.
-- **Install page → Access → Also on Tailscale**: the new app also gets a tailnet address once it runs (not
-  its main address; that is *Change* under Access). It is ticked by default only while Every app on
+- **Install page → Who can reach it → Change → Also on Tailscale**: the new app also gets a tailnet address once it
+  runs (not its main address, which is *Opens first at* in the same place). It is ticked by default only while Every app on
   Tailscale is on; untick it there to keep this one app off. CLI: `harbor install <app> --tailnet`
   (or `--no-tailnet`).
 - **An address in a review is not live yet.** The review of a *Publish* shows the address it will create as
@@ -1219,7 +1217,7 @@ harbor tailscale every-app off                      # stop; nothing is withdrawn
    record for your domain pointing at it. Behind a home router, forward ports 80 and 443 to this machine.
 2. Add the domain in the same page. Harbor resolves it and says *Points here*, *Points elsewhere* (with
    the address it found) or *No DNS record yet*; *Re-check* after DNS has spread.
-3. **Publishing** → *Publish…* (or *Manage* when it is already on your tailnet) on the app → *Public* → pick the domain. Caddy requests the Let's Encrypt
+3. Open the app → **Access** → **Add a domain…** (or **Publishing** → *Add a domain…*). Type the name; the dialog shows the DNS record to create and checks it. Caddy requests the Let's Encrypt
    certificate as soon as the address is added and renews it; the address is *pending* for a minute and
    then *active*. Apps without their own login get a generated password unless you opt out.
 

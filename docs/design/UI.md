@@ -164,3 +164,9 @@ after the password was accepted.
 Multi-user, factory reset, a files app. (Shipped since: notifications bell + Settings section,
 app updates UI with rollback, git-source flow, Home widgets, persistent login with a 30-day
 remember session, Umbrel-style login hero, one geometric Harbor mark replacing emoji.)
+
+## App page and install page (decision 198)
+
+- **App page** (`web/src/app/AppDrawer.tsx`): header (status, Open, Start/Restart/Stop), one slot above the tabs for what blocks the app (failed start, missing drive, locked, update), then four tabs: **Overview** (setup steps, default login, summary), **Access** (the one password, every endpoint's addresses, Add a domain, Tailscale, ports, internet), **Settings** (the manifest's options, connected apps, values you provided, graphics card, name and icon, auto-update, Show on Home, technical details, Remove), **Data** (backups, encryption, what it stores). Sections appear only when they have content; a removed app has no tabs. Red is for deletion only.
+- **Install page**: where it lives, who can reach it, password, internet; the rest under More options. Typed secrets, app options and permissions stay in the review.
+- **Add a domain**: one dialog: the name, the DNS record to create, a live check, the password box, Make main. Publishing is the one list of every app's reach.

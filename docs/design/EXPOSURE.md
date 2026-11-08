@@ -137,10 +137,7 @@ ordinary `expose` plan `{ via: 'tailnet', makePrimary: false }` with actor `tail
 - Off never withdraws anything. Install plans carry a note while the policy is on, and a warning when the
   app has `setup` or `defaultCredentials` (its first-run page is reachable from the tailnet as soon as it
   answers; Harbor cannot tell when setup is done).
-- Not isolated: every tailnet address shares the node's one name, and `tailscale serve` targets the app
-  port, not the LAN HTTPS relay, so the decision-167 cookie firewall and cross-app Origin checks do not
-  apply (§6). The confirm dialog, the CLI and the guide say so; routing tailnet serves through the relay is
-  a follow-up.
+- Isolated since 0.42.0 (decision 196): `tailscale serve` targets a loopback relay on `hostPort + 10000` with the decision-167 cookie firewall and cross-app Origin checks; headers pass untouched. A new Harbor starts with the policy on, an existing one is asked once (decision 197).
 - API: `GET`/`PUT /v1/exposures/tailnet-all` (`TailnetAllDto`: enabled, status off|waiting|on, reason,
   nextAction, except, apps[] with published|pending|waiting|failed|excluded; GET writes nothing), `PUT
   /v1/instances/:id/tailnet-all`. CLI: `harbor tailscale every-app [on|off] [--app <app>] [--yes]`.

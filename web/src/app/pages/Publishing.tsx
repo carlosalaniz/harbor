@@ -3,6 +3,8 @@ import { api } from '../../api';
 import { Copy, Empty, InstanceIcon, Pill } from '../components';
 import { fmtTime } from '../format';
 import type { Console } from '../store';
+import type { PublishMode } from '../dialogs';
+import { EveryAppOnTailscale } from '../TailnetApps';
 
 // Decision 189: addresses grouped by how people reach them. Public names (and your own proxy's) get the attention:
 // they cost a domain, need DNS and can break, so problems float to the top and healthy rows stay quiet. The tailnet
@@ -40,13 +42,13 @@ function State({ e }: { e: ExposureDto }) {
   );
 }
 
-export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: InstanceSummary) => void }) {
+export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: InstanceSummary, mode?: PublishMode) => void }) {
   const { data } = c;
   const ts = data.tools.find((t) => t.id === 'tailscale');
   const byId = new Map(data.instances.map((i) => [i.id, i]));
   const manage = (id: string) => {
     const inst = byId.get(id);
-    if (inst) onPublish(inst);
+    if (inst) onPublish(inst, 'manage');
   };
 
   const internet = data.exposures.filter((e) => e.via !== 'tailnet');
@@ -61,6 +63,9 @@ export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: Instan
 
   return (
     <>
+      <section className="card" aria-label="Tailscale">
+        <EveryAppOnTailscale c={c} />
+      </section>
       <section className="card" aria-labelledby="pub-net-h">
         <div className="row between pub-head">
           <h2 id="pub-net-h">On the internet</h2>
@@ -89,6 +94,7 @@ export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: Instan
                         {e.via === 'proxy' && <span className="muted small"> your proxy</span>}
                         {e.isPrimary && items.length > 1 && <span className="muted small"> · main</span>}
                         {e.protection === 'basic' && <span className="muted small"> · basic auth</span>}
+                        {inst?.login?.on && <span className="muted small"> · password</span>}
                         <State e={e} />
                       </div>
                     ))}
@@ -109,7 +115,7 @@ export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: Instan
             {base && <span className="muted small pub-base">{base}</span>}
           </div>
           <p className="muted small">
-            Only your devices signed in to Tailscale can open these. <a href="#/settings/remote">Choose apps…</a>
+            Only your devices signed in to Tailscale can open these.
           </p>
           <ul className="plain pub-compact">
             <li className="row between">
@@ -158,7 +164,7 @@ export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: Instan
           )}
         </section>
         <section className="card" aria-labelledby="pub-none-h">
-          <h2 id="pub-none-h">Not published</h2>
+          <h2 id="pub-none-h">No domain yet</h2>
           {running.length === 0 ? (
             <p className="muted">Install and start an app first.</p>
           ) : unpublished.length === 0 ? (
@@ -171,7 +177,7 @@ export function Publishing({ c, onPublish }: { c: Console; onPublish: (i: Instan
                   <li key={i.id} className="row between">
                     <AppName inst={i} name={i.name} />
                     <button className="btn" onClick={() => onPublish(i)} aria-label={`Publish ${i.name}`}>
-                      Publish…
+                      Add a domain…
                     </button>
                   </li>
                 ))}

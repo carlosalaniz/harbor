@@ -1338,3 +1338,19 @@ on the `exposure` branch change only documentation and the live-suite runner scr
 are not part of the archive. Rebuild it at any time with `pnpm package`; `pnpm tsx scripts/catalog-verify.ts`
 confirms the package file hashes. The first catalog pass (catalog-2026-09-15T00-13-13) ran an earlier build of
 the same sources that differed only in Uptime Kuma's health expectation and the qualification stamps.
+
+## 0.42.0 (decisions 195–198)
+
+Run on macOS with Node 24.12.0 (CI pins 24.22). Fake Docker and fake Tailscale only: **no live run yet**. Not proven: `tailscale serve` pointing at the loopback relay with a real binary (WebSockets and Host handling included), replacing an existing serve entry in place, and the gate recreate on a real Docker engine.
+
+| Check | Result |
+|---|---|
+| `pnpm lint`, `pnpm typecheck`, `pnpm openapi -- --check`, `catalog:verify`, `catalog:hash --check` | pass |
+| `pnpm test` | 681 passed, 2 skipped |
+| `pnpm test:integration` | 410 passed, 3 live-Docker skipped (4 tests that hard-coded the old serve target were updated and rerun in their files) |
+| `pnpm build && pnpm test:e2e` | 47 passed |
+| `tests/unit/tailnet-relay.test.ts` | real loopback listeners: cookies tagged and returned only to their app, cross-app POST refused, Host and X-Forwarded-For preserved, HSTS dropped |
+| `tests/integration/app-login.test.ts` | one password across pages, adoption of 0.41 per-page passwords, `never` stays open, password at install, password from Add a domain |
+| `tests/integration/tailnet-all.test.ts` | relay target, move of an older address, one-time question, silence without Tailscale |
+| `pnpm test:e2e` | app-page tabs, Remove dialog, Add a domain, Publishing list |
+| Screenshots from `pnpm dev:ui` at 1100 and 390 px | no horizontal scroll on any tab |

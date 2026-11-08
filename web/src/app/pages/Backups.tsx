@@ -522,13 +522,13 @@ export function AppBackupsPanel({ inst, onAction }: { inst: InstanceSummary; onA
   const chosen = new Set(draft?.targets ?? b.policy.targets);
   const enabled = draft?.enabled ?? b.policy.enabled;
   return (
-    <details className="backups-panel">
-      <summary>
+    <section className="backups-panel" aria-label="Backups">
+      <h4>
         Backups{' '}
         <span className="muted small">
           {!b.eligible ? '· not encrypted' : b.policy.enabled ? `· ${b.lastSuccessAt ? `last ${fmtTime(b.lastSuccessAt)}` : 'none yet'} · next ${fmtTime(b.nextAt)}` : '· off'}
         </span>
-      </summary>
+      </h4>
       {!b.eligible ? (
         <p className="small muted">{b.reason}</p>
       ) : places.length === 0 ? (
@@ -624,7 +624,7 @@ export function AppBackupsPanel({ inst, onAction }: { inst: InstanceSummary; onA
           ))}
         </ul>
       )}
-    </details>
+    </section>
   );
 }
 

@@ -124,8 +124,8 @@ const realApi = {
   catalogRefresh: () => call<CatalogStatusDto>('POST', '/v1/catalog/refresh', {}),
   instances: () => call<{ items: InstanceSummary[] }>('GET', '/v1/instances').then((r) => r.items),
   instance: (id: string) => call<InstanceDetail>('GET', `/v1/instances/${id}`),
-  // decision 194: the passwords of an app's Harbor logins (asks for the Harbor password)
-  revealAppLogins: (id: string, password: string) => call<{ logins: { endpoint: string; password: string }[] }>('POST', `/v1/instances/${id}/login/reveal`, { password }),
+  // decision 195: the app's one password (asks for the Harbor password)
+  revealAppLogin: (id: string, password: string) => call<{ password: string | null }>('POST', `/v1/instances/${id}/login/reveal`, { password }),
   widget: (id: string) => call<WidgetDto | null>('GET', `/v1/instances/${id}/widget`),
   tools: () => call<{ items: PlatformToolDto[] }>('GET', '/v1/platform-tools').then((r) => r.items),
   installTool: (id: string) => call<PlatformToolDto>('POST', `/v1/platform-tools/${id}/install`, {}),
@@ -135,6 +135,7 @@ const realApi = {
   // decision 177: "Give every app a Tailscale address"
   tailnetAll: () => call<TailnetAllDto>('GET', '/v1/exposures/tailnet-all'),
   setTailnetAll: (enabled: boolean) => call<TailnetAllDto>('PUT', '/v1/exposures/tailnet-all', { enabled }),
+  dismissTailnetOffer: () => call<TailnetAllDto>('PUT', '/v1/exposures/tailnet-all', { dismissOffer: true }),
   setTailnetAllIncluded: (id: string, included: boolean) => call<TailnetAllDto>('PUT', `/v1/instances/${id}/tailnet-all`, { included }),
   plan: (req: PlanRequest) => call<PlanDto>('POST', '/v1/plans', req),
   // Decision 125: operator-provided secret values travel only here, never in a plan.

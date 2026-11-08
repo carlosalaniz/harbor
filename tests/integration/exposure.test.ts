@@ -1,3 +1,4 @@
+import { tailnetServeTarget } from '../../src/system/lan-https.js';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -66,7 +67,7 @@ describe('exposure: tailnet and public paths on the generic engine', () => {
     const op = await h.api.waitOperation(sub.operationId);
     expect(op.state, JSON.stringify(op.error)).toBe('succeeded');
     expect(op.result?.['exposureState']).toBe('active');
-    expect(h.tailscale.entries).toEqual([{ port, target: `http://127.0.0.1:${hostPort}` }]);
+    expect(h.tailscale.entries).toEqual([{ port, target: tailnetServeTarget(hostPort) }]);
     const list = await exposures();
     expect(list.items).toHaveLength(1);
     expect(list.items[0]).toMatchObject({ instanceName: 'excalidraw', via: 'tailnet', state: 'active', isPrimary: false, port });
@@ -84,7 +85,7 @@ describe('exposure: tailnet and public paths on the generic engine', () => {
 
   it('moves an address published before 0.23.0 (same port as the app) to its own port, new entry first', async () => {
     const hostPort = exca.endpoints[0]!.hostPort;
-    const target = `http://127.0.0.1:${hostPort}`;
+    const target = tailnetServeTarget(hostPort);
     // the old shape: row and serve entry on the app's own port
     h.daemon.ctx.repo.insertExposure({ id: '0a0a0a0a-0000-4000-8000-000000000133', instanceId: exca.id, endpointId: exca.endpoints[0]!.id, via: 'tailnet', hostname: 'harbor-test.tail1234.ts.net', port: hostPort, protection: 'none', state: 'active', note: null });
     await h.tailscale.serve(hostPort, target);
@@ -94,7 +95,7 @@ describe('exposure: tailnet and public paths on the generic engine', () => {
       moved = (await exposures()).items.find((e) => e.via === 'tailnet' && e.port !== hostPort);
     }
     expect(moved, 'observer moved the address').toBeDefined();
-    expect(h.tailscale.entries).toEqual([{ port: moved!.port, target }]);
+    expect(h.tailscale.entries).toEqual([{ port: moved!.port, target: tailnetServeTarget(hostPort) }]);
     const { items } = await h.api.expect<{ items: { kind: string; body: string }[] }>(200, 'GET', '/v1/notifications');
     expect(items.some((n) => n.kind === 'tailnet-moved' && n.body.includes(`was port ${hostPort}`))).toBe(true);
     expect((await h.api.run({ kind: 'unexpose', instanceId: exca.id, via: 'tailnet' })).op.state).toBe('succeeded');

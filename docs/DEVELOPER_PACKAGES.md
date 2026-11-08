@@ -283,6 +283,7 @@ the app's password on a Harbor page, keeps the browser signed in with a cookie, 
 script signed in with basic auth), plus `X-Forwarded-For/-Proto/-Host`. Harbor's readiness probe reaches your
 `health.path` through it without a login (the gate answers with your status code and no body). So:
 
+- **One password per app** (decision 195, Harbor 0.42.0): `required` on any endpoint puts the one password in front of every endpoint that allows it. A package cannot give its pages separate passwords; `never` keeps one endpoint open.
 - An app with **no login of its own** that must never be open (a remote desktop, a device console): `login: required`.
   Do not ship your own auth proxy for it.
 - An app whose **own clients** cannot show a web page (Nextcloud's sync clients, WebDAV, an app's mobile API on the same

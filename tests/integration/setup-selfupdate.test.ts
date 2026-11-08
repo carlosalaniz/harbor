@@ -42,10 +42,12 @@ describe('first-run setup in the browser (no administrator yet)', () => {
     await h.api.expectError(401, 'UNAUTHENTICATED', 'POST', '/v1/setup', { code: code === '000000' ? '000001' : '000000', username: 'admin', password: 'a-good-password-123' }, { authorization: '' });
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/setup', { code, username: 'admin', password: 'short' }, { authorization: '' });
     await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/setup', { code, username: '1bad name', password: 'a-good-password-123' }, { authorization: '' });
-    const s = await h.api.expect<{ token: string }>(201, 'POST', '/v1/setup', { code: `${code.slice(0, 3)} ${code.slice(3)}`, username: 'carlos', password: 'a-good-password-123', deviceName: '  Kitchen  server ' }, { authorization: '' });
+    const s = await h.api.expect<{ token: string }>(201, 'POST', '/v1/setup', { code: `${code.slice(0, 3)} ${code.slice(3)}`, username: 'carlos', password: 'a-good-password-123', everyAppOnTailscale: true, deviceName: '  Kitchen  server ' }, { authorization: '' });
     expect(s.token).toBeTruthy();
     h.api.token = s.token;
     expect(existsSync(path.join(h.stateDir, 'setup-code'))).toBe(false);
+    // decision 197: a new Harbor starts with every app on Tailscale when the wizard says so
+    expect((await h.api.expect<{ enabled: boolean }>(200, 'GET', '/v1/exposures/tailnet-all')).enabled).toBe(true);
     const sys = await h.api.expect<SystemDto>(200, 'GET', '/v1/system');
     expect(sys.deviceName).toBe('Kitchen server');
     expect(sys.lan).toEqual({ enabled: true, url: st.lan!.url });

@@ -20,13 +20,15 @@ export interface TailnetAllSetting {
   // decision 186: apps whose install asked for an address (Also on Tailscale) while the policy is off; the policy
   // publishes them like any app, and drops them from here once they have one
   asked: string[];
+  // decision 197: Not now on the one-time question of an existing Harbor
+  offerDismissed?: boolean;
 }
 
 const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 export function readTailnetAll(repo: Repo): TailnetAllSetting {
   const raw = repo.setting<Partial<TailnetAllSetting>>(TAILNET_ALL_SETTING);
-  return { enabled: raw?.enabled === true, except: ids(raw?.except), asked: ids(raw?.asked) };
+  return { enabled: raw?.enabled === true, except: ids(raw?.except), asked: ids(raw?.asked), ...(raw?.offerDismissed ? { offerDismissed: true } : {}) };
 }
 
 // Which apps the policy plans for: every app while it is on, else only the ones their install asked for.
@@ -166,7 +168,8 @@ export class TailnetAllPolicy {
     const r = await tailnetReadiness(this.ctx.tailscale);
     const mem = this.memory(s.except);
     const apps: TailnetAllAppDto[] = this.candidates().map(({ row, app }) => ({ instanceId: row.id, name: row.displayName ?? row.name, url: app.tailnetUrl, ...tailnetAllState(app, mem) }));
-    return { enabled: s.enabled, status: !s.enabled ? 'off' : r.ready ? 'on' : 'waiting', reason: r.ready ? null : r.reason, nextAction: r.ready ? null : r.nextAction, except: s.except, asked: s.asked, apps };
+    const offer = !s.enabled && r.ready && !s.offerDismissed && apps.some((a) => a.url === null && a.state !== 'excluded');
+    return { enabled: s.enabled, status: !s.enabled ? 'off' : r.ready ? 'on' : 'waiting', reason: r.ready ? null : r.reason, nextAction: r.ready ? null : r.nextAction, except: s.except, asked: s.asked, apps, offer };
   }
 
   // Turning it on is refused while Tailscale cannot publish anything; turning it off never withdraws an address.
@@ -184,6 +187,12 @@ export class TailnetAllPolicy {
     this.update((s) => ({ ...s, enabled }));
     if (!enabled) this.resolveAll();
     this.ctx.log.info(`every-app Tailscale addresses ${enabled ? 'on' : 'off'}`, {});
+    return this.status();
+  }
+
+  // Decision 197: Not now on the one-time question.
+  async dismissOffer(): Promise<TailnetAllDto> {
+    this.update((s) => ({ ...s, offerDismissed: true }));
     return this.status();
   }
 
@@ -218,6 +227,8 @@ export class TailnetAllPolicy {
     if (!on && want !== true) return { note: null, publishes: false };
     const r = await tailnetReadiness(this.ctx.tailscale);
     const why = on ? ' (every app gets a Tailscale address)' : '';
+    // decision 197: on by default on a new Harbor, so a machine without Tailscale says nothing about it
+    if (!r.ready && want === undefined) return { note: null, publishes: false };
     return { note: r.ready ? `It also gets an address on your tailnet once it runs${why}.` : `It also gets an address on your tailnet once it runs and Tailscale is ready (${r.reason}).`, publishes: true };
   }
 

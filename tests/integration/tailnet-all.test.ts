@@ -1,3 +1,4 @@
+import { tailnetServeTarget } from '../../src/system/lan-https.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startHarness, type Harness } from './harness.js';
 import { DIGEST_A, MINIMAL_MANIFEST, writePackage } from '../unit/helpers.js';
@@ -282,7 +283,7 @@ describe('every app gets a Tailscale address (decision 177)', () => {
     expect(policyOps(ids['delta'])).toHaveLength(1);
     expect((await tailnetOf()).some((e) => e.instanceId === ids['delta'])).toBe(false); // no half-made record
     const deltaPort = (await h.api.instances()).find((i) => i.id === ids['delta'])!.endpoints[0]!.hostPort;
-    expect(h.tailscale.entries.some((e) => e.target === `http://127.0.0.1:${deltaPort}`)).toBe(false); // and no orphan serve entry
+    expect(h.tailscale.entries.some((e) => e.target === tailnetServeTarget(deltaPort))).toBe(false); // and no orphan serve entry
     expect(await failureRows(ids['delta']!)).toHaveLength(1);
     const notes = (await h.api.expect<NotificationsDto>(200, 'GET', '/v1/notifications')).items;
     expect(notes.some((n) => n.kind === 'operation-failed' && n.instanceId === ids['delta'])).toBe(false);
@@ -366,5 +367,43 @@ describe('Also on Tailscale at install (decision 186)', () => {
 
   it('the request schema takes only a boolean', async () => {
     expect((await h.api.expectError(422, 'INVALID_REQUEST', 'POST', '/v1/plans', { kind: 'install', packageId: 'demo', name: 'chi', tailnet: 'yes' })).error.message).toMatch(/tailnet: must be boolean/);
+  });
+});
+
+describe('Tailscale by default (decisions 196-197)', () => {
+  it('an app address reaches the app through its relay, and an address from before 0.42.0 is moved onto it', async () => {
+    const name = 'relayed';
+    await install(name);
+    const row = (await h.api.instances()).find((i) => i.id === ids[name])!;
+    await setPolicy(false);
+    expect((await h.api.run({ kind: 'expose', instanceId: row.id, via: 'tailnet' })).op.state).toBe('succeeded');
+    const e = (await tailnetOf()).find((x) => x.instanceId === row.id)!;
+    const want = tailnetServeTarget(row.endpoints[0]!.hostPort);
+    expect(h.tailscale.entries).toContainEqual({ port: e.port, target: want });
+    // what 0.41 left: tailscale points straight at the app
+    await h.tailscale.serve(e.port, `http://127.0.0.1:${row.endpoints[0]!.hostPort}`);
+    await until('moved onto the relay', async () => h.tailscale.entries.some((x) => x.port === e.port && x.target === want));
+    await h.api.run({ kind: 'unexpose', instanceId: row.id, via: 'tailnet' });
+  });
+
+  it('an existing Harbor is asked once; Not now is remembered', async () => {
+    await setPolicy(false);
+    const repo = h.daemon.ctx.repo;
+    repo.setSetting(TAILNET_ALL_SETTING, { ...(repo.setting(TAILNET_ALL_SETTING) as object), except: [] });
+    expect((await policy()).offer).toBe(true);
+    const after = await h.api.expect<TailnetAllDto>(200, 'PUT', '/v1/exposures/tailnet-all', { dismissOffer: true });
+    expect(after.offer).toBe(false);
+    expect(after.enabled).toBe(false);
+    expect((await policy()).offer).toBe(false);
+  });
+
+  it('a machine without Tailscale says nothing about it, even with the policy on', async () => {
+    const repo = h.daemon.ctx.repo;
+    repo.setSetting(TAILNET_ALL_SETTING, { ...(repo.setting(TAILNET_ALL_SETTING) as object), enabled: true });
+    const before = h.tailscale.statusValue;
+    h.tailscale.statusValue = null;
+    expect((await h.api.plan({ kind: 'install', packageId: 'demo', name: 'quiet-probe' })).notes.join(' ')).not.toMatch(/tailnet/);
+    h.tailscale.statusValue = before;
+    repo.setSetting(TAILNET_ALL_SETTING, { ...(repo.setting(TAILNET_ALL_SETTING) as object), enabled: false });
   });
 });

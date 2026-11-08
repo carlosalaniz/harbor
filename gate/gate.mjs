@@ -7,7 +7,7 @@
 //   GATE_UPSTREAM       http://<service>:<port> of the app's endpoint
 //   GATE_PASSWORD_HASH  scrypt:<N>:<r>:<p>:<salt hex>:<hash hex> (Harbor never hands the gate the password itself)
 //   GATE_COOKIE_KEY     hex; signs the session cookie (a new password comes with a new key: everyone signs in again)
-//   GATE_COOKIE         the cookie name (one per app and endpoint: apps on one host name share cookies across ports)
+//   GATE_COOKIE         the cookie name (one per app, decision 195: apps on one host name share cookies across ports)
 //   GATE_APP            the app's name, for the page
 //   GATE_HEALTH_PATH    optional: Harbor's readiness path, answered without a login with the app's status code only
 //   GATE_PORT           listen port (default 8080)

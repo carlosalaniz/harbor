@@ -74,6 +74,7 @@ export interface Ctx {
   // LAN HTTPS listeners (console 443 + one proxy per app endpoint). Wired in
   // daemon.ts; the observer reconciles them from state every tick.
   lanHttps?: LanHttpsServers | null;
+  tailnetRelays?: LanHttpsServers | null; // decision 196
   // App backups (decisions 149–154): places, policy, the sequential worker. Wired in daemon.ts; the
   // runner's backup/restore operations call into it.
   backups?: BackupService | null;

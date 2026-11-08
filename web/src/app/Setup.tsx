@@ -29,7 +29,7 @@ export function SetupWizard({ status, onDone }: { status: SetupStatusDto; onDone
     if (password !== again) return setError('The two passwords do not match.');
     setBusy(true);
     try {
-      const r = await api.setup({ code: code.replace(/\D/g, ''), username: username.trim(), password, ...(deviceName.trim() ? { deviceName: deviceName.trim() } : {}), ...(displayName.trim() ? { displayName: displayName.trim() } : {}) });
+      const r = await api.setup({ code: code.replace(/\D/g, ''), username: username.trim(), password, everyAppOnTailscale: true, ...(deviceName.trim() ? { deviceName: deviceName.trim() } : {}), ...(displayName.trim() ? { displayName: displayName.trim() } : {}) });
       setRecoveryKey(r.recoveryKey);
       setStep(2);
     } catch (err) {

@@ -9,6 +9,7 @@ import { reservedUsername } from '../actors.js';
 import { createSealedMachineKey, zeroMachineKey } from './machine-key.js';
 import { INSTALLATION_RECOVERY_SETTING, newInstallationRecoveryKey, sealInstallationRecovery } from '../storage/installation-recovery.js';
 import type { SessionService } from './sessions.js';
+import { TAILNET_ALL_SETTING } from '../lifecycle/tailnet-all.js';
 
 // First-run setup from the browser. While no administrator exists the daemon is "unclaimed": one open
 // route creates the account, guarded by a short setup code the installer printed on the machine (so a
@@ -45,7 +46,7 @@ export class SetupService {
     return this.repo.administrator() === null;
   }
   // Create the administrator, name the machine, log the browser in. One shot: afterwards the route is gone.
-  async claim(req: { code: string; username: string; password: string; deviceName?: string; displayName?: string }, client: string): Promise<{ token: string; expiresAt: string; recoveryKey: string }> {
+  async claim(req: { code: string; username: string; password: string; deviceName?: string; displayName?: string; everyAppOnTailscale?: boolean }, client: string): Promise<{ token: string; expiresAt: string; recoveryKey: string }> {
     if (!this.needed()) throw new HarborError('INVALID_STATE', 'this Harbor already has an administrator', { nextAction: 'Log in instead.' });
     const now = Date.now();
     if (now < this.blockedUntil) throw new HarborError('RATE_LIMITED', 'too many wrong setup codes', { nextAction: 'Wait a minute and try again with the code shown by the installer.' });
@@ -91,6 +92,8 @@ export class SetupService {
         this.repo.setSetting(INSTALLATION_RECOVERY_SETTING, storedRecovery);
         if (deviceName) this.repo.setSetting('device.name', deviceName);
         if (displayName) this.repo.setSetting('account.displayName', displayName);
+        // decision 197: only a new Harbor starts this way; an existing one is asked once instead
+        if (req.everyAppOnTailscale) this.repo.setSetting(TAILNET_ALL_SETTING, { enabled: true, except: [], asked: [] });
       });
     } finally {
       zeroMachineKey(machineKey);
