@@ -81,7 +81,9 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
 
-**Latest (0.42.0, 2026-11-08, decisions 195–198):** one Harbor password per app (secret `harbor.login`, 0.41 per-endpoint passwords adopted at the next render); tailnet addresses go through a loopback cookie-firewall relay (`hostPort + 10000`); every app on Tailscale is on by default for a new Harbor, an existing one is asked once on Publishing; the app page is four tabs (`web/src/app/AppDrawer.tsx`) and Publish became Add a domain / own proxy / Manage. The relay has not run against a real `tailscale` binary yet.
+**Latest (0.43.0, 2026-11-08, decision 199):** `secrets[].revealable: true` (needs `showOnce`): the app page's Settings tab lists the generated value under Saved passwords, `POST /v1/instances/:id/secrets/reveal` returns it after the Harbor password.
+
+**0.42.0 (2026-11-08, decisions 195–198):** one Harbor password per app (secret `harbor.login`, 0.41 per-endpoint passwords adopted at the next render); tailnet addresses go through a loopback cookie-firewall relay (`hostPort + 10000`); every app on Tailscale is on by default for a new Harbor, an existing one is asked once on Publishing; the app page is four tabs (`web/src/app/AppDrawer.tsx`) and Publish became Add a domain / own proxy / Manage. The relay has not run against a real `tailscale` binary yet.
 
 **Latest decision (111, executed 2026-09-25):** Home greets with an optional display name (`account.displayName`, `PUT /v1/account/name`, setup wizard + Settings → Account card; login name stays the credential); the shared `<dialog>` wrapper no longer `close()`s in cleanup (StrictMode remount killed every dialog — the Network trust sheet looked dead); `.content` is centered with wider caps on big screens.
 

@@ -298,6 +298,11 @@ export const mockApi = {
     return mockCatalogMode() === 'new' ? { ...st, serial: st.serial + 1, commit: '8a1d0e6c2f95', createdAt: new Date().toISOString() } : st;
   },
   instances: async (): Promise<InstanceSummary[]> => instances,
+  revealSecrets: async (_id: string, password: string) => {
+    await beat(150);
+    if (!password) throw new Error('password is wrong');
+    return { secrets: [{ id: 'admin-password', label: 'Admin password', value: 'mock-saved-password-1234' }] };
+  },
   revealAppLogin: async (_id: string, password: string) => {
     await beat(150);
     if (!password) throw new Error('password is wrong');

@@ -836,6 +836,8 @@ a basic-auth password (`curl -u any:<password> …`).
 - Command line: `harbor app-login <app>` (status), `on` / `off`, `--generate` or `--password-stdin` for a new password,
   `--show` to print it. `harbor install <app> --app-password` turns it on at install.
 
+**Saved passwords** (Harbor 0.43.0, decision 199). Some apps keep a password Harbor generated viewable: the app page's **Settings** tab lists it under *Saved passwords*, and **Show…** shows it after you type your Harbor password. Packages choose which values; any other generated value is still shown only once.
+
 ### Apps with full control of this machine, and developer mode (since 0.40.0)
 
 A few apps cannot run without full control of this machine. **Android** (redroid) is one: it runs as a

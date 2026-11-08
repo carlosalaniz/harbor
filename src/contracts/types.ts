@@ -125,6 +125,7 @@ export interface SecretClaim {
   maxLength?: number; // operator only (default 4096)
   retention: 'retain';
   showOnce?: string; // generated only (decision 138): label of a value shown to the operator once
+  revealable?: boolean; // needs showOnce (decision 199): the app page can show the value again, after the Harbor password
   // template (decision 139): a literal with one {{value}}; encode url percent-encodes the value first
   bindings: { service: string; environment: string; template?: string; encode?: 'url' }[];
 }

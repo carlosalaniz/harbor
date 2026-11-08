@@ -45,6 +45,13 @@ describe('package text and secrets (decisions 137–139)', () => {
     expect(() => validateManifestShape(y(withSecret('', '{service: web, environment: URL, template: "a${HOME}{{value}}"}')))).toThrow();
   });
 
+  it('revealable needs showOnce (decision 199)', () => {
+    const bare = validateManifestShape(y(withSecret('    revealable: true\n')));
+    expect(() => validateManifestReferences(bare, compose, 'x')).toThrow(/revealable needs showOnce/);
+    const ok = validateManifestShape(y(withSecret('    showOnce: Admin password\n    revealable: true\n')));
+    expect(ok.secrets?.[0]?.revealable).toBe(true);
+    expect(() => validateManifestReferences(ok, compose, 'x')).not.toThrow();
+  });
   it('showOnce is for generated secrets only', () => {
     const m = validateManifestShape(y(withSecret('    showOnce: JWT secret for the document server\n')));
     expect(m.secrets?.[0]?.showOnce).toBe('JWT secret for the document server');

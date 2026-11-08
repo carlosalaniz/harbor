@@ -113,6 +113,8 @@ secrets:                         # optional: Harbor generates and keeps these
     # showOnce: JWT secret for the document server   # optional (decision 138): the operator sees this
     #                              generated value once after install, under this label (e.g. to paste it
     #                              into another system); never shown again, kept as an instance secret
+    # revealable: true             # optional, needs showOnce (decision 199; set release.minHarbor: "0.43.0"): the app page lists it under Saved passwords and shows the
+    #                              value again after the operator types the Harbor password
     bindings:
       - service: web
         environment: APP_SECRET

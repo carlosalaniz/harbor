@@ -294,6 +294,26 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     },
   );
 
+  // Decision 199: generated values a package marks revealable, under the same rule as the app login's passwords
+  app.post(
+    '/v1/instances/:id/secrets/reveal',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: "The generated values this app's package marks revealable (decision 199), for the app page's Show. Needs the administrator password (wrong ones count against the login limits and answer 422).",
+        params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } },
+        body: { type: 'object', additionalProperties: false, required: ['password'], properties: { password: { type: 'string', minLength: 1, maxLength: 1024 } } },
+        response: { 200: { type: 'object', additionalProperties: false, required: ['secrets'], properties: { secrets: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'label', 'value'], properties: { id: { type: 'string' }, label: { type: 'string' }, value: { type: 'string' } } } } } } },
+      },
+    },
+    async (req, reply) => {
+      const who = clientOf(req);
+      await sessions.confirmPassword((req.body as { password: string }).password, who.id, { local: who.local });
+      void reply.header('cache-control', 'no-store');
+      return { secrets: service.revealSecrets((req.params as { id: string }).id) };
+    },
+  );
+
   // --- developer mode (decision 193)
   app.get('/v1/system/developer-mode', { preHandler: requireAuth, schema: { description: 'Whether developer mode is on (packages that are not from the official catalog may then ask for the privileged and binder permissions), since when, and which installed apps hold such a permission without coming from the official catalog.', response: { 200: DEVELOPER_MODE_SCHEMA } } }, async () => service.developerModeDto());
   app.put(

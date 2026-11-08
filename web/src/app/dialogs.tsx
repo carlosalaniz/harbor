@@ -25,22 +25,29 @@ function generatedPassword(): string {
   return Array.from(bytes, (b) => abc[b % abc.length]).join('');
 }
 
-// Decision 194: Show password asks for the Harbor password first, then shows the app's login passwords.
-export function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSummary; title: string; onClose: () => void }) {
+// Decisions 194 and 199: Show asks for the Harbor password first, then shows the values (the app's login password, or
+// the generated values its package marks revealable; those carry a visible label).
+type RevealedValue = { key: string; label: string; value: string; visibleLabel: boolean };
+function RevealDialog({ title, load, onClose }: { title: string; load: (password: string) => Promise<RevealedValue[]>; onClose: () => void }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [shown, setShown] = useState<string | null>(null);
+  const [values, setValues] = useState<RevealedValue[] | null>(null);
   return (
-    <Dialog title={`Password of ${title}`} onClose={onClose}>
-      {shown !== null ? (
+    <Dialog title={title} onClose={onClose}>
+      {values ? (
         <>
-          <div className="cmd">
-            <pre className="code wrap" aria-label="Password">
-              {shown}
-            </pre>
-            <Copy text={shown} />
-          </div>
+          {values.map((v) => (
+            <div key={v.key}>
+              {v.visibleLabel && <p className="small">{v.label}</p>}
+              <div className="cmd">
+                <pre className="code wrap" aria-label={v.label}>
+                  {v.value}
+                </pre>
+                <Copy text={v.value} />
+              </div>
+            </div>
+          ))}
           <div className="row end">
             <button className="btn primary" onClick={onClose}>
               Done
@@ -54,8 +61,8 @@ export function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSumm
             e.preventDefault();
             setBusy(true);
             setError(null);
-            api.revealAppLogin(inst.id, password).then(
-              (r) => setShown(r.password ?? ''),
+            load(password).then(
+              setValues,
               (err: unknown) => setError(err instanceof Error ? err.message : String(err)),
             ).finally(() => setBusy(false));
           }}
@@ -81,6 +88,14 @@ export function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSumm
       )}
     </Dialog>
   );
+}
+
+export function RevealLoginDialog({ inst, title, onClose }: { inst: InstanceSummary; title: string; onClose: () => void }) {
+  return <RevealDialog title={`Password of ${title}`} load={(password) => api.revealAppLogin(inst.id, password).then((r) => [{ key: 'password', label: 'Password', value: r.password ?? '', visibleLabel: false }])} onClose={onClose} />;
+}
+
+export function RevealSecretsDialog({ inst, title, onClose }: { inst: InstanceSummary; title: string; onClose: () => void }) {
+  return <RevealDialog title={`Saved passwords of ${title}`} load={(password) => api.revealSecrets(inst.id, password).then((r) => r.secrets.map((s) => ({ key: s.id, label: s.label, value: s.value, visibleLabel: true })))} onClose={onClose} />;
 }
 
 // Operator-provided secrets (decision 125): one password-style field per value the plan asks for.

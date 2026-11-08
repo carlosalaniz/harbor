@@ -233,6 +233,8 @@ export const MANIFEST_SCHEMA = {
           // decision 138: a generated secret the operator must see once (e.g. a document server's JWT secret
           // another system needs); the label is what the one-time display calls it
           showOnce: plainText(80),
+          // decision 199: the app page can show this generated secret again, after the administrator's password
+          revealable: { type: 'boolean' },
           bindings: {
             type: 'array',
             minItems: 1,

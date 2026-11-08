@@ -49,7 +49,7 @@ import { ONE_TIME_TTL_MS } from '../state/one-time.js';
 import type { ExposureDto, ExposureVia } from '../contracts/api.js';
 import { HOSTNAME_RE, exposureUrl, mainPublicExposure } from '../exposure/urls.js';
 import { retainedExposures } from './retained-exposures.js';
-import { instanceDir, loadReleaseSnapshot, loginSecretId, readLoginChoices, readOperatorSecret as readOperatorSecretFile, readRuntimeModel, readSettingOverrides, secretExists } from './instance-dir.js';
+import { instanceDir, loadReleaseSnapshot, loginSecretId, readLoginChoices, readOperatorSecret as readOperatorSecretFile, readRuntimeModel, readSecret, readSettingOverrides, secretExists } from './instance-dir.js';
 import { packageVersionOf } from '../packages/version.js';
 
 // Decision 176: an automatic update waits for its backup this long, and after a failed backup tries again this much later.
@@ -74,6 +74,8 @@ export interface SubmitOptions {
 // Read paths and the plan/submit contract. Mutations of Docker resources live in the runner.
 // Decision 130: an install without a location is said plainly, wherever it comes from.
 export const NOT_ENCRYPTED_WARNING = 'Not encrypted: the app keeps its data on plain Docker volumes, readable on disk, and starts on its own after a reboot before anyone logs in.';
+
+const revealableOf = (pkg: LoadedPackage): SecretClaim[] => (pkg.manifest.secrets ?? []).filter((s) => s.revealable === true && s.showOnce !== undefined && s.source !== 'operator');
 
 export class ApplicationService {
   private lastDockerObservation: { available: boolean; observedAt: string | null; version: string | null; error: string | null } = { available: false, observedAt: null, version: null, error: null };
@@ -690,6 +692,17 @@ export class ApplicationService {
     return secret ? readOperatorSecretFile(secrets, secret) : null;
   }
 
+  // Decision 199: the generated values the installed release marks revealable (the caller checked the administrator's
+  // password). Read from the installed release only: a newer catalog cannot widen what an installed app shows.
+  revealSecrets(id: string): { id: string; label: string; value: string }[] {
+    const row = this.instanceRow(id);
+    const dir = instanceDir(this.ctx.config.stateDir, row.id);
+    const secrets = path.join(dir, 'secrets');
+    return revealableOf(loadReleaseSnapshot(path.join(dir, 'release'), row.packageId))
+      .filter((s) => secretExists(secrets, s.id))
+      .map((s) => ({ id: s.id, label: s.showOnce!, value: readSecret(secrets, s.id) }));
+  }
+
   // ---- developer mode (decision 193): packages that are not from the official catalog may ask for the
   // trusted-only permissions (privileged, binder). Off by default; the console shows a banner while it is on.
   developerModeOn(): boolean {
@@ -983,15 +996,15 @@ export class ApplicationService {
     return this.packageMeta(i).primaryEndpoint;
   }
 
-  private packageMeta(i: InstanceRow): { version: string | null; name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] } {
-    const from = (pkg: LoadedPackage) => ({ settings: pkg.manifest.settings ?? [], version: pkg.revision === i.revision ? packageVersionOf(pkg) : null, ports: fixedPortsOf(pkg.manifest), hideFromHome: pkg.manifest.presentation?.hideFromHome === true, apiOnly: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.kind === 'api', name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), links: pkg.manifest.links ?? [] });
+  private packageMeta(i: InstanceRow): { version: string | null; name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] } {
+    const from = (pkg: LoadedPackage) => ({ settings: pkg.manifest.settings ?? [], version: pkg.revision === i.revision ? packageVersionOf(pkg) : null, ports: fixedPortsOf(pkg.manifest), hideFromHome: pkg.manifest.presentation?.hideFromHome === true, apiOnly: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.kind === 'api', name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), revealableSecrets: revealableOf(pkg), links: pkg.manifest.links ?? [] });
     try {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
         return from(this.ctx.packages.load(i.packageId));
       } catch {
-        return { version: null, name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], links: [], settings: [], hideFromHome: false, apiOnly: false, ports: [] };
+        return { version: null, name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], revealableSecrets: [], links: [], settings: [], hideFromHome: false, apiOnly: false, ports: [] };
       }
     }
   }
@@ -1028,7 +1041,7 @@ export class ApplicationService {
 
   // Read-time look that is not a column: links, operator secrets and Hide from Home (decision 131: the
   // operator's per-app choice in the `home.hidden` setting wins over the package's suggestion).
-  private extraLook(i: InstanceRow, meta: { version: string | null; operatorSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] }): ReturnType<ApplicationService['linkLook']> & { version: string | null; hiddenFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; settings: NonNullable<InstanceSummary['settings']>; internet?: InstanceSummary['internet'] } {
+  private extraLook(i: InstanceRow, meta: { version: string | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] }): ReturnType<ApplicationService['linkLook']> & { version: string | null; hiddenFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; settings: NonNullable<InstanceSummary['settings']>; internet?: InstanceSummary['internet'] } {
     const choice = this.ctx.repo.setting<Record<string, boolean>>('home.hidden')?.[i.id];
     // decision 180: effective values (the operator's overrides, else the installed release's defaults)
     const settings = meta.settings.length ? settingDtos({ settings: meta.settings }, readSettingOverrides(this.ctx.config.stateDir, i.id)) : [];
@@ -1036,12 +1049,13 @@ export class ApplicationService {
     return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(login ? { login } : {}), ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}) };
   }
 
-  private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets'] } {
+  private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets']; revealableSecrets: InstanceSummary['revealableSecrets'] } {
     const secretsDir = path.join(instanceDir(this.ctx.config.stateDir, i.id), 'secrets');
     return {
       links: this.appLinks(i, meta.links),
       linkedBy: this.ctx.repo.linksOfProvider(i.id).map((l) => ({ instanceId: l.consumerInstanceId, name: this.ctx.repo.instance(l.consumerInstanceId)?.name ?? l.consumerInstanceId, linkId: l.linkId, state: l.state })),
       operatorSecrets: meta.operatorSecrets.map((s) => ({ id: s.id, prompt: s.prompt ?? s.id, optional: s.optional ?? false, set: secretExists(secretsDir, s.id) })),
+      revealableSecrets: meta.revealableSecrets.filter((s) => secretExists(secretsDir, s.id)).map((s) => ({ id: s.id, label: s.showOnce! })),
     };
   }
 

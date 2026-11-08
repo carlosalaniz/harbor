@@ -220,6 +220,7 @@ export function mockInstances(): InstanceSummary[] {
     links: [],
     linkedBy: [],
     operatorSecrets: [],
+    revealableSecrets: [],
     hiddenFromHome: false,
     login: { on: false, locked: null, hasPassword: false, endpoints: ['web'], open: [], ownLogin: false },
     apiOnly: false,

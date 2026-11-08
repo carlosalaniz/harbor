@@ -3,7 +3,7 @@ import type { AppBackupsDto, CatalogItemDto, ExposureDto, InstanceDetail, Instan
 import { api } from '../api';
 import { AppBackupsPanel } from './pages/Backups';
 import { Copy, Dialog, EventList, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
-import { DefaultLogin, InternetDialog, MovePanel, PassphrasePanel, RevealLoginDialog, UnlockForm, linkCandidates } from './dialogs';
+import { DefaultLogin, InternetDialog, MovePanel, PassphrasePanel, RevealLoginDialog, RevealSecretsDialog, UnlockForm, linkCandidates } from './dialogs';
 import { fmtBytes, fmtTime, fmtVersion, updateLine } from './format';
 import { gpuAppText } from './gpu-text';
 import { internetHint, internetSummary } from './internet-text';
@@ -121,6 +121,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [internetOpen, setInternetOpen] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false); // decision 199
   const [techOpen, setTechOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [stepsOpen, setStepsOpen] = useState(false);
@@ -535,6 +536,18 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           ))}
         </Section>
       )}
+      {inst.revealableSecrets.length > 0 && (
+        // decision 199: generated values the package marks revealable; the values only after the Harbor password
+        <Section title="Saved passwords">
+          {inst.revealableSecrets.map((s) => (
+            <Row key={s.id} title={s.label}>
+              <button className="btn small ghost" onClick={() => setSavedOpen(true)} aria-label={`Show ${s.label}`}>
+                Show…
+              </button>
+            </Row>
+          ))}
+        </Section>
+      )}
       {inst.operatorSecrets.length > 0 && (
         <Section title="Values you provided">
           {inst.operatorSecrets.map((s) => (
@@ -741,6 +754,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
         </>
       )}
       {revealOpen && <RevealLoginDialog inst={inst} title={name} onClose={() => setRevealOpen(false)} />}
+      {savedOpen && <RevealSecretsDialog inst={inst} title={name} onClose={() => setSavedOpen(false)} />}
       {internetOpen && (
         <InternetDialog
           inst={inst}

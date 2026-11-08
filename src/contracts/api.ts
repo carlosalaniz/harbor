@@ -193,6 +193,8 @@ export interface InstanceSummary {
   linkedBy: { instanceId: string; name: string; linkId: string; state: AppLinkState }[];
   // decision 125: secrets the operator typed (never their values); set = a value is stored
   operatorSecrets: { id: string; prompt: string; optional: boolean; set: boolean }[];
+  // decision 199: generated values the app page can show again (the value itself only through /secrets/reveal)
+  revealableSecrets: { id: string; label: string }[];
   // decision 180: the app's settings with their effective values (absent when the package declares none)
   settings?: SettingDto[];
   // decision 131: not shown on Home (the operator's choice, else the package's presentation.hideFromHome)

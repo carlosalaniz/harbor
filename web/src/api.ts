@@ -124,6 +124,8 @@ const realApi = {
   catalogRefresh: () => call<CatalogStatusDto>('POST', '/v1/catalog/refresh', {}),
   instances: () => call<{ items: InstanceSummary[] }>('GET', '/v1/instances').then((r) => r.items),
   instance: (id: string) => call<InstanceDetail>('GET', `/v1/instances/${id}`),
+  // decision 199: generated values the package marks revealable (asks for the Harbor password)
+  revealSecrets: (id: string, password: string) => call<{ secrets: { id: string; label: string; value: string }[] }>('POST', `/v1/instances/${id}/secrets/reveal`, { password }),
   // decision 195: the app's one password (asks for the Harbor password)
   revealAppLogin: (id: string, password: string) => call<{ password: string | null }>('POST', `/v1/instances/${id}/login/reveal`, { password }),
   widget: (id: string) => call<WidgetDto | null>('GET', `/v1/instances/${id}/widget`),

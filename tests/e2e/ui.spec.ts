@@ -2236,3 +2236,69 @@ ui:
   await tab(drawer, 'Access');
   await expect(drawer).toContainText('Anyone who reaches its addresses can open it.', { timeout: 30_000 });
 });
+
+test('decision 199: a revealable generated secret is listed on the app page and shown after the Harbor password', async ({ page }) => {
+  const { writeZip } = await import('../../src/packages/zip.js');
+  const manifest = `apiVersion: harbor/v1alpha1
+kind: Application
+metadata:
+  id: reveal-e2e
+  name: Reveal E2E
+  description: An app with a saved password
+release:
+  revision: "1"
+deployment:
+  compose: compose.yaml
+  multiInstance: false
+  services:
+    web: application
+endpoints:
+  web:
+    service: web
+    containerPort: 80
+    scheme: http
+    exposure: direct
+    browserContext: ordinary
+health:
+  endpoint: web
+  path: /
+  expectedStatus: [200]
+  timeoutSeconds: 5
+  deadlineSeconds: 30
+ui:
+  primaryEndpoint: web
+secrets:
+  - id: admin-password
+    bytes: 32
+    encoding: hex
+    retention: retain
+    showOnce: Admin password
+    revealable: true
+    bindings:
+      - {service: web, environment: ADMIN_PASSWORD}
+`;
+  await login(page);
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'Add your own app' }).click();
+  const up = page.getByRole('dialog', { name: 'Your own app' });
+  await up.getByLabel('Package zip file').setInputFiles({ name: 'reveal-e2e.zip', mimeType: 'application/zip', buffer: writeZip({ 'manifest.yaml': manifest, 'compose.yaml': 'services:\n  web:\n    image: nginx:1.27-alpine\n' }) });
+  await expect(up).toContainText('Reveal E2E is in your App Store');
+  await up.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('tab', { name: 'Your apps' }).click();
+  await page.locator('.tile.store').filter({ hasText: 'Reveal E2E' }).getByRole('button', { name: 'Install Reveal E2E', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Install Reveal E2E now' }).click();
+  await page.getByRole('dialog', { name: 'Review install' }).getByRole('button', { name: 'Install', exact: true }).click();
+  await trayDone(page, 'Install');
+  await dismissRecovery(page);
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of reveal-e2e', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: 'Reveal E2E' });
+  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
+  await expect(drawer.getByRole('heading', { name: 'Saved passwords', exact: true })).toBeVisible();
+  await drawer.getByRole('button', { name: 'Show Admin password', exact: true }).click();
+  const show = page.getByRole('dialog', { name: 'Saved passwords of Reveal E2E' });
+  await show.getByLabel('Your Harbor password', { exact: true }).fill(ADMIN.password);
+  await show.getByRole('button', { name: 'Show', exact: true }).click();
+  await expect(show.getByLabel('Admin password', { exact: true })).toHaveText(/^[a-f0-9]{64}$/);
+  await show.getByRole('button', { name: 'Done', exact: true }).click();
+});
