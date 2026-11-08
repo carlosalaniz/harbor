@@ -1354,3 +1354,13 @@ Run on macOS with Node 24.12.0 (CI pins 24.22). Fake Docker and fake Tailscale o
 | `tests/integration/tailnet-all.test.ts` | relay target, move of an older address, one-time question, silence without Tailscale |
 | `pnpm test:e2e` | app-page tabs, Remove dialog, Add a domain, Publishing list |
 | Screenshots from `pnpm dev:ui` at 1100 and 390 px | no horizontal scroll on any tab |
+
+## 0.43.0 (decision 199)
+
+GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, typecheck, unit, integration, build, e2e and `official-catalog` all pass. **No live run yet.**
+
+| Check | Result |
+|---|---|
+| `tests/integration/revealable-secrets.test.ts` | lists only the marked secret, returns the stored value after the Harbor password, refuses a wrong one, an unmarked `showOnce` secret stays hidden |
+| `tests/e2e/ui.spec.ts` (decision 199) | Settings tab, Saved passwords, Show after the Harbor password |
+| Local suite on macOS, Node 24.12.0, under heavy load | not green: `exposure.test.ts` "unreachable published address" fails here, and also fails on unmodified 0.42.0 (`4a9b5e5`) on the same machine; other timeouts varied from run to run |
