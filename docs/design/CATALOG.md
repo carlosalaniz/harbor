@@ -114,7 +114,7 @@ pattern forbade.
 | OpenClaw | its Compose file needs `command`, `init`, `cap_drop`, `security_opt`, `extra_hosts`; first run is a CLI onboarding that writes the gateway token | a small, reviewed subset extension (`command`, `init`, `cap_drop`) plus a "secret shown once" affordance for the gateway token; AnythingLLM and Open WebUI cover the assistant/agent need meanwhile |
 | Paperless-ngx, Linkding | admin account only via CLI or `*_ADMIN_PASSWORD` env | a one-time credential display for install (the exposure flow already has the pattern) |
 | Collabora as a separate server | needs different `ssl.termination` for loopback vs published; WOPI setup is an in-app step | scheme-dependent configuration; Nextcloud Office works today through the recommended apps' built-in CODE server |
-| Home Assistant, Pi-hole, Syncthing, AdGuard | host networking, DNS port 53, non-HTTP ports | not in the HTTP-endpoint model of this release |
+| Pi-hole, AdGuard | host networking, DNS port 53 | not in the HTTP-endpoint model of this release (Syncthing has since shipped; Home Assistant is harbor-apps PR #31 (2026-11-08): the Container install on its own network: devices added by IP, no discovery, USB or Bluetooth, an after-start hook trusts Harbor's proxies) |
 | Bitcoin/Lightning stack | not in the "cloud for humans" scope | – |
 
 ## 6. Porting Umbrel's official catalog
