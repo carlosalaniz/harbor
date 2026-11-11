@@ -160,7 +160,8 @@ describe('advertise: avahi-publish children', () => {
     h.pub.apply([a!]);
     expect(h.spawned).toHaveLength(1);
     expect(h.pub.state(a!.key)?.state).toBe('starting');
-    h.spawned[0]!.child.stdout.write("Established under name 'Panel browser'\n");
+    // avahi-publish confirms on stderr (live, avahi 0.8); a failure's reason is the last other line
+    h.spawned[0]!.child.stderr.write("Established under name 'Panel browser'\n");
     await tick();
     expect(h.pub.state(a!.key)).toEqual({ state: 'announced', name: 'Panel browser', error: null });
   });

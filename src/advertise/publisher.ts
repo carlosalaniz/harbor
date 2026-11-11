@@ -103,17 +103,23 @@ export class ProcessAdvertPublisher implements AdvertPublisher {
     }
     e.child = child;
     let lastErr = '';
-    child.stdout?.setEncoding('utf8').on('data', (d: string) => {
-      const m = /Established under name '(.*)'/.exec(d);
-      if (m && e.child === child) {
-        e.state = { state: 'announced', name: m[1] ?? a.name, error: null };
-        this.log.info(`announced ${a.type} "${m[1]}" on port ${a.port} on the network`);
+    // avahi-publish writes everything, "Established under name …" included, to stderr (checked live, avahi 0.8);
+    // stdout is read the same way in case another build differs
+    const onText = (d: string) => {
+      for (const raw of d.split('\n')) {
+        const line = raw.trim();
+        if (!line) continue;
+        const m = /^Established under name '(.*)'$/.exec(line);
+        if (m) {
+          if (e.child === child) {
+            e.state = { state: 'announced', name: m[1] ?? a.name, error: null };
+            this.log.info(`announced ${a.type} "${m[1]}" on port ${a.port} on the network`);
+          }
+        } else lastErr = line;
       }
-    });
-    child.stderr?.setEncoding('utf8').on('data', (d: string) => {
-      const line = d.trim().split('\n').pop()?.trim();
-      if (line) lastErr = line;
-    });
+    };
+    child.stdout?.setEncoding('utf8').on('data', onText);
+    child.stderr?.setEncoding('utf8').on('data', onText);
     child.on('error', (err) => {
       if (e.child === child) this.failed(e, err.message);
     });

@@ -628,3 +628,4 @@ None pending. The public paths are proven live on `harbor-test-3` (public one-li
 | 0.42.0 (2026-11-08) | decisions 195–198: app page tabs, install page, one password per app, Add a domain, Tailscale by default through the cookie firewall relay. Local gate on Node 24.12.0, fakes only |
 | 0.43.0 (2026-11-08) | decision 199: revealable generated secrets (Saved passwords on the app page). Local gate on Node 24.12.0, fakes only |
 | 0.44.0 (2026-11-10) | decision 200: `endpoints.<id>.advertise` announces an endpoint on the LAN with DNS-SD (avahi-publish children, LAN mode, while running); app page *Found on your network*. Fake adapter now closes every port of a multi-port container. |
+| 0.44.1 (2026-11-11) | decision 200 fix: the app page said *Announcing…* forever because avahi-publish confirms on stderr, not stdout. Live check of 0.44.0 on harbor-old. |
