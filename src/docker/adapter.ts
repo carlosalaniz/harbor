@@ -125,7 +125,8 @@ export interface ComposeRunner {
   version(): Promise<string | null>;
   // Non-mutating canonical validation. Returns the canonical YAML.
   config(inv: ComposeInvocation, timeoutMs: number): Promise<string>;
-  pull(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult>;
+  // services: only these (default every service). Images already present are not pulled again.
+  pull(inv: ComposeInvocation, timeoutMs: number, services?: readonly string[]): Promise<ComposeResult>;
   // forceRecreate: Restart (decision 116) recreates every container so new configuration applies.
   // noStart (decision 171): create/recreate only, so the runner attaches link networks before anything
   // starts; a second plain `up` then starts them (nothing left to recreate).

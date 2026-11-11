@@ -96,8 +96,8 @@ export class ComposeCli implements ComposeRunner {
     return r.stdout;
   }
 
-  pull(inv: ComposeInvocation, timeoutMs: number): Promise<ComposeResult> {
-    return this.compose(inv, ['pull', '--quiet', '--policy', 'missing'], timeoutMs);
+  pull(inv: ComposeInvocation, timeoutMs: number, services: readonly string[] = []): Promise<ComposeResult> {
+    return this.compose(inv, ['pull', '--quiet', '--policy', 'missing', ...services], timeoutMs);
   }
 
   up(inv: ComposeInvocation, timeoutMs: number, opts: { forceRecreate?: boolean; noStart?: boolean } = {}): Promise<ComposeResult> {

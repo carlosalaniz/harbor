@@ -280,13 +280,21 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     if (/(^|[^$])\$\{/.test(text)) throw new ComposeError('fake compose config: unresolved variable', { command: ['config'], exitCode: 1, stderrTail: 'required variable is missing a value', timedOut: false });
     return text.replace(/\$\$/g, '$');
   }
-  async pull(inv: ComposeInvocation, _timeoutMs: number): Promise<ComposeResult> {
+  async pull(inv: ComposeInvocation, _timeoutMs: number, services?: readonly string[]): Promise<ComposeResult> {
     this.assertUp();
     if (this.behaviour.failPull) throw new ComposeError(`docker compose pull failed: ${this.behaviour.failPull}`, { command: ['pull'], exitCode: 1, stderrTail: this.behaviour.failPull, timedOut: false });
-    if (this.behaviour.pullWait) {
-      const doc = parseYaml(readFileSync(inv.file, 'utf8')) as { services?: Record<string, { image?: string }> };
-      await this.behaviour.pullWait(Object.values(doc?.services ?? {}).map((svc) => String(svc.image ?? '')));
+    const doc = parseYaml(readFileSync(inv.file, 'utf8')) as { services?: Record<string, { image?: string }> };
+    const images = Object.entries(doc?.services ?? {})
+      .filter(([name]) => !services || services.includes(name))
+      .map(([, svc]) => String(svc.image ?? ''));
+    // Like Docker with --policy missing: an image built here (a git source, decision 80) exists only after its
+    // build, and no registry has it, so pulling it before the build fails.
+    const unbuilt = images.find((image) => image.startsWith('harbor-src/') && !this.builtTags.includes(image));
+    if (unbuilt) {
+      const msg = `Error response from daemon: pull access denied for ${unbuilt.split(':')[0]}, repository does not exist or may require 'docker login'`;
+      throw new ComposeError(`docker compose pull failed (exit 18): ${msg}`, { command: ['pull'], exitCode: 18, stderrTail: msg, timedOut: false });
     }
+    if (this.behaviour.pullWait) await this.behaviour.pullWait(images);
     this.log.push(`pull ${inv.projectName}`);
     return { stdout: '', stderr: '' };
   }

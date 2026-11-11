@@ -178,6 +178,29 @@ describe('git app sources: add, build from source, redeploy on commit (decision 
     expect((await h.api.expect<{ items: PackageSourceDto[] }>(200, 'GET', '/v1/package-sources')).items.map((x) => x.url)).not.toContain(url);
   });
 
+  it('an app behind Harbor login installs and updates: the gate image is pulled alone, before the build', async () => {
+    // Regression: the gate's pull (decision 194) used to pull every service, including the harbor-src image
+    // that is only built later, so a git-source app with a login failed at install and at every new commit.
+    const url = 'https://github.com/carlos/locked-notes';
+    const locked = MANIFEST.replace('id: my-notes', 'id: locked-notes').replace('name: My Notes', 'name: Locked Notes').replace('    browserContext: ordinary\n', '    browserContext: ordinary\n    login: required\n');
+    const files = (marker: string) => ({ ...commitFiles(marker), 'harbor/manifest.yaml': locked });
+    h.git.setRepo(url, 'main', [{ commit: '1'.repeat(40), committerDateUnix: 1_760_004_000, files: files('l1') }]);
+    const added = await h.api.expect<AddSourceResult>(201, 'POST', '/v1/package-sources', { url, ref: 'main' });
+    const installed = await h.api.run({ kind: 'install', packageId: 'locked-notes' });
+    expect(installed.op.state, JSON.stringify(installed.op.error)).toBe('succeeded');
+    expect(h.fake.builtTags).toContain(`harbor-src/locked-notes-web:${'1'.repeat(12)}`);
+    const i = (await byName('locked-notes'))!;
+    expect([...h.fake.containers.values()].some((c) => c.state === 'running' && c.service === 'harbor_gate_web')).toBe(true);
+
+    h.git.push(url, { commit: '2'.repeat(40), committerDateUnix: 1_760_004_500, files: files('l2') });
+    await waitFor(async () => (await byName('locked-notes'))!.updateAvailable?.revision === '1.1760004500');
+    const updated = await h.api.run({ kind: 'update', instanceId: i.id });
+    expect(updated.op.state, JSON.stringify(updated.op.error)).toBe('succeeded');
+    expect((await byName('locked-notes'))!.revision).toBe('1.1760004500');
+    expect(h.fake.builtTags).toContain(`harbor-src/locked-notes-web:${'2'.repeat(12)}`);
+    await h.api.expect(204, 'DELETE', `/v1/package-sources/${added.source.id}`);
+  });
+
   it('zip uploads may not declare build: (git sources only); removing the source keeps the app', async () => {
     const { writeZip } = await import('../../src/packages/zip.js');
     await h.api.expectError(422, 'INVALID_PACKAGE', 'POST', '/v1/packages', {

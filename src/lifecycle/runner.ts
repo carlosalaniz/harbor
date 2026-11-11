@@ -628,8 +628,9 @@ export class OperationRunner {
       throw e;
     }
     this.event(op, 'preparing', 'generated private Compose file and validated it with Compose');
-    // decision 194: the gate's image comes with the first gate (an install pulls anyway; configure and restart do not)
-    if (gates.length) await this.ctx.compose.pull({ projectDir: runtimeDir, projectName: identity.project, file }, this.ctx.config.imagePullTimeoutMs);
+    // decision 194: the gate's image comes with the first gate (an install pulls anyway; configure and restart do not).
+    // Only the gate services: a git source's own image does not exist until its build, later in the operation.
+    if (gates.length) await this.ctx.compose.pull({ projectDir: runtimeDir, projectName: identity.project, file }, this.ctx.config.imagePullTimeoutMs, gates.map((g) => gateService(g.endpointId)));
     return file;
   }
 
