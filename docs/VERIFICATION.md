@@ -1364,3 +1364,13 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | `tests/integration/revealable-secrets.test.ts` | lists only the marked secret, returns the stored value after the Harbor password, refuses a wrong one, an unmarked `showOnce` secret stays hidden |
 | `tests/e2e/ui.spec.ts` (decision 199) | Settings tab, Saved passwords, Show after the Harbor password |
 | Local suite on macOS, Node 24.12.0, under heavy load | not green: `exposure.test.ts` "unreachable published address" fails here, and also fails on unmodified 0.42.0 (`4a9b5e5`) on the same machine; other timeouts varied from run to run |
+
+## 0.44.0 (decision 200)
+
+| Check | Result |
+|---|---|
+| Live risk check, harbor-old (Ubuntu 24.04, avahi 0.8, Harbor 0.41.1), 2026-11-10 | `avahi-publish -s -f` as user `harbor` under a `systemd-run` with harbor.service's sandbox (`ProtectSystem=strict`, `NoNewPrivileges`, …) publishes; macOS `dns-sd -L` resolves it with its TXT records; it survives `systemctl restart avahi-daemon.socket avahi-daemon.service`; stopping it withdraws it from the Mac's browse in about a second; a second local service with the same name and type exits with "Local name collision" (hence Harbor's own ` #2`); `--` keeps `-dash` names and TXT entries as arguments; UTF-8 names and values with spaces or `=` pass. |
+| `tests/unit/advertise.test.ts` | format (types, names, TXT limits, reserved keys), what is announced per binding (lan, lan + HTTPS, relay, loopback, LAN mode off, stopped), unique names within 63 bytes, the child-process publisher (start once, restart on change, stop, failure logged once and retried after 30 s, close) |
+| `tests/integration/advertise.test.ts` | install announces on the plain LAN port, a second copy gets ` #2`, stop withdraws and the DTO says why, start announces again, remove withdraws |
+| Not yet | the daemon itself on harbor-old with a real package (needs a 0.44.0 install there) |
+

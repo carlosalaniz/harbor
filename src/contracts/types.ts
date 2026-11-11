@@ -103,6 +103,14 @@ export interface ManifestEndpoint {
   kind?: 'web' | 'api'; // decision 141: api = no Open button (addresses only)
   cookies?: 'isolated' | 'shared'; // decision 167: shared = the relay leaves this endpoint's own cookies untagged
   login?: 'required' | 'never'; // decision 194: Harbor's app login always on / never possible (absent = the operator's switch)
+  advertise?: ManifestAdvertise; // decision 200: announced on the LAN with DNS-SD while the app runs in LAN mode
+}
+
+// decision 200: a DNS-SD announcement of one endpoint (type _<name>._tcp, instance name, static TXT records)
+export interface ManifestAdvertise {
+  type: string;
+  name?: string;
+  txt?: Record<string, string>;
 }
 
 export interface StorageClaim {

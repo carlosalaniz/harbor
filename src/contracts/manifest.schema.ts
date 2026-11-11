@@ -1,5 +1,5 @@
 import { PRODUCT } from '../naming.js';
-import { ENV_KEY_PATTERN, ID_PATTERN, MANIFEST_MIN_HARBOR_PATTERN, RELATIVE_PATH_PATTERN, REVISION_PATTERN } from './patterns.js';
+import { ADVERTISE_TXT_KEY_PATTERN, ADVERTISE_TYPE_PATTERN, ENV_KEY_PATTERN, ID_PATTERN, MANIFEST_MIN_HARBOR_PATTERN, RELATIVE_PATH_PATTERN, REVISION_PATTERN } from './patterns.js';
 
 const idString = { type: 'string', pattern: ID_PATTERN } as const;
 const envKey = { type: 'string', pattern: ENV_KEY_PATTERN } as const;
@@ -125,6 +125,25 @@ export const MANIFEST_SCHEMA = {
           // operator cannot turn it off); never = the operator cannot turn it on (the app's own clients send their own
           // Authorization header: sync clients, WebDAV). Absent = the operator's switch, off by default.
           login: { enum: ['required', 'never'] },
+          // decision 200 (Harbor 0.44.0): announce this endpoint on the LAN with DNS-SD over mDNS while the app runs
+          // in LAN mode. Harbor adds the TXT keys app, harbor, scheme and secure-port itself (refused here).
+          advertise: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['type'],
+            properties: {
+              type: { type: 'string', maxLength: 21, pattern: ADVERTISE_TYPE_PATTERN },
+              // one line of text; 63 bytes or fewer (checked with the references, UTF-8)
+              name: { type: 'string', minLength: 1, maxLength: 63, pattern: '^[^\\u0000-\\u001F\\u007F]*$' },
+              txt: {
+                type: 'object',
+                maxProperties: 8,
+                propertyNames: { pattern: ADVERTISE_TXT_KEY_PATTERN },
+                // plain text, no `$`; 200 bytes or fewer (checked with the references, UTF-8)
+                additionalProperties: { type: 'string', maxLength: 200, pattern: '^[^\\u0000-\\u001F\\u007F$]*$' },
+              },
+            },
+          },
         },
       },
     },

@@ -146,6 +146,7 @@ export class Observer {
       }
       await this.reconcileLanHttps();
       await this.reconcileTailnetRelays();
+      this.ctx.advertise?.sync(); // decision 200: an app that stopped or came back on its own
       if (Date.now() - this.lastSourceCheck >= this.sourceCheckMs) {
         this.lastSourceCheck = Date.now();
         await this.service.checkAllSources();

@@ -44,6 +44,7 @@ import { MachineKeyHolder } from './auth/machine-holder.js';
 import type { CryptoProvider } from './storage/crypto-provider.js';
 import type { BackupEngine } from './backups/engine.js';
 import type { EgressProvider } from './egress/provider.js';
+import type { AdvertPublisher } from './advertise/publisher.js';
 import { FakeKernelProvider, RootKernelProvider, type BinderState, type KernelProvider } from './system/kernel.js';
 
 export function productVersion(): string {
@@ -82,6 +83,7 @@ export interface DaemonOverrides {
   crypto?: CryptoProvider;
   // decision 184: VPN and offline apps (tests: the fake, to inspect what root would load)
   egress?: EgressProvider;
+  advertise?: AdvertPublisher;
   // decision 193: the binder driver (tests: the fake, to see a load and to simulate a kernel without it)
   kernel?: KernelProvider;
   backupEngine?: BackupEngine;
@@ -219,6 +221,10 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const { EgressService } = await import('./egress/service.js');
     const { FakeEgressProvider, RootEgressProvider } = await import('./egress/provider.js');
     ctx.egress = new EgressService(ctx, overrides.egress ?? (fakeMode ? new FakeEgressProvider() : new RootEgressProvider(config.stateDir)));
+    // LAN announcements (decision 200): avahi-publish children on a live host, a recording fake in fake mode.
+    const { AdvertiseService } = await import('./advertise/service.js');
+    const { FakeAdvertPublisher, ProcessAdvertPublisher } = await import('./advertise/publisher.js');
+    ctx.advertise = new AdvertiseService(ctx, overrides.advertise ?? (fakeMode ? new FakeAdvertPublisher() : new ProcessAdvertPublisher({ info: (m) => log.info(m), warn: (m) => log.warn(m) })));
     // App backups (decisions 149–154): restic through the root step on a live host, in-memory places in fake mode.
     const { BackupService } = await import('./backups/service.js');
     const { FakeBackupEngine, RootBackupEngine } = await import('./backups/engine.js');
@@ -328,6 +334,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       selfUpdate.stop();
       catalogUpdates.stop();
       terminals.closeAll();
+      await ctx.advertise?.close().catch(() => undefined);
       await ctx.lanHttps?.closeAll().catch(() => undefined);
       await ctx.tailnetRelays?.closeAll().catch(() => undefined);
       if (lanServer) await new Promise<void>((r) => lanServer!.close(() => r()));

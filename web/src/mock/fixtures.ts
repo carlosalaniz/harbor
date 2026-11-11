@@ -254,6 +254,7 @@ export function mockInstances(): InstanceSummary[] {
       runtime: 'running',
       readiness: 'healthy',
       endpoints: [endpoint(18082)],
+      announce: [{ endpointId: 'web', type: '_immich._tcp', name: 'Immich', state: 'announced' as const }],
       usage: { cpuPercent: 34, memoryBytes: 900 * MiB, sampledAt: t },
       version: '3.2.1',
       updateAvailable: { revision: '2', version: '3.3.1', releaseNotes: 'Faster search' },

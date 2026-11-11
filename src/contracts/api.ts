@@ -205,6 +205,18 @@ export interface InstanceSummary {
   apiOnly: boolean;
   // decision 195: the app's one Harbor login (absent on a removed app and on an app with no web endpoint)
   login?: AppLoginDto;
+  // decision 200: endpoints the package announces on the LAN with DNS-SD (absent when it announces none)
+  announce?: AnnounceDto[];
+}
+
+// Decision 200: one endpoint's LAN announcement. announced = avahi confirmed it under `name`; off = Harbor does not
+// announce it now (reason says why); starting = handed to avahi, not confirmed yet; failed = avahi refused it.
+export interface AnnounceDto {
+  endpointId: string;
+  type: string; // _<service>._tcp
+  name: string;
+  state: 'announced' | 'off' | 'starting' | 'failed';
+  reason?: string;
 }
 
 // ---- app links (decision 126)

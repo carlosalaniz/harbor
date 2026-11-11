@@ -131,9 +131,11 @@ export class OperationRunner {
       if (op.planId === null) {
         const planned = await this.planQueued(op);
         if (planned) await this.execute(planned);
+        this.ctx.advertise?.sync(); // decision 200: announce or withdraw right after the app changed
         continue;
       }
       await this.execute(op);
+      this.ctx.advertise?.sync();
     }
   }
 

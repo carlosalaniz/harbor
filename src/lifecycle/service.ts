@@ -1041,12 +1041,12 @@ export class ApplicationService {
 
   // Read-time look that is not a column: links, operator secrets and Hide from Home (decision 131: the
   // operator's per-app choice in the `home.hidden` setting wins over the package's suggestion).
-  private extraLook(i: InstanceRow, meta: { version: string | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] }): ReturnType<ApplicationService['linkLook']> & { version: string | null; hiddenFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; settings: NonNullable<InstanceSummary['settings']>; internet?: InstanceSummary['internet'] } {
+  private extraLook(i: InstanceRow, meta: { version: string | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] }): ReturnType<ApplicationService['linkLook']> & { version: string | null; hiddenFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; settings: NonNullable<InstanceSummary['settings']>; internet?: InstanceSummary['internet']; announce?: InstanceSummary['announce'] } {
     const choice = this.ctx.repo.setting<Record<string, boolean>>('home.hidden')?.[i.id];
     // decision 180: effective values (the operator's overrides, else the installed release's defaults)
     const settings = meta.settings.length ? settingDtos({ settings: meta.settings }, readSettingOverrides(this.ctx.config.stateDir, i.id)) : [];
     const login = i.installState === 'retained' ? null : this.appLogin(i);
-    return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(login ? { login } : {}), ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}) };
+    return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(login ? { login } : {}), ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}), ...(this.ctx.advertise && i.installState !== 'retained' ? { announce: this.ctx.advertise.statusFor(i) } : {}) };
   }
 
   private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets']; revealableSecrets: InstanceSummary['revealableSecrets'] } {

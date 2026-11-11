@@ -16,6 +16,12 @@ export const HARBOR_VERSION_PATTERN = '^\\d{1,4}\\.\\d{1,4}\\.\\d{1,6}$';
 // declared value is spelled exactly like the release tag the harbor-apps CI looks up (v<x.y.z>)
 export const MANIFEST_MIN_HARBOR_PATTERN = '^(0|[1-9]\\d{0,3})\\.(0|[1-9]\\d{0,3})\\.(0|[1-9]\\d{0,5})$';
 
+// decision 200: a DNS-SD service type an endpoint is announced under (RFC 6335 service name of 1-15 characters:
+// lowercase letters, digits and inner single hyphens, at least one letter), TCP only
+export const ADVERTISE_TYPE_PATTERN = '^_(?![a-z0-9-]*--)(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]{0,13}[a-z0-9])?\\._tcp$';
+// decision 200: a TXT key (RFC 6763 recommends 9 characters or fewer)
+export const ADVERTISE_TXT_KEY_PATTERN = '^[a-z0-9-]{1,9}$';
+
 export const ID_RE = new RegExp(ID_PATTERN);
 export const ENV_KEY_RE = new RegExp(ENV_KEY_PATTERN);
 export const IMAGE_REF_RE = new RegExp(IMAGE_REF_PATTERN);

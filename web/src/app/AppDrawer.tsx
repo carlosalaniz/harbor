@@ -466,6 +466,21 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           ))}
         </Section>
       )}
+      {inst.announce && inst.announce.length > 0 && (
+        <Section title="Found on your network">
+          {inst.announce.map((a) => (
+            <Row
+              key={a.endpointId}
+              title={a.state === 'announced' ? <>Announced as <strong>{a.name}</strong></> : a.state === 'starting' ? 'Announcing…' : 'Not announced'}
+              sub={
+                a.state === 'announced' || a.state === 'starting'
+                  ? `${a.type} · devices on your network find it without typing an address${inst.login?.on && inst.login.endpoints.includes(a.endpointId) ? '. The app login is on here, so a device needs its password' : ''}`
+                  : `${a.type} · ${a.reason ? `${a.reason.charAt(0).toUpperCase()}${a.reason.slice(1)}` : 'Not announced right now'}`
+              }
+            />
+          ))}
+        </Section>
+      )}
       <Section title="What this app can reach">
         <Row
           title={

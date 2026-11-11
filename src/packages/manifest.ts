@@ -6,6 +6,7 @@ import { HarborError } from '../errors.js';
 import { declaredMinHarborProblem } from './min-harbor.js';
 import { NVIDIA_RESERVED_ENV } from '../planner/gpu.js';
 import { settingValueProblem } from '../planner/settings.js';
+import { ADVERTISE_RESERVED_TXT } from '../advertise/adverts.js';
 
 export function validateManifestShape(value: unknown, label = 'manifest.yaml'): Manifest {
   const validate = compile<Manifest>(MANIFEST_SCHEMA);
@@ -34,6 +35,15 @@ export function validateManifestReferences(manifest: Manifest, compose: ComposeS
     if (!(ep.service in manifest.deployment.services)) problems.push(`endpoints.${id}.service references unknown service ${ep.service}`);
     // decision 194: an API endpoint is never gated (its clients send their own Authorization header)
     if (ep.login === 'required' && ep.kind === 'api') problems.push(`endpoints.${id}: login: required cannot be used on an api endpoint`);
+    // decision 200: byte limits of DNS (a label is 63 bytes) and TXT, and the keys Harbor adds itself
+    if (ep.advertise) {
+      const ad = ep.advertise;
+      if (ad.name !== undefined && Buffer.byteLength(ad.name) > 63) problems.push(`endpoints.${id}.advertise.name is longer than 63 bytes`);
+      for (const [k, v] of Object.entries(ad.txt ?? {})) {
+        if (ADVERTISE_RESERVED_TXT.includes(k)) problems.push(`endpoints.${id}.advertise.txt.${k}: Harbor sets ${k} itself`);
+        if (Buffer.byteLength(v) > 200) problems.push(`endpoints.${id}.advertise.txt.${k} is longer than 200 bytes`);
+      }
+    }
   }
   const requireEndpoint = (ref: string, where: string) => {
     if (!endpointIds.includes(ref)) problems.push(`${where} references unknown endpoint ${ref}`);

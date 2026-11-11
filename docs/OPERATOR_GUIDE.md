@@ -79,6 +79,12 @@ puts in links it sends out (emails, share links, webhooks). The install page off
 Tailscale or a domain publishes the app in the same step. Apps that do not work at all over plain `http://`
 (n8n, Vaultwarden) need an HTTPS main address in LAN mode — the store says so before you install.
 
+**Found on your network** (Harbor 0.44.0, decision 200). Some apps ask to be announced on the LAN with
+Bonjour/mDNS, so devices find them without anyone typing an address (a display panel finds its renderer). Harbor
+announces them while the app runs in LAN mode and withdraws them when it stops. The app's page (Access tab) shows
+*Announced as <name>* or why it is not. From a Mac: `dns-sd -B <type>`; from Linux: `avahi-browse -rt <type>`.
+Anything on a LAN can announce itself under any name, so a device should not trust a service just because it found it.
+
 **Restart after network changes.** Turning secure addresses on or off, or renaming the machine, changes the
 addresses apps know about. Open the app and press **Restart** (CLI: `harbor restart <app>`): Harbor rewrites its
 settings with today's addresses and recreates its containers — data, secrets and ports stay. The Network card

@@ -68,6 +68,11 @@ endpoints:
                                  # receive them. shared = its own cookies pass unchanged (it still never receives
                                  # another app's isolated cookies, and may not set a name shaped like one). Only for an app that must hand its cookie to
                                  # something else on harbor.local; most apps never need it.
+    # advertise:                 # optional (Harbor 0.44.0, decision 200; set release.minHarbor: "0.44.0"): announce
+    #   type: _desk-panel._tcp   # this endpoint on the LAN with DNS-SD (Bonjour/avahi) while the app runs in LAN
+    #   name: Desk panel         # mode. type = _<1-15 lowercase letters, digits, inner hyphens>._tcp; name = one line,
+    #   txt: {path: /panel}      # 63 bytes or fewer (default: the app's name); txt = up to 8 keys ([a-z0-9-]{1,9}),
+                                 # plain-text values of 200 bytes or fewer, no `$`, no secrets. See "Found on your network".
 ports:                           # optional (Harbor 0.29.0, decision 163; set release.minHarbor: "0.29.0"):
   wireguard:                     # a fixed host port published on EVERY network of the machine, no proxy, no URL
     service: app                 # e.g. a VPN server's tunnel port. Needs multiInstance: false. The plan refuses
@@ -488,6 +493,25 @@ keep-alive, parallel requests. Declare them as `settings` (decision 180) instead
   `install`/`apply`/`update`/`configure` and `harbor settings <app>`.
 - Write labels the way the operator thinks ("Context length (tokens)", not `OLLAMA_CONTEXT_LENGTH`) and put
   the effect in `help`.
+
+### Found on your network (`endpoints.<id>.advertise`, Harbor 0.44.0)
+
+For an app that devices find on their own (a display panel's renderer, a print or scan endpoint, a media server's
+API), an endpoint can ask Harbor to announce it with DNS-SD over mDNS (decision 200). Containers cannot multicast to
+the LAN, so Harbor does it on the host with avahi. Declare `release.minHarbor: "0.44.0"`.
+
+- **When:** only in LAN mode, only while the app runs. Stopping, removing or uninstalling the app withdraws it
+  within a second or so, and so does a Harbor restart or crash.
+- **Where it points:** the address that works from the LAN. Normally the endpoint's plain port with TXT
+  `scheme=http`, plus `secure-port=<port>` when secure LAN addresses are on. Under HTTPS only, the secure port with
+  `scheme=https` (Harbor's local CA signs it; the device must trust it). Harbor also adds `app=<package id>` and
+  `harbor=1`; a package may not set `app`, `harbor`, `scheme` or `secure-port` itself.
+- **Name:** `name`, else the app's name. Two copies of an app announcing the same name get ` #2`, ` #3`.
+- **Login:** a device that finds the endpoint cannot do a browser login. Use `kind: api` + `login: never` when the
+  device talks to the endpoint directly. If the operator turns Harbor's app login on, the device needs its password
+  (basic auth); the app page says so.
+- **Trust:** anything on a LAN can announce a lookalike service. Discovery is not authentication: a client that
+  matters must check what it connects to (a pairing code, a key, the TLS certificate).
 
 ### Internet access (`network.internet`, Harbor 0.36.0)
 

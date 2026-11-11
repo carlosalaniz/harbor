@@ -10,7 +10,7 @@ export function eventDto(e: EventRow): EventDto {
   return { cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message };
 }
 
-export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; login?: InstanceSummary['login']; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; lanSecureHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home']; links?: InstanceSummary['links']; linkedBy?: InstanceSummary['linkedBy']; operatorSecrets?: InstanceSummary['operatorSecrets']; revealableSecrets?: InstanceSummary['revealableSecrets']; settings?: InstanceSummary['settings']; hiddenFromHome?: boolean; apiOnly?: boolean; ports?: InstanceSummary['ports']; version?: string | null; internet?: InstanceSummary['internet'] } = { icon: null, category: 'other' }): InstanceSummary {
+export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; login?: InstanceSummary['login']; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; lanSecureHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home']; links?: InstanceSummary['links']; linkedBy?: InstanceSummary['linkedBy']; operatorSecrets?: InstanceSummary['operatorSecrets']; revealableSecrets?: InstanceSummary['revealableSecrets']; settings?: InstanceSummary['settings']; hiddenFromHome?: boolean; apiOnly?: boolean; ports?: InstanceSummary['ports']; version?: string | null; internet?: InstanceSummary['internet']; announce?: InstanceSummary['announce'] } = { icon: null, category: 'other' }): InstanceSummary {
   return {
     id: i.id,
     name: i.name,
@@ -46,6 +46,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     ...(look.login ? { login: look.login } : {}),
     apiOnly: look.apiOnly ?? false,
     internet: look.internet ?? { mode: 'direct', choice: null, packageDefault: 'direct', allApps: false },
+    ...(look.announce?.length ? { announce: look.announce } : {}),
   };
 }
 

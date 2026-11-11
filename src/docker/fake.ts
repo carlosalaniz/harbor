@@ -80,7 +80,7 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     if (clash) throw Object.assign(new Error(`invalid pool request: Pool overlaps with other one on this address space (${name} vs ${clash.name})`), { statusCode: 403 });
     return { gateway: subnet.replace(/\.0\/24$/, '.1'), subnet };
   }
-  readonly listeners = new Map<string, Server>(); // container id -> server
+  readonly listeners = new Map<string, Server[]>(); // container id -> one server per published TCP port
   behaviour: FakeBehaviour = {};
   readonly log: string[] = [];
   private seq = 0;
@@ -461,17 +461,23 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
         c.state = 'exited';
         throw new ComposeError(`Bind for 127.0.0.1:${p.hostPort} failed: port is already allocated (${e.message})`, { command: ['up'], exitCode: 1, stderrTail: e.message, timedOut: false });
       });
-      this.listeners.set(c.id, server);
+      this.listeners.set(c.id, [...(this.listeners.get(c.id) ?? []), server]);
     }
   }
   private async unlisten(id: string): Promise<void> {
-    const s = this.listeners.get(id);
-    if (!s) return;
+    const servers = this.listeners.get(id);
+    if (!servers) return;
     this.listeners.delete(id);
-    await new Promise<void>((resolve) => {
-      s.closeAllConnections();
-      s.close(() => resolve());
-    });
+    // every port of the container (a service with two endpoints listened on both, and only the last was closed)
+    await Promise.all(
+      servers.map(
+        (s) =>
+          new Promise<void>((resolve) => {
+            s.closeAllConnections();
+            s.close(() => resolve());
+          }),
+      ),
+    );
   }
   async shutdown(): Promise<void> {
     for (const id of [...this.listeners.keys()]) await this.unlisten(id);

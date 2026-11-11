@@ -21,6 +21,7 @@ import type { CryptoProvider } from '../storage/crypto-provider.js';
 import type { LanHttpsServers } from '../system/lan-https.js';
 import type { BackupService } from '../backups/service.js';
 import type { EgressService } from '../egress/service.js';
+import type { AdvertiseService } from '../advertise/service.js';
 
 // HTTPS reachability check of a published address with real certificate verification.
 export type UrlVerifier = (url: string, opts?: { expectStatus?: number[]; timeoutMs?: number }) => Promise<{ ok: boolean; status: number | null; error: string | null }>;
@@ -81,6 +82,9 @@ export interface Ctx {
   // VPN and offline apps (decision 184): each app's internet mode and the host rules that follow. Wired in
   // daemon.ts (fake provider in fake mode); the runner applies before a non-direct app starts.
   egress?: EgressService | null;
+  // LAN announcements (decision 200): avahi-publish children for the endpoints apps ask to announce. Wired in
+  // daemon.ts (fake publisher in fake mode); synced after every operation and on every observer tick.
+  advertise?: AdvertiseService | null;
   // The Fastify routing function, stashed by daemon.ts so the HTTPS console
   // listener serves the same routes (same guards, same auth).
   __routing?: (req: never, res: never) => void;
