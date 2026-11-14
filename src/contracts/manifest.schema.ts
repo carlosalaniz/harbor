@@ -175,7 +175,7 @@ export const MANIFEST_SCHEMA = {
       minProperties: 1,
       maxProperties: 16,
       propertyNames: { pattern: ID_PATTERN },
-      additionalProperties: { type: 'array', minItems: 1, maxItems: 6, uniqueItems: true, items: { enum: ['net-admin', 'tun', 'ip-forwarding', 'gpu', 'privileged', 'binder'] } },
+      additionalProperties: { type: 'array', minItems: 1, maxItems: 7, uniqueItems: true, items: { enum: ['net-admin', 'tun', 'ip-forwarding', 'gpu', 'privileged', 'binder', 'browser-sandbox'] } },
     },
     // Decision 185 (Harbor 0.36.0): how the app reaches the internet unless the operator chooses otherwise
     // (direct, through the VPN, or offline; decision 184). Leaving it out means direct.

@@ -1375,6 +1375,15 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | Live, harbor-old self-updated 0.41.1 → 0.44.0, 2026-11-11 | a test package (`_harbor-probe._tcp`, Excalidraw image, installed `--unencrypted --no-tailnet`): after install the Mac's `dns-sd -L` resolves it at `harbor-old.local:18086` with TXT `path=/ app=announce-test harbor=1 scheme=http`, the child runs as `harbor`; stop removes it (no avahi-publish left); start shows *Add* and remove shows *Rmv* on the Mac's `dns-sd -B` within a second. **Found:** avahi-publish writes "Established under name …" to stderr, so 0.44.0's app page stayed on *Announcing…*; fixed in 0.44.1 (the unit test now writes to stderr and fails on 0.44.0's code). |
 | Live, harbor-old self-updated 0.44.0 → 0.44.1, 2026-11-11 | the same package: `harbor list --json` shows `announce: [{state: announced, name: Announce test}]`, the daemon logs `announced _harbor-probe._tcp …`, the Mac resolves it with the same TXT records; purge leaves no avahi-publish child. Every other app on harbor-old came back running and healthy after both updates. |
 
+## 0.45.0 (decision 201)
+
+| Check | Result |
+|---|---|
+| Live risk check, test droplet (Ubuntu 24.04.5, kernel 6.8.0-142, Docker 29.9.0, Compose v5.6.0, `kernel.apparmor_restrict_unprivileged_userns=1`), 2026-11-14 | `unshare -Urpn` in `debian:trixie-slim` as uid 1000 with `--cap-drop ALL --security-opt no-new-privileges`: refused under Docker's default profile (`unshare failed`), works under the browser-sandbox profile (AppArmor `docker-default (enforce)`), and fails again with `apparmor=unconfined` (`write /proc/self/uid_map: Operation not permitted`; the kernel log shows the move to `unprivileged_userns` and a `sys_admin` denial). Debian's Chromium (`--headless=new --dump-dom`): "No usable sandbox!" under the default profile, the page's DOM under the browser-sandbox profile. |
+| Live, the same droplet, 2026-11-14 | a Compose file shaped like Harbor's render (`security_opt: [seccomp=/opt/harbor/seccomp/browser-sandbox.json]`, the file copied there): `docker compose up` starts Chromium sandboxed, `docker inspect` shows the profile's JSON in `SecurityOpt` and AppArmor `docker-default`; the same file without the line prints "No usable sandbox!". Test files removed afterwards. Not yet run: a full install of a package asking for the permission on a droplet self-updated to 0.45.0. |
+| `tests/unit/seccomp.test.ts` | the value is accepted next to every permission and ordered last, any source may ask for it, a new one on update needs acceptance, `security_opt` stays refused in `compose.yaml`, the render is exactly one `security_opt` with no capability, privilege or AppArmor change, and the shipped profile is Docker 29.9.3's default (hash) plus exactly one unconditional rule for the four calls |
+| `tests/integration/permissions.test.ts` | an uploaded package with `browser-sandbox`: the plan lists it in plain words, approval without acceptance is `PERMISSION_REQUIRED`, with it the install succeeds and the runtime Compose file points at the shipped profile |
+
 ## 0.44.2
 
 | Check | Result |

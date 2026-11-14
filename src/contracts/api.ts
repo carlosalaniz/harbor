@@ -51,7 +51,7 @@ export interface FixedPortDto {
 // Decision 163: a privilege the operator accepts when approving (label: what it lets the app do)
 export interface PermissionDto {
   service: string;
-  permission: 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu' | 'privileged' | 'binder'; // privileged + binder: decision 193
+  permission: 'net-admin' | 'tun' | 'ip-forwarding' | 'gpu' | 'privileged' | 'binder' | 'browser-sandbox'; // privileged + binder: decision 193; browser-sandbox: decision 201
   label: string;
 }
 // Decision 179: the graphics card this machine offers apps that ask for `gpu` (never group ids or paths).

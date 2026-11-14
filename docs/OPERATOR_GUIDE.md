@@ -805,6 +805,7 @@ UDP port on your machine. Harbor lets an app ask for only a short, fixed list (d
 | Pass traffic between networks inside the app | IP forwarding, so VPN clients reach your home network |
 | Port: UDP 51820 on every network | the tunnel port, open on every network of this machine (not only this one) |
 | Use this machine's graphics card (GPU) | use the graphics card, for local AI apps such as Ollama (since 0.34.0; see *GPU (graphics cards)* below) |
+| Run a web browser's own sandbox | create isolated namespaces inside the app's container, so a browser app (Crossbar, for example) can keep its sandbox on. Docker's default protection stays in place apart from four calls (`clone`, `unshare`, `setns`, `chroot`); the app's processes can then create user namespaces, which reach a little more of the kernel. Since 0.45.0. |
 
 The **Install** button stays off until you tick **Allow … to do this**. On the command line, add
 `--accept-permissions` (`harbor --accept-permissions install wireguard`); `--yes` alone never accepts them.

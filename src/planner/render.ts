@@ -7,6 +7,7 @@ import { browserUrlFor } from '../config.js';
 import { defaultNetworkName, instanceLabels, ownedVolumeName, type InstanceIdentity } from './identity.js';
 import { linkValue } from './links.js';
 import { driDevice, NVIDIA_DEVICE_REQUEST } from './gpu.js';
+import { browserSandboxSecurityOpt } from './seccomp.js';
 import { effectiveSettings, settingBindingValue } from './settings.js';
 import { renderedDns } from '../egress/rules.js';
 import { GATE_DIR, GATE_PORT, gateService, gateServiceDef, type GateRender } from './gate.js';
@@ -58,6 +59,8 @@ export interface RenderInput {
   // decision 194: Harbor's app login in front of these endpoints (the gate publishes their ports instead)
   gates?: GateRender[];
   gateDir?: string;
+  // decision 201: where the browser-sandbox profile is (default: the one in Harbor's release folder)
+  seccompProfile?: string;
 }
 
 export interface RenderedCompose {
@@ -193,6 +196,8 @@ export function renderCompose(input: RenderInput): RenderedCompose {
     if (perms.includes('ip-forwarding')) def['sysctls'] = { ...IP_FORWARDING_SYSCTLS };
     // decision 193: everything at once (all devices, every capability, no seccomp/AppArmor); trusted sources only
     if (perms.includes('privileged')) def['privileged'] = true;
+    // decision 201: Docker's default seccomp profile plus namespaces and chroot, from the file Harbor ships (AppArmor untouched)
+    if (perms.includes('browser-sandbox')) def['security_opt'] = browserSandboxSecurityOpt(input.seccompProfile);
     // decision 179: the graphics card, from host facts (none: nothing, the app runs on the CPU)
     if (perms.includes('gpu') && input.gpu?.kind === 'nvidia') {
       def['deploy'] = { resources: { reservations: { devices: [{ ...NVIDIA_DEVICE_REQUEST, capabilities: [...NVIDIA_DEVICE_REQUEST.capabilities] }] } } };

@@ -11,9 +11,11 @@ export const PERMISSION_LABEL: Readonly<Record<ManifestPermission, string>> = {
   // decision 193: said as plainly as it is; only official-catalog apps get these unless developer mode is on
   privileged: 'Full control of this machine: the app runs as a privileged container and can read, change or erase anything on it',
   binder: "Load Android's binder driver into this machine's kernel (binder_linux, loaded again at every boot)",
+  // decision 201: a narrower seccomp profile than `privileged`, so any source may ask for it
+  'browser-sandbox': "Run a web browser's own sandbox: create isolated namespaces inside the app's container (Docker's default seccomp profile plus clone, unshare, setns and chroot)",
 };
 
-const ORDER: readonly ManifestPermission[] = ['net-admin', 'tun', 'ip-forwarding', 'gpu', 'privileged', 'binder'];
+const ORDER: readonly ManifestPermission[] = ['net-admin', 'tun', 'ip-forwarding', 'gpu', 'privileged', 'binder', 'browser-sandbox'];
 
 // Decision 193: permissions only a trusted source may ask for. The official catalog (signed, decision 168) is
 // trusted; an uploaded zip or a git source is not, unless the operator turned on developer mode.

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import type { InstanceSummary, PackageImportResultDto, PlanDto } from '../../src/contracts/api.js';
 import { writeZip } from '../../src/packages/zip.js';
+import { BROWSER_SANDBOX_PROFILE } from '../../src/planner/seccomp.js';
 import { startHarness, type Harness } from './harness.js';
 
 let h: Harness;
@@ -149,5 +150,25 @@ describe('fixed UDP ports and permissions (decision 163)', () => {
     expect(refused.body.error?.code).toBe('PERMISSION_REQUIRED');
     const ok = await submit(plan.id, { acceptPermissions: true });
     expect((await h.api.waitOperation(ok.body.operationId)).state).toBe('succeeded');
+  });
+});
+
+// Decision 201: browser-sandbox renders Harbor's seccomp profile; any source may ask, a person still accepts it
+describe('browser-sandbox permission (decision 201)', () => {
+  it('needs acceptance, then the runtime file points at the shipped profile and nothing else changes', async () => {
+    const port = await freeUdpPort();
+    await upload('sandboxed', '1', port, ['browser-sandbox']);
+    const plan = await h.api.plan({ kind: 'install', packageId: 'sandboxed' });
+    expect(plan.permissions.map((p) => [p.service, p.permission])).toEqual([['web', 'browser-sandbox']]);
+    expect(plan.permissions[0]!.label).toMatch(/browser's own sandbox/);
+    const refused = await submit(plan.id);
+    expect(refused.body.error?.code).toBe('PERMISSION_REQUIRED');
+    const ok = await submit(plan.id, { acceptPermissions: true });
+    expect((await h.api.waitOperation(ok.body.operationId)).state).toBe('succeeded');
+    const inst = await byName(plan.name);
+    const runtime = parseYaml(readFileSync(path.join(h.stateDir, 'instances', inst.id, 'runtime', 'compose.yaml'), 'utf8'));
+    expect(runtime.services.web.security_opt).toEqual([`seccomp=${BROWSER_SANDBOX_PROFILE}`]);
+    expect(runtime.services.web.cap_add).toBeUndefined();
+    expect(runtime.services.web.privileged).toBeUndefined();
   });
 });

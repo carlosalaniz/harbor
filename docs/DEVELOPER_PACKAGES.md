@@ -91,6 +91,8 @@ permissions:                     # optional (0.29.0, decision 163): per service,
                                  # privileged + binder (0.40.0, decision 193; set release.minHarbor: "0.40.0") =
                                  # full control of this machine / Android's binder driver: OFFICIAL CATALOG ONLY,
                                  # see "Trusted-only permissions" below.
+                                 # browser-sandbox (0.45.0, decision 201; set release.minHarbor: "0.45.0") = a
+                                 # browser's own sandbox inside the container: see "The browser-sandbox permission".
 health:
   endpoint: web
   path: /                        # must answer before any account exists; a published address of this
@@ -307,6 +309,13 @@ then propose it to harbor-apps.
 |---|---|---|
 | `privileged` | `privileged: true` on that service: every device and capability, no seccomp or AppArmor. The review says *Full control of this machine*. | software that cannot run otherwise (redroid). Never as a shortcut for a device or capability the other permissions cover. |
 | `binder` | nothing in Compose. Before any container of the app starts, Harbor's root step loads `binder_linux` (`devices=binder,hwbinder,vndbinder`) and keeps it loaded at every boot. A kernel without the module refuses the plan with `KERNEL_MODULE_MISSING` and the apt line (Ubuntu: `linux-modules-extra-$(uname -r)`). | Android containers (redroid; they mount binderfs themselves, so they also need `privileged`). |
+
+**The browser-sandbox permission** (Harbor 0.45.0, decision 201; set `release.minHarbor: "0.45.0"`). For a service that
+runs Chromium, Chrome or Firefox with its own sandbox on (a headful browser, a scraper, a kiosk renderer). Harbor renders
+`security_opt: [seccomp=<Harbor>/seccomp/browser-sandbox.json]`: Docker's default seccomp profile plus `clone`, `unshare`,
+`setns` and `chroot`. No capability is added and AppArmor stays Docker's default. Any source may ask for it; the operator
+accepts it in the review. Run the browser as a non-root user (Chromium's namespace sandbox needs nothing else) and never
+pass `--no-sandbox`. `security_opt` stays refused in `compose.yaml`: a package cannot bring its own profile.
 
 `privileged` stays refused as a `compose.yaml` key: only the permission renders it, and the operator accepts it in
 the review like every other permission (an update that adds it waits for a person).
