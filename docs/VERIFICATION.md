@@ -1375,13 +1375,20 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | Live, harbor-old self-updated 0.41.1 → 0.44.0, 2026-11-11 | a test package (`_harbor-probe._tcp`, Excalidraw image, installed `--unencrypted --no-tailnet`): after install the Mac's `dns-sd -L` resolves it at `harbor-old.local:18086` with TXT `path=/ app=announce-test harbor=1 scheme=http`, the child runs as `harbor`; stop removes it (no avahi-publish left); start shows *Add* and remove shows *Rmv* on the Mac's `dns-sd -B` within a second. **Found:** avahi-publish writes "Established under name …" to stderr, so 0.44.0's app page stayed on *Announcing…*; fixed in 0.44.1 (the unit test now writes to stderr and fails on 0.44.0's code). |
 | Live, harbor-old self-updated 0.44.0 → 0.44.1, 2026-11-11 | the same package: `harbor list --json` shows `announce: [{state: announced, name: Announce test}]`, the daemon logs `announced _harbor-probe._tcp …`, the Mac resolves it with the same TXT records; purge leaves no avahi-publish child. Every other app on harbor-old came back running and healthy after both updates. |
 
+## 0.46.1 (decision 203)
+
+| Check | Result |
+|---|---|
+| e2e `ui.spec.ts` | the VPN/offline test finds *Internet* on the Network tab; the links test finds *Linked apps* there; the spaces test lands on Network from the overview's *Space* line and sees the *not isolated* line; the publishing test still finds every domain in the Access address list and *Manage…* beside it |
+| Console preview (`pnpm dev:ui`, dark, 1280 and 390 wide) | Access: password, one address list with Tailscale as a row; Network: Internet, the space card (member chips, one address with copy, *Other names (1)* folded), the tab row scrolls at phone width |
+
 ## 0.46.0 (decision 202)
 
 | Check | Result |
 |---|---|
 | `tests/unit/spaces.test.ts` | network name and labels; `<app>` on the first endpoint's service and `<app>-<service>` on every service; refusals for two apps on one name, a name equal to another member's service name (an app's own main service name is allowed) and a name over 63 characters; conflicting names left out, the rest kept; gone apps and double memberships dropped on read |
 | `tests/integration/spaces.test.ts` (fake adapter) | grouping changes nothing in Docker; sharing without `confirmShared` is `PERMISSION_REQUIRED`; with it, one `space` operation per app (actor `space-policy`) attaches every container live (same ids) to an internal network on a Harbor /24 with only Harbor's names (`db`/`web` never appear); Restart creates, attaches, then starts; Stop/Start keep it; an app called `db` is refused in the shared space and accepted in an unshared one; moving an app detaches it live; sharing off deletes the network; removing the last member deletes it; deleting a space keeps its apps; the API takes no `space` plan or queued action |
-| e2e `ui.spec.ts` (decision 202 test) | New space with two apps; *Create* stays disabled until *I understand* is ticked; Home shows the section with *Shared network* and the main grid loses the two apps; the app page's overview names the space and *Access → Space* shows an `http://<app>:<port>` address; deleting puts the apps back |
+| e2e `ui.spec.ts` (decision 202 test) | New space with two apps; *Create* stays disabled until *I understand* is ticked; Home shows the section with *Shared network* and the main grid loses the two apps; the app page's overview names the space and *Network → Space* shows an `http://<app>:<port>` address; deleting puts the apps back |
 | Live | **Not run yet.** Needs a droplet or harbor-old on 0.46.0: share a space between two apps and resolve `<app>` / `<app>-<service>` from inside one container (`getent hosts`), check that a bare service name of the other app does not resolve, Restart one app and resolve again. |
 
 ## 0.45.0 (decision 201)

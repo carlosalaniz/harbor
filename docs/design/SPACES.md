@@ -15,7 +15,7 @@ a shared network is an **explicit, insecure opt-in** for operators who know what
   Turning it on asks for a confirmation that says what it costs, in these words:
   *Every service of these apps, databases included, can reach every other one. Harbor's app login does not apply
   between them; only each app's own login does. Turn it on only for apps you trust with each other's data.*
-- With sharing on, the app page (*Access → Space*) lists the addresses other apps of the space use: a URL with the
+- With sharing on, the app page (*Network* tab, 0.46.1) shows the main address and folds the other names under *Other names*; it lists the addresses other apps of the space use: a URL with the
   container port for a service that serves an endpoint (`http://erpnext:8080`), the bare name for any other service
   (`erpnext-db`; Harbor does not know a database's port). Paste one into the other app (Open WebUI → MCP server URL).
   The overview tab shows the space's name.

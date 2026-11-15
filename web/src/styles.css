@@ -3318,6 +3318,26 @@ input.narrow {
 .tab-panel { display: flex; flex-direction: column; gap: 16px; padding-top: 16px; }
 .app-head-status { margin: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .page-section h4, .backups-panel h4 { margin: 0 0 4px; }
+/* the app page uses sentence-case headings (no uppercase labels) */
+.page-section h4 { font-size: 15px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--fg); }
+.page-section .warn { color: var(--warn); }
+.address-card .address-group { display: flex; flex-direction: column; padding: 4px 0; border-top: 1px solid var(--line); }
+.address-card .address-group:first-child { border-top: 0; }
+.address-card > .address-row { border-top: 1px solid var(--line); padding: 6px 0; }
+.address-ep { font-size: 13px; font-weight: 600; padding-top: 4px; }
+.address-row .grow { flex: 1; min-width: 160px; }
+.menu-wrap { position: relative; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 6px; min-width: 220px; background: var(--card-2-solid); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow-sm); }
+.menu-pop .btn { justify-content: flex-start; text-align: left; }
+.space-card { padding: 16px; border-radius: var(--radius); background: var(--card-2); display: flex; flex-direction: column; gap: 10px; }
+.space-card p { margin: 0; }
+.space-members { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.space-members li { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 10px 4px 4px; border-radius: 999px; background: var(--card-solid); }
+.space-address { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); }
+.space-address code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: none; padding: 0; }
+.address-card label.address-row { font-weight: 400; cursor: pointer; }
+.space-address.quiet { margin-top: 6px; background: transparent; }
+.space-more summary { cursor: pointer; }
 .page-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .page-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 0; border-top: 1px solid var(--line); }
 .page-section > h4 + .page-row, .page-section-head + .page-row, .summary-rows > .page-row:first-child { border-top: 0; }

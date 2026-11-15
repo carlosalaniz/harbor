@@ -16,10 +16,12 @@ import { settingText } from './setting-draft';
 // blocks the app, then four tabs that are the same for every app: sections appear only when the app has something to
 // show. A removed app has no tabs. Changes still go through plan -> review; this file only arranges them.
 
-type Tab = 'overview' | 'access' | 'settings' | 'data';
+// Access = how people open the app; Network = what the app reaches and what reaches it (internet, space, links).
+type Tab = 'overview' | 'access' | 'network' | 'settings' | 'data';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
   { id: 'access', label: 'Access' },
+  { id: 'network', label: 'Network' },
   { id: 'settings', label: 'Settings' },
   { id: 'data', label: 'Data' },
 ];
@@ -120,6 +122,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
   const [locking, setLocking] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [internetOpen, setInternetOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false); // decision 199
   const [techOpen, setTechOpen] = useState(false);
@@ -374,8 +377,8 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
             )}
           </div>
         )}
-        <SummaryLink label="Internet" value={internetSummary(inst.internet).label} onGo={() => setTab('access')} />
-        {spaceLabel && <SummaryLink label="Space" value={spaceLabel} onGo={() => setTab('access')} />}
+        <SummaryLink label="Internet" value={internetSummary(inst.internet).label} onGo={() => setTab('network')} />
+        {spaceLabel && <SummaryLink label="Space" value={spaceLabel} onGo={() => setTab('network')} />}
         <SummaryLink label="Encrypted" value={home ? (home.defaultKey ? 'Yes, on this machine' : 'Yes, with its own passphrase') : 'No'} onGo={() => setTab('data')} />
         <SummaryLink label="Backups" value={backups ? (!backups.eligible ? 'Not available' : backups.policy.enabled ? `On${backups.lastSuccessAt ? `, last ${fmtTime(backups.lastSuccessAt)}` : ''}` : 'Off') : '…'} warn={backups?.eligible === true && !backups.policy.enabled} onGo={() => setTab('data')} />
         <SummaryLink label="Updates" value={autoUpdate ? 'Automatic' : 'Manual'} onGo={() => setTab('settings')} />
@@ -423,42 +426,81 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
         </Section>
       )}
       {inst.endpoints.length > 0 && (
-        <Section title="Addresses">
-          {inst.endpoints.map((ep) => (
-            <div key={ep.id} className="address-card">
-              {inst.endpoints.length > 1 && <strong className="small">{endpointTitle(ep.id, ep.id === inst.primaryEndpoint)}</strong>}
-              {addressRows(ep)}
+        <section className="page-section" aria-label="Addresses">
+          <div className="page-section-head">
+            <h4>Addresses</h4>
+            <div className="row wrap">
+              {exposures.length > 0 && (
+                <button className="btn small" onClick={() => onPublish('manage')} aria-label={`Manage the addresses of ${inst.name}`}>
+                  Manage…
+                </button>
+              )}
+              <div className="menu-wrap">
+                <button className="btn small" disabled={!canOpen} aria-expanded={addOpen} onClick={() => setAddOpen(!addOpen)}>
+                  Add an address…
+                </button>
+                {addOpen && (
+                  <div className="menu-pop" role="group" aria-label="Add an address">
+                    <button className="btn small ghost" onClick={() => (setAddOpen(false), onPublish('domain'))} aria-label={`Add a domain to ${inst.name}`}>
+                      A domain of yours…
+                    </button>
+                    <button className="btn small ghost" onClick={() => (setAddOpen(false), onPublish('proxy'))} aria-label={`Use your own proxy for ${inst.name}`}>
+                      Through my own proxy…
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          ))}
-          <div className="row wrap">
-            <button className="btn small" disabled={!canOpen} onClick={() => onPublish('domain')} aria-label={`Add a domain to ${inst.name}`}>
-              Add a domain…
-            </button>
-            {exposures.length > 0 && (
-              <button className="btn small" onClick={() => onPublish('manage')} aria-label={`Manage the addresses of ${inst.name}`}>
-                Manage…
-              </button>
-            )}
-            <button className="btn small ghost" disabled={!canOpen} onClick={() => onPublish('proxy')} aria-label={`Use your own proxy for ${inst.name}`}>
-              Use my own proxy…
-            </button>
           </div>
-          {tailnetAll && (tailnetUsable || tailnetUrl) ? (
-            <label className="page-row">
-              <span className="page-row-text">
-                On Tailscale
-                <span className="muted small block">Any device on your tailnet can reach it</span>
-              </span>
-              <input type="checkbox" checked={onTailnet} disabled={busy} onChange={(e) => setTailnet(e.target.checked)} aria-label={`${inst.name} on Tailscale`} />
-            </label>
-          ) : (
-            <Row title="Tailscale" sub="Not connected. Reach your apps from anywhere, privately.">
-              <a className="btn small" href="#/settings/remote" onClick={onClose}>
-                Connect…
-              </a>
-            </Row>
-          )}
-        </Section>
+          <div className="address-card">
+            {inst.endpoints.map((ep) => (
+              <div key={ep.id} className="address-group">
+                {inst.endpoints.length > 1 && <span className="address-ep">{endpointTitle(ep.id, ep.id === inst.primaryEndpoint)}</span>}
+                {addressRows(ep)}
+              </div>
+            ))}
+            {tailnetAll && (tailnetUsable || tailnetUrl) ? (
+              <label className="address-row">
+                <span className="address-where">Tailscale</span>
+                <span className="grow muted small">Any device on your tailnet can reach it</span>
+                <input type="checkbox" checked={onTailnet} disabled={busy} onChange={(e) => setTailnet(e.target.checked)} aria-label={`${inst.name} on Tailscale`} />
+              </label>
+            ) : (
+              <div className="address-row">
+                <span className="address-where">Tailscale</span>
+                <span className="grow muted small">Not connected. Reach your apps from anywhere, privately.</span>
+                <a className="btn small" href="#/settings/remote" onClick={onClose}>
+                  Connect…
+                </a>
+              </div>
+            )}
+            {(inst.announce ?? []).map((a) => (
+              <div key={a.endpointId} className="address-row">
+                <span className="address-where">Your network</span>
+                <span className="grow small">
+                  {a.state === 'announced' ? (
+                    <>
+                      Announced as <strong>{a.name}</strong>
+                    </>
+                  ) : a.state === 'starting' ? (
+                    'Announcing…'
+                  ) : (
+                    'Not announced'
+                  )}
+                  <span className="muted">
+                    {' '}
+                    · {a.type}
+                    {a.state === 'announced' || a.state === 'starting'
+                      ? `: devices nearby find it without an address${inst.login?.on && inst.login.endpoints.includes(a.endpointId) ? ' (they need its password)' : ''}`
+                      : a.reason
+                        ? `: ${a.reason}`
+                        : ''}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
       )}
       {inst.ports.length > 0 && (
         <Section title="Ports">
@@ -467,59 +509,29 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           ))}
         </Section>
       )}
-      {inst.announce && inst.announce.length > 0 && (
-        <Section title="Found on your network">
-          {inst.announce.map((a) => (
-            <Row
-              key={a.endpointId}
-              title={a.state === 'announced' ? <>Announced as <strong>{a.name}</strong></> : a.state === 'starting' ? 'Announcing…' : 'Not announced'}
-              sub={
-                a.state === 'announced' || a.state === 'starting'
-                  ? `${a.type} · devices on your network find it without typing an address${inst.login?.on && inst.login.endpoints.includes(a.endpointId) ? '. The app login is on here, so a device needs its password' : ''}`
-                  : `${a.type} · ${a.reason ? `${a.reason.charAt(0).toUpperCase()}${a.reason.slice(1)}` : 'Not announced right now'}`
-              }
-            />
-          ))}
-        </Section>
-      )}
-      <Section title="What this app can reach">
-        <Row
-          title={
-            <>
-              Internet: <strong>{internetSummary(inst.internet).label}</strong>
-            </>
-          }
-          sub={`${internetSummary(inst.internet).why.charAt(0).toUpperCase()}${internetSummary(inst.internet).why.slice(1)}. ${internetHint(inst.internet.mode)}`}
-        >
-          <button className="btn small" disabled={busy} onClick={() => setInternetOpen(true)} aria-label={`Change how ${name} reaches the internet`}>
-            Change…
-          </button>
-        </Row>
-      </Section>
-      {space}
     </>
   );
 
-  const settings = (
+  const network = (
     <>
-      {inst.settings && inst.settings.length > 0 && (
-        <section className="page-section" aria-label="App options">
-          <div className="page-section-head">
-            <h4>App options</h4>
-            <button className="btn small" disabled={busy} onClick={() => setSettingsOpen(true)} aria-label={`Change the settings of ${inst.name}`}>
+      <section className="page-section" aria-label="Internet">
+        <div className="page-row">
+          <div className="page-row-text">
+            <h4>Internet</h4>
+            <div className="muted small">
+              {internetSummary(inst.internet).label}, {internetSummary(inst.internet).why}. {internetHint(inst.internet.mode)}
+            </div>
+          </div>
+          <div className="page-row-actions">
+            <button className="btn small" disabled={busy} onClick={() => setInternetOpen(true)} aria-label={`Change how ${name} reaches the internet`}>
               Change…
             </button>
           </div>
-          {inst.settings.map((x) => (
-            <Row key={x.id} title={x.label}>
-              <strong>{settingText(x, x.value)}</strong>
-              {!x.overridden ? <span className="muted small">default</span> : null}
-            </Row>
-          ))}
-        </section>
-      )}
+        </div>
+      </section>
+      {space}
       {(inst.links.length > 0 || inst.linkedBy.length > 0) && (
-        <Section title="Connected apps">
+        <Section title="Linked apps">
           {inst.links.map((l) => {
             const claim = catalog.find((x) => x.id === inst.packageId)?.links.find((x) => x.id === l.id);
             const cands = linkCandidates({ packages: claim?.packages ?? null }, instances, inst.id);
@@ -552,6 +564,27 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
             <Row key={`${b.instanceId}-${b.linkId}`} title={<span className="muted">{b.name} reaches this app privately</span>} />
           ))}
         </Section>
+      )}
+    </>
+  );
+
+  const settings = (
+    <>
+      {inst.settings && inst.settings.length > 0 && (
+        <section className="page-section" aria-label="App options">
+          <div className="page-section-head">
+            <h4>App options</h4>
+            <button className="btn small" disabled={busy} onClick={() => setSettingsOpen(true)} aria-label={`Change the settings of ${inst.name}`}>
+              Change…
+            </button>
+          </div>
+          {inst.settings.map((x) => (
+            <Row key={x.id} title={x.label}>
+              <strong>{settingText(x, x.value)}</strong>
+              {!x.overridden ? <span className="muted small">default</span> : null}
+            </Row>
+          ))}
+        </section>
       )}
       {inst.revealableSecrets.length > 0 && (
         // decision 199: generated values the package marks revealable; the values only after the Harbor password
@@ -765,6 +798,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           <div id="app-tab-panel" role="tabpanel" aria-labelledby={`app-tab-${tab}`} className="tab-panel">
             {tab === 'overview' && overview}
             {tab === 'access' && access}
+            {tab === 'network' && network}
             {tab === 'settings' && settings}
             {tab === 'data' && data}
           </div>

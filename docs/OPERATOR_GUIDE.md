@@ -734,7 +734,7 @@ bottom bar as the *Alerts* tab, with the unread count on it.
 - A space is **grouping only** unless you tick **Share a network**. Then every service of every app in the space
   joins one private network (no internet route, nothing published) and the apps reach each other by name:
   `<app>` for the app's main page and `<app>-<service>` for each of its services, e.g. `http://erpnext:8080`,
-  `erpnext-db`. The app's page (*Access → Space*) lists its names with their ports, ready to paste into the other
+  `erpnext-db`. The app's page (*Network* tab → *Space*) shows its main name with its port (other names fold under *Other names*), ready to paste into the other
   app (Open WebUI → its MCP server URL). Ports are the app's own ports inside its container, not the ones on
   this machine.
 - **Sharing is not isolated, on purpose.** Every service, databases included, can reach every other one, and
@@ -1153,7 +1153,7 @@ harbor unexpose erp --via public --host erp.example.com             # withdraw o
 harbor expose --ui --via tailnet                    # Harbor itself on your tailnet (never public)
 ```
 
-In the console, **Add a domain…** and **Manage…** are on the app's **Access** tab and on the Publishing page. A healthy
+In the console, **Add an address…** → *A domain of yours…* and **Manage…** are on the app's **Access** tab and on the Publishing page. A healthy
 address shows just its link; the state, the reason and the last check appear only when it is not
 *active*; the Platform page shows Tailscale enrollment and proxy state.
 
@@ -1248,7 +1248,7 @@ harbor tailscale every-app off                      # stop; nothing is withdrawn
    record for your domain pointing at it. Behind a home router, forward ports 80 and 443 to this machine.
 2. Add the domain in the same page. Harbor resolves it and says *Points here*, *Points elsewhere* (with
    the address it found) or *No DNS record yet*; *Re-check* after DNS has spread.
-3. Open the app → **Access** → **Add a domain…** (or **Publishing** → *Add a domain…*). Type the name; the dialog shows the DNS record to create and checks it. Caddy requests the Let's Encrypt
+3. Open the app → **Access** → **Add an address…** → **A domain of yours…** (or **Publishing** → *Add a domain…*). Type the name; the dialog shows the DNS record to create and checks it. Caddy requests the Let's Encrypt
    certificate as soon as the address is added and renews it; the address is *pending* for a minute and
    then *active*. Apps without their own login get a generated password unless you opt out.
 

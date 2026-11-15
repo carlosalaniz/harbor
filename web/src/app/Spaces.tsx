@@ -138,45 +138,52 @@ export function SpaceCard({ c, inst }: { c: Console; inst: InstanceSummary }) {
   const [editing, setEditing] = useState(false);
   if (!space) return null;
   const me = space.apps.find((a) => a.instanceId === inst.id)!;
-  const others = space.apps.filter((a) => a.instanceId !== inst.id).map((a) => a.name);
+  const others = space.apps.filter((a) => a.instanceId !== inst.id).map((a) => c.data.instances.find((i) => i.id === a.instanceId)).filter((i): i is InstanceSummary => Boolean(i));
+  // one address up front (the app's own name, else its first one); the rest (often the same container) folded away
+  const main = me.addresses.find((a) => a.main) ?? me.addresses[0] ?? null;
+  const more = me.addresses.filter((a) => a !== main);
   return (
-    <section className="page-section" aria-label="Space">
+    <section className="page-section space-card" aria-label="Space">
       <div className="page-section-head">
-        <h4>Space: {space.name}</h4>
+        <div>
+          <h4>Space: {space.name}</h4>
+          <div className={`small ${space.shared ? 'warn' : 'muted'}`}>{space.shared ? 'Shared network: not isolated from the apps below' : 'Grouped on Home only. Each app stays on its own network.'}</div>
+        </div>
         <button className="btn small" onClick={() => setEditing(true)} aria-label={`Edit space ${space.name}`}>
-          Edit…
+          Edit space…
         </button>
       </div>
-      {space.shared ? (
-        <>
-          <div className="page-row">
-            <div className="page-row-text">
-              <div>Shared network{others.length ? ` with ${others.join(', ')}` : ''}</div>
-              <div className="muted small">Other apps of the space reach {inst.name} at these addresses (paste one into the other app).</div>
-            </div>
-          </div>
-          {me.addresses.map((a) => (
-            <div className="page-row" key={a.alias}>
-              <div className="page-row-text">
-                <div>
-                  <code>{a.address}</code>
-                </div>
-                <div className="muted small">{a.main ? 'Main page' : `Service ${a.service}`}</div>
-              </div>
-              <div className="page-row-actions">
-                <Copy text={a.address} />
-              </div>
-            </div>
+      {others.length > 0 && (
+        <ul className="space-members" aria-label={`Other apps in ${space.name}`}>
+          {others.map((o) => (
+            <li key={o.id}>
+              <InstanceIcon inst={o} size={20} />
+              {appLabel(o, c.data.instances)}
+            </li>
           ))}
+        </ul>
+      )}
+      {space.shared && main && (
+        <>
+          <p className="muted small">They reach {appLabel(inst, c.data.instances)} at</p>
+          <div className="space-address">
+            <code>{main.address}</code>
+            <Copy text={main.address} />
+          </div>
+          {more.length > 0 && (
+            <details className="space-more">
+              <summary className="muted small">Other names ({more.length})</summary>
+              {more.map((a) => (
+                <div className="space-address quiet" key={a.alias}>
+                  <code>{a.address}</code>
+                  <span className="muted small">service {a.service}</span>
+                  <Copy text={a.address} />
+                </div>
+              ))}
+            </details>
+          )}
           {space.conflicts.length > 0 && <p className="muted small">Left out: {space.conflicts.join('; ')}</p>}
         </>
-      ) : (
-        <div className="page-row">
-          <div className="page-row-text">
-            <div>Grouped on Home{others.length ? ` with ${others.join(', ')}` : ''}</div>
-            <div className="muted small">No shared network: each app stays on its own.</div>
-          </div>
-        </div>
       )}
       {editing && <SpaceDialog c={c} space={space} onClose={() => setEditing(false)} />}
     </section>

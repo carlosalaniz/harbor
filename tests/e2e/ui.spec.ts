@@ -1148,10 +1148,11 @@ links:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of gateway-e2e' }).click();
   const drawer = page.getByRole('dialog');
-  await tab(drawer, 'Settings');
-  await expect(drawer.getByRole('heading', { name: 'Connected apps', exact: true })).toBeVisible();
+  await tab(drawer, 'Network');
+  await expect(drawer.getByRole('heading', { name: 'Linked apps', exact: true })).toBeVisible();
   await expect(drawer).toContainText('Linked to');
   await expect(drawer).toContainText('http://docs-link:3010');
+  await tab(drawer, 'Settings');
   await expect(drawer).toContainText('Set, never shown');
   await expect(drawer).not.toContainText('tok-FIXTURE-e2e-123');
   await expect(drawer.getByRole('button', { name: 'Change api-token' })).toBeVisible();
@@ -2054,8 +2055,8 @@ network:
   await page.getByRole('link', { name: 'Home' }).click();
   await page.getByRole('button', { name: 'Details of quiet-e2e', exact: true }).click();
   const drawer = page.getByRole('dialog', { name: 'Quiet E2E' });
-  await tab(drawer, 'Access');
-  await expect(drawer.getByRole('heading', { name: 'What this app can reach', exact: true })).toBeVisible();
+  await tab(drawer, 'Network');
+  await expect(drawer.getByRole('heading', { name: 'Internet', exact: true })).toBeVisible();
   await expect(drawer).toContainText('Offline');
   await drawer.getByRole('button', { name: 'Change how Quiet E2E reaches the internet', exact: true }).click();
   const pick = page.getByRole('dialog', { name: 'Internet for Quiet E2E' });
@@ -2331,6 +2332,8 @@ test('decision 202: spaces — group two apps, share a network only after the wa
   await page.getByRole('button', { name: 'Space: Productivity, shared network', exact: true }).click();
   const card = page.getByRole('region', { name: 'Space', exact: true });
   await expect(card.locator('code').first()).toHaveText(/^http:\/\/[a-z][a-z0-9-]*:\d+$/);
+  await expect(card).toContainText('Shared network: not isolated');
+  await expect(page.getByRole('tab', { name: 'Network', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Escape');
   // delete: the apps stay installed and go back to the main grid
   await group.getByRole('button', { name: 'Edit space Productivity', exact: true }).click();
