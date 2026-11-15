@@ -127,7 +127,7 @@ describe('queueable kinds and error codes (decision 183)', () => {
 
 describe("Harbor's own actor names are not login names (decision 183)", () => {
   it('lists every background actor, and setup / enroll refuse them as usernames (any case)', () => {
-    expect([...INTERNAL_ACTORS].sort()).toEqual(['auto-update', 'drive-guard', 'git-source', 'link-guard', 'lock-guard', 'scheduler', TAILNET_POLICY_ACTOR, 'vpn-policy'].sort());
+    expect([...INTERNAL_ACTORS].sort()).toEqual(['auto-update', 'drive-guard', 'git-source', 'link-guard', 'lock-guard', 'scheduler', TAILNET_POLICY_ACTOR, 'vpn-policy', 'space-policy'].sort());
     for (const name of [...INTERNAL_ACTORS, 'Scheduler', 'DRIVE-GUARD']) expect(reservedUsername(name)).toMatch(/Harbor uses for its own background work/);
     expect(reservedUsername('carlos')).toBeNull();
     expect(reservedUsername('constructor')).toBeNull();

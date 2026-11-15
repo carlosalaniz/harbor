@@ -1860,6 +1860,8 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
       return `Harbor will update ${n} ${updateSentence(plan)}. Data, ports and addresses stay; if the new release does not start, the previous one is put back automatically.`;
     case 'relink':
       return `Harbor will attach the private links of ${n} again with only the names it gives them. Nothing is recreated; each link drops for a moment.`;
+    case 'space':
+      return `Harbor will put ${n} on the network its space wants (or take it off). Nothing is recreated.`;
   }
 }
 
@@ -1869,7 +1871,7 @@ function internetOnly(plan: PlanDto): boolean {
 }
 
 function verb(kind: PlanDto['kind']): string {
-  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption', move: 'move', backup: 'backup', restore: 'restore', relink: 'link check' }[kind];
+  return { install: 'install', start: 'start', stop: 'stop', remove: 'removal', reinstall: 'reinstall', purge: 'full uninstall', update: 'update', expose: 'publishing', unexpose: 'withdrawal', reconfigure: 'address switch', restart: 'restart', configure: 'new settings', seal: 'encryption', move: 'move', backup: 'backup', restore: 'restore', relink: 'link check', space: 'space network' }[kind];
 }
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

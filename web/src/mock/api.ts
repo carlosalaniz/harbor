@@ -26,6 +26,8 @@ import type {
   BackupTargetDto,
   VpnDto,
   DeveloperModeDto,
+  SpaceDto,
+  SpacesDto,
 } from '../../../src/contracts/api';
 import {
   mockAppearance,
@@ -66,6 +68,34 @@ export const isMockUi = (): boolean => {
 const beat = (ms = 350) => new Promise((r) => setTimeout(r, ms));
 
 let instances = mockInstances();
+// decision 202: spaces. "AI tooling" shares a network (open-webui + ollama); ?spaces=none starts without any.
+let mockSpaces: { id: string; name: string; shared: boolean; apps: string[] }[] =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('spaces') === 'none'
+    ? []
+    : [
+        { id: 'a1b2c3d4', name: 'AI tooling', shared: true, apps: ['inst-open-webui', 'inst-ollama'] },
+        { id: 'e5f6a7b8', name: 'Media', shared: false, apps: ['inst-jellyfin'] },
+      ];
+function spaceDto(s: { id: string; name: string; shared: boolean; apps: string[] }): SpaceDto {
+  const apps = s.apps.map((id) => instances.find((i) => i.id === id)).filter((i): i is InstanceSummary => Boolean(i));
+  return {
+    id: s.id,
+    name: s.name,
+    shared: s.shared,
+    network: s.shared ? `hb_space_${s.id}` : null,
+    conflicts: [],
+    apps: apps.map((i) => ({
+      instanceId: i.id,
+      name: i.name,
+      addresses: s.shared
+        ? [
+            { alias: i.name, service: 'web', address: `http://${i.name}:8080`, main: true },
+            { alias: `${i.name}-web`, service: 'web', address: `http://${i.name}-web:8080`, main: false },
+          ]
+        : [],
+    })),
+  };
+}
 let queueState = mockQueue();
 const finishedOps = new Map<string, OperationDto>();
 // decision 177: the every-app Tailscale policy, derived from the mock instances and exposures
@@ -321,6 +351,28 @@ export const mockApi = {
   },
   exposures: async (): Promise<{ items: ExposureDto[]; ui: UiExposureDto | null }> => mockExposures(),
   links: async (): Promise<LinkDto[]> => [],
+  spaces: async (): Promise<SpacesDto> => ({ items: mockSpaces.map(spaceDto) }),
+  createSpace: async (body: { name: string; apps?: string[]; shared?: boolean }): Promise<SpaceDto> => {
+    await beat();
+    if (mockSpaces.some((x) => x.name.toLowerCase() === body.name.trim().toLowerCase())) throw new Error(`there is already a space called ${body.name.trim()}`);
+    const s = { id: Math.random().toString(16).slice(2, 10).padEnd(8, '0'), name: body.name.trim(), shared: Boolean(body.shared), apps: body.apps ?? [] };
+    mockSpaces = [...mockSpaces.map((x) => ({ ...x, apps: x.apps.filter((a) => !s.apps.includes(a)) })), s];
+    return spaceDto(s);
+  },
+  updateSpace: async (id: string, body: { name?: string; apps?: string[]; shared?: boolean; confirmShared?: boolean }): Promise<SpaceDto> => {
+    await beat();
+    const cur = mockSpaces.find((x) => x.id === id);
+    if (!cur) throw new Error('unknown space');
+    if (body.shared && !cur.shared && !body.confirmShared) throw new Error('sharing a network needs your confirmation');
+    const next = { ...cur, ...(body.name !== undefined ? { name: body.name.trim() } : {}), ...(body.apps ? { apps: body.apps } : {}), ...(body.shared !== undefined ? { shared: body.shared } : {}) };
+    mockSpaces = mockSpaces.map((x) => (x.id === id ? next : { ...x, apps: x.apps.filter((a) => !next.apps.includes(a)) }));
+    return spaceDto(next);
+  },
+  deleteSpace: async (id: string): Promise<SpacesDto> => {
+    await beat();
+    mockSpaces = mockSpaces.filter((x) => x.id !== id);
+    return { items: mockSpaces.map(spaceDto) };
+  },
   vpn: async (): Promise<VpnDto> => mockVpn(),
   setVpn: async (config: string, name?: string): Promise<VpnDto> => {
     await beat(700);

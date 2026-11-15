@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–201 so far; 201 = the browser-sandbox permission) | `docs/DECISIONS.md` — **next number is 202**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–202 so far; 202 = spaces) | `docs/DECISIONS.md` — **next number is 203**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -227,6 +227,7 @@ validated live against Caddy v2.11.4.
 - LAN announcements (decision 200): avahi refuses a second LOCAL service with the same name and type (the `avahi-publish` child exits, "Local name collision") instead of renaming it, so `planAdverts` makes names unique itself. Everything avahi-publish prints, the "Established under name …" confirmation included, goes to STDERR. Never write files to `/etc/avahi/services/` (the daemon cannot, and the children dying with the daemon is the clean-up). DigitalOcean cannot test it (no multicast): use harbor-old + `dns-sd -B <type>` on the Mac.
 - browser-sandbox (decision 201): the profile is a FILE in the release folder (`seccomp/browser-sandbox.json`, `BROWSER_SANDBOX_PROFILE`), referenced by absolute path; never inline it and never add `apparmor=unconfined` (on Ubuntu 24.04 that breaks user namespaces, see the decision). Regenerate it only with `node scripts/seccomp-profile.mjs` and copy the printed hash into `src/planner/seccomp.ts`.
 - `compose.pull` before `buildImages` must name its services: `--policy missing` still asks a registry for a git source's `harbor-src/<app>-<service>:<sha>` tag that is not built yet, and Docker answers "pull access denied" (0.44.2: the app-login gate's early pull). The fake refuses that pull too.
+- Spaces (decision 202): the shared network `hb_space_<id>` is attached by the runner (`syncSpaceMembers`), never by Compose, with only `<app>` / `<app>-<service>` aliases; `upAndRecord` takes the create→attach→start path when the app is in a shared space. Docker's network LIST API leaves `Containers` empty (only inspect fills it), so `pruneSpaceNetworks` inspects before deleting. During a remove the app is still `installed`, so prune is told which app is leaving. `space` items are planned at their turn (`queueAction` accepts kind `space` only with actor `space-policy`) so a busy app never makes them stale.
 - Never test on .192 (production `harbor`): live tests go to harbor-old (.146) or the droplet.
 - xterm.js needs `style-src 'unsafe-inline'`; the WebSocket terminal authenticates by first message, never URL.
 - macOS has no `timeout`; use `curl --max-time` or `gtimeout`.

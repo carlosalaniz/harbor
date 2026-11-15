@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { InternetMode, LinkChoice, LoginChange, SettingValue } from '../../../src/contracts/api';
-import type { AppearanceDto, CatalogItemDto, InstallMainAddress, ExposureDto, InstanceSummary, NotificationsDto, OperationDto, OperationQueueDto, PlanDto, PlanRequest, PlatformToolDto, QueueableKind, SystemDto, SystemMetricsDto, UiExposureDto } from '../../../src/contracts/api';
+import type { AppearanceDto, CatalogItemDto, InstallMainAddress, ExposureDto, InstanceSummary, NotificationsDto, OperationDto, OperationQueueDto, PlanDto, PlanRequest, PlatformToolDto, QueueableKind, SpaceDto, SystemDto, SystemMetricsDto, UiExposureDto } from '../../../src/contracts/api';
 import { ApiError, api, newIdempotencyKey } from '../api';
 import { REFRESH_MS, alreadyQueued, clearFinished as withoutPlainFinished, isFinal, isQueueable, keepFinished, queuePollMs, reviewHasValues } from './queue';
 
@@ -14,6 +14,8 @@ export interface Data {
   uiExposure: UiExposureDto | null;
   appearance: AppearanceDto | null;
   notifications: NotificationsDto | null;
+  // decision 202: spaces (groups on Home; a shared one lists the names its apps reach each other by)
+  spaces: SpaceDto[];
 }
 
 export type Action =
@@ -71,7 +73,7 @@ export function submitPassphraseFor(a: Action | null): string | undefined {
 // key per plan, and the queue (decision 183): what runs and waits, plus the operations this console saw finish,
 // each with its own results until dismissed. Everything comes from the daemon; nothing is cached across reloads.
 export function useConsole(onAuthLost: (msg?: string) => void) {
-  const [data, setData] = useState<Data>({ system: null, metrics: null, catalog: [], instances: [], tools: [], exposures: [], uiExposure: null, appearance: null, notifications: null });
+  const [data, setData] = useState<Data>({ system: null, metrics: null, catalog: [], instances: [], tools: [], exposures: [], uiExposure: null, appearance: null, notifications: null, spaces: [] });
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pending, setPending] = useState<Action | null>(null);
@@ -113,8 +115,8 @@ export function useConsole(onAuthLost: (msg?: string) => void) {
         .tools()
         .then((tools) => setData((prev) => ({ ...prev, tools })))
         .catch(() => undefined);
-      const [system, catalog, instances, exp, metrics, appearance, notifications] = await Promise.all([api.system(), api.catalog(), api.instances(), api.exposures(), api.metrics().catch(() => null), api.appearance().catch(() => null), api.notifications().catch(() => null)]);
-      setData((prev) => ({ ...prev, system, metrics, catalog, instances, exposures: exp.items, uiExposure: exp.ui, appearance: appearance ?? prev.appearance, notifications: notifications ?? prev.notifications }));
+      const [system, catalog, instances, exp, metrics, appearance, notifications, spaces] = await Promise.all([api.system(), api.catalog(), api.instances(), api.exposures(), api.metrics().catch(() => null), api.appearance().catch(() => null), api.notifications().catch(() => null), api.spaces().catch(() => null)]);
+      setData((prev) => ({ ...prev, system, metrics, catalog, instances, exposures: exp.items, uiExposure: exp.ui, appearance: appearance ?? prev.appearance, notifications: notifications ?? prev.notifications, spaces: spaces?.items ?? prev.spaces }));
       setLoadError(null);
       setLoaded(true);
     } catch (e) {

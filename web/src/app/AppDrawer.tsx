@@ -66,7 +66,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const endpointTitle = (id: string, primary: boolean) => (primary ? 'Main page' : `${id.charAt(0).toUpperCase()}${id.slice(1).replace(/-/g, ' ')} page`);
 const placeName = (via: string, url: string) => (via === 'tailnet' ? 'Tailscale' : via === 'public' ? 'Domain' : /\/\/(localhost|127\.)/.test(url) ? 'This machine' : 'Home network');
 
-export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPublish, onCustomize, onChanged, instances = [], catalog = [] }: { inst: InstanceSummary; exposures: ExposureDto[]; ops?: OperationDto[]; onClose: () => void; onAction: (a: Action) => void; onPublish: (mode: 'domain' | 'proxy' | 'manage') => void; onCustomize: () => void; onChanged?: (i: InstanceSummary) => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[] }) {
+export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPublish, onCustomize, onChanged, instances = [], catalog = [], space = null, spaceLabel = null }: { inst: InstanceSummary; exposures: ExposureDto[]; ops?: OperationDto[]; onClose: () => void; onAction: (a: Action) => void; onPublish: (mode: 'domain' | 'proxy' | 'manage') => void; onCustomize: () => void; onChanged?: (i: InstanceSummary) => void; instances?: InstanceSummary[]; catalog?: CatalogItemDto[]; space?: ReactNode; spaceLabel?: string | null }) {
   const [tab, setTab] = useState<Tab>('overview');
   const [relink, setRelink] = useState<Record<string, string>>({});
   const upd = inst.updateAvailable;
@@ -375,6 +375,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           </div>
         )}
         <SummaryLink label="Internet" value={internetSummary(inst.internet).label} onGo={() => setTab('access')} />
+        {spaceLabel && <SummaryLink label="Space" value={spaceLabel} onGo={() => setTab('access')} />}
         <SummaryLink label="Encrypted" value={home ? (home.defaultKey ? 'Yes, on this machine' : 'Yes, with its own passphrase') : 'No'} onGo={() => setTab('data')} />
         <SummaryLink label="Backups" value={backups ? (!backups.eligible ? 'Not available' : backups.policy.enabled ? `On${backups.lastSuccessAt ? `, last ${fmtTime(backups.lastSuccessAt)}` : ''}` : 'Off') : '…'} warn={backups?.eligible === true && !backups.policy.enabled} onGo={() => setTab('data')} />
         <SummaryLink label="Updates" value={autoUpdate ? 'Automatic' : 'Manual'} onGo={() => setTab('settings')} />
@@ -495,6 +496,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           </button>
         </Row>
       </Section>
+      {space}
     </>
   );
 

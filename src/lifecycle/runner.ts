@@ -14,6 +14,8 @@ import { needsBinder } from '../planner/permissions.js';
 import { appLoginOf, gateCookieName, gatedEndpoints, gatePasswordHash, gateService, GATE_PORT, LOGIN_KEY_SECRET, LOGIN_PASSWORD_SECRET, type GateRender } from '../planner/gate.js';
 import { linkAlias, linkAliasesDrift, linkExtraNames, linkNetworkLabels, linkValue } from '../planner/links.js';
 import { aliasesOn, linkMembers, ownsLinkNetwork } from './link-members.js';
+import { isGateService, ownsSpaceNetwork, readSpaces, spaceNamesOf, spaceOfInstance } from './space-members.js';
+import { SPACE_LABEL, spaceNetworkLabels, spaceNetworkName } from '../planner/spaces.js';
 import type { NetworkInfo } from '../docker/adapter.js';
 import type { LinkRow, PlannedLink } from '../state/repo.js';
 import { checkHostDirectory } from '../storage/host-path.js';
@@ -245,6 +247,7 @@ export class OperationRunner {
         case 'backup': await this.backupCold(op, plan, inst); break;
         case 'restore': await this.restoreInPlace(op, plan, inst, secretValues); break;
         case 'relink': await this.relink(op, inst, secretValues); break;
+        case 'space': await this.spaceSync(op, inst); break;
       }
       if (this.freshLogins.length) this.opResult = { ...(this.opResult ?? {}), shownOnce: [...((this.opResult?.['shownOnce'] as unknown[] | undefined) ?? []), ...this.freshLogins] };
       this.freshLogins = [];
@@ -1077,6 +1080,83 @@ export class OperationRunner {
     }
   }
 
+  // ---------- spaces (decision 202)
+
+  private inSharedSpace(inst: InstanceRow): boolean {
+    return Boolean(spaceOfInstance(this.ctx, inst.id)?.shared);
+  }
+
+  // The `space` operation (actor space-policy): this app's containers on the network its space wants, live.
+  private async spaceSync(op: OperationRow, inst: InstanceRow): Promise<void> {
+    this.phase(op, 'applying', 'starting', `putting ${inst.name} on the network its space wants`);
+    await this.engineOrThrow();
+    await this.syncSpaceMembers(op, inst);
+    await this.pruneSpaceNetworks(op, 'starting');
+  }
+
+  // Create (or verify) the network of one shared space. Never adopts a network Harbor did not label.
+  private async ensureSpaceNetwork(op: OperationRow, spaceId: string, spaceName: string): Promise<NetworkInfo> {
+    const { docker } = this.ctx;
+    const name = spaceNetworkName(spaceId);
+    const existing = await docker.inspectNetwork(name);
+    if (existing) {
+      if (!ownsSpaceNetwork(this.ctx, existing, spaceId)) throw new HarborError('OWNERSHIP_CONFLICT', `network ${name} exists but is not the one Harbor created for space ${spaceName}`, { nextAction: 'Inspect the network manually (docker network inspect); Harbor never uses or deletes a network it did not create.' });
+      return existing;
+    }
+    const subnet = await this.freeSubnet(name);
+    const created = await docker.createNetwork(name, spaceNetworkLabels(this.ctx.installationId, spaceId), { internal: true, subnet });
+    this.event(op, 'preparing', `created the shared network ${name} of space ${spaceName} on ${subnet} (internal: no route out, nothing published)`);
+    return created;
+  }
+
+  // Every container of `inst` on exactly the space network it should be on (none when its space is not shared),
+  // under exactly the names Harbor gives (`<app>`, `<app>-<service>`); attached and detached live, nothing recreated.
+  private async syncSpaceMembers(op: OperationRow, inst: InstanceRow): Promise<void> {
+    const { docker, repo } = this.ctx;
+    const space = spaceOfInstance(this.ctx, inst.id);
+    const want = space?.shared ? space : null;
+    const nets = (await docker.listNetworks({ [LABELS.installation]: this.ctx.installationId, [LABELS.kind]: 'space' })).filter((n) => ownsSpaceNetwork(this.ctx, n));
+    const containers = repo.resources(inst.id).filter((r) => r.kind === 'container' && r.dockerId && !isGateService(r.role));
+    if (!want && !nets.length) return;
+    const target = want ? await this.ensureSpaceNetwork(op, want.id, want.name) : null;
+    const { names, conflicts } = want ? spaceNamesOf(this.ctx, want) : { names: {}, conflicts: [] as string[] };
+    if (conflicts.length) this.event(op, 'starting', `space ${want!.name}: names left out because ${conflicts.join('; ')}`);
+    for (const r of containers) {
+      const c = await docker.inspectContainer(r.dockerId!);
+      if (!c) continue;
+      for (const n of nets) {
+        if (target && n.id === target.id) continue;
+        if (aliasesOn(c, n) === undefined) continue;
+        await docker.disconnectNetwork(n.id, c.id);
+        this.event(op, 'starting', `detached ${c.name} from the shared network ${n.name}`);
+      }
+      if (!target) continue;
+      const aliases = names[inst.id]?.[r.role] ?? [];
+      const actual = aliasesOn(c, target);
+      if (actual !== undefined) {
+        if (!actual || !linkAliasesDrift(actual, aliases, c)) continue;
+        await docker.disconnectNetwork(target.id, c.id);
+      }
+      await docker.connectNetwork(target.id, c.id, aliases);
+      this.event(op, 'starting', `attached ${c.name} to the shared network ${target.name}${aliases.length ? ` as ${aliases.join(', ')}` : ''}`);
+    }
+  }
+
+  // Delete Harbor's space networks that no shared space wants and no container uses (ownership verified first).
+  // `leaving`: an app being removed right now (still `installed` until its remove finishes).
+  private async pruneSpaceNetworks(op: OperationRow, phase: string, leaving?: string): Promise<void> {
+    const { docker } = this.ctx;
+    const wanted = new Set(readSpaces(this.ctx).filter((s) => s.shared && s.apps.some((id) => id !== leaving && this.ctx.repo.instance(id)?.installState !== 'retained')).map((s) => s.id));
+    for (const n of await docker.listNetworks({ [LABELS.installation]: this.ctx.installationId, [LABELS.kind]: 'space' })) {
+      if (!ownsSpaceNetwork(this.ctx, n) || wanted.has(n.labels[SPACE_LABEL]!)) continue;
+      // the list API leaves out attached containers (Docker fills them only on inspect)
+      const full = await docker.inspectNetwork(n.id);
+      if (!full || full.containerIds.length) continue;
+      await docker.removeNetwork(n.id);
+      this.event(op, phase, `deleted the shared network ${n.name} (no shared space uses it any more)`);
+    }
+  }
+
   // Decision 171: the one-time switch of links Compose attached before 0.32.0 (actor `link-guard`): both
   // sides of every active link of `inst` are attached again with only the names Harbor gives, live (no
   // container is recreated), and the Compose files of both apps are written without the link networks.
@@ -1770,7 +1850,8 @@ export class OperationRunner {
       await this.removeDroppedGates(op, identity, inst, inv.projectDir);
       const links = this.hasActiveLinks(inst);
       const egress = this.needsEgress(inst);
-      if (links || egress) {
+      const space = this.inSharedSpace(inst);
+      if (links || egress || space) {
         // Decision 171: create (or recreate), put this app's link members on their networks, then start,
         // so a linked service can reach (and be reached) from its first second; `up --wait` would
         // otherwise wait on a health check that needs the link. Decision 184: the network exists now, so
@@ -1778,6 +1859,8 @@ export class OperationRunner {
         await this.ctx.compose.up(inv, this.ctx.config.startTimeoutMs, { ...opts, noStart: true });
         await this.recordProjectResources(op, identity, inst);
         if (links) await this.syncLinkMembers(op, inst, 'own');
+        // decision 202: a recreated container lost its live attachment to the space network
+        if (space) await this.syncSpaceMembers(op, inst);
         if (egress) await this.applyEgress(op, inst);
         await this.ctx.compose.up(inv, this.ctx.config.startTimeoutMs);
       } else {
@@ -1895,6 +1978,7 @@ export class OperationRunner {
     const file = path.join(dirs.runtime, 'compose.yaml');
     await this.ensureLinkNetworks(op, inst);
     await this.syncLinkMembers(op, inst, 'own');
+    await this.syncSpaceMembers(op, inst);
     if (this.needsEgress(inst)) await this.applyEgress(op, inst);
     await this.ensureKernel(op, inst);
     await this.ctx.compose.start({ projectDir: dirs.runtime, projectName: identity.project, file }, config.startTimeoutMs);
@@ -2366,6 +2450,7 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { runtime: 'starting' });
     await this.ensureLinkNetworks(op, inst);
     await this.syncLinkMembers(op, inst, 'own');
+    await this.syncSpaceMembers(op, inst);
     if (this.needsEgress(inst)) await this.applyEgress(op, inst);
     await this.ensureKernel(op, inst);
     await this.ctx.compose.start({ projectDir: dirs.runtime, projectName: identity.project, file: path.join(dirs.runtime, 'compose.yaml') }, config.startTimeoutMs);
@@ -2543,6 +2628,7 @@ export class OperationRunner {
       this.event(op, 'removing', `removed container ${c.name}`);
     }
     await this.unlinkOnRemove(op, inst, sink);
+    await this.pruneSpaceNetworks(op, 'removing', inst.id);
     const netRec = resources.find((x) => x.kind === 'network' && x.role === 'default');
     if (netRec) {
       const net = await docker.inspectNetwork(netRec.dockerId ?? netRec.name);

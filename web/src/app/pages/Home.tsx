@@ -7,6 +7,8 @@ import { fmtBytes, fmtUptime, plainStatus, updateLine } from '../format';
 import { useReorder } from '../reorder';
 import { tileStatus } from '../queue';
 import type { Console } from '../store';
+import { SpaceDialog } from '../Spaces';
+import type { SpaceDto } from '../../../../src/contracts/api';
 
 const PICKS = ['nextcloud', 'immich', 'jellyfin', 'open-webui', 'vaultwarden', 'n8n'];
 
@@ -49,6 +51,11 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   // decision 131: helpers the operator hid stay out of the launcher (still in the Store, Platform, lists)
   const shown = active.filter((i) => !i.hiddenFromHome);
   const hidden = active.filter((i) => i.hiddenFromHome);
+  // decision 202: apps in a space show in that space's section; Arrange moves the others
+  const spaces = data.spaces;
+  const inSpace = new Set(spaces.flatMap((s) => s.apps.map((a) => a.instanceId)));
+  const loose = shown.filter((i) => !inSpace.has(i.id));
+  const [spaceEdit, setSpaceEdit] = useState<SpaceDto | 'new' | null>(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -58,10 +65,16 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   // launcher order: the saved order first, then anything new in install order
   const saved = data.appearance?.home.order ?? [];
   const sortedIds = useMemo(() => {
-    const ids = shown.map((i) => i.id);
+    const ids = loose.map((i) => i.id);
     const rank = new Map(saved.map((id, i) => [id, i]));
     return ids.slice().sort((a, b) => (rank.get(a) ?? 1e9) - (rank.get(b) ?? 1e9) || ids.indexOf(a) - ids.indexOf(b));
-  }, [shown.map((i) => i.id).join('|'), saved.join('|')]);
+  }, [loose.map((i) => i.id).join('|'), saved.join('|')]);
+  const savedRank = new Map(saved.map((id, i) => [id, i]));
+  const spaceTiles = (s: SpaceDto) =>
+    s.apps
+      .map((a) => shown.find((i) => i.id === a.instanceId))
+      .filter((i): i is InstanceSummary => Boolean(i))
+      .sort((a, b) => (savedRank.get(a.id) ?? 1e9) - (savedRank.get(b.id) ?? 1e9));
   const commit = useCallback(
     (shownOrder: string[]) => {
       // hidden apps keep their saved slot so Show puts them back where they were
@@ -87,7 +100,12 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           <p className="muted">{!loaded ? 'Loading your apps…' : data.instances.length === 0 ? 'Your own cloud, on this machine. Add your first app to get started.' : `${running} of ${active.length} app${active.length === 1 ? '' : 's'} running · ${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}`}</p>
         </div>
         <div className="row wrap head-actions">
-          {shown.length > 1 && (
+          {active.length > 0 && !re.arranging && (
+            <button className="btn ghost" onClick={() => setSpaceEdit('new')}>
+              New space
+            </button>
+          )}
+          {loose.length > 1 && (
             <button className={`btn ghost ${re.arranging ? 'active' : ''}`} onClick={() => re.setArranging(!re.arranging)} aria-pressed={re.arranging}>
               {re.arranging ? 'Done' : 'Arrange'}
             </button>
@@ -211,6 +229,29 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
                 </li>
               )}
             </ul>
+            {spaces.map((s) => {
+              const ts = spaceTiles(s);
+              return (
+                <section key={s.id} className="space-group" aria-labelledby={`space-h-${s.id}`}>
+                  <div className="space-head">
+                    <h2 id={`space-h-${s.id}`}>{s.name}</h2>
+                    {s.shared && <Pill tone="warn">Shared network</Pill>}
+                    <button className="btn ghost small" onClick={() => setSpaceEdit(s)} aria-label={`Edit space ${s.name}`}>
+                      Edit
+                    </button>
+                  </div>
+                  {ts.length ? (
+                    <ul className="icons" aria-label={`Apps in ${s.name}`}>
+                      {ts.map((i) => (
+                        <AppIconTile key={i.id} inst={i} op={c.activeFor(i.id)} all={data.instances} onDetails={() => onOpenApp(i)} />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="muted small">No apps here yet. Edit the space to add some.</p>
+                  )}
+                </section>
+              );
+            })}
             {hidden.length > 0 && (
               <details className="retained-list">
                 <summary className="muted small">
@@ -238,6 +279,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           </>
         )}
       </section>
+      {spaceEdit && <SpaceDialog c={c} space={spaceEdit === 'new' ? null : spaceEdit} onClose={() => setSpaceEdit(null)} />}
       {picture && (
         <p className="wallpaper-credit small">
           <span aria-hidden="true">◐ </span>

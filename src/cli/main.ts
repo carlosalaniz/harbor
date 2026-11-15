@@ -3,6 +3,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { AppBackupsDto, BackupPolicyDto, BackupsOverviewDto, BackupTargetDto, FoundAppDto, FoundBackupAppDto, HostStorageDto, LinkChoice, LinkDto, TailnetAllDto } from '../contracts/api.js';
 import { defaultInstallLocation } from '../storage/install-location.js';
 import { validatePackageFolder } from '../packages/validate-folder.js';
+import type { SpaceDto, SpacesDto } from '../contracts/api.js';
+import { SHARED_WARNING } from '../planner/spaces.js';
 import type { AddSourceResult, CatalogItemDto, DiagnosticsDto, DomainDto, DomainsDto, ExposureDto, InstanceDetail, InstanceSummary, OperationDto, PackageSourceDto, PlanDto, PlatformToolDto, OperationQueueDto, QueueableKind, SystemDto, SystemHostDto, UiExposureDto, AppearanceDto, PackageImportResultDto, SelfUpdateStatusDto, CatalogStatusDto } from '../contracts/api.js';
 import { loadConfig } from '../config.js';
 import { HarborError } from '../errors.js';
@@ -750,6 +752,99 @@ vpnCmd
     await api.delete('/v1/vpn');
     const v = await api.get<VpnDto>('/v1/vpn');
     out(v, () => vpnText(v));
+  });
+
+// Spaces (decision 202): named groups of apps; a shared network is an explicit opt-in.
+function spacesText(items: SpaceDto[]): string {
+  if (!items.length) return 'No spaces. Make one: harbor spaces create <name> --app <app>';
+  return items
+    .map((s) => {
+      const head = `${s.name} (${s.id})${s.shared ? `  shared network ${s.network}` : ''}`;
+      const apps = s.apps.length ? s.apps.map((a) => `  ${a.name}${s.shared && a.addresses.length ? `  ${a.addresses.map((x) => x.address).join('  ')}` : ''}`) : ['  (no apps)'];
+      return [head, ...apps, ...s.conflicts.map((c) => `  left out: ${c}`)].join('\n');
+    })
+    .join('\n\n');
+}
+async function resolveSpace(api: ApiClient, ref: string): Promise<SpaceDto> {
+  const { items } = await api.get<SpacesDto>('/v1/spaces');
+  const s = items.find((x) => x.id === ref) ?? items.find((x) => x.name.toLowerCase() === ref.toLowerCase());
+  if (!s) throw new HarborError('NOT_FOUND', `no space called ${ref}`, { nextAction: 'List them: harbor spaces' });
+  return s;
+}
+async function confirmShare(yes: boolean): Promise<void> {
+  if (!globals().json) process.stderr.write(`${SHARED_WARNING}\n`);
+  if (!yes && !(await confirm('Share one network between the apps of this space?'))) throw new HarborError('INVALID_REQUEST', 'not shared', { nextAction: 'Re-run with --yes to share it non-interactively.' });
+}
+const spacesCmd = program.command('spaces').description('spaces: named groups of apps, optionally on one shared private network');
+spacesCmd.action(async () => {
+  const { items } = await client().get<SpacesDto>('/v1/spaces');
+  out(items, () => spacesText(items));
+});
+spacesCmd
+  .command('create <name>')
+  .description('make a space (apps named with --app leave any other space)')
+  .option('--app <app...>', 'apps to put in it', [])
+  .action(async (name: string, opts: { app: string[] }) => {
+    const api = client();
+    const apps = await Promise.all(opts.app.map(async (a) => (await resolveInstance(api, a)).id));
+    const s = await api.post<SpaceDto>('/v1/spaces', { name, apps });
+    out(s, () => spacesText([s]));
+  });
+for (const [verb, help] of [
+  ['add', 'put apps in a space (they leave any other space)'],
+  ['remove', 'take apps out of a space (they stay installed)'],
+] as const) {
+  spacesCmd
+    .command(`${verb} <space> <apps...>`)
+    .description(help)
+    .action(async (ref: string, refs: string[]) => {
+      const api = client();
+      const s = await resolveSpace(api, ref);
+      const ids = await Promise.all(refs.map(async (a) => (await resolveInstance(api, a)).id));
+      const cur = s.apps.map((a) => a.instanceId);
+      const apps = verb === 'add' ? [...cur, ...ids.filter((i) => !cur.includes(i))] : cur.filter((i) => !ids.includes(i));
+      const next = await api.post<SpaceDto>(`/v1/spaces/${s.id}`, { apps }, {}, 'PATCH');
+      out(next, () => spacesText([next]));
+    });
+}
+spacesCmd
+  .command('rename <space> <name>')
+  .description('rename a space')
+  .action(async (ref: string, name: string) => {
+    const api = client();
+    const s = await resolveSpace(api, ref);
+    const next = await api.post<SpaceDto>(`/v1/spaces/${s.id}`, { name }, {}, 'PATCH');
+    out(next, () => spacesText([next]));
+  });
+spacesCmd
+  .command('share <space>')
+  .description('put every service of the space\'s apps on one private network (insecure by design: databases included)')
+  .option('--yes', 'share without the question', false)
+  .action(async (ref: string, opts: { yes: boolean }) => {
+    const api = client();
+    const s = await resolveSpace(api, ref);
+    if (!s.shared) await confirmShare(opts.yes);
+    const next = await api.post<SpaceDto>(`/v1/spaces/${s.id}`, { shared: true, confirmShared: true }, {}, 'PATCH');
+    out(next, () => spacesText([next]));
+  });
+spacesCmd
+  .command('unshare <space>')
+  .description('take the space\'s apps off their shared network (the network is deleted)')
+  .action(async (ref: string) => {
+    const api = client();
+    const s = await resolveSpace(api, ref);
+    const next = await api.post<SpaceDto>(`/v1/spaces/${s.id}`, { shared: false }, {}, 'PATCH');
+    out(next, () => spacesText([next]));
+  });
+spacesCmd
+  .command('delete <space>')
+  .description('delete a space; its apps stay installed')
+  .action(async (ref: string) => {
+    const api = client();
+    const s = await resolveSpace(api, ref);
+    await api.delete(`/v1/spaces/${s.id}`);
+    const { items } = await api.get<SpacesDto>('/v1/spaces');
+    out(items, () => spacesText(items));
   });
 
 program

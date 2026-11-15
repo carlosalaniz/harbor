@@ -20,6 +20,7 @@ import type { SetupRequest, SetupStatusDto, TerminalClientMessage } from '../con
 import type { SetupService } from '../auth/setup.js';
 import type { BackupService } from '../backups/service.js';
 import type { EgressService } from '../egress/service.js';
+import type { SpacesService, SpaceChange } from '../lifecycle/spaces.js';
 import type { BackupAppPolicyDto, BackupPolicyDto } from '../contracts/api.js';
 import { CATALOG_STATUS_SCHEMA, DEVELOPER_MODE_SCHEMA, QUEUEABLE_KINDS, type QueueableKind } from '../contracts/api.js';
 import { isLanPeer, lanHostAllowed } from '../system/lan.js';
@@ -55,6 +56,8 @@ export interface ApiDeps {
   backups?: BackupService | null;
   // decision 184: VPN and offline apps
   egress?: EgressService | null;
+  // decision 202: spaces (named groups of apps, optional shared network)
+  spaces?: SpacesService | null;
 }
 
 declare module 'fastify' {
@@ -1326,6 +1329,40 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     async (req) => egress().setAllApps((req.body as { enabled: boolean }).enabled),
   );
   app.post('/v1/vpn/check', { preHandler: requireAuth, schema: { description: 'Ask the tunnel now (last handshake, bytes) instead of the cached answer.' } }, async () => egress().check());
+
+  // --- spaces (decision 202): named groups of apps; `shared` puts every service of every member on one private
+  // network. Routes change the desired state only; the Docker changes run as `space` operations (actor space-policy).
+  const spaces = (): SpacesService => {
+    if (!deps.spaces) throw new HarborError('UNSUPPORTED_CAPABILITY', 'spaces are not available on this machine');
+    return deps.spaces;
+  };
+  const SPACE_ID = { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: '^[a-f0-9]{8}$' } } } as const;
+  const spaceBody = (required: string[]) => ({
+    type: 'object',
+    additionalProperties: false,
+    required,
+    properties: {
+      name: { type: 'string', minLength: 1, maxLength: 64 },
+      apps: { type: 'array', maxItems: 200, items: { type: 'string', pattern: UUID_PATTERN } },
+      shared: { type: 'boolean' },
+      confirmShared: { type: 'boolean' },
+    },
+  });
+  app.get('/v1/spaces', { preHandler: requireAuth, schema: { description: 'Spaces: named groups of apps, whether each shares a private network, and (when shared) the names its apps reach each other by.' } }, async () => spaces().list());
+  app.post(
+    '/v1/spaces',
+    { preHandler: requireAuth, schema: { description: 'Make a space. `apps` leave any other space. `shared: true` needs `confirmShared: true`: every service of every member, databases included, can reach every other one.', body: spaceBody(['name']) } },
+    async (req, reply) => {
+      const created = spaces().create(req.body as SpaceChange & { name: string });
+      return reply.status(201).send(created);
+    },
+  );
+  app.patch(
+    '/v1/spaces/:id',
+    { preHandler: requireAuth, schema: { description: 'Rename a space, set its apps (the full list) or switch its shared network (turning it on needs `confirmShared: true`). Apps whose network changes are attached or detached live, one queued operation each.', params: SPACE_ID, body: spaceBody([]) } },
+    async (req) => spaces().update((req.params as { id: string }).id, req.body as SpaceChange),
+  );
+  app.delete('/v1/spaces/:id', { preHandler: requireAuth, schema: { description: 'Delete a space. Its apps stay installed; a shared network is detached from them and deleted.', params: SPACE_ID } }, async (req) => spaces().remove((req.params as { id: string }).id));
 
   // --- static UI
   if (config.uiDir && existsSync(path.join(config.uiDir, 'index.html'))) {

@@ -1752,6 +1752,53 @@ progress {
 .retained-list {
   margin-top: 18px;
 }
+/* decision 202: spaces on Home */
+.space-group {
+  margin-top: 24px;
+}
+.space-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.space-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+.space-head .btn {
+  margin-left: auto;
+}
+.space-apps {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.space-apps legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+.space-apps ul {
+  max-height: 260px;
+  overflow-y: auto;
+}
+.space-apps .plain > li {
+  padding: 2px 0;
+  border-bottom: 0;
+}
+.space-apps .check {
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.warn-box {
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, var(--line));
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  padding: 12px;
+}
+.block {
+  display: block;
+}
 .retained-list summary {
   cursor: pointer;
 }

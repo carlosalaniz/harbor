@@ -11,7 +11,7 @@ export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action' | 'cancelled';
 export type FinalOperationState = 'succeeded' | 'failed' | 'needs_action' | 'cancelled';
 export const FINAL_OPERATION_STATES: readonly FinalOperationState[] = ['succeeded', 'failed', 'needs_action', 'cancelled'];
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move' | 'backup' | 'restore' | 'relink';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move' | 'backup' | 'restore' | 'relink' | 'space';
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
 // The operator's own proxy (decision 118) is never the main address: Harbor does not own its TLS.
 export type PrimaryExposure = 'loopback' | 'tailnet' | 'public';

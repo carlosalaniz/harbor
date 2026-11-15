@@ -726,6 +726,28 @@ bottom bar as the *Alerts* tab, with the unread count on it.
 - CLI: `harbor look <app> --name Photos --glyph 📷 --color #3366ff`, `harbor look <app> --hide` / `--show`, `harbor look <app> --reset`; `harbor wallpaper`, `harbor wallpaper set --on --source bing|wikimedia|reddit [--subreddits a,b] [--every 24] [--reddit-client-id ID --reddit-secret-stdin]`, `harbor wallpaper next`; `harbor power restart|shutdown`.
 - **Restart / Shut down** work because bootstrap installs a small polkit rule that lets the Harbor service account ask the system for exactly those two actions. On an installation bootstrapped before v0.5.0, run `sudo /opt/harbor/bin/harbor bootstrap --yes` once to add it; Settings tells you when it is missing.
 
+### Spaces: group apps, optionally on one shared network (since 0.46.0)
+
+- **Home → New space** names a group ("Productivity") and picks its apps. Home then shows each space as its own
+  section under the apps that are in none; **Edit** on a section renames it, changes its apps or deletes it (its apps
+  stay installed). An app is in at most one space: picking it for another space moves it.
+- A space is **grouping only** unless you tick **Share a network**. Then every service of every app in the space
+  joins one private network (no internet route, nothing published) and the apps reach each other by name:
+  `<app>` for the app's main page and `<app>-<service>` for each of its services, e.g. `http://erpnext:8080`,
+  `erpnext-db`. The app's page (*Access → Space*) lists its names with their ports, ready to paste into the other
+  app (Open WebUI → its MCP server URL). Ports are the app's own ports inside its container, not the ones on
+  this machine.
+- **Sharing is not isolated, on purpose.** Every service, databases included, can reach every other one, and
+  Harbor's app login does not apply between them (each app's own login still does). Harbor asks you to tick
+  *I understand* before it turns it on. Use it only for apps you trust with each other's data. An offline app in a
+  shared space still reaches its peers there (like a link), so a peer with internet access could act for it.
+- Harbor refuses a shared space where two apps would answer to one name, or where an app's name equals a service
+  name inside another app (e.g. an app called `db`): put that app in another space or keep the space unshared.
+- Turning sharing on or off, or moving an app, attaches or detaches the running containers live (nothing restarts).
+- CLI: `harbor spaces`, `harbor spaces create Productivity --app erpnext --app open-webui`,
+  `harbor spaces add|remove <space> <app…>`, `harbor spaces share <space>` (asks; `--yes` skips the question),
+  `harbor spaces unshare <space>`, `harbor spaces rename <space> <name>`, `harbor spaces delete <space>`.
+
 Two things still need root on the machine, once: installing Tailscale (`bootstrap --with-tailscale`) and the public proxy (`bootstrap --with-public-proxy`). Settings shows the exact command when they are missing.
 
 ### If "Log in with Tailscale" says Harbor is not allowed to operate Tailscale

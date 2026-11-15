@@ -2302,3 +2302,41 @@ secrets:
   await expect(show.getByLabel('Admin password', { exact: true })).toHaveText(/^[a-f0-9]{64}$/);
   await show.getByRole('button', { name: 'Done', exact: true }).click();
 });
+
+test('decision 202: spaces — group two apps, share a network only after the warning is ticked, the app page lists its names, delete puts them back', async ({ page }) => {
+  await login(page);
+  const loose = page.locator('.icons[aria-label="Installed apps"] .icon-tile.instance');
+  await expect.poll(() => loose.count()).toBeGreaterThanOrEqual(2);
+  const before = await loose.count();
+  await page.getByRole('button', { name: 'New space', exact: true }).click();
+  const dlg = page.getByRole('dialog', { name: 'New space' });
+  await dlg.getByLabel('Space name', { exact: true }).fill('Productivity');
+  const boxes = dlg.getByRole('group', { name: 'Apps' }).getByRole('checkbox');
+  await boxes.nth(0).check();
+  await boxes.nth(1).check();
+  await dlg.getByRole('checkbox', { name: /Share a network/ }).check();
+  await expect(dlg.getByRole('note')).toContainText('databases included');
+  const create = dlg.getByRole('button', { name: 'Create space', exact: true });
+  await expect(create).toBeDisabled();
+  await dlg.getByRole('checkbox', { name: 'I understand, share the network', exact: true }).check();
+  await create.click();
+  await expect(dlg).toBeHidden();
+  const group = page.getByRole('region', { name: 'Productivity' });
+  await expect(group.getByText('Shared network', { exact: true })).toBeVisible();
+  const inSpace = page.getByRole('list', { name: 'Apps in Productivity' }).locator('.icon-tile.instance');
+  await expect(inSpace).toHaveCount(2);
+  await expect(loose).toHaveCount(before - 2);
+  // the app page: overview names the space, Access lists the names the other app uses
+  await inSpace.first().getByRole('button', { name: /^Details of / }).click();
+  await page.getByRole('button', { name: 'Space: Productivity, shared network', exact: true }).click();
+  const card = page.getByRole('region', { name: 'Space', exact: true });
+  await expect(card.locator('code').first()).toHaveText(/^http:\/\/[a-z][a-z0-9-]*:\d+$/);
+  await page.keyboard.press('Escape');
+  // delete: the apps stay installed and go back to the main grid
+  await group.getByRole('button', { name: 'Edit space Productivity', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit Productivity' });
+  await edit.getByRole('button', { name: 'Delete space', exact: true }).click();
+  await edit.getByRole('button', { name: 'Delete Productivity? Apps stay installed', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Productivity' })).toHaveCount(0);
+  await expect(loose).toHaveCount(before);
+});

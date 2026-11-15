@@ -1,4 +1,5 @@
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
+import { spaceOfInstance } from './space-members.js';
 import path from 'node:path';
 import { UUID_RE } from '../contracts/patterns.js';
 import { tagValue } from '../backups/restic.js';
@@ -1914,7 +1915,9 @@ export class ApplicationService {
   // it when its turn comes (OperationRunner → planQueuedAction). Idempotent like submit: same key, same request → same operation.
   queueAction(instanceId: string, kind: string, actor: string, idempotencyKey: string): SubmitResult {
     const { repo, ids } = this.ctx;
-    if (!(QUEUEABLE_KINDS as readonly string[]).includes(kind)) throw new HarborError('INVALID_REQUEST', `${kind} cannot be queued without a review`, { nextAction: `Queueable actions: ${QUEUEABLE_KINDS.join(', ')}. Make a plan for anything else.` });
+    // decision 202: Harbor's own `space` items (actor space-policy) are planned at their turn too; the API never takes them
+    const internalKind = kind === 'space' && actor === 'space-policy';
+    if (!internalKind && !(QUEUEABLE_KINDS as readonly string[]).includes(kind)) throw new HarborError('INVALID_REQUEST', `${kind} cannot be queued without a review`, { nextAction: `Queueable actions: ${QUEUEABLE_KINDS.join(', ')}. Make a plan for anything else.` });
     const k = kind as QueueableKind;
     const result = repo.transaction((): SubmitResult => {
       const existing = repo.operationByIdempotencyKey(idempotencyKey);
@@ -2304,6 +2307,7 @@ export class ApplicationService {
     if (req.kind === 'expose' || req.kind === 'unexpose' || req.kind === 'reconfigure') return this.exposurePlan(req, inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'seal') return this.sealPlan(inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'relink') return this.relinkPlan(inst, pkgName, actor, now, expiresAt);
+    if (req.kind === 'space') return this.spacePlan(inst, pkgName, actor, now, expiresAt);
     if (req.kind === 'move') return this.movePlan(inst, req.location.dir, pkgName, actor, now, expiresAt);
     if (req.kind === 'backup') return this.backupPlan(inst, req.runId, pkgName, actor, now, expiresAt);
     if (req.kind === 'restore') return this.restorePlan(inst, req.runId, req.targetId, pkgName, actor, now, expiresAt);
@@ -2955,6 +2959,35 @@ export class ApplicationService {
       releaseHashes: inst.releaseHashes,
     };
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'relink', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
+    repo.insertPlan(plan);
+    return this.plan(plan.id);
+  }
+
+  // Decision 202: put an app's containers on the network its space wants (or take them off), live. Queued by the
+  // spaces service (actor `space-policy`) after a space's apps or its shared switch change; nothing is recreated.
+  private spacePlan(inst: InstanceRow, pkgName: string, actor: string, now: Date, expiresAt: string): PlanDto {
+    const { repo, ids } = this.ctx;
+    if (inst.installState !== 'installed') throw new HarborError('INVALID_STATE', `${inst.name} is ${inst.installState}; its space network is attached when it starts`);
+    const space = spaceOfInstance(this.ctx, inst.id);
+    const proposal: PlanProposal = {
+      packageId: inst.packageId,
+      revision: inst.revision,
+      name: inst.name,
+      project: inst.project,
+      endpoints: inst.endpoints,
+      storage: [],
+      location: null,
+      secrets: inst.secrets.map((s) => ({ id: s.id })),
+      changes: [
+        space?.shared
+          ? `Put ${pkgName} ("${inst.name}") on the shared network of space ${space.name}: every app of the space reaches it, and it reaches them, by name`
+          : `Take ${pkgName} ("${inst.name}") off any space network${space ? ` (space ${space.name} does not share one)` : ''}`,
+        'Same containers, data, ports and addresses; nothing is recreated',
+      ],
+      warnings: [],
+      releaseHashes: inst.releaseHashes,
+    };
+    const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'space', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
   }

@@ -54,6 +54,11 @@ and choose, per app, *Direct*, *Through the VPN* or *Offline* (or send every app
 An app on the VPN never falls back to direct when the tunnel drops; an offline app opens no
 connection at all, yet you reach both exactly as before. See the [operator guide](docs/OPERATOR_GUIDE.md) §4d.
 
+**Spaces** — group apps on Home ("Productivity", "AI tooling"). Isolated by default; tick *Share a
+network* and the apps of a space reach each other by name (`http://erpnext:8080`), for example Open WebUI
+using an ERP's MCP server. Sharing is insecure on purpose (databases included) and Harbor says so before it
+turns it on. See the [operator guide](docs/OPERATOR_GUIDE.md) §4c.
+
 **Plus your own apps** — upload a zip or point Harbor at a git repo; every push can redeploy
 automatically. Apps can ask you for a value at install (another service's token, an SMTP password)
 and talk privately to another app you pick, over a network only those two join. See

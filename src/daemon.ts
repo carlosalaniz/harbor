@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { SpacesService } from './lifecycle/spaces.js';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildApi } from './api/server.js';
@@ -264,7 +265,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
         return { installed: false, loggedIn: false };
       }
     };
-    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version, backups: ctx.backups, egress: ctx.egress });
+    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version, backups: ctx.backups, egress: ctx.egress, spaces: new SpacesService(ctx) });
     await app.listen({ host: config.listen.host, port: config.listen.port });
     // The HTTPS console listener serves these same routes (same Host/Origin
     // guards, same bearer auth) — stashed before the LAN listeners start.

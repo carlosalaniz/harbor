@@ -9,7 +9,7 @@ export type Readiness = 'healthy' | 'unhealthy' | 'checking' | 'unknown';
 export type OperationState = 'queued' | 'applying' | 'verifying' | 'succeeded' | 'failed' | 'needs_action' | 'cancelled';
 // configure (decisions 125/126/180): change an installed app's operator-provided secrets, link providers and/or settings.
 // backup/restore (decisions 151, 153): the cold pass of a backup run, and restoring an app in place.
-export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move' | 'backup' | 'restore' | 'relink';
+export type PlanKind = 'install' | 'start' | 'stop' | 'remove' | 'reinstall' | 'purge' | 'update' | 'expose' | 'unexpose' | 'reconfigure' | 'restart' | 'configure' | 'seal' | 'move' | 'backup' | 'restore' | 'relink' | 'space';
 // Decision 183: kinds that may be queued as an action without a plan (`POST /v1/operations {action}`); Harbor plans
 // them when their turn comes. They take no typed values, so a queued action never holds a secret.
 export const QUEUEABLE_KINDS = ['start', 'stop', 'restart', 'update', 'remove', 'reinstall', 'purge'] as const;
@@ -19,7 +19,8 @@ export type QueueableKind = (typeof QUEUEABLE_KINDS)[number];
 // not cancellable and an auto-update's refusal rings the bell, both decided by the actor name). A person's queued
 // action never merges into an item of one of these actors (decision 183 dedupe); the console reads the same list.
 // vpn-policy (decision 184): the restarts that move running apps' DNS when every-app VPN is switched
-export const INTERNAL_ACTORS = ['drive-guard', 'link-guard', 'lock-guard', 'scheduler', 'auto-update', 'git-source', 'tailnet-policy', 'vpn-policy'] as const;
+// space-policy (decision 202): the live attach/detach that follows a space's apps or its shared-network switch
+export const INTERNAL_ACTORS = ['drive-guard', 'link-guard', 'lock-guard', 'scheduler', 'auto-update', 'git-source', 'tailnet-policy', 'vpn-policy', 'space-policy'] as const;
 export type InternalActor = (typeof INTERNAL_ACTORS)[number];
 // 'proxy' = published through the operator's own reverse proxy (decision 118); Harbor runs nothing for it.
 export type ExposureVia = 'tailnet' | 'public' | 'proxy';
@@ -90,6 +91,33 @@ export interface InternetDto {
   // every app goes through the VPN (turns direct into vpn)
   allApps: boolean;
 }
+// Spaces (decision 202): named groups of apps on Home; `shared` puts every service of every member on one private
+// network under the names Harbor gives (`<app>`, `<app>-<service>`).
+export interface SpaceAddressDto {
+  alias: string; // the name other apps of the space use
+  service: string;
+  // http://<alias>:<port> when the service serves an endpoint (its container port), else the bare name
+  address: string;
+  main: boolean; // the app's own name (its first endpoint's service)
+}
+export interface SpaceAppDto {
+  instanceId: string;
+  name: string;
+  addresses: SpaceAddressDto[]; // empty unless the space is shared
+}
+export interface SpaceDto {
+  id: string;
+  name: string;
+  shared: boolean;
+  network: string | null; // the Docker network's name while shared
+  apps: SpaceAppDto[];
+  // what would make the shared names ambiguous (after an update added a service, say); Harbor leaves those out
+  conflicts: string[];
+}
+export interface SpacesDto {
+  items: SpaceDto[];
+}
+
 export interface VpnDto {
   // this machine can load the firewall (nftables); tunnelAvailable: and bring up WireGuard
   available: boolean;
@@ -653,7 +681,10 @@ export type PlanRequest =
   | { kind: 'restore'; instanceId: string; runId: string; targetId?: string }
   // decision 171: attach an app's links again with only the names Harbor gives (no container recreated).
   // Internal: queued by the daemon's one-time check after an upgrade (actor `link-guard`), not by the API.
-  | { kind: 'relink'; instanceId: string };
+  | { kind: 'relink'; instanceId: string }
+  // decision 202: attach or detach an app's containers on its space's shared network (no container recreated).
+  // Internal: queued by the spaces service (actor `space-policy`) after a space changes, not by the API.
+  | { kind: 'space'; instanceId: string };
 
 export interface DomainDto {
   hostname: string;

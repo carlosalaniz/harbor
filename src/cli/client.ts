@@ -96,7 +96,7 @@ export class ApiClient {
     if (res.status >= 400) throw new HarborError('INTERNAL', `HTTP ${res.status}`, {});
     return text;
   }
-  post<T>(url: string, body: unknown, headers: Record<string, string> = {}, method: 'POST' | 'PUT' = 'POST'): Promise<T> {
+  post<T>(url: string, body: unknown, headers: Record<string, string> = {}, method: 'POST' | 'PUT' | 'PATCH' = 'POST'): Promise<T> {
     return this.call<T>(method, url, body, headers).then((r) => r.body);
   }
   delete(url: string): Promise<void> {

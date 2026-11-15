@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { SpaceCard, spaceLabel } from './app/Spaces';
 import type { CatalogItemDto, InstanceDetail, InstanceSummary, NotificationsDto, OperationDto } from '../../src/contracts/api';
 import { ApiError, api, forgetToken, hasToken, restoreRemembered } from './api';
 import { Copy, EventList, RecoveryCard, openUrl as appOpenUrl } from './app/components';
@@ -558,6 +559,8 @@ function ConsoleShell({ onAuthLost }: { onAuthLost: (msg?: string) => void }) {
       {liveDrawer && !c.pending && !publishing && (
         <AppDrawer
           inst={liveDrawer}
+          space={<SpaceCard c={c} inst={liveDrawer} />}
+          spaceLabel={spaceLabel(c.data.spaces, liveDrawer.id)}
           exposures={c.data.exposures.filter((e) => e.instanceId === liveDrawer.id)}
           ops={c.queue.active.filter((o) => o.instanceId === liveDrawer.id)}
           onClose={() => {
