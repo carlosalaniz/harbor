@@ -38,6 +38,34 @@ describe('per-app resource usage and storage inventory', () => {
     await waitTicks();
   });
 
+  // An operation that finishes while a tick is sampling wrote fresher state; the tick must not put its stale view
+  // back. A stop finishing mid-tick used to be overwritten with 'running', and Lock then refused the stopped app
+  // ("is running; its files are open"; app-homes CI flake, 0.46.2).
+  it('a tick does not overwrite state an operation wrote while it was sampling', async () => {
+    const observer = h.daemon.observer;
+    observer.stop();
+    await new Promise((r) => setTimeout(r, 600)); // let a tick already under way finish
+    const real = h.fake.containerStats.bind(h.fake);
+    let wrote = false;
+    h.fake.containerStats = async (id: string) => {
+      if (!wrote) {
+        wrote = true; // as a stop finishing between the tick's inspection and its write
+        h.daemon.ctx.repo.updateInstance(a.id, { runtime: 'stopped', readiness: 'unknown', observedAt: h.daemon.ctx.repo.now() });
+      }
+      return real(id);
+    };
+    try {
+      await observer.tick();
+      expect(wrote).toBe(true);
+      expect(h.daemon.ctx.repo.instance(a.id)!.runtime).toBe('stopped');
+      await observer.tick(); // the next tick sees the containers as they are
+      expect(h.daemon.ctx.repo.instance(a.id)!.runtime).toBe('running');
+    } finally {
+      h.fake.containerStats = real;
+      observer.start();
+    }
+  });
+
   it('groups volume sizes per app and reports unowned volumes separately', async () => {
     // A stateful app owns volumes; an unrelated volume must not be attributed to any app.
     const r = await h.api.run({ kind: 'install', packageId: 'n8n' });

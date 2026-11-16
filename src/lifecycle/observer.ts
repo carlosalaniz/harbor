@@ -124,6 +124,11 @@ export class Observer {
         if (runtime === 'running' && inst.installState === 'installed') {
           readiness = (await this.quickProbe(inst.id, inst.packageId, inst.endpoints)) ? 'healthy' : 'unhealthy';
         }
+        // An operation that ran while this tick was sampling (a stop finishing between the inspection and here)
+        // changed the row; this tick's view is stale, so it writes nothing for the app (the next tick will). A stale 'running' over a
+        // stop's 'stopped' made Lock refuse an app that had just stopped (CI flake in app-homes, 0.46.2).
+        const fresh = this.ctx.repo.instance(inst.id);
+        if (!fresh || fresh.activeOperationId || fresh.runtime !== inst.runtime || fresh.readiness !== inst.readiness || fresh.observedAt !== inst.observedAt) continue;
         // An app that should be running but is not answering is a warning; recovery clears the unread row.
         if (inst.desired === 'running' && inst.installState === 'installed' && (readiness === 'unhealthy' || runtime === 'stopped')) {
           this.ctx.notifier.notify({ kind: 'app-degraded', severity: 'warning', title: `${inst.displayName ?? inst.name} is not answering`, body: runtime === 'stopped' ? 'Its containers are not running. Open the app drawer to start it or check its logs.' : 'Its containers run but the app does not answer its health check. Check its logs under Troubleshoot.', instanceId: inst.id, dedupeKey: `app-degraded:${inst.id}` });
