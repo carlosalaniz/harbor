@@ -226,6 +226,8 @@ export function mockInstances(): InstanceSummary[] {
     apiOnly: false,
     ports: [],
     internet: { mode: 'direct' as const, choice: null, packageDefault: 'direct' as const, allApps: false },
+    // decision 205: normal priority and no limits, on a 20-thread machine with 32 GiB
+    limits: { priority: 'normal' as const, cpus: null, memoryMiB: null, package: { priority: 'normal' as const, cpus: null, memoryMiB: null }, chosen: { priority: false, cpus: false, memoryMiB: false }, host: { cpus: 20, memoryMiB: 32768 } },
   };
   return [
     {
@@ -256,6 +258,8 @@ export function mockInstances(): InstanceSummary[] {
       endpoints: [endpoint(18082)],
       announce: [{ endpointId: 'web', type: '_immich._tcp', name: 'Immich', state: 'announced' as const }],
       usage: { cpuPercent: 34, memoryBytes: 900 * MiB, sampledAt: t },
+      // decision 205: background priority chosen, a 4 GiB memory limit from the package
+      limits: { priority: 'background' as const, cpus: 4, memoryMiB: 4096, package: { priority: 'normal' as const, cpus: null, memoryMiB: 4096 }, chosen: { priority: true, cpus: true, memoryMiB: false }, host: { cpus: 20, memoryMiB: 32768 } },
       version: '3.2.1',
       updateAvailable: { revision: '2', version: '3.3.1', releaseNotes: 'Faster search' },
     },

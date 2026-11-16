@@ -1,4 +1,5 @@
 import { LOGIN_KEY_SECRET, LOGIN_PASSWORD_SECRET, legacyLoginKeySecret, legacyLoginPasswordSecret } from '../planner/gate.js';
+import { readChoice, type ResourceChoice } from '../planner/resources.js';
 import { chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import type { InternetMode, LoadedPackage, Manifest, SettingValue } from '../contracts/types.js';
@@ -178,7 +179,7 @@ export function settingsFile(stateDir: string, instanceId: string): string {
   return path.join(instanceDir(stateDir, instanceId), SETTINGS_FILE);
 }
 
-function readSettingsDoc(stateDir: string, instanceId: string): { values?: unknown; internet?: unknown; login?: unknown } | null {
+function readSettingsDoc(stateDir: string, instanceId: string): { values?: unknown; internet?: unknown; login?: unknown; resources?: unknown } | null {
   let raw: string;
   try {
     raw = readFileSync(settingsFile(stateDir, instanceId), 'utf8');
@@ -186,7 +187,7 @@ function readSettingsDoc(stateDir: string, instanceId: string): { values?: unkno
     return null;
   }
   try {
-    const doc = JSON.parse(raw) as { values?: unknown; internet?: unknown; login?: unknown };
+    const doc = JSON.parse(raw) as { values?: unknown; internet?: unknown; login?: unknown; resources?: unknown };
     return doc && typeof doc === 'object' ? doc : null;
   } catch {
     return null;
@@ -217,16 +218,24 @@ export function readLoginChoices(stateDir: string, instanceId: string): Record<s
   return out;
 }
 
-function writeSettingsDoc(stateDir: string, instanceId: string, values: Record<string, SettingValue>, internet: InternetMode | null, login: Record<string, boolean> = readLoginChoices(stateDir, instanceId)): void {
+// Decision 205: the operator's CPU/memory choice for this app (`resources`), carried by backups and restores like the
+// rest of this file. {} = follow the package.
+export function readResourceChoice(stateDir: string, instanceId: string): ResourceChoice {
+  return readChoice(readSettingsDoc(stateDir, instanceId)?.resources);
+}
+
+function writeSettingsDoc(stateDir: string, instanceId: string, values: Record<string, SettingValue>, internet: InternetMode | null, login: Record<string, boolean> = readLoginChoices(stateDir, instanceId), resources: ResourceChoice = readResourceChoice(stateDir, instanceId)): void {
   const file = settingsFile(stateDir, instanceId);
   const logins = Object.fromEntries(Object.entries(login).filter(([, on]) => on).sort(([a], [b]) => a.localeCompare(b)));
-  if (!Object.keys(values).length && internet === null && !Object.keys(logins).length) {
+  const res = readChoice(resources);
+  const hasRes = Object.keys(res).length > 0;
+  if (!Object.keys(values).length && internet === null && !Object.keys(logins).length && !hasRes) {
     rmSync(file, { force: true });
     return;
   }
   mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const sorted = Object.fromEntries(Object.entries(values).sort(([a], [b]) => a.localeCompare(b)));
-  writeDurable(file, JSON.stringify({ format: 1, values: sorted, ...(internet ? { internet } : {}), ...(Object.keys(logins).length ? { login: logins } : {}) }, null, 2) + '\n', 0o644, false);
+  writeDurable(file, JSON.stringify({ format: 1, values: sorted, ...(internet ? { internet } : {}), ...(Object.keys(logins).length ? { login: logins } : {}), ...(hasRes ? { resources: res } : {}) }, null, 2) + '\n', 0o644, false);
   chmodSync(file, 0o644); // UMask=0077 masks the open() mode
 }
 
@@ -241,6 +250,10 @@ export function writeInternetChoice(stateDir: string, instanceId: string, choice
 
 export function writeLoginChoices(stateDir: string, instanceId: string, login: Record<string, boolean>): void {
   writeSettingsDoc(stateDir, instanceId, readSettingOverrides(stateDir, instanceId), readInternetChoice(stateDir, instanceId), login);
+}
+
+export function writeResourceChoice(stateDir: string, instanceId: string, choice: ResourceChoice): void {
+  writeSettingsDoc(stateDir, instanceId, readSettingOverrides(stateDir, instanceId), readInternetChoice(stateDir, instanceId), readLoginChoices(stateDir, instanceId), choice);
 }
 
 // The raw bytes (backups carry the file as it is; null = no overrides).

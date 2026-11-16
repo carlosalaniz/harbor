@@ -1,6 +1,7 @@
 import type { Db } from './db.js';
 import { rfc3339, type Clock } from '../util.js';
-import type { GpuDto, PlanInternetDto, PlanSettingDto, SettingValue } from '../contracts/api.js';
+import type { GpuDto, PlanInternetDto, PlanSettingDto, ResourceLimitsDto, SettingValue } from '../contracts/api.js';
+import type { ResourceChoice } from '../planner/resources.js';
 
 // Thin typed data access. JSON columns hold small immutable nested records.
 
@@ -212,6 +213,10 @@ export interface PlanProposal {
   internet?: PlanInternetDto;
   // configure: the internet choice is the only change (nothing is re-rendered or restarted)
   internetOnly?: boolean;
+  // decision 205: configure: the CPU/memory choice the runner stores, what the main service runs with before and after,
+  // whether `docker update` can apply it to running containers, and whether it is the plan's only change
+  resources?: { choice: ResourceChoice; from: ResourceLimitsDto; to: ResourceLimitsDto; live: boolean; changed: boolean };
+  resourcesOnly?: boolean;
   // decision 194: configure: the app-login switches after this plan, and the endpoints that get a new password
   // decision 195: one login per app; generate = Harbor makes the password and shows it once (install, Add a domain)
   login?: { choices: Record<string, boolean>; newPassword: boolean; generate?: boolean };

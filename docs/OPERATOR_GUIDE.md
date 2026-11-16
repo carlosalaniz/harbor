@@ -1020,6 +1020,28 @@ Some apps have settings you can change without editing any file (decision 180), 
   made with `harbor plan`. On/off settings take `on`/`off` (or `true`/`false`). A value that is not allowed is
   refused with `SETTING_INVALID` and what the setting accepts.
 
+### CPU and memory (since 0.47.0)
+
+One busy app (a document reader indexing a pile of PDFs, a photo library scanning faces) can take every CPU core and
+slow everything else down. On the app's page, **Settings → CPU and memory** shows what the app may take and what it
+uses right now; **Change…** sets, for each of its services:
+
+- **CPU priority**: *Normal*, *Low* (gives way when other apps need the CPU) or *Background* (only the CPU others leave
+  free). A low-priority app still runs at full speed while the machine is idle, so this is usually the right choice for
+  an app that does heavy work in the background.
+- **CPU limit**: none, or at most N cores, always (the app is slower even when nothing else runs).
+- **Memory limit**: none, or at most so much memory. A service that needs more is stopped by the kernel and restarted,
+  so leave room above what it uses.
+
+Each one can also follow *the app's default* (some apps ship one). The review says how it applies: setting or
+tightening a value applies at once to the running app with no restart; removing a limit or going back to normal
+priority restarts the app once. A stopped app gets the new values when it next starts. The choice is kept across
+Restart, updates, backups and restores.
+
+From a terminal: `harbor limits <app>` shows them; `harbor limits <app> --priority background --cpus 2 --memory 4g`
+changes them (`none` removes a limit, `default` follows the app again). `harbor configure <app>` takes the same three
+flags.
+
 ### VPN and offline apps (since 0.36.0)
 
 Every app has an **Internet access** choice (decision 184):

@@ -3,7 +3,7 @@ import type { AppBackupsDto, CatalogItemDto, ExposureDto, InstanceDetail, Instan
 import { api } from '../api';
 import { AppBackupsPanel } from './pages/Backups';
 import { Copy, Dialog, EventList, InstanceIcon, Pill, StatusPill, appLabel, openUrl } from './components';
-import { DefaultLogin, InternetDialog, MovePanel, PassphrasePanel, RevealLoginDialog, RevealSecretsDialog, UnlockForm, linkCandidates } from './dialogs';
+import { DefaultLogin, InternetDialog, MovePanel, PassphrasePanel, ResourcesDialog, RevealLoginDialog, RevealSecretsDialog, UnlockForm, limitsSummary, linkCandidates } from './dialogs';
 import { fmtBytes, fmtTime, fmtVersion, updateLine } from './format';
 import { gpuAppText } from './gpu-text';
 import { internetHint, internetSummary } from './internet-text';
@@ -122,6 +122,7 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
   const [locking, setLocking] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [internetOpen, setInternetOpen] = useState(false);
+  const [limitsOpen, setLimitsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [revealOpen, setRevealOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false); // decision 199
@@ -609,6 +610,16 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           ))}
         </Section>
       )}
+      {inst.limits && (
+        // decision 205: how much of the machine the app may take; its live CPU use next to it
+        <Section title="CPU and memory">
+          <Row title={limitsSummary(inst.limits)} sub={inst.usage ? `Using now: CPU ${inst.usage.cpuPercent}% · ${fmtBytes(inst.usage.memoryBytes)}` : 'Not running'}>
+            <button className="btn small" disabled={busy} onClick={() => setLimitsOpen(true)} aria-label={`Change CPU and memory of ${inst.name}`}>
+              Change…
+            </button>
+          </Row>
+        </Section>
+      )}
       {detail?.gpu && (
         <Section title="Graphics card">
           <Row title={gpuAppText(detail.gpu)} />
@@ -814,6 +825,18 @@ export function AppDrawer({ inst, exposures, ops = [], onClose, onAction, onPubl
           onReview={(internet) => {
             setInternetOpen(false);
             onAction({ kind: 'configure', instance: inst, internet });
+          }}
+        />
+      )}
+      {limitsOpen && inst.limits && (
+        <ResourcesDialog
+          inst={inst}
+          limits={inst.limits}
+          title={`CPU and memory of ${name}`}
+          onClose={() => setLimitsOpen(false)}
+          onReview={(resources) => {
+            setLimitsOpen(false);
+            onAction({ kind: 'configure', instance: inst, resources });
           }}
         />
       )}

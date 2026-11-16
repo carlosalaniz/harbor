@@ -9,6 +9,8 @@ import { renderedDns } from '../egress/rules.js';
 import { defaultNetworkName, identityFor, ownedVolumeName, volumeLabels, type InstanceIdentity } from '../planner/identity.js';
 import { HARBOR_SUBNET_BLOCK, isHarborSubnet, pickSubnet } from '../planner/subnets.js';
 import { renderCompose, type ConsumerLink } from '../planner/render.js';
+import { effectiveResources, renderedResourceKeys } from '../planner/resources.js';
+import { hostCapacity } from '../system/capacity.js';
 import { gpuChanges, gpuFromRendered, gpuServicesOf } from '../planner/gpu.js';
 import { needsBinder } from '../planner/permissions.js';
 import { appLoginOf, gateCookieName, gatedEndpoints, gatePasswordHash, gateService, GATE_PORT, LOGIN_KEY_SECRET, LOGIN_PASSWORD_SECRET, type GateRender } from '../planner/gate.js';
@@ -25,7 +27,7 @@ import { protectorFor } from '../storage/crypto-provider.js';
 import { zeroMachineKey } from '../auth/machine-key.js';
 import type { HostGpu, LoadedPackage, Manifest } from '../contracts/types.js';
 import type { InstanceRow, OperationRow, PlanRow, ResourceRow } from '../state/repo.js';
-import { adoptLegacyLogin, ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, loginSecretId, readOperatorSecret, readSecret, readSettingOverrides, readSettingsBytes, removeSecret, secretExists, SETTINGS_FILE, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose, writeSettingOverrides, writeSettingsBytes, readRuntimeModel, readInternetChoice, writeInternetChoice, readLoginChoices, writeLoginChoices } from './instance-dir.js';
+import { adoptLegacyLogin, ensureInstanceDirs, generateSecretOnce, instanceDir, loadReleaseSnapshot, loginSecretId, readOperatorSecret, readSecret, readSettingOverrides, readSettingsBytes, removeSecret, secretExists, SETTINGS_FILE, writeOperatorSecret, writeReleaseSnapshot, writeRuntimeCompose, writeSettingOverrides, writeSettingsBytes, readRuntimeModel, readInternetChoice, writeInternetChoice, readLoginChoices, writeLoginChoices, readResourceChoice, writeResourceChoice } from './instance-dir.js';
 import { applySettingValues, formatSettingValue, settingsOf } from '../planner/settings.js';
 import type { SettingValue } from '../contracts/types.js';
 import { waitReady } from './readiness.js';
@@ -621,7 +623,7 @@ export class OperationRunner {
     const settingOverrides = settingsOf(pkg.manifest).length ? readSettingOverrides(this.ctx.config.stateDir, inst.id) : {};
     const subnet = await this.appSubnet(op, identity);
     const gates = this.gatesFor(op, pkg, inst);
-    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, volumeNames, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: bind.bindHost, lanRelay: bind.lanRelay, provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages, consumerLinks, ...(gpu ? { gpu } : {}), settingOverrides, internet: this.ctx.egress?.modeOf(inst, pkg.manifest) ?? 'direct', ...(subnet ? { subnet } : {}), ...(gates.length ? { gates } : {}) });
+    const rendered = renderCompose({ manifest: pkg.manifest, compose: pkg.compose, identity, endpoints: inst.endpoints, secretValues, volumeNames, endpointUrls: this.endpointUrlsFor(inst, primary), externalStorage, bindHost: bind.bindHost, lanRelay: bind.lanRelay, provisioned: provisioned ?? this.provisionedFor(pkg, inst), builtImages, consumerLinks, ...(gpu ? { gpu } : {}), settingOverrides, internet: this.ctx.egress?.modeOf(inst, pkg.manifest) ?? 'direct', ...(subnet ? { subnet } : {}), ...(gates.length ? { gates } : {}), resources: readResourceChoice(this.ctx.config.stateDir, inst.id), host: hostCapacity() });
     if (gpu && !keepGpu) this.event(op, 'preparing', gpuChanges(pkg.manifest, gpu).join('; '));
     const file = writeRuntimeCompose(runtimeDir, rendered.yaml);
     try {
@@ -1196,7 +1198,7 @@ export class OperationRunner {
   // already applied it; the file keeps every later `up` consistent). Decision 167: the file keeps the port
   // binding its containers run with (read back from the file it replaces), so the relay and rebindToApply keep
   // describing the running app, not what its next restart will do.
-  private async rewriteCompose(op: OperationRow, other: InstanceRow, sink: string[], bestEffort: boolean): Promise<void> {
+  private async rewriteCompose(op: OperationRow, other: InstanceRow, sink: string[], bestEffort: boolean, why = 'for its links'): Promise<void> {
     try {
       const fresh = this.ctx.repo.instance(other.id);
       if (!fresh || fresh.purgedAt) return;
@@ -1209,7 +1211,7 @@ export class OperationRunner {
       // decision 179: and the graphics card they run with (a toolkit installed since is used by the next Restart)
       const keepGpu = gpuServicesOf(pkg.manifest).length ? gpuFromRendered(readRuntimeModel(dirs.runtime), gpuServicesOf(pkg.manifest)) : undefined;
       await this.renderAndValidate(op, pkg, identity, fresh, dirs.runtime, this.readSecrets(pkg, dirs.secrets, sink), undefined, undefined, binding, keepGpu);
-      this.event(op, 'preparing', `updated the private Compose file of ${fresh.name} for its links`);
+      this.event(op, 'preparing', `updated the private Compose file of ${fresh.name} ${why}`);
     } catch (e) {
       if (!bestEffort) throw e;
       this.event(op, 'preparing', `could not update the Compose file of ${other.name} (${e instanceof Error ? e.message : String(e)}); its next Restart applies the change`);
@@ -1363,6 +1365,13 @@ export class OperationRunner {
     // decision 184: internet access. The containers carry the resolver of their mode, so a running app is re-created
     // (rules first: upAndRecord applies them between create and start); a stopped one only gets its rules and is
     // re-created at its next start. The choice is put back when any of that fails, so the app shows what it runs.
+    const reverts: (() => void)[] = [];
+    // decision 205: the CPU/memory choice is stored first, so every render below carries it; put back on failure
+    if (plan.proposal.resources) {
+      const before = readResourceChoice(this.ctx.config.stateDir, inst.id);
+      writeResourceChoice(this.ctx.config.stateDir, inst.id, plan.proposal.resources.choice);
+      reverts.push(() => writeResourceChoice(this.ctx.config.stateDir, inst.id, before));
+    }
     let revert: (() => void) | null = null;
     if (plan.proposal.internet) {
       const before = readInternetChoice(this.ctx.config.stateDir, inst.id);
@@ -1377,6 +1386,11 @@ export class OperationRunner {
         this.event(op, 'preparing', `${inst.name} is stopped: its containers follow when it next starts`);
         return;
       }
+      const res = plan.proposal.resources;
+      if (plan.proposal.resourcesOnly && res && (!res.changed || inst.desired !== 'running' || res.live)) {
+        await this.applyResourcesInPlace(op, pkg, inst, res, sink);
+        return;
+      }
       await this.applyPlannedLinks(op, inst, plan.proposal.links ?? [], sink);
       const identity = identityFor(this.ctx.installationId, inst.id);
       const fresh = repo.instance(inst.id) ?? inst;
@@ -1387,11 +1401,65 @@ export class OperationRunner {
       await this.checkReadiness(op, pkg, fresh, containers);
       repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: repo.now() });
     } catch (e) {
+      for (const r of reverts) r();
       if (revert) {
         revert();
         await this.ctx.egress?.sync().catch(() => undefined);
       }
       throw e;
+    }
+  }
+
+  // Decision 205: a CPU/memory change that needs no new containers. Stopped: the next start sees the rendered limits
+  // are stale and re-creates. Running: the Compose file is re-rendered (Restart and updates keep the limits) and each
+  // container gets `docker update`; a readiness check follows (a memory limit below what a service uses stops it).
+  private async applyResourcesInPlace(op: OperationRow, pkg: LoadedPackage, inst: InstanceRow, res: NonNullable<PlanRow['proposal']['resources']>, sink: string[]): Promise<void> {
+    if (!res.changed) {
+      this.event(op, 'preparing', `${inst.name}: stored the choice; its containers keep the same limits`);
+      return;
+    }
+    if (inst.desired !== 'running') {
+      this.event(op, 'preparing', `${inst.name} is stopped: its containers get the new limits when it next starts`);
+      return;
+    }
+    await this.rewriteCompose(op, inst, sink, false, 'with the new limits');
+    const host = hostCapacity();
+    const containers: ContainerInfo[] = [];
+    for (const r of this.ctx.repo.resources(inst.id).filter((x) => x.kind === 'container')) {
+      const c = await this.ctx.docker.inspectContainer(r.dockerId ?? r.name);
+      if (!c || c.labels[LABELS.instance] !== inst.id) continue;
+      containers.push(c);
+      const svc = c.labels[LABELS.service] ?? '';
+      const def = pkg.compose.services[svc];
+      if (!def) continue; // Harbor's own login gate: no limits
+      const want = effectiveResources(def, res.choice, host);
+      const upd: { cpuShares?: number; nanoCpus?: number; memoryBytes?: number } = {};
+      if (want.cpuShares !== null) upd.cpuShares = want.cpuShares;
+      if (want.cpus !== null) upd.nanoCpus = Math.round(want.cpus * 1e9);
+      if (want.memoryMiB !== null) upd.memoryBytes = want.memoryMiB * 1024 * 1024;
+      if (!Object.keys(upd).length) continue;
+      await this.ctx.docker.updateResources(c.id, upd);
+      this.event(op, 'applying', `${svc}: ${Object.entries(renderedResourceKeys(want)).filter(([k]) => k !== 'memswap_limit').map(([k, v]) => `${k} ${String(v)}`).join(', ')} (live, no restart)`);
+    }
+    await this.checkReadiness(op, pkg, inst, containers);
+    this.ctx.repo.updateInstance(inst.id, { runtime: 'running', readiness: 'healthy', observedAt: this.ctx.repo.now() });
+  }
+
+  // Decision 205: the containers were created with other limits than the app should have now (changed while it was
+  // stopped, or this machine's size changed): start re-creates them.
+  private renderedResourcesStale(runtimeDir: string, inst: InstanceRow, pkg: LoadedPackage): boolean {
+    const choice = readResourceChoice(this.ctx.config.stateDir, inst.id);
+    const host = hostCapacity();
+    const keys = ['cpu_shares', 'cpus', 'mem_limit', 'memswap_limit'];
+    try {
+      const model = readRuntimeModel(runtimeDir) as { services?: Record<string, Record<string, unknown>> } | null;
+      if (!model?.services) return false;
+      return Object.entries(pkg.compose.services).some(([svc, def]) => {
+        const have = Object.fromEntries(keys.filter((k) => model.services![svc]?.[k] !== undefined).map((k) => [k, model.services![svc]![k]]));
+        return JSON.stringify(have) !== JSON.stringify(renderedResourceKeys(effectiveResources(def, choice, host)));
+      });
+    } catch {
+      return false;
     }
   }
 
@@ -1967,8 +2035,9 @@ export class OperationRunner {
     repo.updateInstance(inst.id, { runtime: 'starting' });
     // decision 184: the containers carry the resolver of the internet access they were created with; when that changed
     // while the app was stopped (every app through the VPN, an update of its default), start re-creates them
-    if (this.renderedInternetStale(dirs.runtime, inst, pkg)) {
-      this.event(op, 'starting', `${inst.name}'s internet access changed while it was stopped: re-creating its containers (same data and addresses)`);
+    const resourcesStale = this.renderedResourcesStale(dirs.runtime, inst, pkg);
+    if (this.renderedInternetStale(dirs.runtime, inst, pkg) || resourcesStale) {
+      this.event(op, 'starting', `${inst.name}'s ${resourcesStale ? 'CPU or memory limits' : 'internet access'} changed while it was stopped: re-creating its containers (same data and addresses)`);
       const fresh = await this.renderAndValidate(op, pkg, identity, inst, dirs.runtime, this.readSecrets(pkg, dirs.secrets, []));
       const created = await this.upAndRecord(op, { projectDir: dirs.runtime, projectName: identity.project, file: fresh }, identity, inst);
       await this.checkReadiness(op, pkg, inst, created);

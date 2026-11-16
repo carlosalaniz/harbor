@@ -1551,6 +1551,11 @@ progress {
   font-weight: 600;
   padding: 0 6px;
 }
+/* decision 205: a number inside a radio label (CPU cores, memory GiB) */
+.storage-choices .inline-num {
+  width: 5.5em;
+  margin: 0 6px;
+}
 .claim {
   display: grid;
   gap: 4px;

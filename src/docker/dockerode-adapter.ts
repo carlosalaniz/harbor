@@ -32,6 +32,7 @@ export function containerInfoFromInspect(c: InspectInfo): ContainerInfo {
     networkIds: Object.values(c.NetworkSettings?.Networks ?? {}).map((n) => n.NetworkID),
     // keyed by network NAME: a container that never started has NetworkID "" on every network (Docker 29)
     networkAliases: Object.fromEntries(Object.entries(c.NetworkSettings?.Networks ?? {}).map(([name, n]) => [name, n.Aliases ?? []])),
+    resources: { cpuShares: c.HostConfig?.CpuShares ?? 0, nanoCpus: c.HostConfig?.NanoCpus ?? 0, memoryBytes: c.HostConfig?.Memory ?? 0 },
   };
 }
 
@@ -78,6 +79,17 @@ export class DockerodeAdapter implements DockerAdapter {
       if (isNotFound(e)) return null;
       throw e;
     }
+  }
+
+  async updateResources(id: string, r: { cpuShares?: number; nanoCpus?: number; memoryBytes?: number }): Promise<void> {
+    const body: Record<string, number> = {};
+    if (r.cpuShares !== undefined) body['CpuShares'] = r.cpuShares;
+    if (r.nanoCpus !== undefined) body['NanoCpus'] = r.nanoCpus;
+    if (r.memoryBytes !== undefined) {
+      body['Memory'] = r.memoryBytes;
+      body['MemorySwap'] = r.memoryBytes;
+    }
+    await this.docker.getContainer(id).update(body);
   }
 
   async startContainer(id: string): Promise<void> {

@@ -10,7 +10,7 @@ export function eventDto(e: EventRow): EventDto {
   return { cursor: String(e.cursor), at: e.at, phase: e.phase, message: e.message };
 }
 
-export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; login?: InstanceSummary['login']; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; lanSecureHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home']; links?: InstanceSummary['links']; linkedBy?: InstanceSummary['linkedBy']; operatorSecrets?: InstanceSummary['operatorSecrets']; revealableSecrets?: InstanceSummary['revealableSecrets']; settings?: InstanceSummary['settings']; hiddenFromHome?: boolean; apiOnly?: boolean; ports?: InstanceSummary['ports']; version?: string | null; internet?: InstanceSummary['internet']; announce?: InstanceSummary['announce'] } = { icon: null, category: 'other' }): InstanceSummary {
+export function instanceSummary(i: InstanceRow, packageName: string, primaryEndpoint: string, exposures: ExposureRow[] = [], look: { icon: string | null; category: string; login?: InstanceSummary['login']; updateAvailable?: InstanceSummary['updateAvailable']; lanHost?: string | null; lanSecureHost?: string | null; usage?: InstanceSummary['usage']; needsDrive?: InstanceSummary['needsDrive']; home?: InstanceSummary['home']; links?: InstanceSummary['links']; linkedBy?: InstanceSummary['linkedBy']; operatorSecrets?: InstanceSummary['operatorSecrets']; revealableSecrets?: InstanceSummary['revealableSecrets']; settings?: InstanceSummary['settings']; hiddenFromHome?: boolean; apiOnly?: boolean; ports?: InstanceSummary['ports']; version?: string | null; internet?: InstanceSummary['internet']; announce?: InstanceSummary['announce']; limits?: InstanceSummary['limits'] } = { icon: null, category: 'other' }): InstanceSummary {
   return {
     id: i.id,
     name: i.name,
@@ -47,6 +47,7 @@ export function instanceSummary(i: InstanceRow, packageName: string, primaryEndp
     apiOnly: look.apiOnly ?? false,
     internet: look.internet ?? { mode: 'direct', choice: null, packageDefault: 'direct', allApps: false },
     ...(look.announce?.length ? { announce: look.announce } : {}),
+    ...(look.limits ? { limits: look.limits } : {}),
   };
 }
 
@@ -73,6 +74,7 @@ export function planDto(p: PlanRow, storageStates: Record<string, 'new' | 'exist
     links: (p.proposal.links ?? []).map((l) => ({ id: l.id, purpose: l.purpose, optional: l.optional, provider: l.provider ? { instanceId: l.provider.instanceId, name: l.provider.name, endpointId: l.provider.endpointId, url: linkValue(l.alias, l.provider.containerPort) } : null, alias: l.alias, network: l.network, change: l.change ?? 'set' })),
     ...(p.proposal.settings?.length ? { settings: p.proposal.settings } : {}),
     ...(p.proposal.internet ? { internet: p.proposal.internet } : {}),
+    ...(p.proposal.resources ? { resources: { from: p.proposal.resources.from, to: p.proposal.resources.to, live: p.proposal.resources.live } } : {}),
     warnings: p.proposal.warnings,
     notes: p.proposal.notes ?? [],
     ...(p.proposal.update ? { update: p.proposal.update } : {}),

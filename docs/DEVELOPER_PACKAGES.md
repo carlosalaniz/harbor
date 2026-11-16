@@ -261,7 +261,8 @@ volumes:
 ```
 
 Allowed per service: `image`, `command` (an argument array, decision 123), `environment` (literal
-values), `depends_on` (with `condition`), `healthcheck`, `volumes` of `type: volume`. Not allowed, on
+values), `depends_on` (with `condition`), `healthcheck`, `volumes` of `type: volume`, and since 0.47.0 `cpu_shares`,
+`cpus` and `mem_limit` (below). Not allowed, on
 purpose: `ports` (Harbor publishes the endpoints on 127.0.0.1 itself), `entrypoint`, `privileged`, `cap_add`, `devices`, `deploy`, `runtime`, `group_add`, host networking, bind mounts
 (operators choose folders through storage claims instead).
 
@@ -319,6 +320,19 @@ pass `--no-sandbox`. `security_opt` stays refused in `compose.yaml`: a package c
 
 `privileged` stays refused as a `compose.yaml` key: only the permission renders it, and the operator accepts it in
 the review like every other permission (an update that adds it waits for a person).
+
+**CPU and memory limits** (Harbor 0.47.0, decision 205; set `release.minHarbor: "0.47.0"`). Per service:
+
+| Key | Meaning | Bounds |
+|---|---|---|
+| `cpu_shares` | CPU priority on Docker's scale (1024 = normal). A lower value gives way when other apps want the CPU and still runs at full speed while the machine is idle: the right knob for a background worker | 2–1024: a package may only lower its own priority |
+| `cpus` | a hard cap in cores (`2`, `0.5`) | 0.01–1024; dropped on a machine with fewer cores |
+| `mem_limit` | a memory limit (`512m`, `2g`); swap beyond it is off. The kernel stops a service that needs more (Docker restarts it) | 32m–1024g; dropped on a machine with less memory |
+
+`cpu_shares: 1024` renders nothing: Docker only leaves an app at the kernel's default weight when the key is unset
+(runc before 1.3 turns an explicit 1024 into a lower weight). Other resource keys (`cpuset`, `cpu_quota`,
+`memswap_limit`, `mem_reservation`, `pids_limit`, `deploy`) stay refused. The operator can override all three per
+app from the app page or `harbor limits <app>`; their choice applies to every service, on top of the package's values.
 
 `healthcheck: {disable: true}` (Harbor 0.28.4, decision 162; set `release.minHarbor: "0.28.4"`) switches off a check the
 image carries. Use it when the image's own check cannot pass in your setup or takes longer than Harbor waits: Harbor

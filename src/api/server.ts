@@ -1071,6 +1071,18 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
                 // decision 195: the app's one login: on/off, and/or a new password (its value comes with the submission,
                 // under the secret id harbor.login)
                 login: { type: 'object', additionalProperties: false, minProperties: 1, properties: { on: { type: 'boolean' }, password: { const: true } } },
+                // decision 205: CPU priority, CPU limit (cores) and memory limit (MiB) for each of the app's services;
+                // null = no limit, default = follow the package again (bounds against this machine checked in the plan)
+                resources: {
+                  type: 'object',
+                  additionalProperties: false,
+                  minProperties: 1,
+                  properties: {
+                    priority: { enum: ['normal', 'low', 'background', 'default'] },
+                    cpus: { oneOf: [{ type: 'null' }, { const: 'default' }, { type: 'number', minimum: 0.1, maximum: 1024 }] },
+                    memoryMiB: { oneOf: [{ type: 'null' }, { const: 'default' }, { type: 'integer', minimum: 64, maximum: 1048576 }] },
+                  },
+                },
               },
             },
             {

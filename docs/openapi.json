@@ -3153,6 +3153,55 @@
                             ]
                           }
                         }
+                      },
+                      "resources": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "minProperties": 1,
+                        "properties": {
+                          "priority": {
+                            "enum": [
+                              "normal",
+                              "low",
+                              "background",
+                              "default"
+                            ]
+                          },
+                          "cpus": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "enum": [
+                                  "default"
+                                ]
+                              },
+                              {
+                                "type": "number",
+                                "minimum": 0.1,
+                                "maximum": 1024
+                              }
+                            ]
+                          },
+                          "memoryMiB": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "enum": [
+                                  "default"
+                                ]
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 64,
+                                "maximum": 1048576
+                              }
+                            ]
+                          }
+                        }
                       }
                     }
                   },

@@ -129,6 +129,8 @@ crawlers), `tmpfs`, `read_only`, `working_dir`, `cpu_shares`.
 **Why it matters.** These are tuning knobs, but without them the app crashes or misbehaves (Chromium
 needs a large `/dev/shm`). Each is container-local and grants nothing on the host.
 
+`cpu_shares` (only lower than normal), `cpus` and `mem_limit` are accepted since 0.47.0 (decision 205).
+
 **What Harbor needs.** Optional Compose keys with bounds: `shm_size` ≤ 4 GiB, `ulimits` only `nofile` and
 `nproc` (bounded), `tmpfs` (container paths only, size required), `read_only`, `working_dir` (absolute
 container path). Add two more for fidelity even though they block nothing:

@@ -131,4 +131,42 @@ describe.skipIf(!enabled)('live Docker (explicit opt-in engine)', () => {
     expect(res.headers.get('cross-origin-opener-policy')).toBe('same-origin');
     expect(['require-corp', 'credentialless']).toContain(res.headers.get('cross-origin-embedder-policy'));
   }, 600_000);
+
+  // Decision 205: limits applied live with `docker update` (same container), read back from Docker and from the
+  // container's own cgroup; removing one re-creates the container (docker update cannot remove a limit).
+  it('applies CPU priority and limits live on the real engine, and removes one by re-creating the container', async () => {
+    const pdf = (await api.instances()).find((i) => i.packageId === 'bentopdf')!;
+    const one = async () => {
+      const [c] = await docker.listContainers({ all: true, filters: JSON.stringify({ label: [`${LABELS.instance}=${pdf.id}`] }) });
+      return docker.getContainer(c!.Id).inspect();
+    };
+    const before = await one();
+    const live = await api.run({ kind: 'configure', instanceId: pdf.id, resources: { priority: 'background', cpus: 0.5, memoryMiB: 256 } });
+    expect(live.op.state, JSON.stringify(live.op.error) + JSON.stringify(live.op.events)).toBe('succeeded');
+    expect(live.plan.resources?.live).toBe(true);
+    const after = await one();
+    expect(after.Id).toBe(before.Id);
+    expect(after.State.StartedAt).toBe(before.State.StartedAt); // not restarted
+    expect(after.HostConfig).toMatchObject({ CpuShares: 128, NanoCpus: 500_000_000, Memory: 256 * 1024 * 1024, MemorySwap: 256 * 1024 * 1024 });
+    const cg = async (id: string) => {
+      const ex = await docker.getContainer(id).exec({ Cmd: ['cat', '/sys/fs/cgroup/cpu.max', '/sys/fs/cgroup/memory.max'], AttachStdout: true, AttachStderr: true });
+      const stream = await ex.start({});
+      const chunks: Buffer[] = [];
+      await new Promise((r) => { stream.on('data', (d: Buffer) => chunks.push(d)); stream.on('end', r); });
+      return Buffer.concat(chunks).toString('utf8');
+    };
+    const text = await cg(after.Id);
+    expect(text).toContain('50000 100000');
+    expect(text).toContain(String(256 * 1024 * 1024));
+    // a Restart re-creates from the rendered file: the limits stay
+    expect((await api.run({ kind: 'restart', instanceId: pdf.id })).op.state).toBe('succeeded');
+    expect((await one()).HostConfig).toMatchObject({ CpuShares: 128, NanoCpus: 500_000_000, Memory: 256 * 1024 * 1024 });
+    // removing the CPU limit and the priority needs a new container
+    const removed = await api.run({ kind: 'configure', instanceId: pdf.id, resources: { priority: 'default', cpus: null } });
+    expect(removed.op.state, JSON.stringify(removed.op.error)).toBe('succeeded');
+    expect(removed.plan.resources?.live).toBe(false);
+    const fresh = await one();
+    expect(fresh.HostConfig).toMatchObject({ CpuShares: 0, NanoCpus: 0, Memory: 256 * 1024 * 1024 });
+    expect(await cg(fresh.Id)).toContain('max 100000'); // the stream carries Docker's 8-byte frame headers
+  }, 600_000);
 });

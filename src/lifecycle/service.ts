@@ -4,7 +4,8 @@ import path from 'node:path';
 import { UUID_RE } from '../contracts/patterns.js';
 import { tagValue } from '../backups/restic.js';
 import { INTERNAL_ACTORS, QUEUEABLE_KINDS, type AppLinkDto, type FixedPortDto, type LinkChoice, type LinkDto, type QueueableKind } from '../contracts/api.js';
-import type { LinkClaim, Manifest, ManifestPermission, ManifestSetting, SecretClaim, SettingValue } from '../contracts/types.js';
+import type { ComposeSourceService, LinkClaim, Manifest, ManifestPermission, ManifestSetting, SecretClaim, SettingValue } from '../contracts/types.js';
+import { appliesLive, effectiveResources, limitsOf, mainServiceOf, nextChoice, packageResources, resourceChangeLines, sameChoice, sameResources, type HostCapacity } from '../planner/resources.js';
 import { fixedPortClaim, fixedPortsOf, newPermissions, PERMISSION_LABEL, permissionDto, needsBinder, permissionsOf, untrustedPermissions } from '../planner/permissions.js';
 import { binderInstallHint } from '../system/kernel.js';
 import { appLoginOf, LOGIN_PASSWORD_SECRET, loginChoices, packageHasOwnLogin } from '../planner/gate.js';
@@ -14,11 +15,12 @@ import { checkSubmittedSecrets, plannedSecrets } from '../planner/secrets.js';
 import { checkSubmittedSettings, formatSettingValue, installSettingChanges, plannedConfigureSettings, plannedInstallSettings, plannedUpdateSettings, settingDtos } from '../planner/settings.js';
 import { plannedConfigureInternet, plannedInstallInternet, plannedUpdateInternet, packageInternet } from '../planner/internet.js';
 import type { LinkRow, PlannedLink, PlannedSecret } from '../state/repo.js';
-import type { AddSourceResult, CatalogItemDto, CatalogStatusDto, GpuDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, PermissionDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationActionDto, NotificationChannelDto, NotificationsDto, OperationDto, OperationQueueDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, DeveloperModeDto, AppLoginDto, LoginChange, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
+import type { AddSourceResult, CatalogItemDto, CatalogStatusDto, GpuDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, PermissionDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceResourcesDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationActionDto, NotificationChannelDto, NotificationsDto, OperationDto, OperationQueueDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, DeveloperModeDto, AppLoginDto, LoginChange, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
 import { lanAppHost, lanNames, lanUrl } from '../system/lan.js';
 import { caPem, ensureTlsCerts, HTTPS_ONLY_SETTING, httpsOnlyOn, lanHttpsHosts, readTlsState, reconcileLanHttps, runtimeLanAccess } from '../system/lan-https.js';
 import { hostname } from 'node:os';
+import { hostCapacity } from '../system/capacity.js';
 import { defaultCredentialsOf } from '../packages/catalog.js';
 import { dnsState } from '../system/net.js';
 import { sampleMetrics } from '../system/metrics.js';
@@ -50,7 +52,7 @@ import { ONE_TIME_TTL_MS } from '../state/one-time.js';
 import type { ExposureDto, ExposureVia } from '../contracts/api.js';
 import { HOSTNAME_RE, exposureUrl, mainPublicExposure } from '../exposure/urls.js';
 import { retainedExposures } from './retained-exposures.js';
-import { instanceDir, loadReleaseSnapshot, loginSecretId, readLoginChoices, readOperatorSecret as readOperatorSecretFile, readRuntimeModel, readSecret, readSettingOverrides, secretExists } from './instance-dir.js';
+import { instanceDir, loadReleaseSnapshot, loginSecretId, readLoginChoices, readOperatorSecret as readOperatorSecretFile, readResourceChoice, readRuntimeModel, readSecret, readSettingOverrides, secretExists } from './instance-dir.js';
 import { packageVersionOf } from '../packages/version.js';
 
 // Decision 176: an automatic update waits for its backup this long, and after a failed backup tries again this much later.
@@ -997,15 +999,15 @@ export class ApplicationService {
     return this.packageMeta(i).primaryEndpoint;
   }
 
-  private packageMeta(i: InstanceRow): { version: string | null; name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] } {
-    const from = (pkg: LoadedPackage) => ({ settings: pkg.manifest.settings ?? [], version: pkg.revision === i.revision ? packageVersionOf(pkg) : null, ports: fixedPortsOf(pkg.manifest), hideFromHome: pkg.manifest.presentation?.hideFromHome === true, apiOnly: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.kind === 'api', name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), revealableSecrets: revealableOf(pkg), links: pkg.manifest.links ?? [] });
+  private packageMeta(i: InstanceRow): { version: string | null; name: string; primaryEndpoint: string; description: string; setup: { endpoint: string; instructions: string } | null; icon: string | null; category: string; defaultCredentials: CatalogItemDto['defaultCredentials']; widget: NonNullable<LoadedPackage['manifest']['presentation']>['widget'] | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; mainService: ComposeSourceService | null } {
+    const from = (pkg: LoadedPackage) => ({ mainService: mainServiceOf(pkg.manifest, pkg.compose), settings: pkg.manifest.settings ?? [], version: pkg.revision === i.revision ? packageVersionOf(pkg) : null, ports: fixedPortsOf(pkg.manifest), hideFromHome: pkg.manifest.presentation?.hideFromHome === true, apiOnly: pkg.manifest.endpoints[pkg.manifest.ui.primaryEndpoint]?.kind === 'api', name: pkg.manifest.metadata.name, primaryEndpoint: pkg.manifest.ui.primaryEndpoint, description: pkg.manifest.metadata.description, setup: pkg.manifest.setup ?? null, icon: pkg.manifest.presentation?.icon ?? null, category: pkg.manifest.presentation?.category ?? 'other', defaultCredentials: defaultCredentialsOf(pkg.manifest), widget: pkg.manifest.presentation?.widget ?? null, operatorSecrets: (pkg.manifest.secrets ?? []).filter((x) => x.source === 'operator'), revealableSecrets: revealableOf(pkg), links: pkg.manifest.links ?? [] });
     try {
       return from(loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, i.id), 'release'), i.packageId));
     } catch {
       try {
         return from(this.ctx.packages.load(i.packageId));
       } catch {
-        return { version: null, name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], revealableSecrets: [], links: [], settings: [], hideFromHome: false, apiOnly: false, ports: [] };
+        return { version: null, name: i.packageId, primaryEndpoint: i.endpoints[0]?.id ?? 'web', description: '', setup: null, icon: null, category: 'other', defaultCredentials: null, widget: null, operatorSecrets: [], revealableSecrets: [], links: [], settings: [], hideFromHome: false, apiOnly: false, ports: [], mainService: null };
       }
     }
   }
@@ -1042,12 +1044,23 @@ export class ApplicationService {
 
   // Read-time look that is not a column: links, operator secrets and Hide from Home (decision 131: the
   // operator's per-app choice in the `home.hidden` setting wins over the package's suggestion).
-  private extraLook(i: InstanceRow, meta: { version: string | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[] }): ReturnType<ApplicationService['linkLook']> & { version: string | null; hiddenFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; settings: NonNullable<InstanceSummary['settings']>; internet?: InstanceSummary['internet']; announce?: InstanceSummary['announce'] } {
+  private extraLook(i: InstanceRow, meta: { version: string | null; operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[]; settings: ManifestSetting[]; hideFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; mainService: ComposeSourceService | null }): ReturnType<ApplicationService['linkLook']> & { version: string | null; hiddenFromHome: boolean; apiOnly: boolean; ports: FixedPortDto[]; settings: NonNullable<InstanceSummary['settings']>; internet?: InstanceSummary['internet']; announce?: InstanceSummary['announce']; limits?: InstanceSummary['limits'] } {
     const choice = this.ctx.repo.setting<Record<string, boolean>>('home.hidden')?.[i.id];
     // decision 180: effective values (the operator's overrides, else the installed release's defaults)
     const settings = meta.settings.length ? settingDtos({ settings: meta.settings }, readSettingOverrides(this.ctx.config.stateDir, i.id)) : [];
     const login = i.installState === 'retained' ? null : this.appLogin(i);
-    return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(login ? { login } : {}), ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}), ...(this.ctx.advertise && i.installState !== 'retained' ? { announce: this.ctx.advertise.statusFor(i) } : {}) };
+    return { ...this.linkLook(i, meta), version: meta.version, hiddenFromHome: choice ?? meta.hideFromHome, apiOnly: meta.apiOnly, ports: meta.ports, settings, ...(login ? { login } : {}), ...(this.ctx.egress ? { internet: this.ctx.egress.internetDto(i) } : {}), ...(this.ctx.advertise && i.installState !== 'retained' ? { announce: this.ctx.advertise.statusFor(i) } : {}), ...(meta.mainService ? { limits: this.resourcesDto(i, meta.mainService) } : {}) };
+  }
+
+  // Decision 205: this machine's size; CPU and memory limits are bounded by it.
+  hostCapacity(): HostCapacity {
+    return hostCapacity();
+  }
+
+  private resourcesDto(i: InstanceRow, main: ComposeSourceService): InstanceResourcesDto {
+    const host = this.hostCapacity();
+    const choice = readResourceChoice(this.ctx.config.stateDir, i.id);
+    return { ...limitsOf(effectiveResources(main, choice, host)), package: limitsOf(packageResources(main, host)), chosen: { priority: choice.priority !== undefined, cpus: choice.cpus !== undefined, memoryMiB: choice.memoryMiB !== undefined }, host };
   }
 
   private linkLook(i: InstanceRow, meta: { operatorSecrets: SecretClaim[]; revealableSecrets: SecretClaim[]; links: LinkClaim[] }): { links: AppLinkDto[]; linkedBy: InstanceSummary['linkedBy']; operatorSecrets: InstanceSummary['operatorSecrets']; revealableSecrets: InstanceSummary['revealableSecrets'] } {
@@ -2548,7 +2561,10 @@ export class ApplicationService {
     const internetPlan = req.internet !== undefined ? plannedConfigureInternet(packageInternet(pkg.manifest), this.ctx.egress?.choice(inst.id) ?? null, req.internet, inst.name, { ...this.internetContext(), running: inst.desired === 'running' }) : null;
     const loginPlan = req.login ? this.plannedLogin(pkg.manifest, inst, req.login) : null;
     const othersChange = wanted.length > 0 || Object.keys(req.links ?? {}).length > 0 || Boolean(settingPlan?.changes.length) || Boolean(loginPlan?.changes.length);
-    if (!othersChange && !internetPlan) {
+    // decision 205: CPU/memory limits; applied live when only values are set or tightened and nothing else re-creates
+    const resourcePlan = req.resources ? this.plannedResources(pkg, inst, req.resources, othersChange || Boolean(internetPlan && inst.desired === 'running')) : null;
+    if (!othersChange && !internetPlan && !resourcePlan) {
+      if (req.resources) throw new HarborError('INVALID_REQUEST', 'nothing to change: the app already has these limits', { nextAction: 'Choose a different priority or limit.' });
       if (req.internet !== undefined) throw new HarborError('INVALID_REQUEST', 'nothing to change: the app already uses that internet access', { nextAction: 'Choose a different one.' });
       if (req.settings && Object.keys(req.settings).length) throw new HarborError('INVALID_REQUEST', `nothing to change: ${Object.keys(req.settings).length === 1 ? 'that setting already has this value' : 'those settings already have these values'}`, { nextAction: 'Choose a different value.' });
       throw new HarborError('INVALID_REQUEST', 'nothing to change', { nextAction: 'Name a secret to replace (--secret id=@file), a link provider (--link id=<app>), a setting (--set id=value) and/or internet access (--internet direct|vpn|offline|default).' });
@@ -2568,7 +2584,8 @@ export class ApplicationService {
       secrets,
       links,
       ...(settingPlan?.settings.length ? { settings: settingPlan.settings, settingValues: settingPlan.values } : {}),
-      ...(internetPlan ? { internet: internetPlan.internet, internetOnly: !othersChange } : {}),
+      ...(internetPlan ? { internet: internetPlan.internet, internetOnly: !othersChange && !resourcePlan } : {}),
+      ...(resourcePlan ? { resources: resourcePlan.proposal, resourcesOnly: !othersChange && !internetPlan } : {}),
       ...(loginPlan ? { login: { choices: loginPlan.choices, newPassword: loginPlan.newPassword } } : {}),
       changes: [
         ...(loginPlan?.changes ?? []),
@@ -2576,6 +2593,7 @@ export class ApplicationService {
         ...this.linkChanges(links, pkgName),
         ...(settingPlan?.changes ?? []),
         ...(internetPlan?.changes ?? []),
+        ...(resourcePlan?.changes ?? []),
         ...(othersChange ? [`Re-render the private Compose file of "${inst.name}" and recreate the containers whose configuration changed (same volumes and ports), then check readiness`] : []),
       ],
       warnings: [...(internetPlan?.warnings ?? [])],
@@ -2584,6 +2602,29 @@ export class ApplicationService {
     const plan: Omit<PlanRow, 'consumedOperationId'> = { id: ids.uuid(), actor, kind: 'configure', instanceId: inst.id, proposal, expectedGeneration: inst.generation, createdAt: rfc3339(now), expiresAt };
     repo.insertPlan(plan);
     return this.plan(plan.id);
+  }
+
+  // Decision 205: a configure plan's change to the app's CPU/memory limits (each service: its package values with the
+  // operator's choice on top). `docker update` sets and tightens values on running containers; removing one (or going
+  // back to normal priority) needs new containers. recreated = another change in the plan re-creates them anyway.
+  private plannedResources(pkg: LoadedPackage, inst: InstanceRow, change: NonNullable<Extract<PlanRequest, { kind: 'configure' }>['resources']>, recreated: boolean): { proposal: NonNullable<PlanProposal['resources']>; changes: string[] } | null {
+    const host = this.hostCapacity();
+    const current = readResourceChoice(this.ctx.config.stateDir, inst.id);
+    let next: ReturnType<typeof nextChoice>;
+    try {
+      next = nextChoice(current, change, host);
+    } catch (e) {
+      throw new HarborError('INVALID_REQUEST', (e as Error).message, { nextAction: `This machine has ${host.cpus} CPU threads and ${Math.floor(host.memoryMiB / 1024)} GiB of memory.` });
+    }
+    if (sameChoice(current, next)) return null;
+    const services = Object.values(pkg.compose.services);
+    const changed = services.some((s) => !sameResources(effectiveResources(s, current, host), effectiveResources(s, next, host)));
+    const live = changed && !recreated && services.every((s) => appliesLive(effectiveResources(s, current, host), effectiveResources(s, next, host)));
+    const main = mainServiceOf(pkg.manifest, pkg.compose) ?? services[0]!;
+    const before = effectiveResources(main, current, host);
+    const after = effectiveResources(main, next, host);
+    const apply = !changed || recreated ? null : inst.desired !== 'running' ? 'next-start' : live ? 'live' : 'restart';
+    return { proposal: { choice: next, from: limitsOf(before), to: limitsOf(after), live, changed }, changes: resourceChangeLines(inst.name, before, after, apply) };
   }
 
   // Decision 195: a configure plan's change to the app's one login. Turning it on needs a password (a new one, or the

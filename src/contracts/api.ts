@@ -132,6 +132,34 @@ export interface VpnDto {
   // the host rules: ok = loaded this daemon run, failed = the last apply failed (message), none = nothing applied yet
   rules: { state: 'ok' | 'failed' | 'none'; message: string | null; appliedAt: string | null };
 }
+// Decision 205: how much of the machine an app may take, for each of its services. priority: CPU weight (low and
+// background give way to other apps under load and run at full speed when the machine is idle); cpus: a hard cap in
+// cores; memoryMiB: a memory limit (the kernel stops a service that needs more). null = none.
+export type ResourcePriority = 'normal' | 'low' | 'background';
+export interface ResourceLimitsDto {
+  priority: ResourcePriority;
+  cpus: number | null;
+  memoryMiB: number | null;
+}
+export interface InstanceResourcesDto extends ResourceLimitsDto {
+  // what the package itself sets (main service), and which of the three the operator chose (the rest follow it)
+  package: ResourceLimitsDto;
+  chosen: { priority: boolean; cpus: boolean; memoryMiB: boolean };
+  // this machine: limits are bounded by it
+  host: { cpus: number; memoryMiB: number };
+}
+// configure: a value, null (no limit) or default (follow the package again)
+export interface ResourceChangeRequest {
+  priority?: ResourcePriority | 'default';
+  cpus?: number | null | 'default';
+  memoryMiB?: number | null | 'default';
+}
+// In a configure plan: what the main service runs with before and after, and whether it applies without a restart
+export interface PlanResourcesDto {
+  from: ResourceLimitsDto;
+  to: ResourceLimitsDto;
+  live: boolean;
+}
 // In a plan: install (to = what it starts with), configure (from → to), update (the package default moved)
 export interface PlanInternetDto {
   from: InternetMode | null;
@@ -207,6 +235,8 @@ export interface InstanceSummary {
   customIcon: { kind: 'glyph'; glyph: string; color: string } | { kind: 'image'; url: string } | null;
   // live resource usage summed over the app's containers; null when stopped or not yet sampled
   usage: { cpuPercent: number; memoryBytes: number; sampledAt: string } | null;
+  // decision 205: CPU priority, CPU limit and memory limit (main service); absent for an app with no readable release
+  limits?: InstanceResourcesDto;
   // opt-in automatic updates (decision 78)
   autoUpdate: boolean;
   // drive guard: set when an external folder's identity check fails (drive
@@ -485,6 +515,8 @@ export interface PlanDto {
   settings?: PlanSettingDto[];
   // decision 184: internet access this plan sets (install, configure) or moves (update of a following app)
   internet?: PlanInternetDto;
+  // decision 205: CPU/memory limits a configure plan changes
+  resources?: PlanResourcesDto;
   warnings: string[];
   // decision 157: plain facts worth reading before approving (how it opens, what happens next) — not warnings
   notes: string[];
@@ -665,7 +697,7 @@ export type PlanRequest =
   // links: a provider per link id, or null to unlink an optional one
   // decision 180: settings: new values by setting id (a value equal to the default removes the override)
   // internet (decision 184): a mode, or 'default' to follow the package again
-  | { kind: 'configure'; instanceId: string; secrets?: string[]; links?: Record<string, LinkChoice | null>; settings?: Record<string, SettingValue>; internet?: InternetMode | 'default'; login?: LoginChange }
+  | { kind: 'configure'; instanceId: string; secrets?: string[]; links?: Record<string, LinkChoice | null>; settings?: Record<string, SettingValue>; internet?: InternetMode | 'default'; login?: LoginChange; resources?: ResourceChangeRequest }
   | { kind: 'expose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string; protection?: 'none' | 'basic'; makePrimary?: boolean; proxyFrom?: string; login?: boolean }
   // decision 127: hostname picks one of several public names (required when there are several)
   | { kind: 'unexpose'; instanceId: string; endpointId?: string; via: ExposureVia; hostname?: string }

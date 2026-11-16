@@ -182,6 +182,11 @@ export interface ComposeSourceService {
   depends_on?: Record<string, { condition: 'service_started' | 'service_healthy' }>;
   healthcheck?: { test?: string[]; interval?: string; timeout?: string; retries?: number; start_period?: string; disable?: true };
   volumes?: { type: 'volume'; source: string; target: string; read_only?: boolean }[];
+  // decision 205: CPU priority (Docker's scale, 1024 = normal; a package may only go lower), a CPU cap in cores and a
+  // memory limit ("512m", "2g"); bounded in validation and clamped to the host at render (first accepted by 0.47.0)
+  cpu_shares?: number;
+  cpus?: number;
+  mem_limit?: string;
 }
 export interface ComposeSource {
   services: Record<string, ComposeSourceService>;

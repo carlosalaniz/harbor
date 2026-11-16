@@ -11,6 +11,7 @@ import { browserSandboxSecurityOpt } from './seccomp.js';
 import { effectiveSettings, settingBindingValue } from './settings.js';
 import { renderedDns } from '../egress/rules.js';
 import { GATE_DIR, GATE_PORT, gateService, gateServiceDef, type GateRender } from './gate.js';
+import { effectiveResources, renderedResourceKeys, type HostCapacity, type ResourceChoice } from './resources.js';
 
 // Decision 126: an active link where this instance is the consumer: its bound services get the provider's
 // address. Decision 171: link networks never appear in a Compose file (Compose would add every service
@@ -61,6 +62,10 @@ export interface RenderInput {
   gateDir?: string;
   // decision 201: where the browser-sandbox profile is (default: the one in Harbor's release folder)
   seccompProfile?: string;
+  // decision 205: the operator's CPU/memory choice for this app (each service, on top of the package's own values)
+  // and this machine's size (limits at or above it are dropped). No host = no clamp.
+  resources?: ResourceChoice;
+  host?: HostCapacity;
 }
 
 export interface RenderedCompose {
@@ -218,6 +223,8 @@ export function renderCompose(input: RenderInput): RenderedCompose {
         return { type: 'volume', source: m.source, target: m.target, ...(m.read_only ? { read_only: true } : {}) };
       });
     }
+    // decision 205: nothing at all for a service with no limits (apps that never use this render as before)
+    Object.assign(def, renderedResourceKeys(effectiveResources(src, input.resources ?? {}, input.host ?? { cpus: Infinity, memoryMiB: Infinity })));
     services[service] = def;
   }
 

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse as parseYaml } from 'yaml';
-import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type ExecResult, type NetworkInfo, type VolumeInfo } from './adapter.js';
+import { ComposeError, type ComposeInvocation, type ComposeResult, type ComposeRunner, type ContainerInfo, type ContainerResources, type ContainerStats, type DockerAdapter, type DockerDiskUsage, type EngineInfo, type ExecResult, type NetworkInfo, type VolumeInfo } from './adapter.js';
 import type { Clock } from '../util.js';
 import { rfc3339 } from '../util.js';
 import { subnetsOverlap } from '../planner/subnets.js';
@@ -21,6 +21,7 @@ interface FakeContainer extends ContainerInfo {
   env?: Record<string, string>;
   // what Compose's config hash covers: a change recreates the container on the next `up` (decision 171)
   configHash?: string;
+  resources?: ContainerResources;
 }
 
 export interface FakeBehaviour {
@@ -114,6 +115,18 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     const c = this.containers.get(id) ?? [...this.containers.values()].find((x) => x.name === id);
     return c ? clone(c, this.networks) : null;
   }
+  // decision 205: like `docker update` (sets or tightens; 0 means "no change" for cpus and is refused for memory)
+  async updateResources(id: string, r: { cpuShares?: number; nanoCpus?: number; memoryBytes?: number }): Promise<void> {
+    this.assertUp();
+    const c = this.containers.get(id);
+    if (!c) throw Object.assign(new Error('no such container'), { statusCode: 404 });
+    if (r.memoryBytes !== undefined && r.memoryBytes <= 0) throw new Error('Invalid memory: a limit cannot be removed with docker update');
+    this.updates.push({ id, ...r });
+    const cur = c.resources ?? { cpuShares: 0, nanoCpus: 0, memoryBytes: 0 };
+    c.resources = { cpuShares: r.cpuShares || cur.cpuShares, nanoCpus: r.nanoCpus || cur.nanoCpus, memoryBytes: r.memoryBytes ?? cur.memoryBytes };
+  }
+  readonly updates: { id: string; cpuShares?: number; nanoCpus?: number; memoryBytes?: number }[] = [];
+
   async startContainer(id: string): Promise<void> {
     this.assertUp();
     const c = this.containers.get(id);
@@ -306,7 +319,7 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
     if (this.behaviour.failUp) throw new ComposeError(`docker compose up failed: ${this.behaviour.failUp}`, { command: ['up'], exitCode: 1, stderrTail: this.behaviour.failUp, timedOut: false });
     const text = readFileSync(inv.file, 'utf8').replace(/\$\$/g, '$');
     const doc = parseYaml(text) as {
-      services: Record<string, { image: string; labels?: Record<string, string>; ports?: { target: number; published: string; host_ip: string; protocol?: string }[]; volumes?: { source: string }[]; environment?: Record<string, string>; networks?: string[] | Record<string, { aliases?: string[] } | null> }>;
+      services: Record<string, { image: string; labels?: Record<string, string>; ports?: { target: number; published: string; host_ip: string; protocol?: string }[]; volumes?: { source: string }[]; environment?: Record<string, string>; networks?: string[] | Record<string, { aliases?: string[] } | null>; cpu_shares?: number; cpus?: number; mem_limit?: string }>;
       volumes?: Record<string, { name?: string; external?: boolean }>;
       networks?: Record<string, { name?: string; labels?: Record<string, string>; external?: boolean; ipam?: { config?: { subnet?: string }[] } }>;
     };
@@ -372,6 +385,8 @@ export class FakeDocker implements DockerAdapter, ComposeRunner {
       }
       c.configHash = hash;
       c.env = { ...(def.environment ?? {}) };
+      // decision 205: what Docker records from the Compose keys (0 = none), as `docker inspect` shows them
+      if (!c.resources || recreate) c.resources = { cpuShares: def.cpu_shares ?? 0, nanoCpus: Math.round((def.cpus ?? 0) * 1e9), memoryBytes: def.mem_limit ? Number(/^(\d+)m$/.exec(def.mem_limit)?.[1] ?? 0) * 1024 * 1024 : 0 };
       const wanted = new Map<string, string[]>([[net.id, []]]);
       const svcNets = Array.isArray(def.networks) ? Object.fromEntries(def.networks.map((k) => [k, null])) : (def.networks ?? { default: null });
       for (const [key, cfg] of Object.entries(svcNets)) {
@@ -498,5 +513,5 @@ function matches(labels: Record<string, string>, want?: Record<string, string>):
 }
 function clone(c: FakeContainer, networks: Map<string, NetworkInfo>): ContainerInfo {
 
-  return { id: c.id, name: c.name, image: c.image, state: c.state, labels: { ...c.labels }, createdAt: c.createdAt, startedAt: c.startedAt, health: c.health, ports: c.ports.map((p) => ({ ...p })), networkIds: [...c.networkIds], networkAliases: Object.fromEntries(c.networkIds.map((n) => [networks.get(n)?.name ?? n, [...(c.aliases?.[n] ?? [])]])) };
+  return { id: c.id, name: c.name, image: c.image, state: c.state, labels: { ...c.labels }, createdAt: c.createdAt, startedAt: c.startedAt, health: c.health, ports: c.ports.map((p) => ({ ...p })), networkIds: [...c.networkIds], networkAliases: Object.fromEntries(c.networkIds.map((n) => [networks.get(n)?.name ?? n, [...(c.aliases?.[n] ?? [])]])), resources: { ...(c.resources ?? { cpuShares: 0, nanoCpus: 0, memoryBytes: 0 }) } };
 }

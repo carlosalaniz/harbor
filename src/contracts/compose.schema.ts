@@ -95,6 +95,10 @@ export const COMPOSE_SOURCE_SCHEMA = {
               },
             },
           },
+          // decision 205 (first accepted by 0.47.0): bounds checked in code (src/planner/resources.ts)
+          cpu_shares: { type: 'integer' },
+          cpus: { type: 'number' },
+          mem_limit: { type: 'string', maxLength: 16 },
         },
       },
     },

@@ -23,6 +23,14 @@ export interface ContainerInfo {
   // container that never started, so `networkIds` cannot tell whether such a container is attached.
   // Absent when the adapter cannot tell.
   networkAliases?: Record<string, string[]>;
+  // decision 205: the container's CPU/memory limits (0 = none: Docker's own encoding). Absent when unknown.
+  resources?: ContainerResources;
+}
+
+export interface ContainerResources {
+  cpuShares: number;
+  nanoCpus: number;
+  memoryBytes: number;
 }
 
 export interface VolumeInfo {
@@ -105,6 +113,9 @@ export interface DockerAdapter {
   containerStats(id: string): Promise<ContainerStats | null>;
   // Volume sizes (docker system df). Expensive; callers cache (observer never calls this).
   diskUsage(): Promise<DockerDiskUsage>;
+  // decision 205: `docker update` of a container's CPU priority, CPU cap and memory limit (memory swap = memory).
+  // It can set and tighten values but not remove one; callers re-create the container for that.
+  updateResources(id: string, r: { cpuShares?: number; nanoCpus?: number; memoryBytes?: number }): Promise<void>;
   // Run a command inside a running container; never through a shell on the host.
   exec(id: string, opts: { cmd: string[]; user?: string; env?: Record<string, string>; timeoutMs: number }): Promise<ExecResult>;
 }

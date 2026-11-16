@@ -3,6 +3,7 @@ import { INTERPOLATION_RE, parseDuration } from '../contracts/patterns.js';
 import type { ComposeSource } from '../contracts/types.js';
 import { compile, formatErrors } from '../contracts/validate.js';
 import { HarborError } from '../errors.js';
+import { packageResourceProblems } from '../planner/resources.js';
 
 // Keys that are explicitly unsupported get a clearer capability error than a generic schema failure.
 // `build` left this list in round 9 (decision 80): git-sourced packages may build from source;
@@ -15,7 +16,9 @@ const FORBIDDEN_SERVICE_KEYS = new Set([
   'privileged', 'security_opt', 'sysctls', 'networks', 'volumes_from', 'user', 'labels', 'logging', 'deploy',
   'links', 'external_links', 'expose', 'dns', 'extra_hosts', 'tmpfs', 'ulimits', 'cgroup_parent', 'runtime',
   'platform', 'pull_policy', 'profiles', 'develop', 'stdin_open', 'tty', 'working_dir', 'hostname', 'domainname',
-  'init', 'stop_signal', 'stop_grace_period', 'shm_size', 'mem_limit', 'cpus', 'oom_kill_disable',
+  'init', 'stop_signal', 'stop_grace_period', 'shm_size', 'oom_kill_disable',
+  // decision 205: `cpu_shares`, `cpus` and `mem_limit` are accepted (bounded); the rest of the resource keys are not
+  'cpu_quota', 'cpu_period', 'cpuset', 'cpu_count', 'cpu_percent', 'cpu_rt_runtime', 'cpu_rt_period', 'memswap_limit', 'mem_reservation', 'mem_swappiness', 'pids_limit', 'blkio_config',
   // decision 179: only Harbor's renderer hands out a graphics card (`permissions: [gpu]`)
   'group_add', 'device_cgroup_rules', 'gpus',
 ]);
@@ -93,6 +96,7 @@ export function validateComposeSource(value: unknown, label = 'compose.yaml'): C
       check('timeout', hc.timeout, HEALTHCHECK_BOUNDS.timeoutMs);
       check('start_period', hc.start_period, HEALTHCHECK_BOUNDS.startPeriodMs);
     }
+    problems.push(...packageResourceProblems(svc, def));
     const targets = new Set<string>();
     for (const m of def.volumes ?? []) {
       if (m.target.includes('/../') || m.target.endsWith('/..')) problems.push(`service ${svc} mount target ${m.target} contains traversal`);

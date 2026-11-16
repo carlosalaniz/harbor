@@ -2343,3 +2343,33 @@ test('decision 202: spaces — group two apps, share a network only after the wa
   await expect(page.getByRole('region', { name: 'Productivity' })).toHaveCount(0);
   await expect(loose).toHaveCount(before);
 });
+
+test('decision 205: CPU and memory — the app page shows the limits; background priority and a CPU limit apply without a restart', async ({ page }) => {
+  await login(page);
+  await installFromStore(page, 'FreshRSS');
+  await approve(page, 'Install');
+  await trayDone(page, 'Install');
+  await dismissRecovery(page);
+  await page.getByRole('link', { name: 'Home' }).click();
+  await page.getByRole('button', { name: 'Details of freshrss', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: /FreshRSS/ }).first();
+  await tab(drawer, 'Settings');
+  const card = drawer.getByRole('region', { name: 'CPU and memory', exact: true });
+  await expect(card).toContainText('Normal priority · no CPU limit · no memory limit');
+  await card.getByRole('button', { name: 'Change CPU and memory of freshrss', exact: true }).click();
+  const pick = page.getByRole('dialog', { name: 'CPU and memory of FreshRSS' });
+  await expect(pick.getByRole('button', { name: 'Review', exact: true })).toBeDisabled();
+  await pick.getByRole('radio', { name: /^Background/ }).check();
+  await pick.getByLabel('CPU cores', { exact: true }).fill('1');
+  await pick.getByRole('button', { name: 'Review', exact: true }).click();
+  const plan = page.getByRole('dialog', { name: 'Review new settings' });
+  await expect(plan).toContainText('CPU priority: normal → background');
+  await expect(plan).toContainText('CPU: no CPU limit → at most 1 core');
+  await expect(plan).toContainText('Applied to the running containers at once (no restart)');
+  await plan.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /settings applied$/ })).toBeVisible({ timeout: 30_000 });
+  await page.getByRole('button', { name: 'Details of freshrss', exact: true }).click();
+  await tab(drawer, 'Settings');
+  await expect(drawer.getByRole('region', { name: 'CPU and memory', exact: true })).toContainText('Background priority · at most 1 core · no memory limit', { timeout: 15_000 });
+  await drawer.getByRole('button', { name: 'Close dialog', exact: true }).last().click();
+});

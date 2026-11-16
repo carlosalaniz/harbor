@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { DomainsDto, HostStorageDto, InstallCandidateDto } from '../../../src/contracts/api';
-import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceSummary, PackageImportResultDto, PlanDto, PlatformToolDto } from '../../../src/contracts/api';
+import type { AddressOptionsDto, CatalogItemDto, ExposureDto, InstanceResourcesDto, InstanceSummary, PackageImportResultDto, PlanDto, PlatformToolDto, ResourceChangeRequest, ResourcePriority } from '../../../src/contracts/api';
 import { ApiError, api } from '../api';
 import { AppIcon, Copy, Dialog, FolderPicker, InstanceIcon, OpenCopy, Pill, RecoveryCard, StatusPill, UpdateButton, appLabel, copiesOf, endpointUrlHere, outdatedCopy } from './components';
 import { defaultCopyName, installView, nameProblem } from './copies';
@@ -1822,6 +1822,108 @@ export function InternetDialog({ inst, title, onClose, onReview }: { inst: Insta
   );
 }
 
+// Decision 205: CPU priority, a CPU limit and a memory limit for each of the app's services. Each field can follow
+// the package (the default) or take the operator's value; the plan review says whether it applies without a restart.
+type LimitPick = 'default' | 'none' | 'set';
+const PRIORITY_CHOICES: { value: ResourcePriority; label: string; hint: string }[] = [
+  { value: 'normal', label: 'Normal', hint: 'shares the CPU equally with other apps' },
+  { value: 'low', label: 'Low', hint: 'gives way when other apps need the CPU' },
+  { value: 'background', label: 'Background', hint: 'only uses the CPU other apps leave free' },
+];
+const memLabel = (m: number | null): string => (m === null ? 'none' : m % 1024 === 0 ? `${m / 1024} GiB` : `${m} MiB`);
+export function limitsSummary(l: InstanceResourcesDto): string {
+  const p = PRIORITY_CHOICES.find((c) => c.value === l.priority)!.label;
+  const cpu = l.cpus === null ? 'no CPU limit' : `at most ${l.cpus} ${l.cpus === 1 ? 'core' : 'cores'}`;
+  const mem = l.memoryMiB === null ? 'no memory limit' : `at most ${memLabel(l.memoryMiB)}`;
+  return `${p} priority · ${cpu} · ${mem}`;
+}
+
+export function ResourcesDialog({ inst, limits, title, onClose, onReview }: { inst: InstanceSummary; limits: InstanceResourcesDto; title: string; onClose: () => void; onReview: (r: ResourceChangeRequest) => void }) {
+  const [priority, setPriority] = useState<ResourcePriority | 'default'>(limits.chosen.priority ? limits.priority : 'default');
+  const [cpuPick, setCpuPick] = useState<LimitPick>(!limits.chosen.cpus ? 'default' : limits.cpus === null ? 'none' : 'set');
+  const [cpus, setCpus] = useState(String(limits.cpus ?? Math.max(1, Math.floor(limits.host.cpus / 2))));
+  const [memPick, setMemPick] = useState<LimitPick>(!limits.chosen.memoryMiB ? 'default' : limits.memoryMiB === null ? 'none' : 'set');
+  const [memGiB, setMemGiB] = useState(String(limits.memoryMiB !== null ? Math.round((limits.memoryMiB / 1024) * 100) / 100 : 2));
+  const cpuNum = Number(cpus);
+  const memMiB = Math.round(Number(memGiB) * 1024);
+  const cpuBad = cpuPick === 'set' && !(cpuNum >= 0.1 && cpuNum <= limits.host.cpus);
+  const memBad = memPick === 'set' && !(memMiB >= 64 && memMiB <= limits.host.memoryMiB);
+  const change: ResourceChangeRequest = {};
+  const was = { priority: limits.chosen.priority ? limits.priority : 'default', cpus: !limits.chosen.cpus ? 'default' : limits.cpus, memoryMiB: !limits.chosen.memoryMiB ? 'default' : limits.memoryMiB };
+  if (priority !== was.priority) change.priority = priority;
+  const cpuWant = cpuPick === 'default' ? 'default' : cpuPick === 'none' ? null : cpuNum;
+  if (cpuWant !== was.cpus && !cpuBad) change.cpus = cpuWant;
+  const memWant = memPick === 'default' ? 'default' : memPick === 'none' ? null : memMiB;
+  if (memWant !== was.memoryMiB && !memBad) change.memoryMiB = memWant;
+  const nothing = Object.keys(change).length === 0;
+  const pkgPriority = PRIORITY_CHOICES.find((c) => c.value === limits.package.priority)!.label.toLowerCase();
+  return (
+    <Dialog title={title} onClose={onClose}>
+      <form
+        className="stack"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!nothing && !cpuBad && !memBad) onReview(change);
+        }}
+      >
+        <p className="muted small">
+          For each of {inst.name}'s services. This machine has {limits.host.cpus} CPU threads and {memLabel(limits.host.memoryMiB)} of memory. Setting or tightening a limit applies at once; removing one restarts the app.
+        </p>
+        <fieldset className="storage-choices">
+          <legend>CPU priority</legend>
+          <label className="check">
+            <input type="radio" name="limits-priority" checked={priority === 'default'} onChange={() => setPriority('default')} /> The app's default: {pkgPriority}
+          </label>
+          {PRIORITY_CHOICES.map((c) => (
+            <label key={c.value} className="check">
+              <input type="radio" name="limits-priority" checked={priority === c.value} onChange={() => setPriority(c.value)} /> {c.label}
+              <span className="muted small"> · {c.hint}</span>
+            </label>
+          ))}
+        </fieldset>
+        <fieldset className="storage-choices">
+          <legend>CPU limit</legend>
+          <label className="check">
+            <input type="radio" name="limits-cpu" checked={cpuPick === 'default'} onChange={() => setCpuPick('default')} /> The app's default: {limits.package.cpus === null ? 'none' : `${limits.package.cpus} cores`}
+          </label>
+          <label className="check">
+            <input type="radio" name="limits-cpu" checked={cpuPick === 'none'} onChange={() => setCpuPick('none')} /> No limit
+          </label>
+          <label className="check">
+            <input type="radio" name="limits-cpu" checked={cpuPick === 'set'} onChange={() => setCpuPick('set')} /> At most
+            <input className="inline-num" type="number" min={0.1} max={limits.host.cpus} step="any" value={cpus} onChange={(e) => { setCpus(e.target.value); setCpuPick('set'); }} aria-label="CPU cores" /> cores
+          </label>
+          {cpuBad && <p className="error small">Between 0.1 and {limits.host.cpus} cores.</p>}
+        </fieldset>
+        <fieldset className="storage-choices">
+          <legend>Memory limit</legend>
+          <label className="check">
+            <input type="radio" name="limits-mem" checked={memPick === 'default'} onChange={() => setMemPick('default')} /> The app's default: {memLabel(limits.package.memoryMiB)}
+          </label>
+          <label className="check">
+            <input type="radio" name="limits-mem" checked={memPick === 'none'} onChange={() => setMemPick('none')} /> No limit
+          </label>
+          <label className="check">
+            <input type="radio" name="limits-mem" checked={memPick === 'set'} onChange={() => setMemPick('set')} /> At most
+            <input className="inline-num" type="number" min={0.0625} max={Math.floor(limits.host.memoryMiB / 1024)} step="any" value={memGiB} onChange={(e) => { setMemGiB(e.target.value); setMemPick('set'); }} aria-label="Memory in GiB" /> GiB
+          </label>
+          {memBad && <p className="error small">Between 64 MiB and {memLabel(limits.host.memoryMiB)}.</p>}
+          {memPick === 'set' && !memBad && <p className="muted small">A service that needs more is stopped by the kernel and restarted.</p>}
+        </fieldset>
+        <div className="row end">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={nothing || cpuBad || memBad} title={nothing ? 'Change something first' : undefined}>
+            Review
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
     case 'install':
       return plan.location
@@ -1846,6 +1948,7 @@ function humanSummary(plan: PlanDto, n: string): string {  switch (plan.kind) {
     case 'purge':
       return `Harbor will uninstall ${n} completely: containers, its data volumes, secrets and stored release. Folders of yours are left alone. This cannot be undone.`;
     case 'configure':
+      if (plan.resources && !plan.internet && plan.changes.every((c) => /^(CPU|Memory|Applied|It applies|.* restarts once|.* keeps the same limits)/.test(c))) return plan.resources.live ? `Harbor will change how much of the machine ${n} may take. It applies at once, without a restart.` : `Harbor will change how much of the machine ${n} may take.`;
       if (internetOnly(plan)) return `Harbor will change what ${n} may open on the internet. The firewall changes first; a running app then restarts for a few seconds so its lookups follow too. People reach ${n} as before.`;
       return `Harbor will apply the new settings to ${n} and recreate only what changed. Data, ports and addresses stay.`;
     case 'move':

@@ -186,3 +186,11 @@ storage on a chosen location, an RPC health path) and needs no engine change. No
   before designing any opt-out; decision 103's rule stands (never call plaintext encrypted).
 - **Validators and staking keys are a non-goal**: slashing risk and liveness duties do not fit a single-admin
   beta manager; no validator client goes into the official catalog.
+
+## CPU and memory: later (recorded 2026-11-16, after decision 205)
+
+- A host-wide reserve (keep N cores for interactive apps) and a host default (background services low unless the
+  package says otherwise). Per-app priority covers the case reported in issue #7; asked and deferred.
+- Per-service choices from the app page (the operator's choice applies to every service of the app today; packages can
+  already differ per service).
+- A combined limit for a whole app (one cgroup parent for all its containers) instead of one limit per service.

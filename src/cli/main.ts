@@ -22,7 +22,8 @@ import { gpuFact, planSummary } from './plan-summary.js';
 import { busyQuestion, canQueueAction, queueStatusLine, queueText } from './queue-view.js';
 import { gpuStatusLine } from '../planner/gpu.js';
 import { formatSettingValue, parseSettingInput } from '../planner/settings.js';
-import type { InternetDto, SettingDto, SettingValue, VpnDto } from '../contracts/api.js';
+import type { InstanceResourcesDto, InternetDto, ResourceChangeRequest, SettingDto, SettingValue, VpnDto } from '../contracts/api.js';
+import { parseMemLimit } from '../planner/resources.js';
 
 interface Globals {
   url: string;
@@ -345,6 +346,7 @@ program
         ...(d.ports ?? []).map((x) => `  port ${x.id}: ${x.protocol.toUpperCase()} ${x.hostPort} on every network -> ${x.service}:${x.containerPort} (${x.purpose}); forward it on your router to reach it from outside`),
         ...(d.gpu ? [`  graphics card: ${gpuStatusLine(d.gpu)}`] : []),
         `  internet: ${internetText(d.internet)}`,
+        ...(d.limits ? [`  limits: ${limitsText(d.limits)}`] : []),
         ...(d.setup ? [`  setup: ${d.setup.instructions} -> ${d.setup.browserUrl}`] : []),
         ...(d.lastError ? [`  last error ${d.lastError.code}: ${d.lastError.message}`, `  next: ${d.lastError.nextAction}`] : []),
         '  resources:',
@@ -598,16 +600,71 @@ program
   .option('--unlink <id>', 'remove an optional link (repeatable)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--set <id=value>', 'a new value for a setting, e.g. --set context-length=16384; the default value removes your override (repeatable; harbor settings <app> lists them)', (v: string, acc: string[]) => [...acc, v], [] as string[])
   .option('--internet <direct|vpn|offline|default>', 'internet access (decision 184): straight out, only through the VPN, none at all, or the app\'s own default again; a running app restarts')
+  .option('--priority <normal|low|background|default>', 'CPU priority for each of its services (decision 205): low and background give way when other apps need the CPU')
+  .option('--cpus <n|none|default>', 'at most this many CPU cores for each of its services (e.g. 2 or 0.5)')
+  .option('--memory <size|none|default>', 'a memory limit for each of its services (e.g. 512m, 2g); a service that needs more is stopped by the kernel')
   .option('--yes', 'approve the shown plan non-interactively', false)
   .option('--no-wait', 'return after submission')
-  .action(async (ref: string, opts: { secret: string[]; link: string[]; unlink: string[]; set: string[]; internet?: string; yes: boolean; wait: boolean }) => {
+  .action(async (ref: string, opts: { secret: string[]; link: string[]; unlink: string[]; set: string[]; internet?: string; priority?: string; cpus?: string; memory?: string; yes: boolean; wait: boolean }) => {
     const api = client();
     const inst = await resolveInstance(api, ref);
     const secrets = await readSecretFlags(opts.secret);
     const links: Record<string, LinkChoice | null> = { ...(await readLinkFlags(api, opts.link)), ...Object.fromEntries(opts.unlink.map((id) => [id, null])) };
     const settings = typedSettings(inst.settings ?? [], readSetFlags(opts.set), inst.name);
-    const plan = await planWhenFree(api, { kind: 'configure', instanceId: inst.id, ...(Object.keys(secrets).length ? { secrets: Object.keys(secrets) } : {}), ...(Object.keys(links).length ? { links } : {}), ...(Object.keys(settings).length ? { settings } : {}), ...(opts.internet !== undefined ? { internet: internetFlag(opts.internet, true) } : {}) });
+    const plan = await planWhenFree(api, { kind: 'configure', instanceId: inst.id, ...(Object.keys(secrets).length ? { secrets: Object.keys(secrets) } : {}), ...(Object.keys(links).length ? { links } : {}), ...(Object.keys(settings).length ? { settings } : {}), ...(opts.internet !== undefined ? { internet: internetFlag(opts.internet, true) } : {}), ...resourceFlags(opts) });
     await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait, secrets });
+  });
+
+// --- decision 205: CPU priority, CPU limit and memory limit per app
+function resourceFlags(opts: { priority?: string; cpus?: string; memory?: string }): { resources?: ResourceChangeRequest } {
+  const r: ResourceChangeRequest = {};
+  if (opts.priority !== undefined) {
+    if (!['normal', 'low', 'background', 'default'].includes(opts.priority)) throw new HarborError('INVALID_REQUEST', `--priority expects normal, low, background or default, got ${opts.priority}`);
+    r.priority = opts.priority as NonNullable<ResourceChangeRequest['priority']>;
+  }
+  if (opts.cpus !== undefined) {
+    const n = Number(opts.cpus);
+    if (opts.cpus === 'none') r.cpus = null;
+    else if (opts.cpus === 'default') r.cpus = 'default';
+    else if (Number.isFinite(n) && n > 0) r.cpus = n;
+    else throw new HarborError('INVALID_REQUEST', `--cpus expects a number of cores (e.g. 2 or 0.5), none or default, got ${opts.cpus}`);
+  }
+  if (opts.memory !== undefined) {
+    if (opts.memory === 'none') r.memoryMiB = null;
+    else if (opts.memory === 'default') r.memoryMiB = 'default';
+    else {
+      const mib = /^[0-9]+$/.test(opts.memory) ? Number(opts.memory) : parseMemLimit(opts.memory);
+      if (mib === null) throw new HarborError('INVALID_REQUEST', `--memory expects a size like 512m or 2g (or MiB), none or default, got ${opts.memory}`);
+      r.memoryMiB = mib;
+    }
+  }
+  return Object.keys(r).length ? { resources: r } : {};
+}
+
+function limitsText(l: InstanceResourcesDto): string {
+  const mark = (on: boolean) => (on ? ' (your choice)' : '');
+  const mem = (m: number | null) => (m === null ? 'none' : m % 1024 === 0 ? `${m / 1024} GiB` : `${m} MiB`);
+  return `priority ${l.priority}${mark(l.chosen.priority)}, CPU limit ${l.cpus === null ? 'none' : `${l.cpus} cores`}${mark(l.chosen.cpus)}, memory limit ${mem(l.memoryMiB)}${mark(l.chosen.memoryMiB)} (this machine: ${l.host.cpus} CPU threads, ${mem(l.host.memoryMiB)})`;
+}
+
+program
+  .command('limits <instance>')
+  .description('show or change how much of the machine an app may take (decision 205): CPU priority, a CPU limit and a memory limit, for each of its services. Setting or tightening applies at once; removing a limit restarts the app')
+  .option('--priority <normal|low|background|default>', 'low and background run at full speed while the machine is idle and give way when other apps need the CPU')
+  .option('--cpus <n|none|default>', 'at most this many CPU cores (e.g. 2 or 0.5)')
+  .option('--memory <size|none|default>', 'a memory limit (e.g. 512m, 2g)')
+  .option('--yes', 'approve the shown plan non-interactively', false)
+  .option('--no-wait', 'return after submission')
+  .action(async (ref: string, opts: { priority?: string; cpus?: string; memory?: string; yes: boolean; wait: boolean }) => {
+    const api = client();
+    const inst = await resolveInstance(api, ref);
+    const change = resourceFlags(opts);
+    if (!change.resources) {
+      if (!inst.limits) throw new HarborError('INVALID_STATE', `${inst.name} has no readable release; its limits cannot be shown`);
+      return out(inst.limits, () => `${inst.name}: ${limitsText(inst.limits!)}`);
+    }
+    const plan = await planWhenFree(api, { kind: 'configure', instanceId: inst.id, ...change });
+    await approveAndApply(api, plan, { yes: opts.yes, wait: opts.wait });
   });
 
 // Decision 194: Harbor's app login in front of an app's web endpoint
