@@ -649,7 +649,9 @@ pnpm catalog:smoke --docker-socket ~/.docker/run/docker.sock --catalog /tmp/next
 ```
 
 `--record` writes the passed result into the package's qualification (CI does this; never by hand). The smoke run
-installs a required own folder into an empty temp folder and typed-in secrets with throwaway values; an app with a
+installs a required own folder into an empty temp folder and required typed-in secrets with throwaway values (optional
+ones stay empty, as most installs leave them; since 0.46.2); a Postgres major written into a tag (`0.8.7-pg15`) never
+moves (since 0.46.2); an app with a
 required link to another app is reported as "needs a manual check".
 
 **minHarbor (decision 161).** An app states the oldest Harbor release it runs on in its own manifest:

@@ -1375,6 +1375,16 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | Live, harbor-old self-updated 0.41.1 → 0.44.0, 2026-11-11 | a test package (`_harbor-probe._tcp`, Excalidraw image, installed `--unencrypted --no-tailnet`): after install the Mac's `dns-sd -L` resolves it at `harbor-old.local:18086` with TXT `path=/ app=announce-test harbor=1 scheme=http`, the child runs as `harbor`; stop removes it (no avahi-publish left); start shows *Add* and remove shows *Rmv* on the Mac's `dns-sd -B` within a second. **Found:** avahi-publish writes "Established under name …" to stderr, so 0.44.0's app page stayed on *Announcing…*; fixed in 0.44.1 (the unit test now writes to stderr and fails on 0.44.0's code). |
 | Live, harbor-old self-updated 0.44.0 → 0.44.1, 2026-11-11 | the same package: `harbor list --json` shows `announce: [{state: announced, name: Announce test}]`, the daemon logs `announced _harbor-probe._tcp …`, the Mac resolves it with the same TXT records; purge leaves no avahi-publish child. Every other app on harbor-old came back running and healthy after both updates. |
 
+## 0.46.2 (decision 204)
+
+| Check | Result |
+|---|---|
+| `tests/unit/readiness-probe.test.ts` | two probes arrive on two different client ports, each with `Connection: close`; fails on 0.46.1's probe (one reused socket) |
+| Keep-alive race, Docker Desktop 29.2.1 (arm64), 2026-11-16 | Wizarr v2026.9.1 published on 18690, 50 probes 1.9–2.1 s apart: Node's default agent 48 × 302 + 2 × "socket hang up", `agent: false` 50 × 302. The same run of `catalog:smoke wizarr` failed 3 of 4 times on 0.46.1 code; Harbor's observer logged `socket hang up` about 6 s after healthy |
+| `tests/unit/smoke-secrets.test.ts` | a required typed-in secret gets a `Smoke-…` value at least `minLength` long; optional ones and generated ones get none |
+| `tests/unit/upstream-tags.test.ts` (Postgres major) | `0.8.7-pg15` offers only `0.8.8-pg15` among `0.8.7-pg18`, `0.8.8-pg18`, `0.9.0-pg16`; TimescaleDB `2.17.2-pg16` stays on 16; `jpg3` is still a number; `pgvector/pgvector` is a data store. `catalog:upstream check --only khoj,immich` against harbor-apps main: 0 updates (0.46.1 offered `db 0.8.7-pg15 -> 0.8.7-pg18`) |
+| `catalog:smoke` on Docker Desktop (arm64), harbor-apps main + the moves, 2026-11-16 | ntfy 2.30.0 → 2.37.2: on 0.46.1 code the update fails (`if set, upstream-base-url must start with http:// or https://` in the container log); with optional secrets empty, upgrade + fresh pass. qBittorrent 5.2.4 → 5.3.0 (hook writes the new `[WebUI]` section), Wizarr 2026.9.1 → 2026.10.1, Bark Wallet 0.8.0 → 0.11.0: upgrade + fresh pass. Qualification itself comes from harbor-apps CI on x86-64 after this release |
+
 ## 0.46.1 (decision 203)
 
 | Check | Result |

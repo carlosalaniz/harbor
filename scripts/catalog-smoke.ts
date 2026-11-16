@@ -34,6 +34,7 @@ import { packageVersionOf } from '../src/packages/version.js';
 import { initializeState } from '../src/state/db.js';
 import { systemClock, systemIds } from '../src/util.js';
 import { HARBOR_ROOT } from './catalog-dir.mjs';
+import { smokeSecrets } from './smoke-secrets.js';
 import { restartBaseline, settleProblem, toleratedRestarts, type SettleContainer } from './smoke-settle.js';
 
 const ADMIN = { username: 'smoke', password: `smoke-${randomBytes(12).toString('hex')}` };
@@ -171,14 +172,16 @@ export async function smoke(o: ReturnType<typeof args>): Promise<SmokeResult> {
     /* not Linux: keep platform + arch */
   }
 
-  // What an install needs besides the package: typed-in secrets get throwaway values; a required own folder
-  // gets an empty temp folder; a required link to another app cannot be smoke-tested alone.
+  // What an install needs besides the package: required typed-in secrets get throwaway values; optional ones
+  // stay empty, as most installs leave them (a throwaway in a field the app reads as a URL, like ntfy's iPhone
+  // relay, stops the app, which no operator would see); a required own folder gets an empty temp folder; a
+  // required link to another app cannot be smoke-tested alone.
   const required = (next.manifest.links ?? []).filter((l) => !l.optional);
   if (required.length) {
     result.skipped = `needs another app (${required.map((l) => l.id).join(', ')}); check it by hand`;
     return result;
   }
-  const secrets = Object.fromEntries((next.manifest.secrets ?? []).filter((s) => s.source === 'operator').map((s) => [s.id, `Smoke-${randomBytes(Math.max(12, Math.ceil((s.minLength ?? 12) / 2))).toString('hex')}`]));
+  const secrets = smokeSecrets(next.manifest.secrets ?? []);
   const root = mkdtempSync(path.join(tmpdir(), 'harbor-smoke-'));
   const storage: Record<string, { hostPath: string }> = {};
   for (const s of next.manifest.storage ?? []) {

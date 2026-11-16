@@ -19,7 +19,10 @@ export function probeOnce(hostPort: number, pathname: string, expected: number[]
       resolve(r);
     };
     const req = request(
-      { host: '127.0.0.1', port: hostPort, path: pathname, method: 'GET', headers: { host: `localhost:${hostPort}`, accept: '*/*', 'user-agent': 'harbor-readiness/1' }, timeout: timeoutMs },
+      // agent: false = a fresh connection per probe (Connection: close). Node's default agent keeps sockets alive, and
+      // a server that drops idle ones after 2 s (gunicorn's default; Harbor probes every 2 s) closed the reused one
+      // under the next probe: "socket hang up", an app reported unhealthy that never was (harbor-apps #41, Wizarr).
+      { host: '127.0.0.1', port: hostPort, path: pathname, method: 'GET', agent: false, headers: { host: `localhost:${hostPort}`, accept: '*/*', 'user-agent': 'harbor-readiness/1' }, timeout: timeoutMs },
       (res) => {
         let received = 0;
         res.on('data', (chunk: Buffer) => {

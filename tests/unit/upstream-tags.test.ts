@@ -67,3 +67,19 @@ describe('upstream tags', () => {
     expect(() => checkPolicy({ schemaVersion: 1, apps: { x: { match: { web: '(' } } } })).toThrow(/regular expression/);
   });
 });
+
+describe('a Postgres major in a tag (harbor-apps #46)', () => {
+  it('keeps pgNN in the shape, so 0.8.7-pg15 never moves to 0.8.7-pg18', () => {
+    expect(tagShape('0.8.7-pg15')).toEqual({ key: '#.#.#-pg15', nums: [0, 8, 7] });
+    expect(newerTags('0.8.7-pg15', ['0.8.7-pg18', '0.8.8-pg18', '0.8.8-pg15', 'pg15', '0.9.0-pg16'])).toEqual([{ tag: '0.8.8-pg15', level: 'minor' }]);
+    expect(newerTags('2.17.2-pg16', ['2.18.0-pg17', '2.17.3-pg16'], { withinMajor: true })).toEqual([{ tag: '2.17.3-pg16', level: 'patch' }]);
+  });
+
+  it('does not treat digits after other letters as a Postgres major', () => {
+    expect(tagShape('v1.2-jpg3')?.nums).toEqual([1, 2, 3]);
+  });
+
+  it('counts pgvector as a data store', () => {
+    expect(isDataStore('pgvector/pgvector')).toBe(true);
+  });
+});

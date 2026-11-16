@@ -4,7 +4,9 @@
 //
 // A tag is compared only with tags of the same shape: the same text with every run of digits replaced, so
 // v0.11.3 competes with v0.12.0 but never with v0.12.0-cuda, latest or 2024-nightly. Within a shape the digit
-// runs compare as numbers, left to right.
+// runs compare as numbers, left to right. A Postgres major written into a tag (pgvector 0.8.7-pg15, timescaledb
+// 2.17.2-pg16) is part of the shape, not a number: its data directory only opens with that major, so 0.8.7-pg15
+// never moves to 0.8.7-pg18 (harbor-apps #46, Khoj).
 
 export interface TagShape {
   key: string; // the tag with each digit run replaced by '#'
@@ -16,7 +18,8 @@ export function tagShape(tag: string): TagShape | null {
   const nums: number[] = [];
   let key = '';
   for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 1) {
+    if (i % 2 === 1 && /(^|[^a-z])pg$/i.test(parts[i - 1]!)) key += parts[i];
+    else if (i % 2 === 1) {
       const n = Number(parts[i]);
       if (!Number.isSafeInteger(n)) return null;
       nums.push(n);
@@ -76,7 +79,7 @@ export function newerTags(current: string, available: string[], opts: { withinMa
 
 // Images that hold data in a format tied to their major version. They stay on their major whatever role the
 // package gives them (a database declared as an application service is still a database).
-const DATA_STORE = /(^|\/)(postgres|postgis|pgvecto-rs|pgautoupgrade|timescaledb|mariadb|mysql|mongo|redis|valkey|keydb|elasticsearch|opensearch|influxdb|clickhouse-server|couchdb|cassandra|neo4j|etcd)$/;
+const DATA_STORE = /(^|\/)(postgres|postgis|pgvector|pgvecto-rs|pgautoupgrade|timescaledb|mariadb|mysql|mongo|redis|valkey|keydb|elasticsearch|opensearch|influxdb|clickhouse-server|couchdb|cassandra|neo4j|etcd)$/;
 export const isDataStore = (repository: string): boolean => DATA_STORE.test(repository.replace(/^docker\.io\//, '').replace(/^library\//, ''));
 
 // Services that must move together: images from the same publisher (registry + owner) on the same tag, like
