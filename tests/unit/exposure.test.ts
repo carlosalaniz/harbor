@@ -88,6 +88,14 @@ describe('Caddy config renderer', () => {
     expect(text).toContain('"terminal":true');
     expect(JSON.stringify(renderCaddyConfig([]))).toContain('"routes":[]');
   });
+  it('public routes keep the browser default referrer policy, never no-referrer (decision 206)', () => {
+    // no-referrer makes Chrome send `Origin: null` on same-origin form POSTs, which Django's CSRF check
+    // (Plane, Paperless, …) refuses: "CSRF Verification Failed" on every login.
+    const text = JSON.stringify(renderCaddyConfig([{ id: 'a', hostname: 'plane.example.com', upstreamPort: 18092, basicAuth: null }]));
+    expect(text).toContain('"Referrer-Policy":["strict-origin-when-cross-origin"]');
+    expect(text).not.toContain('no-referrer"');
+    expect(text).toContain('"X-Content-Type-Options":["nosniff"]');
+  });
   it('two public names of one endpoint become two routes to the same upstream, each with its own protection (decision 127)', () => {
     const cfg = renderCaddyConfig([
       { id: 'a', hostname: 'erp.example.com', upstreamPort: 18080, basicAuth: null },
