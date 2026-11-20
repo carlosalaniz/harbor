@@ -1,5 +1,5 @@
 import type { AppBackupsDto, BackupAppPolicyDto, BackupPolicyDto, BackupsOverviewDto, BackupTargetDto, FoundBackupAppDto, SettingValue } from '../../src/contracts/api';
-import type { AddressOptionsDto, ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, OperationQueueDto, QueueableKind, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailnetAllDto, TailscaleLoginDto, UiExposureDto, WidgetDto, LinkDto, CatalogStatusDto, VpnDto, DeveloperModeDto, SpaceDto, SpacesDto } from '../../src/contracts/api';
+import type { AddressOptionsDto, ApiErrorBody, AppearanceDto, FoundAppDto, InstanceAppearancePatch, InstanceLogsDto, LogsDto, NetworkHttpsDto, PackageImportResultDto, RotationPatch, SecurityDto, SelfUpdateStatusDto, SessionInfoDto, RecoveryKeyRotationDto, SetupRequest, SetupResultDto, SetupStatusDto, SystemHostDto, TotpSetupDto, CatalogItemDto, DomainDto, DomainsDto, ExposureDto, FolderListingDto, HostStorageDto, NotificationChannelDto, NotificationsDto, StorageUsageDto, AddSourceResult, PackageSourceDto, InstanceDetail, InstanceSummary, OperationDto, OperationQueueDto, QueueableKind, PlanDto, PlanRequest, PlatformToolDto, SessionDto, SystemDto, SystemMetricsDto, TailnetAllDto, TailscaleLoginDto, UiExposureDto, WidgetDto, LinkDto, CatalogStatusDto, VpnDto, AccessGuardDto, GuardLookupDto, DeveloperModeDto, SpaceDto, SpacesDto } from '../../src/contracts/api';
 
 export interface SpaceChange {
   name?: string;
@@ -164,6 +164,15 @@ const realApi = {
   updateSpace: (id: string, body: SpaceChange) => call<SpaceDto>('PATCH', `/v1/spaces/${encodeURIComponent(id)}`, body),
   deleteSpace: (id: string) => call<SpacesDto>('DELETE', `/v1/spaces/${encodeURIComponent(id)}`),
   checkVpn: () => call<VpnDto>('POST', '/v1/vpn/check', {}),
+  // Access Guard (decision 207)
+  accessGuard: () => call<AccessGuardDto>('GET', '/v1/access-guard'),
+  setAccessGuard: (enabled: boolean) => call<AccessGuardDto>('PUT', '/v1/access-guard/enabled', { enabled }),
+  checkAccessGuard: () => call<AccessGuardDto>('POST', '/v1/access-guard/check', {}),
+  addGuardEntry: (body: { address: string; label?: string; tags?: string[]; expiresAt?: string }) => call<AccessGuardDto>('POST', '/v1/access-guard/entries', body),
+  updateGuardEntry: (id: string, patch: { label?: string | null; tags?: string[]; expiresAt?: string | null }) => call<AccessGuardDto>('PATCH', `/v1/access-guard/entries/${id}`, patch),
+  removeGuardEntry: (id: string) => call<AccessGuardDto>('DELETE', `/v1/access-guard/entries/${id}`),
+  tagGuardAddress: (address: string, tags: string[]) => call<AccessGuardDto>('PUT', '/v1/access-guard/tags', { address, tags }),
+  guardLookup: (address: string, online: boolean) => call<GuardLookupDto>('POST', '/v1/access-guard/lookup', { address, online }),
   foundApps: () => call<{ items: FoundAppDto[] }>('GET', '/v1/found-apps').then((r) => r.items),
   adoptFoundApp: (home: string, passphrase: string, name?: string, acceptPermissions?: boolean) => call<InstanceSummary>('POST', '/v1/found-apps/adopt', { home, passphrase, ...(name ? { name } : {}), ...(acceptPermissions ? { acceptPermissions: true } : {}) }),
   unlockApp: (id: string, passphrase: string) => call<InstanceSummary>('POST', `/v1/instances/${id}/unlock`, { passphrase }),

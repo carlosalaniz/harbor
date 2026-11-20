@@ -12,7 +12,7 @@ import { rfc3339, systemClock } from '../util.js';
 import { dockerInstallPreview, installDocker } from './docker-install.js';
 import { assertRequiredTools, exec, execOk, aptGet } from './exec.js';
 import { assertSupportedHost, distroSupport, gatherHostFacts, RELEASE_MARKER, type HostFacts } from './host.js';
-import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit, APP_CRYPTO_UNIT_FILE, appCryptoUnit, BACKUP_UNIT_FILE, backupUnit, EGRESS_UNIT_FILE, egressStepUnit, EGRESS_BOOT_UNIT, egressBootUnit, VPN_UNIT, vpnUnit, KERNEL_UNIT_FILE, kernelStepUnit } from './systemd.js';
+import { harborUnit, POLKIT_RULE_PATH, polkitPowerRule, SELF_UPDATE_UNIT_FILE, selfUpdateUnit, TAILSCALE_OPERATOR_UNIT, tailscaleOperatorUnit, TOOLS_INSTALL_UNIT, toolsInstallUnit, DEVICE_MOUNT_UNIT, deviceMountUnit, APP_CRYPTO_UNIT_FILE, appCryptoUnit, BACKUP_UNIT_FILE, backupUnit, EGRESS_UNIT_FILE, egressStepUnit, EGRESS_BOOT_UNIT, egressBootUnit, VPN_UNIT, vpnUnit, GUARD_UNIT_FILE, guardStepUnit, GUARD_BOOT_UNIT, guardBootUnit, KERNEL_UNIT_FILE, kernelStepUnit } from './systemd.js';
 import { prepareDataFolderForSealing } from './app-crypto-apply.js';
 import { installBackupTools } from './backup-tools.js';
 import { configureAvahiForLan, restartAvahi, unpinAvahiHostName } from './mdns.js';
@@ -416,10 +416,14 @@ async function bootstrapAfterStop(opts: BootstrapOptions, s: { facts: Awaited<Re
   writeFileSync(`/etc/systemd/system/${EGRESS_UNIT_FILE}`, egressStepUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${EGRESS_BOOT_UNIT}`, egressBootUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${VPN_UNIT}`, vpnUnit(), { mode: 0o644 });
+  writeFileSync(`/etc/systemd/system/${GUARD_UNIT_FILE}`, guardStepUnit(), { mode: 0o644 });
+  writeFileSync(`/etc/systemd/system/${GUARD_BOOT_UNIT}`, guardBootUnit(), { mode: 0o644 });
   writeFileSync(`/etc/systemd/system/${KERNEL_UNIT_FILE}`, kernelStepUnit(), { mode: 0o644 });
   await execOk('/usr/bin/systemctl', ['daemon-reload'], { timeoutMs: 60_000 });
   // decision 184: Docker waits for Harbor's firewall at boot (skipped while there are no rules); the tunnel follows the network
   await execOk('/usr/bin/systemctl', ['enable', EGRESS_BOOT_UNIT, VPN_UNIT], { timeoutMs: 60_000 });
+  // decision 207: Caddy waits for the allowed list at boot (skipped while the guard is off)
+  await execOk('/usr/bin/systemctl', ['enable', GUARD_BOOT_UNIT], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['enable', PRODUCT.paths.systemdUnit], { timeoutMs: 60_000 });
   await execOk('/usr/bin/systemctl', ['restart', PRODUCT.paths.systemdUnit], { timeoutMs: 120_000 });
   const managementUrl = `http://localhost:${config.listen.port}`;

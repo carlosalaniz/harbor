@@ -1,0 +1,90 @@
+# Builds and pushes ghcr.io/carlosalaniz/harbor-ip-lookup (the IP Lookup app's image) for linux/amd64 and linux/arm64.
+#
+# Push to main: tag = images/ip-lookup/package.json `version`, pushed once (a published version is never pushed
+# again; the app package pins digests). Run by hand on any other branch: tag = `<version>-<short sha>`, a test build.
+# The job summary prints the digest to pin. Never put ${{ }} of file contents inside a run: script; pass values
+# through env and quote them.
+name: ip-lookup-image
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'images/ip-lookup/**'
+      - '.github/workflows/ip-lookup-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/carlosalaniz/harbor-ip-lookup
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test
+        run: node --test images/ip-lookup/test.mjs
+      - name: Read package.json
+        id: meta
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          version="$(jq -r .version images/ip-lookup/package.json)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::images/ip-lookup/package.json version must be x.y.z"; exit 1; }
+          tag="$version"
+          [[ "$REF" == refs/heads/main ]] || tag="$version-${SHA:0:7}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Is this tag published already?
+        id: exists
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE:$TAG" > /dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "$IMAGE:$TAG is published already; not pushed again (raise images/ip-lookup/package.json version)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v3
+        if: steps.exists.outputs.already == 'false'
+      - uses: docker/setup-buildx-action@v3
+        if: steps.exists.outputs.already == 'false'
+      - name: Build and push
+        id: build
+        if: steps.exists.outputs.already == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: images/ip-lookup
+          platforms: linux/amd64,linux/arm64
+          labels: |
+            org.opencontainers.image.version=${{ steps.meta.outputs.tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          push: true
+          provenance: mode=max
+          sbom: true
+      - name: Digest to pin
+        if: steps.exists.outputs.already == 'false'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "pushed \`$IMAGE@$DIGEST\` (tag $TAG)" >> "$GITHUB_STEP_SUMMARY"

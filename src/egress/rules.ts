@@ -226,10 +226,11 @@ export function flushRouteTableArgs(): string[] {
 }
 
 // The mode an app runs with (decision 184): the operator's choice, else the package's default, else direct;
-// "every app through the VPN" turns direct into VPN and leaves offline alone.
-export function effectiveInternet(choice: InternetMode | null, packageDefault: InternetMode | null | undefined, allApps: boolean): InternetMode {
+// "every app through the VPN" turns direct into VPN and leaves offline alone. An app that requires the VPN
+// (decision 208) never runs direct, whatever a stored choice says.
+export function effectiveInternet(choice: InternetMode | null, packageDefault: InternetMode | null | undefined, allApps: boolean, requireVpn = false): InternetMode {
   const chosen = choice ?? packageDefault ?? 'direct';
-  if (chosen === 'direct' && allApps) return 'vpn';
+  if (chosen === 'direct' && (allApps || requireVpn)) return 'vpn';
   return chosen;
 }
 

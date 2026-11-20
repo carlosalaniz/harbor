@@ -182,7 +182,29 @@ export const MANIFEST_SCHEMA = {
     network: {
       type: 'object',
       additionalProperties: false,
-      properties: { internet: { enum: ['direct', 'vpn', 'offline'] } },
+      properties: {
+        internet: { enum: ['direct', 'vpn', 'offline'] },
+        // Decision 208 (Harbor 0.48.0): the app may only reach the internet through the VPN. Its default becomes
+        // vpn, the operator cannot pick direct (offline stays allowed: nothing leaves), and install refuses while
+        // no VPN is set up. Not combinable with internet: direct.
+        requireVpn: { type: 'boolean' },
+      },
+    },
+    // Decision 209 (Harbor 0.48.0): services this app offers to Harbor itself. ipLookup = Harbor asks this app about
+    // an address (Settings → Allowed addresses → Ask online): GET http://127.0.0.1:<endpoint port><path>?ip=<address>,
+    // answered with the documented JSON (docs/DEVELOPER_PACKAGES.md).
+    provides: {
+      type: 'object',
+      additionalProperties: false,
+      minProperties: 1,
+      properties: {
+        ipLookup: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['endpoint', 'path'],
+          properties: { endpoint: idString, path: { type: 'string', pattern: RELATIVE_PATH_PATTERN, maxLength: 256 } },
+        },
+      },
     },
     health: {
       type: 'object',

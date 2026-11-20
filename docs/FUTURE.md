@@ -194,3 +194,14 @@ storage on a chosen location, an RPC health path) and needs no engine change. No
 - Per-service choices from the app page (the operator's choice applies to every service of the app today; packages can
   already differ per service).
 - A combined limit for a whole app (one cgroup parent for all its containers) instead of one limit per service.
+
+## Access Guard: later (recorded 2026-11-20, after decisions 207–209)
+
+- Per-app allowed lists (L1): Caddy `remote_ip` + `abort` per public route; the firewall keeps the union. Decided
+  against for v1 (D1): one global list is the firewall alone.
+- A country filter (L2) on top of addresses (the local DB-IP database already answers countries).
+- Hostname entries (L3): a dynamic DNS name re-resolved every few minutes, for a home connection whose address changes.
+- Docker-published app ports (L4, VPN-server apps' fixed UDP ports) under the same list, through the forward chain.
+- Exact tries instead of packets (a dropped client resends its first packet; counting SYNs per second window would
+  approximate it).
+- More services in IP Lookup (it takes a new source as a release of its own image).

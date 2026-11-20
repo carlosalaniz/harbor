@@ -25,6 +25,8 @@ import type {
   BackupsOverviewDto,
   BackupTargetDto,
   VpnDto,
+  AccessGuardDto,
+  GuardLookupDto,
   DeveloperModeDto,
   SpaceDto,
   SpacesDto,
@@ -111,6 +113,44 @@ function mockTailnetAll(): TailnetAllDto {
     });
   return { enabled: tailnetAll.enabled, status: tailnetAll.enabled ? 'on' : 'off', reason: null, nextAction: null, except: tailnetAll.except, asked: [], apps, offer: false };
 }
+// decision 207: Access Guard. ?guard=on starts with the list on and a few dropped addresses (documentation ranges).
+const guardParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('guard') : null;
+const hoursAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
+let guardMock: AccessGuardDto = {
+  available: true,
+  reason: null,
+  enabled: guardParam === 'on',
+  state: guardParam === 'on' ? 'on' : 'off',
+  message: null,
+  appliedAt: guardParam === 'on' ? hoursAgo(30) : null,
+  checkedAt: guardParam === 'on' ? hoursAgo(0.1) : null,
+  entries: [
+    { id: 'a1111111-1111-4111-8111-111111111111', address: '203.0.113.24', family: 4, label: 'Home fibre', tags: ['home', 'family'], expiresAt: null, expired: false, createdAt: hoursAgo(400) },
+    { id: 'a2222222-2222-4222-8222-222222222222', address: '2001:db8:4a10::/64', family: 6, label: 'Home IPv6', tags: ['home'], expiresAt: null, expired: false, createdAt: hoursAgo(400) },
+    { id: 'a3333333-3333-4333-8333-333333333333', address: '198.51.100.77', family: 4, label: 'Office, Ana', tags: ['work'], expiresAt: new Date(Date.now() + 20 * 86_400_000).toISOString(), expired: false, createdAt: hoursAgo(48) },
+  ],
+  exempt: ['127.0.0.0/8', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10', '::1/128', 'fc00::/7', 'fe80::/10', 'tailscale0'],
+  own: guardParam === 'on' ? ['198.51.100.4'] : [],
+  publicApps: [{ instanceId: 'mock', name: 'Immich', hostname: 'photos.example.net' }],
+  blocked:
+    guardParam === 'on'
+      ? [
+          { address: '192.0.2.140', family: 4, packets: 4812, firstSeen: hoursAgo(400), lastSeen: hoursAgo(0.05), tags: ['scanner'], allowed: false, geo: { country: 'NL', countryName: 'Netherlands', asn: 'AS64500', org: 'Example Hosting' }, online: null },
+          { address: '198.51.100.9', family: 4, packets: 1290, firstSeen: hoursAgo(200), lastSeen: hoursAgo(0.3), tags: [], allowed: false, geo: null, online: null },
+          { address: '203.0.113.201', family: 4, packets: 37, firstSeen: hoursAgo(20), lastSeen: hoursAgo(1), tags: [], allowed: false, geo: null, online: null },
+          { address: '2001:db8:9f::23', family: 6, packets: 12, firstSeen: hoursAgo(5), lastSeen: hoursAgo(3), tags: [], allowed: false, geo: null, online: null },
+        ]
+      : [],
+  totals: guardParam === 'on' ? { addresses: 4, packets: 6151, addresses24h: 4 } : { addresses: 0, packets: 0, addresses24h: 0 },
+  geo: { ready: guardParam === 'on', edition: guardParam === 'on' ? '2026-11' : null, downloadedAt: null, attribution: { text: 'IP Geolocation by DB-IP', url: 'https://db-ip.com' } },
+  lookupApps: guardParam === 'on' ? [{ instanceId: 'mock-lookup', name: 'IP Lookup', running: true }] : [],
+};
+const MOCK_GEO: Record<string, GuardLookupDto['geo']> = {
+  '198.51.100.9': { country: 'US', countryName: 'United States', asn: 'AS64501', org: 'Example Cloud' },
+  '203.0.113.201': { country: 'MX', countryName: 'Mexico', asn: 'AS64502', org: 'Example Mobile' },
+  '2001:db8:9f::23': { country: 'DE', countryName: 'Germany', asn: 'AS64503', org: 'Example Transit' },
+};
+
 // decision 184: the apps' VPN. ?vpn=on shows a connected tunnel, ?vpn=down one that stopped answering.
 const vpnParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('vpn') : null;
 let vpnTunnel: VpnDto['tunnel'] = vpnParam === 'on' || vpnParam === 'down' ? { name: 'Mullvad Stockholm', endpoint: '185.65.134.82:51820', addresses: ['10.66.12.34/32'], dns: ['10.64.0.1'], dnsFallback: false, mtu: 1420, peerPublicKey: 'MOCKpublicKEYforDESIGNmodeONLYxxxxxxxxxxxA=', setAt: new Date(Date.now() - 86_400_000).toISOString() } : null;
@@ -395,6 +435,53 @@ export const mockApi = {
   checkVpn: async (): Promise<VpnDto> => {
     await beat(500);
     return mockVpn();
+  },
+  accessGuard: async (): Promise<AccessGuardDto> => guardMock,
+  setAccessGuard: async (enabled: boolean): Promise<AccessGuardDto> => {
+    await beat(600);
+    guardMock = { ...guardMock, enabled, state: enabled ? 'on' : 'off', appliedAt: new Date().toISOString() };
+    return guardMock;
+  },
+  checkAccessGuard: async (): Promise<AccessGuardDto> => {
+    await beat(400);
+    return { ...guardMock, checkedAt: new Date().toISOString() };
+  },
+  addGuardEntry: async (body: { address: string; label?: string; tags?: string[]; expiresAt?: string }): Promise<AccessGuardDto> => {
+    await beat();
+    if (!/^[0-9a-f:.]+(\/\d{1,3})?$/i.test(body.address)) throw new Error(`${body.address} is not an address or a range`);
+    const id = `a${Math.random().toString(16).slice(2, 9)}-1111-4111-8111-111111111111`;
+    guardMock = {
+      ...guardMock,
+      entries: [...guardMock.entries, { id, address: body.address.toLowerCase(), family: body.address.includes(':') ? 6 : 4, label: body.label ?? null, tags: body.tags ?? [], expiresAt: body.expiresAt ?? null, expired: false, createdAt: new Date().toISOString() }],
+      blocked: guardMock.blocked.map((b) => (b.address === body.address ? { ...b, allowed: true } : b)),
+    };
+    return guardMock;
+  },
+  updateGuardEntry: async (id: string, patch: { label?: string | null; tags?: string[]; expiresAt?: string | null }): Promise<AccessGuardDto> => {
+    await beat();
+    guardMock = { ...guardMock, entries: guardMock.entries.map((e) => (e.id === id ? { ...e, ...(patch.label !== undefined ? { label: patch.label } : {}), ...(patch.tags ? { tags: patch.tags } : {}), ...(patch.expiresAt !== undefined ? { expiresAt: patch.expiresAt } : {}) } : e)) };
+    return guardMock;
+  },
+  removeGuardEntry: async (id: string): Promise<AccessGuardDto> => {
+    await beat();
+    guardMock = { ...guardMock, entries: guardMock.entries.filter((e) => e.id !== id) };
+    return guardMock;
+  },
+  tagGuardAddress: async (address: string, tags: string[]): Promise<AccessGuardDto> => {
+    await beat();
+    guardMock = { ...guardMock, blocked: guardMock.blocked.map((b) => (b.address === address ? { ...b, tags } : b)) };
+    return guardMock;
+  },
+  guardLookup: async (address: string, online: boolean): Promise<GuardLookupDto> => {
+    await beat(online ? 900 : 300);
+    const geo = MOCK_GEO[address] ?? guardMock.blocked.find((b) => b.address === address)?.geo ?? null;
+    const r: GuardLookupDto = {
+      address,
+      geo,
+      online: online ? { instanceId: 'mock-lookup', app: 'IP Lookup', at: new Date().toISOString(), note: null, results: [{ source: 'ipinfo', ok: true, country: geo?.country ?? undefined, city: 'Example City', org: geo?.org ?? undefined, flags: ['hosting'] }, { source: 'abuseipdb', ok: true, abuseScore: 87, reports: 412, usage: 'Data Center/Web Hosting/Transit' }] } : null,
+    };
+    guardMock = { ...guardMock, blocked: guardMock.blocked.map((b) => (b.address === address ? { ...b, geo, ...(r.online ? { online: r.online } : {}) } : b)) };
+    return r;
   },
   exposeUi: async (): Promise<UiExposureDto> => mockExposures().ui!,
   unexposeUi: async (): Promise<void> => {

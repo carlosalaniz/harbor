@@ -90,6 +90,8 @@ export interface InternetDto {
   packageDefault: InternetMode;
   // every app goes through the VPN (turns direct into vpn)
   allApps: boolean;
+  // decision 208: the package allows only the VPN (or offline); direct is never offered
+  requireVpn?: boolean;
 }
 // Spaces (decision 202): named groups of apps on Home; `shared` puts every service of every member on one private
 // network under the names Harbor gives (`<app>`, `<app>-<service>`).
@@ -131,6 +133,88 @@ export interface VpnDto {
   apps: { instanceId: string; name: string; mode: 'vpn' | 'offline' }[];
   // the host rules: ok = loaded this daemon run, failed = the last apply failed (message), none = nothing applied yet
   rules: { state: 'ok' | 'failed' | 'none'; message: string | null; appliedAt: string | null };
+}
+// ---- Access Guard (decision 207): allowed addresses for the public apps
+export interface GuardEntryDto {
+  id: string;
+  // as typed back to the operator: one address (no /32 or /128) or a range
+  address: string;
+  family: 4 | 6;
+  label: string | null;
+  tags: string[];
+  expiresAt: string | null;
+  // past its expiry: no longer allowed (removed at the next check)
+  expired: boolean;
+  createdAt: string;
+}
+export interface GeoDto {
+  country: string | null;
+  countryName: string | null;
+  asn: string | null;
+  org: string | null;
+}
+// decision 209: what an IP lookup app answered (only checked, known fields)
+export interface OnlineLookupDto {
+  instanceId: string;
+  app: string;
+  at: string;
+  note: string | null;
+  results: {
+    source: string;
+    ok: boolean;
+    error?: string;
+    country?: string;
+    region?: string;
+    city?: string;
+    asn?: string;
+    org?: string;
+    hostname?: string;
+    abuseScore?: number;
+    reports?: number;
+    lastReportedAt?: string;
+    usage?: string;
+    flags?: ('hosting' | 'vpn' | 'proxy' | 'tor' | 'relay' | 'bogon')[];
+  }[];
+}
+export interface BlockedAddressDto {
+  address: string;
+  family: 4 | 6;
+  // dropped packets while the guard was on (a client resends its first packet, so one try counts about 2–3)
+  packets: number;
+  firstSeen: string;
+  lastSeen: string;
+  tags: string[];
+  // an entry of the list covers it now (allowed after it was dropped)
+  allowed: boolean;
+  geo: GeoDto | null;
+  online: OnlineLookupDto | null;
+}
+export interface AccessGuardDto {
+  // this machine can load the firewall (nftables)
+  available: boolean;
+  reason: string | null;
+  enabled: boolean;
+  // the kernel table: on = loaded, off = not, failed = the last change failed (message)
+  state: 'on' | 'off' | 'failed';
+  message: string | null;
+  appliedAt: string | null;
+  checkedAt: string | null;
+  entries: GuardEntryDto[];
+  // never dropped: these ranges, the tailnet and this machine's own public addresses (looked up from the public names)
+  exempt: string[];
+  own: string[];
+  // apps published on the internet (what the guard protects)
+  publicApps: { instanceId: string; name: string; hostname: string }[];
+  blocked: BlockedAddressDto[];
+  totals: { addresses: number; packets: number; addresses24h: number };
+  geo: { ready: boolean; edition: string | null; downloadedAt: string | null; attribution: { text: string; url: string } };
+  // decision 209: apps that answer address lookups (running = can be asked now)
+  lookupApps: { instanceId: string; name: string; running: boolean }[];
+}
+export interface GuardLookupDto {
+  address: string;
+  geo: GeoDto | null;
+  online: OnlineLookupDto | null;
 }
 // Decision 205: how much of the machine an app may take, for each of its services. priority: CPU weight (low and
 // background give way to other apps under load and run at full speed when the machine is idle); cpus: a hard cap in
@@ -586,6 +670,8 @@ export interface CatalogItemDto {
   proposedName?: string;
   // decision 185: the package's network.internet (absent = direct, or a package Harbor cannot read)
   internet?: InternetMode;
+  // decision 208: the app only reaches the internet through the VPN (install needs one set up)
+  requireVpn?: boolean;
 }
 
 export interface SystemMetricsDto {

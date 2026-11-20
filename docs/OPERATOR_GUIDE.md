@@ -1069,6 +1069,8 @@ Every app has an **Internet access** choice (decision 184):
   reachable from a VPN app; tailnet addresses do not (they would go into the tunnel).
 - **What stays direct**: Harbor itself (updates, the catalog, Tailscale, Let's Encrypt) and image downloads for
   updates (Docker pulls them on the host), so offline and VPN apps still update.
+- **Apps that only go through the VPN** (since 0.48.0, decision 208; e.g. IP Lookup): the package says so, Direct is
+  not offered (Offline is), and installing one waits until a VPN is set up.
 - **Packages** may ask for a default (`network.internet`, e.g. *offline* for an app that never needs the internet);
   the install page shows "what X asks for". Your choice wins and is kept across updates; an update that changes the
   package's default moves only apps that follow it, and its review says so.
@@ -1275,6 +1277,49 @@ harbor tailscale every-app off                      # stop; nothing is withdrawn
    then *active*. Apps without their own login get a generated password unless you opt out.
 
 `harbor domains` prints the same table from the terminal.
+
+### Allowed addresses: who can reach your public apps (since 0.48.0)
+
+**Settings → Allowed addresses** (Access Guard, decision 207) decides who reaches the apps you publish on the
+internet:
+
+| Setting | Who reaches your public apps |
+|---|---|
+| **Everyone** (the default) | anyone, as before; each app's own login (or Harbor's password) protects it |
+| **Allowed list only** | only the addresses on the list, plus your own network, the tailnet and this machine; every other connection is **dropped** before it opens: no page, no certificate, no answer |
+
+- **Add address…**: one address (`203.0.113.7`, `2001:db8::7`) or a range (`203.0.113.0/24`; a home IPv6
+  connection usually needs its `/64`), with an optional label, tags and an expiry (24 hours, 7 days, 30 days). Ranges
+  wider than /8 (IPv4) or /16 (IPv6) are refused. Addresses on your own network or the tailnet need no entry and are
+  refused with that reason.
+- **Allowed list only** asks first and says how many entries will get in. An empty list is allowed: then nobody on the
+  internet gets in. The switch only moves once the firewall loaded the list; if it cannot, the previous setting stays
+  and the page says why.
+- **Never dropped**: `127/8`, `10/8`, `172.16/12`, `192.168/16`, `169.254/16`, `100.64/10` (Tailscale), IPv6
+  `::1`, `fc00::/7`, `fe80::/10`, the `tailscale0` interface, and this machine's own public addresses (what your public
+  names point to: some routers send home traffic back in through them). A wrong list never locks you out of the
+  console, which is never on the internet anyway.
+- **On a phone**: reach your apps through the tailnet. Mobile carriers change your address too often to allow.
+- **Dropped**: every address that was dropped, with a packet count (a client resends its first packet when nobody
+  answers, so one try counts about 2–3), when it was last seen, its tags, and **Look up**: country and network from a
+  database on this machine (DB-IP Lite, downloaded from db-ip.com the first time you look one up and refreshed monthly;
+  the address itself never leaves the machine). **Tag** works on any address ("scanner", "me on mobile?"); a tagged
+  address is kept past the 30 days and never notified about. **Allow…** prefills the add dialog. Harbor reads the
+  counts every 10 minutes (**Check now** reads them at once).
+- **Ask online** appears once **IP Lookup** (App Store) is installed and running: it asks ipinfo and, with a key,
+  AbuseIPDB (abuse score, reports, hosting/VPN/Tor flags). IP Lookup only goes on the internet through your VPN
+  (Settings → VPN first), so those services never see this machine's address; they do see the address you ask about.
+- **Notifications**: one when an untagged address sends 300 or more packets between two checks, and one a day before
+  an entry expires. An expired entry leaves the list at the next check.
+- **What it covers**: port 443 (TCP and HTTP/3), where Caddy serves every public app. Port 80 stays open because
+  Let's Encrypt checks your domains from addresses it does not publish; Caddy only redirects to https or answers
+  certificate checks there. Fixed ports of VPN-server apps and SSH are not covered.
+- **CLI**: `harbor access` (status and list), `harbor access mode list|everyone`, `harbor access add 203.0.113.7
+  --label home --tag family --hours 24`, `harbor access remove <address>`, `harbor access tag <address> scanner`,
+  `harbor access attempts [--check]`, `harbor access lookup <address> [--online]`.
+- **How it is enforced** (docs/design/ACCESS_GUARD.md): an nftables table of Harbor's own (`inet harbor_guard`) in the
+  input path, before ufw. At boot Caddy waits for it (`harbor-guard.service`, skipped while the guard is off), so a
+  list that cannot load keeps the public apps down rather than open. To look: `sudo nft list table inet harbor_guard`.
 
 ## 7. Troubleshooting
 

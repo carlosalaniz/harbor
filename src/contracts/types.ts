@@ -12,7 +12,8 @@ export interface Manifest {
   endpoints: Record<string, ManifestEndpoint>;
   ports?: Record<string, ManifestPort>; // decision 163
   permissions?: Record<string, ManifestPermission[]>; // decision 163
-  network?: { internet?: InternetMode }; // decision 185
+  network?: { internet?: InternetMode; requireVpn?: boolean }; // decisions 185, 208
+  provides?: { ipLookup?: { endpoint: string; path: string } }; // decision 209
   health: { endpoint: string; path: string; expectedStatus: number[]; timeoutSeconds: number; deadlineSeconds: number };
   ui: { primaryEndpoint: string };
   storage?: StorageClaim[];

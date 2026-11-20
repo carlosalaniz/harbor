@@ -45,6 +45,9 @@ import { MachineKeyHolder } from './auth/machine-holder.js';
 import type { CryptoProvider } from './storage/crypto-provider.js';
 import type { BackupEngine } from './backups/engine.js';
 import type { EgressProvider } from './egress/provider.js';
+import type { GuardProvider } from './guard/provider.js';
+import type { GeoSource } from './guard/geo.js';
+import type { Resolver } from './guard/service.js';
 import type { AdvertPublisher } from './advertise/publisher.js';
 import { FakeKernelProvider, RootKernelProvider, type BinderState, type KernelProvider } from './system/kernel.js';
 
@@ -84,6 +87,13 @@ export interface DaemonOverrides {
   crypto?: CryptoProvider;
   // decision 184: VPN and offline apps (tests: the fake, to inspect what root would load)
   egress?: EgressProvider;
+  // decision 207: Access Guard (tests: the fake provider, a fake location source, a resolver for public names)
+  guard?: GuardProvider;
+  geo?: GeoSource;
+  resolver?: Resolver;
+  // decision 209: how the daemon reaches an IP lookup app (tests: a stub)
+  lookupFetch?: (url: string, init?: { signal?: AbortSignal; redirect?: 'error' }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
+  guardPollMs?: number;
   advertise?: AdvertPublisher;
   // decision 193: the binder driver (tests: the fake, to see a load and to simulate a kernel without it)
   kernel?: KernelProvider;
@@ -222,6 +232,18 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const { EgressService } = await import('./egress/service.js');
     const { FakeEgressProvider, RootEgressProvider } = await import('./egress/provider.js');
     ctx.egress = new EgressService(ctx, overrides.egress ?? (fakeMode ? new FakeEgressProvider() : new RootEgressProvider(config.stateDir)));
+    // Access Guard (decision 207): the allowed-addresses firewall through the root step on a live host; in fake mode the
+    // fake keeps it in memory, location answers come from a fixed table and public names resolve to nothing.
+    const { GuardService } = await import('./guard/service.js');
+    const { FakeGuardProvider, RootGuardProvider } = await import('./guard/provider.js');
+    const { DbIpGeo, FakeGeo } = await import('./guard/geo.js');
+    ctx.guard = new GuardService(
+      ctx,
+      overrides.guard ?? (fakeMode ? new FakeGuardProvider() : new RootGuardProvider(config.stateDir)),
+      overrides.geo ?? (fakeMode ? new FakeGeo() : new DbIpGeo(path.join(config.stateDir, 'geo'))),
+      overrides.resolver ?? (fakeMode ? async () => [] : undefined),
+      overrides.lookupFetch,
+    );
     // LAN announcements (decision 200): avahi-publish children on a live host, a recording fake in fake mode.
     const { AdvertiseService } = await import('./advertise/service.js');
     const { FakeAdvertPublisher, ProcessAdvertPublisher } = await import('./advertise/publisher.js');
@@ -265,7 +287,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
         return { installed: false, loggedIn: false };
       }
     };
-    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version, backups: ctx.backups, egress: ctx.egress, spaces: new SpacesService(ctx) });
+    const app = await buildApi({ config, service, sessions, tools, devices, appearance, power, terminals, setup, tailscaleFacts, log, version: ctx.version, backups: ctx.backups, egress: ctx.egress, guard: ctx.guard, spaces: new SpacesService(ctx) });
     await app.listen({ host: config.listen.host, port: config.listen.port });
     // The HTTPS console listener serves these same routes (same Host/Origin
     // guards, same bearer auth) — stashed before the LAN listeners start.
@@ -316,6 +338,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     }
     // decision 184: the boot unit loaded the last rules before Docker; this catches what changed while we were down
     await ctx.egress.sync({ force: true }).catch((e: Error) => log.error(`VPN and offline app rules could not be applied at startup: ${e.message}`));
+    await ctx.guard.start(overrides.guardPollMs);
     observer.start();
     ctx.backups.start(overrides.backupTickMs ?? 30_000);
     appearance.start();
@@ -330,6 +353,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
       closed = true;
       machineKey.clear(); // AFU -> BFU: the unsealed key never outlives the process
       observer.stop();
+      ctx.guard?.stop();
       await ctx.backups?.stop();
       appearance.stop();
       selfUpdate.stop();

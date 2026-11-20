@@ -2373,3 +2373,47 @@ test('decision 205: CPU and memory — the app page shows the limits; background
   await expect(drawer.getByRole('region', { name: 'CPU and memory', exact: true })).toContainText('Background priority · at most 1 core · no memory limit', { timeout: 15_000 });
   await drawer.getByRole('button', { name: 'Close dialog', exact: true }).last().click();
 });
+
+test('decision 207: Allowed addresses — add one, a bad one is refused with a reason, turn the list on after the question, edit, remove, back to everyone', async ({ page }) => {
+  await login(page);
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: /^Allowed addresses Who can reach/ }).click();
+  const top = page.locator('section.card').filter({ has: page.getByRole('heading', { name: 'Allowed addresses', exact: true }) });
+  const list = page.locator('section.card').filter({ has: page.getByRole('heading', { name: 'Allowed', exact: true }) });
+  await expect(top.getByRole('radio', { name: 'Everyone', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(list).toContainText('Nobody yet. Add the addresses you connect from');
+  // a private address is refused with the reason
+  await list.getByRole('button', { name: 'Add address…', exact: true }).click();
+  const add = page.getByRole('dialog', { name: 'Allow an address' });
+  await add.getByLabel('Address or range', { exact: true }).fill('192.168.1.20');
+  await add.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(add.getByRole('alert')).toContainText('is on your own network or the tailnet, which is never dropped');
+  await add.getByLabel('Address or range', { exact: true }).fill('2001:DB8:4A10::1/64');
+  await add.getByLabel('Label', { exact: true }).fill('Home IPv6');
+  await add.getByLabel('Tags', { exact: true }).fill('home, family');
+  await add.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(add).toBeHidden();
+  await expect(list).toContainText('2001:db8:4a10::/64');
+  await expect(list).toContainText('Home IPv6');
+  // on: the question names what happens, and the switch only moves once the list is loaded
+  await top.getByRole('radio', { name: 'Allowed list only', exact: true }).click();
+  const ask = page.getByRole('dialog', { name: 'Allow only the addresses on the list?' });
+  await expect(ask).toContainText('Only 1 allowed entry, your own network and the tailnet will reach your public apps');
+  await ask.getByRole('button', { name: 'Allow only the list', exact: true }).click();
+  await expect(top.getByRole('radio', { name: 'Allowed list only', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await expect(top).toContainText('on');
+  // edit the label and give it an expiry
+  await list.getByRole('button', { name: 'Edit 2001:db8:4a10::/64', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit 2001:db8:4a10::/64' });
+  await edit.getByLabel('Label', { exact: true }).fill('Home');
+  await edit.getByLabel('Expires', { exact: true }).selectOption({ label: 'In 7 days' });
+  await edit.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(edit).toBeHidden();
+  await expect(list).toContainText('Home');
+  await expect(list).toContainText(/7 days left|168 h left|6 days left/);
+  // remove it, then back to everyone
+  await list.getByRole('button', { name: 'Remove 2001:db8:4a10::/64', exact: true }).click();
+  await expect(list).toContainText('Nobody yet: every connection from the internet is dropped.');
+  await top.getByRole('radio', { name: 'Everyone', exact: true }).click();
+  await expect(top.getByRole('radio', { name: 'Everyone', exact: true })).toHaveAttribute('aria-checked', 'true');
+});

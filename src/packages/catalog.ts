@@ -174,7 +174,8 @@ export function listCatalog(catalogDir: string, origin: PackageOrigin = 'bundled
         operatorSecrets: operatorSecretsOf(pkg.manifest),
         links: linksOf(pkg.manifest),
         multiInstance: pkg.manifest.deployment.multiInstance,
-        ...(pkg.manifest.network?.internet ? { internet: pkg.manifest.network.internet } : {}),
+        ...(pkg.manifest.network?.internet ? { internet: pkg.manifest.network.internet } : pkg.manifest.network?.requireVpn ? { internet: 'vpn' as const } : {}),
+        ...(pkg.manifest.network?.requireVpn ? { requireVpn: true } : {}),
       });
     } catch (e) {
       // A package that needs a newer Harbor still shows its name and look when this Harbor can read them.

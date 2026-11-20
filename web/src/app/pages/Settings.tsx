@@ -7,6 +7,7 @@ import { ApiError, api } from '../../api';
 import { Copy, Dialog, FolderPicker, InstanceIcon, Pill, RecoveryCard, appLabel } from '../components';
 import { Network } from './Network';
 import { Vpn } from './Vpn';
+import { Guard } from './Guard';
 import { BackupsSettings } from './Backups';
 import { Mark, PencilIcon } from '../icons';
 import { fmtBytes, fmtUptime } from '../format';
@@ -14,7 +15,7 @@ import { gpuMachineText } from '../gpu-text';
 import type { Console } from '../store';
 import { DEFAULT_SURFACES_OPACITY, WALLPAPERS, applySurfacesOpacity, applyTheme, applyWallpaper, hasExplicitWallpaper, readSurfacesOpacity, readTheme, readWallpaper, syncWallpaperPicture, type Theme, type Wallpaper } from '../theme';
 
-type Section = 'overview' | 'account' | 'network' | 'vpn' | 'links' | 'remote' | 'public' | 'storage' | 'backups' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
+type Section = 'overview' | 'account' | 'network' | 'vpn' | 'links' | 'remote' | 'public' | 'guard' | 'storage' | 'backups' | 'appearance' | 'notifications' | 'access' | 'troubleshoot' | 'about';
 // One 16px stroke set for the settings rail: same weight, same box, no emoji.
 const SECTION_ICON: Record<Section, ReactNode> = {
   overview: (
@@ -33,6 +34,13 @@ const SECTION_ICON: Record<Section, ReactNode> = {
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M8 2.2 3.2 4v3.6c0 3 2 5.2 4.8 6.2 2.8-1 4.8-3.2 4.8-6.2V4L8 2.2Z" />
       <path d="M6 8h4M8.6 6.4 10 8l-1.4 1.6" />
+    </svg>
+  ),
+  guard: (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="7" width="10" height="6.5" rx="1.5" />
+      <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" />
+      <path d="M8 9.6v1.6" />
     </svg>
   ),
   links: (
@@ -118,6 +126,7 @@ const SECTIONS: { id: Section; label: string; blurb: string }[] = [
   { id: 'links', label: 'Internal networks', blurb: 'Which apps talk to each other privately' },
   { id: 'remote', label: 'Remote access', blurb: 'Reach Harbor from your other devices' },
   { id: 'public', label: 'Public addresses', blurb: 'Publishing apps on the internet' },
+  { id: 'guard', label: 'Allowed addresses', blurb: 'Who can reach the apps you publish' },
   { id: 'storage', label: 'Storage', blurb: 'Disks and folders your apps use' },
   { id: 'backups', label: 'Backups', blurb: 'Encrypted copies of your apps, elsewhere' },
   { id: 'appearance', label: 'Appearance', blurb: 'Theme and wallpapers' },
@@ -197,6 +206,7 @@ export function Settings({ c, initialSection, onSection }: { c: Console; initial
           {section === 'links' && <InternalNetworks />}
           {section === 'remote' && <RemoteAccess c={c} />}
           {section === 'public' && <PublicAddresses c={c} />}
+          {section === 'guard' && <Guard />}
           {section === 'storage' && <Storage />}
           {section === 'backups' && <BackupsSettings c={c} />}
           {section === 'appearance' && <Appearance c={c} />}

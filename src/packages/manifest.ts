@@ -190,6 +190,12 @@ export function validateManifestReferences(manifest: Manifest, compose: ComposeS
     }
   }
 
+  // Decision 208: an app that requires the VPN cannot also default to direct.
+  if (manifest.network?.requireVpn && manifest.network.internet === 'direct') problems.push('network.requireVpn: true cannot be combined with network.internet: direct');
+  // Decision 209: a provided service is answered on a declared endpoint.
+  const lookup = manifest.provides?.ipLookup;
+  if (lookup && !(lookup.endpoint in manifest.endpoints)) problems.push(`provides.ipLookup.endpoint references unknown endpoint ${lookup.endpoint}`);
+
   const hook = manifest.hooks?.afterStart;
   if (hook && !(hook.service in manifest.deployment.services)) problems.push(`hooks.afterStart references unknown service ${hook.service}`);
 

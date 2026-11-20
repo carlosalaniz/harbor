@@ -1230,7 +1230,8 @@ export function InstallWizard({ item, instances = [], installed = 0, mode: start
               <fieldset className="storage-choices" id={`${sectionId}-internet`}>
                 <legend>Internet access</legend>
                 <p className="muted small">People reach {item.name} the same way in every case; this only decides what it may open itself.</p>
-                {INTERNET_CHOICES.map((m) => (
+                {item.requireVpn && <p className="notice small">{item.name} only goes on the internet through your VPN, so Direct is not offered.</p>}
+                {INTERNET_CHOICES.filter((m) => !(item.requireVpn && m.mode === 'direct')).map((m) => (
                   <label key={m.mode} className="check">
                     <input type="radio" name="internet-access" checked={internetPick === m.mode} onChange={() => setInternetPick(m.mode)} /> {m.label}
                     {m.mode === internetDefault && internetDefault !== 'direct' ? <span className="muted small"> (its default)</span> : null}
@@ -1801,13 +1802,14 @@ export function InternetDialog({ inst, title, onClose, onReview }: { inst: Insta
           <label className="check">
             <input type="radio" name="internet-pick" checked={pick === 'default'} onChange={() => setPick('default')} /> The app's default: {internetLabel(def)}
           </label>
-          {INTERNET_CHOICES.map((m) => (
+          {INTERNET_CHOICES.filter((m) => !(inst.internet.requireVpn && m.mode === 'direct')).map((m) => (
             <label key={m.mode} className="check">
               <input type="radio" name="internet-pick" checked={pick === m.mode} onChange={() => setPick(m.mode)} /> {m.label}
               <span className="muted small"> · {m.hint}</span>
             </label>
           ))}
         </fieldset>
+        {inst.internet.requireVpn && <p className="muted small">This app only goes on the internet through your VPN: Direct is not offered.</p>}
         {inst.internet.allApps && (pick === 'direct' || (pick === 'default' && def === 'direct')) && <p className="notice small">Every app goes through the VPN right now (Settings → VPN), so this one does too.</p>}
         <div className="row end">
           <button type="button" className="btn" onClick={onClose}>

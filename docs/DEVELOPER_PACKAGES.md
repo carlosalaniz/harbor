@@ -187,6 +187,12 @@ network:                         # optional, Harbor ≥ 0.36.0 (declare release.
   internet: offline              # direct (default) | vpn | offline: what the app starts with; the operator may
                                  # choose another (decision 185). offline = opens no connection at all; vpn =
                                  # only through Harbor's VPN (no internet while it is down)
+  requireVpn: true               # optional, Harbor ≥ 0.48.0: ONLY the VPN (or offline); direct is never offered and
+                                 # install waits for a VPN (decision 208). Not with internet: direct.
+provides:                        # optional, Harbor ≥ 0.48.0: services this app offers to Harbor itself (decision 209)
+  ipLookup:                      # Settings → Allowed addresses → Ask online calls it (see §8 "Address lookups")
+    endpoint: web                # a declared endpoint
+    path: /v1/lookup             # Harbor sends GET <path>?ip=<address> on 127.0.0.1
 configuration:                   # optional: hand the app its main address (links it sends out)
   - service: web
     environment: PUBLIC_URL
@@ -553,6 +559,33 @@ with (decision 185), and declares `release.minHarbor: "0.36.0"`:
 It is a default, not a permission: the operator's choice wins and is kept across your updates; an update that
 changes it moves only apps that follow the default (the update review says so). Images are pulled by Docker on the
 host, so offline and VPN apps update as usual.
+
+**Only through the VPN** (`network.requireVpn: true`, Harbor 0.48.0, decision 208): for an app whose outgoing traffic
+must never come from the operator's own address (an app that queries third-party services about other people's
+addresses). Its default becomes `vpn` (`internet:` may still say `offline`; `direct` is refused at upload). The
+operator is never offered Direct (the API refuses it too); Offline stays allowed, since nothing leaves. Install is
+refused while no VPN is set up ("Add your VPN in Settings → VPN first"). The kill switch applies as for any VPN app.
+Declare `release.minHarbor: "0.48.0"`.
+
+### Address lookups (`provides.ipLookup`, Harbor 0.48.0)
+
+An app may answer Harbor's **Ask online** button in Settings → Allowed addresses (decision 209). Harbor calls the
+named endpoint on loopback, `GET http://127.0.0.1:<its port><path>?ip=<address>` (20 s timeout, no redirects,
+64 KiB at most), and expects:
+
+```json
+{ "format": 1, "ip": "203.0.113.5", "note": null, "results": [
+  { "source": "ipinfo", "ok": true, "country": "US", "region": "Virginia", "city": "Ashburn",
+    "asn": "AS64500", "org": "Example Hosting", "hostname": "x.example.net", "flags": ["hosting"] },
+  { "source": "abuseipdb", "ok": true, "abuseScore": 87, "reports": 412,
+    "lastReportedAt": "2026-11-19T10:00:00Z", "usage": "Data Center/Web Hosting/Transit", "flags": ["tor"] },
+  { "source": "other", "ok": false, "error": "HTTP 429" } ] }
+```
+
+Harbor keeps only these fields (at most 8 results; strings cut to size; `abuseScore` 0–100; `flags` from `hosting`,
+`vpn`, `proxy`, `tor`, `relay`, `bogon`; `source` letters, digits, `._-`) and shows them as text. Such an app sends
+the operator's visitors' addresses to third parties, so it should also declare `network.requireVpn: true`. The
+official one is **IP Lookup** (harbor-apps `apps/ip-lookup`, image source in Harbor's `images/ip-lookup/`).
 
 ## 9. Backup place packages (`kind: BackupTarget`)
 

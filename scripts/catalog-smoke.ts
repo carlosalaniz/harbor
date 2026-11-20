@@ -27,6 +27,8 @@ import { createServer } from 'node:net';
 import { normalizeConfig, type DaemonConfig } from '../src/config.js';
 import type { InstanceSummary, OperationDto, PlanDto } from '../src/contracts/api.js';
 import { findDockerBinary, startDaemon, type Daemon } from '../src/daemon.js';
+import { FakeEgressProvider } from '../src/egress/provider.js';
+import { FakeGuardProvider } from '../src/guard/provider.js';
 import { enrollAdministrator } from '../src/maintenance.js';
 import { LABELS } from '../src/naming.js';
 import { loadPackage, readCatalogIndex } from '../src/packages/catalog.js';
@@ -37,6 +39,8 @@ import { HARBOR_ROOT } from './catalog-dir.mjs';
 import { smokeSecrets } from './smoke-secrets.js';
 import { restartBaseline, settleProblem, toleratedRestarts, type SettleContainer } from './smoke-settle.js';
 
+// A WireGuard file with the shape of one (keys are 32 bytes of base64, not real); the fake provider never dials it.
+const SMOKE_VPN = `[Interface]\nPrivateKey = ${Buffer.alloc(32, 1).toString('base64')}\nAddress = 10.66.0.2/32\nDNS = 10.64.0.1\n\n[Peer]\nPublicKey = ${Buffer.alloc(32, 2).toString('base64')}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:51820\n`;
 const ADMIN = { username: 'smoke', password: `smoke-${randomBytes(12).toString('hex')}` };
 
 export interface SmokePhase {
@@ -142,6 +146,7 @@ class Client {
 export async function smoke(o: ReturnType<typeof args>): Promise<SmokeResult> {
   const next = loadPackage(o.catalog, o.id);
   const prev = o.base && existsSync(path.join(o.base, 'index.json')) && readCatalogIndex(o.base).packages[o.id] ? loadPackage(o.base, o.id) : null;
+  const needsVpn = next.manifest.network?.requireVpn === true || prev?.manifest.network?.requireVpn === true;
   const docker = new Docker({ socketPath: o.socket });
   const dockerBin = findDockerBinary();
   if (!dockerBin) throw new Error('the docker CLI is not installed (Harbor runs `docker compose`)');
@@ -209,8 +214,12 @@ export async function smoke(o: ReturnType<typeof args>): Promise<SmokeResult> {
       installationId = initializeState(stateDir, { clock: systemClock, ids: systemIds, config: {} }).installationId;
       await enrollAdministrator(config, ADMIN.username, ADMIN.password, { reset: false });
     }
-    daemon = await startDaemon(config, { observerIntervalMs: 2000 });
+    // The host firewall is not what a smoke run proves (it has no root and no VPN): VPN and Access Guard run on
+    // their fakes. An app that requires the VPN (decision 208) gets a stand-in tunnel so its install is accepted;
+    // its containers then ask a resolver that answers nothing, so its health path must not need the internet.
+    daemon = await startDaemon(config, { observerIntervalMs: 2000, egress: new FakeEgressProvider(), guard: new FakeGuardProvider() });
     await api.login();
+    if (needsVpn) await api.call('PUT', '/v1/vpn', { config: SMOKE_VPN, name: 'smoke stand-in' });
   };
   const stop = async () => {
     await daemon?.close();

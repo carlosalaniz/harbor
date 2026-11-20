@@ -18,7 +18,7 @@ ships the latest one as an offline seed.
   **root-equivalent**. The API is not a sandbox against root/Docker admins. Loopback by default;
   LAN mode, tailnet (Tailscale) and public HTTPS (Caddy + Let's Encrypt) are opt-in providers.
 - Product truth: `docs/spec/TDD.md` (original spec) + `docs/DECISIONS.md` (every scope lift since, numbered —
-  next number is **207**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
+  next number is **210**). `docs/spec/plan.md` is the historical build order; `docs/dev/PROGRESS.md` is the changelog.
 - Session map: `docs/AI_CONTEXT.md` (where things are, versions, gotchas, live droplets).
 
 ## 2. Where things live
@@ -54,12 +54,17 @@ src/            daemon (TypeScript strict ESM, Node 24.22, pnpm 10.16)
               ruleset, ip rules, effective mode); provider.ts = root handoff (`harbor-egress@<action>`,
               bootstrap/egress-apply.ts loads nft/routes/WireGuard) + FAKE provider; service.ts = desired state from
               every app, the VPN page, the `vpn-down` notification
+  guard/        Access Guard (decision 207): rules.ts + mmdb.ts + online.ts are PURE (addresses, nft ruleset, counters,
+              MaxMind DB reader, lookup answers); provider.ts = root handoff (`harbor-guard@<action>`,
+              bootstrap/guard-apply.ts loads nft) + FAKE provider; geo.ts = DB-IP Lite; service.ts = list, counters, tags
   cli/          commander CLI (mirrors every console action)
   notify/       notifications engine + channels (ntfy/webhook/email; resolved rows delete fully)
 web/src/        React 19 + Vite, plain CSS tokens, strict CSP; App.tsx, app/pages/*, app/icons.tsx,
                 mock/ fixtures for `pnpm dev:ui`
                 (the app catalog is NOT here: carlosalaniz/harbor-apps, checked out beside this repo as
                 ../harbor-apps; apps/<id>/ = manifest.yaml + compose.yaml + README.md + release.json (+ icon))
+images/ip-lookup/ the IP Lookup app's image (decision 209; zero-dependency Node server + node --test), published to GHCR
+                by .github/workflows/ip-lookup-image.yml; its package lives in harbor-apps apps/ip-lookup
 targets/<id>/   one backup place package = manifest.yaml (kind BackupTarget: a form + a transport) + README.md
 tests/          unit/ integration/ (fake adapter) e2e/ (Playwright) vm/ (live suite, opt-in);
                 fixtures/catalog/ = FROZEN copies of 9 apps for tests, e2e and `pnpm dev` (not the store);
@@ -148,7 +153,7 @@ Key separations (do not blur them):
    ```
    Never `pnpm package | head` (SIGPIPE leaves a stale archive — always `| tail`).
 5. **Docs are part of done.** Update together with the code:
-   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **207**).
+   - Non-obvious choice → new row in `docs/DECISIONS.md` (next number **210**).
    - User-visible behavior → `docs/OPERATOR_GUIDE.md` (and `README.md` catalog/layout/scope if
      it changed).
    - Package format change → `docs/DEVELOPER_PACKAGES.md` (+ template) and the relevant

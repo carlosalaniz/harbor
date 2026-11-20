@@ -3,9 +3,11 @@ import { UNIT_MARKER } from './host.js';
 import { APP_CRYPTO_UNIT_PREFIX } from '../storage/fscrypt.js';
 import { BACKUP_UNIT_PREFIX } from '../backups/step.js';
 import { EGRESS_UNIT_PREFIX } from '../egress/provider.js';
+import { GUARD_UNIT_PREFIX } from '../guard/provider.js';
 import { KERNEL_UNIT_PREFIX } from '../system/kernel.js';
 export { BACKUP_UNIT_FILE } from '../backups/step.js';
 export { EGRESS_BOOT_UNIT, EGRESS_UNIT_FILE, VPN_UNIT } from '../egress/provider.js';
+export { GUARD_BOOT_UNIT, GUARD_UNIT_FILE } from '../guard/provider.js';
 export { APP_CRYPTO_UNIT_FILE } from '../storage/fscrypt.js';
 export { KERNEL_UNIT_FILE } from '../system/kernel.js';
 
@@ -114,6 +116,12 @@ polkit.addRule(function (action, subject) {
   // VPN and offline apps (decision 184): start harbor-egress@<apply|tunnel-set|tunnel-remove|status>.service
   if (action.id === "org.freedesktop.systemd1.manage-units" &&
       String(action.lookup("unit")).indexOf("${EGRESS_UNIT_PREFIX}") === 0 &&
+      action.lookup("verb") === "start") {
+    return polkit.Result.YES;
+  }
+  // Access Guard (decision 207): start harbor-guard@<apply|off|status>.service
+  if (action.id === "org.freedesktop.systemd1.manage-units" &&
+      String(action.lookup("unit")).indexOf("${GUARD_UNIT_PREFIX}") === 0 &&
       action.lookup("verb") === "start") {
     return polkit.Result.YES;
   }
@@ -294,6 +302,41 @@ ExecStart=-${PRODUCT.paths.opt}/bin/harbor egress-boot
 
 [Install]
 RequiredBy=docker.service
+WantedBy=multi-user.target
+`;
+}
+
+// Access Guard (decision 207). The daemon starts `harbor-guard@<action>` and BLOCKS on it; the root step re-validates
+// the request under <stateDir>/guard/, loads the firewall table and writes its verdict (with the drop counters).
+export function guardStepUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor Access Guard step (%i: apply, off or status)
+
+[Service]
+Type=oneshot
+ExecStart=${PRODUCT.paths.opt}/bin/harbor guard-step %i
+TimeoutStartSec=90
+`;
+}
+
+// Boot, before Caddy serves any public app: the last allowed list that loaded, with nft alone. Caddy requires this
+// unit, so a list that fails to load keeps the public apps down instead of open (fail closed); with the guard off
+// there is no rules file and the unit is skipped (a skipped condition is no failure).
+export function guardBootUnit(): string {
+  return `${UNIT_MARKER}
+[Unit]
+Description=Harbor Access Guard (allowed addresses for public apps, loaded before Caddy)
+Before=caddy.service
+ConditionPathExists=${PRODUCT.paths.etc}/guard/rules.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f ${PRODUCT.paths.etc}/guard/rules.nft
+
+[Install]
+RequiredBy=caddy.service
 WantedBy=multi-user.target
 `;
 }

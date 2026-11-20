@@ -22,7 +22,7 @@ import { gpuFact, planSummary } from './plan-summary.js';
 import { busyQuestion, canQueueAction, queueStatusLine, queueText } from './queue-view.js';
 import { gpuStatusLine } from '../planner/gpu.js';
 import { formatSettingValue, parseSettingInput } from '../planner/settings.js';
-import type { InstanceResourcesDto, InternetDto, ResourceChangeRequest, SettingDto, SettingValue, VpnDto } from '../contracts/api.js';
+import type { AccessGuardDto, GuardLookupDto, InstanceResourcesDto, InternetDto, ResourceChangeRequest, SettingDto, SettingValue, VpnDto } from '../contracts/api.js';
 import { parseMemLimit } from '../planner/resources.js';
 
 interface Globals {
@@ -809,6 +809,104 @@ vpnCmd
     await api.delete('/v1/vpn');
     const v = await api.get<VpnDto>('/v1/vpn');
     out(v, () => vpnText(v));
+  });
+
+// Access Guard (decision 207): allowed addresses for the public apps.
+function guardText(g: AccessGuardDto): string {
+  if (!g.available) return `Access Guard: not available here. ${g.reason ?? ''}`.trim();
+  const lines = [
+    `Access Guard: ${g.enabled ? 'ON (allowed list only)' : 'off (everyone reaches your public apps)'}${g.state === 'failed' ? ` — the last change FAILED: ${g.message ?? ''}` : ''}`,
+    g.publicApps.length ? `Public apps: ${g.publicApps.map((p) => `${p.name} (${p.hostname})`).join(', ')}` : 'No app is published on the internet yet.',
+    `Never dropped: your network, the tailnet${g.own.length ? `, this machine (${g.own.join(', ')})` : ''}`,
+    '',
+    g.entries.length ? 'Allowed:' : 'Allowed: nobody yet' + (g.enabled ? ' (every connection from the internet is dropped)' : ''),
+    ...g.entries.map((e) => `  ${e.address.padEnd(28)} ${e.label ?? ''}${e.tags.length ? `  [${e.tags.join(', ')}]` : ''}${e.expiresAt ? `  ${e.expired ? 'EXPIRED' : `until ${e.expiresAt}`}` : ''}`),
+  ];
+  if (g.totals.addresses) lines.push('', `Dropped: ${g.totals.packets} packets from ${g.totals.addresses} addresses (${g.totals.addresses24h} in the last 24 h). See: harbor access attempts`);
+  return lines.join('\n');
+}
+function attemptsText(g: AccessGuardDto, limit: number): string {
+  const rows = g.blocked.filter((b) => b.packets > 0).slice(0, limit);
+  if (!rows.length) return g.enabled ? 'Nothing dropped yet.' : 'Nothing dropped (Access Guard is off).';
+  return [
+    'Packets dropped (a client resends its first packet, so one try counts about 2-3):',
+    ...rows.map((b) => `  ${b.address.padEnd(40)} ${String(b.packets).padStart(8)}  last ${b.lastSeen}${b.geo ? `  ${b.geo.country ?? '?'} ${b.geo.org ?? ''}` : ''}${b.tags.length ? `  [${b.tags.join(', ')}]` : ''}${b.allowed ? '  (allowed now)' : ''}`),
+  ].join('\n');
+}
+const accessCmd = program.command('access').description('Access Guard: only allowed addresses reach the apps you publish on the internet; tag and look up the rest');
+accessCmd.action(async () => {
+  const g = await client().get<AccessGuardDto>('/v1/access-guard');
+  out(g, () => guardText(g));
+});
+accessCmd
+  .command('mode <mode>')
+  .description('"list": only allowed addresses (plus your network and the tailnet) reach your public apps; "everyone": as before')
+  .option('--yes', 'switch without the question', false)
+  .action(async (mode: string, opts: { yes: boolean }) => {
+    if (mode !== 'list' && mode !== 'everyone') throw new HarborError('INVALID_REQUEST', 'expected "list" or "everyone"');
+    const api = client();
+    if (mode === 'list') {
+      const before = await api.get<AccessGuardDto>('/v1/access-guard');
+      if (!globals().json) process.stderr.write(before.entries.length ? `Only ${before.entries.length} allowed entr${before.entries.length === 1 ? 'y' : 'ies'} (plus your network and the tailnet) will reach your public apps.\n` : 'The list is empty: nobody on the internet will reach your public apps.\n');
+      if (!opts.yes && !(await confirm('Turn Access Guard on?'))) throw new HarborError('INVALID_REQUEST', 'not changed', { nextAction: 'Re-run with --yes to switch non-interactively.' });
+    }
+    const g = await api.post<AccessGuardDto>('/v1/access-guard/enabled', { enabled: mode === 'list' }, {}, 'PUT');
+    out(g, () => guardText(g));
+  });
+accessCmd
+  .command('add <address>')
+  .description('allow one address or a range (203.0.113.7, 203.0.113.0/24, 2001:db8:4a::/64)')
+  .option('--label <text>', 'who or what it is, e.g. "home fibre"')
+  .option('--tag <tag...>', 'tags (several allowed)')
+  .option('--hours <n>', 'expire after this many hours')
+  .action(async (address: string, opts: { label?: string; tag?: string[]; hours?: string }) => {
+    const hours = opts.hours === undefined ? null : Number(opts.hours);
+    if (hours !== null && !(hours > 0 && hours <= 8784)) throw new HarborError('INVALID_REQUEST', '--hours must be between 1 and 8784');
+    const g = await client().post<AccessGuardDto>('/v1/access-guard/entries', { address, ...(opts.label ? { label: opts.label } : {}), ...(opts.tag ? { tags: opts.tag } : {}), ...(hours ? { expiresAt: new Date(Date.now() + hours * 3600_000).toISOString() } : {}) });
+    out(g, () => guardText(g));
+  });
+accessCmd
+  .command('remove <address>')
+  .description('remove an entry (by its address or range as listed, or its id)')
+  .action(async (ref: string) => {
+    const api = client();
+    const g = await api.get<AccessGuardDto>('/v1/access-guard');
+    const e = g.entries.find((x) => x.id === ref || x.address === ref || x.address === ref.replace(/\/(32|128)$/, ''));
+    if (!e) throw new HarborError('NOT_FOUND', `${ref} is not on the list`, { nextAction: 'List it: harbor access' });
+    await api.delete(`/v1/access-guard/entries/${e.id}`);
+    const after = await api.get<AccessGuardDto>('/v1/access-guard');
+    out(after, () => guardText(after));
+  });
+accessCmd
+  .command('tag <address> [tags...]')
+  .description('tag one address, dropped or not (no tags = remove its tags)')
+  .action(async (address: string, tags: string[]) => {
+    const g = await client().post<AccessGuardDto>('/v1/access-guard/tags', { address, tags }, {}, 'PUT');
+    out(g, () => `${address}: ${tags.length ? tags.join(', ') : 'no tags'}`);
+  });
+accessCmd
+  .command('attempts')
+  .description('the addresses Access Guard dropped, the busiest first')
+  .option('--limit <n>', 'how many', '25')
+  .option('--check', 'read the counters now instead of the last check', false)
+  .action(async (opts: { limit: string; check: boolean }) => {
+    const api = client();
+    const g = opts.check ? await api.post<AccessGuardDto>('/v1/access-guard/check', {}) : await api.get<AccessGuardDto>('/v1/access-guard');
+    out(g.blocked, () => attemptsText(g, Math.max(1, Number(opts.limit) || 25)));
+  });
+accessCmd
+  .command('lookup <address>')
+  .description('where an address is (local DB-IP database); --online also asks your IP Lookup app, through the VPN')
+  .option('--online', 'also ask the IP lookup app', false)
+  .action(async (address: string, opts: { online: boolean }) => {
+    const r = await client().post<GuardLookupDto>('/v1/access-guard/lookup', { address, online: opts.online });
+    out(r, () =>
+      [
+        `${r.address}: ${r.geo ? `${r.geo.countryName ?? r.geo.country ?? 'unknown country'}${r.geo.asn ? `, ${r.geo.asn}` : ''}${r.geo.org ? ` ${r.geo.org}` : ''}` : 'not in the location database'}`,
+        ...(r.online ? r.online.results.map((x) => `  ${x.source}: ${x.ok ? [x.city, x.region, x.country].filter(Boolean).join(', ') + (x.abuseScore !== undefined ? `  abuse score ${x.abuseScore}%` : '') + (x.reports !== undefined ? ` (${x.reports} reports)` : '') + (x.flags?.length ? `  ${x.flags.join(', ')}` : '') : `failed: ${x.error ?? ''}`}`) : []),
+        'IP Geolocation by DB-IP (https://db-ip.com)',
+      ].join('\n'),
+    );
   });
 
 // Spaces (decision 202): named groups of apps; a shared network is an explicit opt-in.
@@ -2208,6 +2306,14 @@ program
   .action(async (action: string) => {
     const { applyEgressStep } = await import('../bootstrap/egress-apply.js');
     await applyEgressStep(action, (msg) => process.stderr.write(`[egress-step] ${msg}\n`));
+  });
+
+program
+  .command('guard-step <action>')
+  .description('ROOT, run by harbor-guard@<action>.service: Access Guard (the allowed-addresses firewall for public apps; request handed over by the daemon)')
+  .action(async (action: string) => {
+    const { applyGuardStep } = await import('../bootstrap/guard-apply.js');
+    await applyGuardStep(action, (msg) => process.stderr.write(`[guard-step] ${msg}\n`));
   });
 
 program

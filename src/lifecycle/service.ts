@@ -13,7 +13,7 @@ import { gpuChanges, gpuDto, gpuFromRendered, gpuServicesOf } from '../planner/g
 import { linkAlias, linkNetworkName, linkValue } from '../planner/links.js';
 import { checkSubmittedSecrets, plannedSecrets } from '../planner/secrets.js';
 import { checkSubmittedSettings, formatSettingValue, installSettingChanges, plannedConfigureSettings, plannedInstallSettings, plannedUpdateSettings, settingDtos } from '../planner/settings.js';
-import { plannedConfigureInternet, plannedInstallInternet, plannedUpdateInternet, packageInternet } from '../planner/internet.js';
+import { plannedConfigureInternet, plannedInstallInternet, plannedUpdateInternet, packageInternet, packageRequiresVpn } from '../planner/internet.js';
 import type { LinkRow, PlannedLink, PlannedSecret } from '../state/repo.js';
 import type { AddSourceResult, CatalogItemDto, CatalogStatusDto, GpuDto, DiagnosticsDto, DomainDto, DomainsDto, FoundAppDto, PermissionDto, InstallCandidateDto, InstanceDetail, InstanceLogsDto, InstanceResourcesDto, InstanceSummary, LogsDto, AddressOptionsDto, NetworkHttpsDto, NotificationActionDto, NotificationChannelDto, NotificationsDto, OperationDto, OperationQueueDto, PackageImportResultDto, PackageSourceDto, PlanDto, PlanRequest, SelfUpdateStatusDto, DeveloperModeDto, AppLoginDto, LoginChange, StorageUsageDto, SystemDto, SystemMetricsDto, WidgetDto } from '../contracts/api.js';
 import { journalTail } from '../system/logs.js';
@@ -2558,7 +2558,7 @@ export class ApplicationService {
     // decision 180: setting values are checked here (they are not secret: the plan lists them as changes)
     const settingPlan = req.settings ? plannedConfigureSettings(pkg.manifest, readSettingOverrides(this.ctx.config.stateDir, inst.id), req.settings) : null;
     // decision 184: internet access (rules + the resolver rendered into its containers: a running app is re-created)
-    const internetPlan = req.internet !== undefined ? plannedConfigureInternet(packageInternet(pkg.manifest), this.ctx.egress?.choice(inst.id) ?? null, req.internet, inst.name, { ...this.internetContext(), running: inst.desired === 'running' }) : null;
+    const internetPlan = req.internet !== undefined ? plannedConfigureInternet(packageInternet(pkg.manifest), this.ctx.egress?.choice(inst.id) ?? null, req.internet, inst.name, { ...this.internetContext(), running: inst.desired === 'running', requireVpn: packageRequiresVpn(pkg.manifest) }) : null;
     const loginPlan = req.login ? this.plannedLogin(pkg.manifest, inst, req.login) : null;
     const othersChange = wanted.length > 0 || Object.keys(req.links ?? {}).length > 0 || Boolean(settingPlan?.changes.length) || Boolean(loginPlan?.changes.length);
     // decision 205: CPU/memory limits; applied live when only values are set or tightened and nothing else re-creates

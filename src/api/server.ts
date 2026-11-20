@@ -20,6 +20,7 @@ import type { SetupRequest, SetupStatusDto, TerminalClientMessage } from '../con
 import type { SetupService } from '../auth/setup.js';
 import type { BackupService } from '../backups/service.js';
 import type { EgressService } from '../egress/service.js';
+import type { GuardService } from '../guard/service.js';
 import type { SpacesService, SpaceChange } from '../lifecycle/spaces.js';
 import type { BackupAppPolicyDto, BackupPolicyDto } from '../contracts/api.js';
 import { CATALOG_STATUS_SCHEMA, DEVELOPER_MODE_SCHEMA, QUEUEABLE_KINDS, type QueueableKind } from '../contracts/api.js';
@@ -56,6 +57,7 @@ export interface ApiDeps {
   backups?: BackupService | null;
   // decision 184: VPN and offline apps
   egress?: EgressService | null;
+  guard?: GuardService | null;
   // decision 202: spaces (named groups of apps, optional shared network)
   spaces?: SpacesService | null;
 }
@@ -1341,6 +1343,64 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
     async (req) => egress().setAllApps((req.body as { enabled: boolean }).enabled),
   );
   app.post('/v1/vpn/check', { preHandler: requireAuth, schema: { description: 'Ask the tunnel now (last handshake, bytes) instead of the cached answer.' } }, async () => egress().check());
+
+  // --- Access Guard (decision 207): allowed addresses for the public apps; root loads the firewall table. Location
+  // lookups use the local DB-IP database; online lookups ask an installed IP lookup app (decision 209).
+  const guard = (): GuardService => {
+    if (!deps.guard) throw new HarborError('UNSUPPORTED_CAPABILITY', 'Access Guard is not available on this machine');
+    return deps.guard;
+  };
+  const addressText = { type: 'string', minLength: 2, maxLength: 64, pattern: '^[0-9A-Fa-f:./]+$' };
+  const tagList = { type: 'array', maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 32 } };
+  const labelText = { type: ['string', 'null'], maxLength: 64, pattern: '^[^\\u0000-\\u001F\\u007F]*$' };
+  const expiry = { type: ['string', 'null'], maxLength: 40 };
+  const entryParams = { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: UUID_PATTERN } } };
+  app.get('/v1/access-guard', { preHandler: requireAuth, schema: { description: 'Access Guard: whether it is on, the allowed list, what is never dropped (your network, the tailnet, this machine\'s public addresses), the public apps it protects, the dropped addresses with their counts and tags, the location database and the apps that answer lookups.' } }, async () => guard().dto());
+  app.put(
+    '/v1/access-guard/enabled',
+    { preHandler: requireAuth, schema: { description: 'On: only addresses on the allowed list (plus your network, the tailnet and this machine) reach the public apps; every other connection to port 443 is dropped. Off: everyone, as before.', body: { type: 'object', additionalProperties: false, required: ['enabled'], properties: { enabled: { type: 'boolean' } } } } },
+    async (req) => guard().setEnabled((req.body as { enabled: boolean }).enabled),
+  );
+  app.post('/v1/access-guard/check', { preHandler: requireAuth, schema: { description: 'Read the drop counters now instead of at the next check (every 10 minutes).' } }, async () => guard().check());
+  app.post(
+    '/v1/access-guard/entries',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Allow an address or a range (IPv4 or IPv6, /8 or narrower for IPv4, /16 or narrower for IPv6), with an optional label, tags and expiry.',
+        body: { type: 'object', additionalProperties: false, required: ['address'], properties: { address: addressText, label: labelText, tags: tagList, expiresAt: expiry } },
+      },
+    },
+    async (req) => guard().addEntry(req.body as { address: string; label?: string | null; tags?: string[]; expiresAt?: string | null }),
+  );
+  app.patch(
+    '/v1/access-guard/entries/:id',
+    { preHandler: requireAuth, schema: { description: 'Change an entry\'s label, tags or expiry (null = never).', params: entryParams, body: { type: 'object', additionalProperties: false, minProperties: 1, properties: { label: labelText, tags: tagList, expiresAt: expiry } } } },
+    async (req) => guard().updateEntry((req.params as { id: string }).id, req.body as { label?: string | null; tags?: string[]; expiresAt?: string | null }),
+  );
+  app.delete('/v1/access-guard/entries/:id', { preHandler: requireAuth, schema: { description: 'Remove an entry: that address is dropped again from the next connection.', params: entryParams } }, async (req) => guard().removeEntry((req.params as { id: string }).id));
+  app.put(
+    '/v1/access-guard/tags',
+    { preHandler: requireAuth, schema: { description: 'Tag one address, dropped or not (an empty list removes its tags). A tagged address is kept past the 30 days and never notified about.', body: { type: 'object', additionalProperties: false, required: ['address', 'tags'], properties: { address: addressText, tags: tagList } } } },
+    async (req) => {
+      const b = req.body as { address: string; tags: string[] };
+      return guard().tagAddress(b.address, b.tags);
+    },
+  );
+  app.post(
+    '/v1/access-guard/lookup',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Where an address is: country and network from the local database (downloaded from DB-IP the first time). online: also ask an installed IP lookup app, which goes through the VPN.',
+        body: { type: 'object', additionalProperties: false, required: ['address'], properties: { address: addressText, online: { type: 'boolean' }, instanceId: { type: 'string', pattern: UUID_PATTERN } } },
+      },
+    },
+    async (req) => {
+      const b = req.body as { address: string; online?: boolean; instanceId?: string };
+      return guard().lookup(b.address, { online: b.online === true, ...(b.instanceId ? { instanceId: b.instanceId } : {}) });
+    },
+  );
 
   // --- spaces (decision 202): named groups of apps; `shared` puts every service of every member on one private
   // network. Routes change the desired state only; the Docker changes run as `space` operations (actor space-policy).

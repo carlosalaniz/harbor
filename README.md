@@ -54,6 +54,12 @@ and choose, per app, *Direct*, *Through the VPN* or *Offline* (or send every app
 An app on the VPN never falls back to direct when the tunnel drops; an offline app opens no
 connection at all, yet you reach both exactly as before. See the [operator guide](docs/OPERATOR_GUIDE.md) §4d.
 
+**Only the addresses you allow** — publish an app on the internet and still decide who reaches it:
+turn on *Allowed list only* and every connection from an address that is not on your list is dropped
+before it opens, while your home network and tailnet always get in. See which addresses were dropped,
+tag them, look up where they are (on your machine), or ask IP Lookup through your VPN. See the
+[operator guide](docs/OPERATOR_GUIDE.md) "Allowed addresses".
+
 **Spaces** — group apps on Home ("Productivity", "AI tooling"). Isolated by default; tick *Share a
 network* and the apps of a space reach each other by name (`http://erpnext:8080`), for example Open WebUI
 using an ERP's MCP server. Sharing is insecure on purpose (databases included) and Harbor says so before it

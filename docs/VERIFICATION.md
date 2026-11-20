@@ -1375,6 +1375,20 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | Live, harbor-old self-updated 0.41.1 → 0.44.0, 2026-11-11 | a test package (`_harbor-probe._tcp`, Excalidraw image, installed `--unencrypted --no-tailnet`): after install the Mac's `dns-sd -L` resolves it at `harbor-old.local:18086` with TXT `path=/ app=announce-test harbor=1 scheme=http`, the child runs as `harbor`; stop removes it (no avahi-publish left); start shows *Add* and remove shows *Rmv* on the Mac's `dns-sd -B` within a second. **Found:** avahi-publish writes "Established under name …" to stderr, so 0.44.0's app page stayed on *Announcing…*; fixed in 0.44.1 (the unit test now writes to stderr and fails on 0.44.0's code). |
 | Live, harbor-old self-updated 0.44.0 → 0.44.1, 2026-11-11 | the same package: `harbor list --json` shows `announce: [{state: announced, name: Announce test}]`, the daemon logs `announced _harbor-probe._tcp …`, the Mac resolves it with the same TXT records; purge leaves no avahi-publish child. Every other app on harbor-old came back running and healthy after both updates. |
 
+## 0.48.0 (decisions 207–209)
+
+| Check | Result |
+|---|---|
+| Local gate, macOS arm64, Node 24.12.0, 2026-11-20 | lint, typecheck; unit 749 passed + 2 skipped; integration 452 passed + 4 skipped; build + e2e 51 passed; catalog verify/hash and openapi --check pass |
+| `tests/unit/access-guard.test.ts` | address parsing (host bits zeroed, RFC 5952 IPv6, refusals), root's re-validation (injection text, too-wide ranges, 1024 cap), ruleset order (exempt → allow → count → drop on 443), parsing a real `nft -j` answer from nft 1.0.9, the MMDB reader on a database written by the test, a lookup app's answer cut to known fields, units and polkit |
+| `tests/integration/access-guard.test.ts` (fake provider) | off by default and nothing asked of root; on with an empty list; entries normalised and refusals (bad, duplicate, too wide, LAN, tailnet, bad tag, past expiry); counters folded across a reload (40 + 5 read before the reload + 2 after = 47); allowed-later addresses; tags, local location, online refusal without an app; busy notification once, never for tagged; expiry notification and removal; label change asks nothing of root; fail closed (failed apply keeps list and switch); `requireVpn` refused without a VPN, never direct, offline allowed; `provides.ipLookup` asked on `127.0.0.1:<hostPort>/v1/lookup` with unknown fields dropped |
+| e2e `ui.spec.ts` (decision 207) | Settings → Allowed addresses: a LAN address refused with the reason, an IPv6 /64 added and normalised, the question before *Allowed list only*, edit with an expiry, remove, back to Everyone |
+| Kernel, Ubuntu 24.04 container on Docker Desktop (nft 1.0.9), 2026-11-20 | Harbor's generated ruleset (`allow 198.18.9.20`, own `198.18.9.40`) loaded and reloaded; HTTP to :443 from .20 and .40 → 200, from .50 (twice) and .51 → dropped (curl timeout); `nft -j list set … seen4` parsed to .50 = 4 packets, .51 = 2 |
+| `systemctl enable harbor-guard.service` without Caddy (Ubuntu 24.04 container) | exit 0; symlinks in `multi-user.target.wants` and `caddy.service.requires` (systemd notes the missing caddy.service) |
+| DB-IP Lite 2026-11 (country + ASN) with Harbor's reader | 8.8.8.8 → US / AS15169, 1.1.1.1 → AU / AS13335, IPv6 and `::ffff:` addresses answer, 192.168.1.1 → none |
+| IP Lookup image (`images/ip-lookup`) | `node --test` 12 passed; built and run on Docker Desktop: /healthz 200, bad ip 400, a real unauthenticated ipinfo answer, cached on the second call, runs as uid 1000 |
+| Live | **Not run yet.** A droplet with Caddy and a public name: turn the list on, reach the app from an allowed address, see another dropped and counted, reboot and see Caddy wait for `harbor-guard.service` |
+
 ## 0.47.1 (decision 206)
 
 | Check | Result |

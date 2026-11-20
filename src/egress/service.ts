@@ -13,6 +13,7 @@ import type { InternetDto, VpnDto } from '../contracts/api.js';
 import { instanceDir, loadReleaseSnapshot, readInternetChoice } from '../lifecycle/instance-dir.js';
 import { defaultNetworkName, identityFor } from '../planner/identity.js';
 import { effectiveInternet, isAppSubnet, type EgressApp, type EgressState } from './rules.js';
+import { packageInternet, packageRequiresVpn } from '../planner/internet.js';
 import { parseWireguardConfig, tunnelSummary, type TunnelSummary } from './wireguard.js';
 import type { EgressProvider, TunnelReport } from './provider.js';
 
@@ -33,7 +34,7 @@ const STATUS_CACHE_MS = 10_000;
 export class EgressService {
   private lastApplied: string | null = null;
   private chain: Promise<unknown> = Promise.resolve();
-  private defaults = new Map<string, InternetMode>();
+  private defaults = new Map<string, { mode: InternetMode; requireVpn: boolean }>();
   private lastReport: { report: TunnelReport; at: number } | null = null;
   private lastError: { message: string; at: string } | null = null;
   private appliedAt: string | null = null;
@@ -52,21 +53,26 @@ export class EgressService {
     this.ctx.repo.setSetting(VPN_SETTING, next);
   }
 
-  // The package's own default (direct when it says nothing), cached by instance + revision.
-  packageDefault(inst: InstanceRow, manifest?: Manifest): InternetMode {
-    if (manifest) return manifest.network?.internet ?? 'direct';
+  // The package's own default (direct when it says nothing; vpn when it requires the VPN, decision 208) and whether
+  // it requires the VPN, cached by instance + revision.
+  packageNetwork(inst: InstanceRow, manifest?: Manifest): { mode: InternetMode; requireVpn: boolean } {
+    if (manifest) return { mode: packageInternet(manifest), requireVpn: packageRequiresVpn(manifest) };
     const key = `${inst.id}@${inst.revision}`;
     const hit = this.defaults.get(key);
     if (hit) return hit;
-    let mode: InternetMode;
+    let net: { mode: InternetMode; requireVpn: boolean };
     try {
-      mode = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId).manifest.network?.internet ?? 'direct';
+      const m = loadReleaseSnapshot(path.join(instanceDir(this.ctx.config.stateDir, inst.id), 'release'), inst.packageId).manifest;
+      net = { mode: packageInternet(m), requireVpn: packageRequiresVpn(m) };
     } catch {
       // no readable release: the app cannot be started either; direct keeps it out of the rules
-      return 'direct';
+      return { mode: 'direct', requireVpn: false };
     }
-    this.defaults.set(key, mode);
-    return mode;
+    this.defaults.set(key, net);
+    return net;
+  }
+  packageDefault(inst: InstanceRow, manifest?: Manifest): InternetMode {
+    return this.packageNetwork(inst, manifest).mode;
   }
 
   choice(instanceId: string): InternetMode | null {
@@ -74,14 +80,15 @@ export class EgressService {
   }
 
   modeOf(inst: InstanceRow, manifest?: Manifest): InternetMode {
-    return effectiveInternet(this.choice(inst.id), this.packageDefault(inst, manifest), this.setting().allApps);
+    const net = this.packageNetwork(inst, manifest);
+    return effectiveInternet(this.choice(inst.id), net.mode, this.setting().allApps, net.requireVpn);
   }
 
   internetDto(inst: InstanceRow): InternetDto {
-    const packageDefault = this.packageDefault(inst);
+    const net = this.packageNetwork(inst);
     const choice = this.choice(inst.id);
     const allApps = this.setting().allApps;
-    return { mode: effectiveInternet(choice, packageDefault, allApps), choice, packageDefault, allApps };
+    return { mode: effectiveInternet(choice, net.mode, allApps, net.requireVpn), choice, packageDefault: net.mode, allApps, ...(net.requireVpn ? { requireVpn: true } : {}) };
   }
 
   // Every non-direct app whose network exists, with its subnets. `pending` = an app being installed or updated
