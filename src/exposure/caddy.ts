@@ -120,7 +120,7 @@ export function renderCaddyConfig(routes: CaddyRoute[], opts: { adminListen?: st
                   routes: [
                     {
                       handle: [
-                        { handler: 'headers', response: { set: { 'X-Content-Type-Options': ['nosniff'], 'Referrer-Policy': ['no-referrer'] } } },
+                        { handler: 'headers', response: { set: { 'X-Content-Type-Options': ['nosniff'], 'Referrer-Policy': ['strict-origin-when-cross-origin'] } } }, // not no-referrer: Chrome then sends Origin: null and Django CSRF refuses logins (decision 206)
                         { handler: 'request_body', max_size: 256 * 1024 * 1024 },
                         ...(r.basicAuth
                           ? [{ handler: 'authentication', providers: { http_basic: { accounts: [{ username: r.basicAuth.username, password: r.basicAuth.bcryptHash }], hash: { algorithm: 'bcrypt' }, hash_cache: {}, realm: 'Harbor' } } }]

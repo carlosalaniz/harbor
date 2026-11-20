@@ -1375,6 +1375,13 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | Live, harbor-old self-updated 0.41.1 → 0.44.0, 2026-11-11 | a test package (`_harbor-probe._tcp`, Excalidraw image, installed `--unencrypted --no-tailnet`): after install the Mac's `dns-sd -L` resolves it at `harbor-old.local:18086` with TXT `path=/ app=announce-test harbor=1 scheme=http`, the child runs as `harbor`; stop removes it (no avahi-publish left); start shows *Add* and remove shows *Rmv* on the Mac's `dns-sd -B` within a second. **Found:** avahi-publish writes "Established under name …" to stderr, so 0.44.0's app page stayed on *Announcing…*; fixed in 0.44.1 (the unit test now writes to stderr and fails on 0.44.0's code). |
 | Live, harbor-old self-updated 0.44.0 → 0.44.1, 2026-11-11 | the same package: `harbor list --json` shows `announce: [{state: announced, name: Announce test}]`, the daemon logs `announced _harbor-probe._tcp …`, the Mac resolves it with the same TXT records; purge leaves no avahi-publish child. Every other app on harbor-old came back running and healthy after both updates. |
 
+## 0.47.1 (decision 206)
+
+| Check | Result |
+|---|---|
+| Live, production box, Plane 1.4.3 published at its public domain, 2026-11-20 | Chrome login → *CSRF Verification Failed* (the API logs `POST /auth/sign-in/ 200`, Plane's failure view). Response headers carried `referrer-policy: no-referrer` from Harbor's Caddy route. With curl: the same POST with `Origin: https://<domain>` passes CSRF (`USER_DOES_NOT_EXIST` redirect), with `Origin: null` it shows *CSRF Verification Failed* |
+| `tests/unit/exposure.test.ts` (decision 206 test) | a public route sets `Referrer-Policy: strict-origin-when-cross-origin` and `nosniff`, never `no-referrer`; fails on 0.47.0 |
+
 ## 0.47.0 (decision 205)
 
 | Check | Result |
