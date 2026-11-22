@@ -1609,7 +1609,7 @@ progress {
   position: relative;
   pointer-events: none;
 }
-.icon-tile.lifted .appicon {
+.icon-tile.dragging .appicon {
   box-shadow: 0 24px 50px rgba(0, 0, 0, 0.5);
 }
 .icon-btn {
@@ -1628,6 +1628,10 @@ progress {
   -webkit-user-drag: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+/* an icon picture must not start the browser's own image drag: that cancels the pointer and drops the tile */
+.icon-btn img {
+  -webkit-user-drag: none;
 }
 .icon-btn:hover {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -1709,6 +1713,9 @@ progress {
 .icon-tile:focus-within .more {
   opacity: 1;
 }
+.launcher.dragging .icon-tile .more {
+  opacity: 0;
+}
 .icon-tile.retained .appicon {
   filter: grayscale(1);
   opacity: 0.7;
@@ -1773,6 +1780,52 @@ progress {
 }
 .space-head .btn {
   margin-left: auto;
+}
+/* decision 210: drag an app onto a space (or back to the main grid); the group under the pointer lights up */
+.space-group,
+.launcher .icons {
+  border-radius: 18px;
+  outline: 2px dashed transparent;
+  outline-offset: 6px;
+  transition: outline-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+.launcher.dragging .icons,
+.launcher.dragging .space-empty {
+  min-height: 96px;
+}
+.space-group.drop-target,
+.launcher .icons.drop-target {
+  outline-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.drop-hint {
+  color: var(--fg);
+  font-weight: 600;
+}
+.space-empty {
+  margin: 0;
+  display: grid;
+  align-items: center;
+}
+/* buttons that sit straight on the wallpaper (Home): a frosted surface so they read over any picture */
+.btn.on-wallpaper {
+  background: color-mix(in srgb, var(--card-solid) 72%, transparent);
+  border-color: var(--line-strong);
+  color: var(--fg);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+.btn.on-wallpaper:hover {
+  background: color-mix(in srgb, var(--card-solid) 88%, transparent);
+}
+.btn.on-wallpaper.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+:root[data-wallpaper='photo'] .space-head h2,
+:root[data-wallpaper='photo'] .launcher .retained-list summary {
+  color: var(--fg);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 .space-apps {
   border: 0;

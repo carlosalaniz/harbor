@@ -2344,6 +2344,80 @@ test('decision 202: spaces — group two apps, share a network only after the wa
   await expect(loose).toHaveCount(before);
 });
 
+test('decision 210: drag an app onto a space and back out; a drop into a shared space asks first', async ({ page }) => {
+  await login(page);
+  const loose = page.locator('.icons[aria-label="Installed apps"] .icon-tile.instance');
+  await expect.poll(() => loose.count()).toBeGreaterThanOrEqual(2);
+  // press, lift, and when the target is off screen hold the pointer at that edge until the page scrolls to it
+  const drag = async (from: Locator, to: Locator) => {
+    await from.scrollIntoViewIfNeeded();
+    const a = (await from.boundingBox())!;
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a.x + a.width / 2 + 12, a.y + a.height / 2 + 4, { steps: 3 });
+    const vh = page.viewportSize()!.height;
+    const inView = async () => {
+      const b = (await to.boundingBox())!;
+      return b.y + b.height / 2 > 80 && b.y + b.height / 2 < vh - 80;
+    };
+    if (!(await inView())) {
+      const below = (await to.boundingBox())!.y > vh / 2;
+      await page.mouse.move(a.x + a.width / 2, below ? vh - 4 : 4, { steps: 6 });
+      await expect.poll(inView, { timeout: 15_000 }).toBe(true);
+      // leave the edge so the page stops scrolling before the target is measured
+      await page.mouse.move(a.x + a.width / 2, vh / 2, { steps: 2 });
+    }
+    const b = (await to.boundingBox())!;
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+    await page.mouse.up();
+  };
+  await page.getByRole('button', { name: 'New space', exact: true }).click();
+  const dlg = page.getByRole('dialog', { name: 'New space' });
+  await dlg.getByLabel('Space name', { exact: true }).fill('Dragged');
+  await dlg.getByRole('button', { name: 'Create space', exact: true }).click();
+  await expect(dlg).toBeHidden();
+  const group = page.getByRole('region', { name: 'Dragged' });
+  await expect(group.getByText(/No apps here yet/)).toBeVisible();
+  const inSpace = page.getByRole('list', { name: 'Apps in Dragged' }).locator('.icon-tile.instance');
+  // into the space
+  const name = (await loose.first().getAttribute('data-instance'))!;
+  await drag(loose.first(), group);
+  await expect(inSpace).toHaveCount(1);
+  await expect(inSpace.first()).toHaveAttribute('data-instance', name);
+  expect(page.context().pages().length).toBe(1);
+  // survives a reload (the daemon has it)
+  await page.reload();
+  await login(page);
+  await expect(inSpace).toHaveCount(1);
+  // back out to the main grid
+  await drag(inSpace.first(), page.locator('.icons[aria-label="Installed apps"]'));
+  await expect(page.getByRole('list', { name: 'Apps in Dragged' })).toHaveCount(0);
+  await expect(page.locator(`.icons[aria-label="Installed apps"] .icon-tile[data-instance="${name}"]`)).toHaveCount(1);
+  // a shared space: the drop asks, Cancel leaves the app where it was, Move puts it in
+  await group.getByRole('button', { name: 'Edit space Dragged', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit Dragged' });
+  await edit.getByRole('checkbox', { name: /Share a network/ }).check();
+  await edit.getByRole('checkbox', { name: 'I understand, share the network', exact: true }).check();
+  await edit.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(edit).toBeHidden();
+  const tile = page.locator(`.icons[aria-label="Installed apps"] .icon-tile[data-instance="${name}"]`);
+  await drag(tile, group);
+  const ask = page.getByRole('dialog', { name: `Move ${name} into Dragged?` });
+  await expect(ask.getByRole('note')).toContainText('databases included');
+  await ask.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(ask).toBeHidden();
+  await expect(tile).toHaveCount(1);
+  await expect(page.getByRole('list', { name: 'Apps in Dragged' })).toHaveCount(0);
+  await drag(tile, group);
+  await ask.getByRole('button', { name: 'Move into Dragged', exact: true }).click();
+  await expect(inSpace).toHaveCount(1);
+  // clean up: the app goes back to the main grid
+  await group.getByRole('button', { name: 'Edit space Dragged', exact: true }).click();
+  await edit.getByRole('button', { name: 'Delete space', exact: true }).click();
+  await edit.getByRole('button', { name: 'Delete Dragged? Apps stay installed', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Dragged' })).toHaveCount(0);
+});
+
 test('decision 205: CPU and memory — the app page shows the limits; background priority and a CPU limit apply without a restart', async ({ page }) => {
   await login(page);
   await installFromStore(page, 'FreshRSS');

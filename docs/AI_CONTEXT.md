@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–209 so far; 207–209 = Access Guard, requireVpn, provides.ipLookup) | `docs/DECISIONS.md` — **next number is 210**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–210 so far; 207–209 = Access Guard, requireVpn, provides.ipLookup; 210 = drag apps into spaces) | `docs/DECISIONS.md` — **next number is 211**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -100,6 +100,7 @@ bootstrap adds the `caddy` user to the `harbor` group and makes the state dir gr
 validated live against Caddy v2.11.4.
 
 **Last three actions, most recent first:**
+1. **0.49.0 (decision 210, 2026-11-22)**: Home drag and drop across groups (`web/src/app/reorder.ts` takes groups + `onMove`; Home turns a drop into one `PATCH /v1/spaces/:id`; a drop into a shared space asks with the decision 202 warning). Page-coordinate rects + edge auto-scroll. Icon `<img>` now `draggable={false}` (native image drag fired `pointercancel`, so picture-icon tiles never dragged). Frosted `.btn.on-wallpaper` for Home's Edit/New space/Arrange.
 1. **0.48.0 (decisions 207–209, 2026-11-20)**: Access Guard (Settings → Allowed addresses; docs/design/ACCESS_GUARD.md): one global allowed list, nft table `inet harbor_guard` drops :443 (TCP+UDP) from anyone else, never LAN/tailnet/own public address; root `harbor-guard@<apply|off|status>`, boot unit `harbor-guard.service` (Caddy requires it); per-source packet counters (`seen4/6` sets) folded into `<stateDir>/guard/addresses.json`; DB-IP Lite location via Harbor's own MMDB reader (src/guard/mmdb.ts). Package format: `network.requireVpn` and `provides.ipLookup`; IP Lookup image in `images/ip-lookup/` (workflow `ip-lookup-image.yml`). Proven in an Ubuntu 24.04 container (nft 1.0.9), not yet on a droplet.
 1. **0.37.1 (decision 188, 2026-10-23)**: the smoke test judges restarts against a per-phase baseline (`scripts/smoke-settle.ts`): the published base may have restarted before healthy, the new revision may not restart at all. Unblocks the Ghost/Etherpad/Pastefy updates.
 1. **0.37.1 (decision 187, 2026-10-23)**: contributor PRs #1 and #3 — Ubuntu 26.04 LTS hosts (Tailscale apt suite follows the host; no `--force` hint for out-of-window Ubuntu/Debian) and bundled Node 24.22.1 (October 21 Node.js security release; CI and release pin it too).

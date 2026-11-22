@@ -1375,6 +1375,15 @@ GitHub CI on `d32c980` (run 42522472755, Ubuntu runner, fake Docker): lint, type
 | Live, harbor-old self-updated 0.41.1 → 0.44.0, 2026-11-11 | a test package (`_harbor-probe._tcp`, Excalidraw image, installed `--unencrypted --no-tailnet`): after install the Mac's `dns-sd -L` resolves it at `harbor-old.local:18086` with TXT `path=/ app=announce-test harbor=1 scheme=http`, the child runs as `harbor`; stop removes it (no avahi-publish left); start shows *Add* and remove shows *Rmv* on the Mac's `dns-sd -B` within a second. **Found:** avahi-publish writes "Established under name …" to stderr, so 0.44.0's app page stayed on *Announcing…*; fixed in 0.44.1 (the unit test now writes to stderr and fails on 0.44.0's code). |
 | Live, harbor-old self-updated 0.44.0 → 0.44.1, 2026-11-11 | the same package: `harbor list --json` shows `announce: [{state: announced, name: Announce test}]`, the daemon logs `announced _harbor-probe._tcp …`, the Mac resolves it with the same TXT records; purge leaves no avahi-publish child. Every other app on harbor-old came back running and healthy after both updates. |
 
+## 0.49.0 (decision 210)
+
+| Check | Result |
+|---|---|
+| e2e `ui.spec.ts` (new test) | on a Home with 21 apps: create an empty space, drag the first app (a picture icon) onto it with the mouse; the page scrolls itself to the space below the fold; the app lands in the space and stays there after a reload; drag it back to the main grid; share the space, drag again: the confirmation shows the *databases included* warning, Cancel leaves the app out, *Move into Dragged* puts it in; delete the space |
+| e2e `ui.spec.ts` (existing) | arrange, spaces (decision 202) and the rest unchanged: 51 passed with `setup.spec.ts` |
+| Console preview (`pnpm dev:ui`, dark and light, 1280 wide, the photo wallpaper from Carlos's screenshot) | Edit, New space and Arrange read over the picture; the space under a lifted tile shows a dashed accent outline and *Drop to move here* |
+| Not checked | a real touch device (hold to lift, then drag across groups); a live Harbor (the change is console-only: the same `PATCH /v1/spaces/:id` the Edit dialog sends) |
+
 ## 0.48.0 (decisions 207–209)
 
 | Check | Result |

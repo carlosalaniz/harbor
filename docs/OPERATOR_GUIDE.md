@@ -731,6 +731,11 @@ bottom bar as the *Alerts* tab, with the unread count on it.
 - **Home → New space** names a group ("Productivity") and picks its apps. Home then shows each space as its own
   section under the apps that are in none; **Edit** on a section renames it, changes its apps or deletes it (its apps
   stay installed). An app is in at most one space: picking it for another space moves it.
+- **Drag and drop** (since 0.49.0): drag an app's icon onto a space to move it there, or back onto the main grid to
+  take it out of its space. The space under the pointer lights up (*Drop to move here*); near the top or bottom of
+  the window the page scrolls by itself. On a phone, hold an icon until it lifts, then drag. Dropping into a space
+  with a shared network asks first (the app and the space's apps can then reach each other). Inside a space, icons
+  can be arranged like the main grid.
 - A space is **grouping only** unless you tick **Share a network**. Then every service of every app in the space
   joins one private network (no internet route, nothing published) and the apps reach each other by name:
   `<app>` for the app's main page and `<app>-<service>` for each of its services, e.g. `http://erpnext:8080`,

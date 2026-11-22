@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CatalogItemDto, HostStorageDto, InstanceSummary, OperationDto, SystemMetricsDto, WidgetDto } from '../../../../src/contracts/api';
 import { api } from '../../api';
-import { AppIcon, InstanceIcon, Pill, appLabel, copyName, openUrl } from '../components';
+import { AppIcon, Dialog, InstanceIcon, Pill, appLabel, copyName, openUrl } from '../components';
 import { ArrowUpIcon, EllipsisIcon } from '../icons';
 import { fmtBytes, fmtUptime, plainStatus, updateLine } from '../format';
-import { useReorder } from '../reorder';
+import { useReorder, type GroupMove } from '../reorder';
 import { tileStatus } from '../queue';
 import type { Console } from '../store';
-import { SpaceDialog } from '../Spaces';
+import { SHARED_WARNING, SpaceDialog } from '../Spaces';
 import type { SpaceDto } from '../../../../src/contracts/api';
 
+const LOOSE = 'loose'; // the main grid's group key (space ids are hex)
 const PICKS = ['nextcloud', 'immich', 'jellyfin', 'open-webui', 'vaultwarden', 'n8n'];
 
 function greeting(): string {
@@ -56,6 +57,9 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
   const inSpace = new Set(spaces.flatMap((s) => s.apps.map((a) => a.instanceId)));
   const loose = shown.filter((i) => !inSpace.has(i.id));
   const [spaceEdit, setSpaceEdit] = useState<SpaceDto | 'new' | null>(null);
+  // decision 210: a drop into a shared space waits for a confirmation; a failed move says why
+  const [pendingMove, setPendingMove] = useState<GroupMove | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 30_000);
@@ -84,9 +88,41 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
     },
     [c, saved.join('|')],
   );
-  const re = useReorder(sortedIds, commit);
+  const byIdAll = new Map(data.instances.map((i) => [i.id, i]));
+  // Drag an app into a space, or out of one back to the main grid: one space change (the server takes the app out
+  // of any other space), shown at once and confirmed by the next refresh.
+  const applyMove = useCallback(
+    (m: GroupMove) => {
+      const target = spaces.find((s) => s.id === m.to);
+      const source = spaces.find((s) => s.id === m.from);
+      const name = byIdAll.get(m.id)?.name ?? m.id;
+      setMoveError(null);
+      c.patchData((d) => ({
+        ...d,
+        spaces: d.spaces.map((s) => {
+          const apps = s.apps.filter((a) => a.instanceId !== m.id);
+          return s.id === m.to ? { ...s, apps: [...apps, { instanceId: m.id, name, addresses: [] }] } : { ...s, apps };
+        }),
+      }));
+      commit(m.order);
+      const change = target ? api.updateSpace(target.id, { apps: [...target.apps.map((a) => a.instanceId).filter((a) => a !== m.id), m.id] }) : source ? api.updateSpace(source.id, { apps: source.apps.map((a) => a.instanceId).filter((a) => a !== m.id) }) : null;
+      void change
+        ?.catch((e: Error) => setMoveError(`${name} did not move: ${e.message}`))
+        .finally(() => void c.refresh());
+    },
+    [c, commit, spaces, data.instances],
+  );
+  const onMove = useCallback(
+    (m: GroupMove) => {
+      const target = spaces.find((s) => s.id === m.to);
+      if (target?.shared) setPendingMove(m);
+      else applyMove(m);
+    },
+    [spaces, applyMove],
+  );
+  const re = useReorder([{ key: LOOSE, ids: sortedIds }, ...spaces.map((s) => ({ key: s.id, ids: spaceTiles(s).map((i) => i.id) }))], commit, onMove);
   const byId = new Map(active.map((i) => [i.id, i]));
-  const tiles = re.order.map((id) => byId.get(id)).filter((i): i is InstanceSummary => Boolean(i));
+  const tiles = re.orderOf(LOOSE).map((id) => byId.get(id)).filter((i): i is InstanceSummary => Boolean(i));
   const picture = data.appearance?.wallpaper.kind === 'rotating' ? data.appearance.wallpaper.current : null;
   const updates = active.filter((i) => i.updateAvailable && i.installState === 'installed');
   const hello = useGreeting();
@@ -101,12 +137,12 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
         </div>
         <div className="row wrap head-actions">
           {active.length > 0 && !re.arranging && (
-            <button className="btn ghost" onClick={() => setSpaceEdit('new')}>
+            <button className="btn on-wallpaper" onClick={() => setSpaceEdit('new')}>
               New space
             </button>
           )}
-          {loose.length > 1 && (
-            <button className={`btn ghost ${re.arranging ? 'active' : ''}`} onClick={() => re.setArranging(!re.arranging)} aria-pressed={re.arranging}>
+          {shown.length > 1 && (
+            <button className={`btn on-wallpaper ${re.arranging ? 'active' : ''}`} onClick={() => re.setArranging(!re.arranging)} aria-pressed={re.arranging}>
               {re.arranging ? 'Done' : 'Arrange'}
             </button>
           )}
@@ -180,13 +216,18 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           </ul>
         </section>
       )}
-      <section className={`launcher ${re.arranging ? 'arranging' : ''}`} aria-labelledby="apps-h">
+      <section className={`launcher ${re.arranging ? 'arranging' : ''} ${re.dragging ? 'dragging' : ''}`} aria-labelledby="apps-h">
         <h2 id="apps-h" className="visually-hidden">
           Your apps
         </h2>
         {re.arranging && (
           <p className="muted small arrange-hint" role="status">
-            Drag icons to arrange them. Arrow keys move the focused app. Press Done (or Esc) when you are happy.
+            Drag icons to arrange them{spaces.length ? ', or onto a space to move them there' : ''}. Arrow keys move the focused app. Press Done (or Esc) when you are happy.
+          </p>
+        )}
+        {moveError && (
+          <p className="error small" role="alert">
+            {moveError}
           </p>
         )}
         {!loaded ? (
@@ -214,7 +255,7 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
           </div>
         ) : (
           <>
-            <ul className="icons" aria-label="Installed apps">
+            <ul className={`icons ${re.dropTarget === LOOSE ? 'drop-target' : ''}`} aria-label="Installed apps" ref={re.groupRef(LOOSE)}>
               {tiles.map((i) => (
                 <AppIconTile key={i.id} inst={i} op={c.activeFor(i.id)} all={data.instances} onDetails={() => onOpenApp(i)} reorder={re} />
               ))}
@@ -230,24 +271,25 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
               )}
             </ul>
             {spaces.map((s) => {
-              const ts = spaceTiles(s);
+              const ts = re.orderOf(s.id).map((id) => byId.get(id)).filter((i): i is InstanceSummary => Boolean(i));
               return (
-                <section key={s.id} className="space-group" aria-labelledby={`space-h-${s.id}`}>
+                <section key={s.id} ref={re.groupRef(s.id)} className={`space-group ${re.dropTarget === s.id ? 'drop-target' : ''}`} aria-labelledby={`space-h-${s.id}`}>
                   <div className="space-head">
                     <h2 id={`space-h-${s.id}`}>{s.name}</h2>
                     {s.shared && <Pill tone="warn">Shared network</Pill>}
-                    <button className="btn ghost small" onClick={() => setSpaceEdit(s)} aria-label={`Edit space ${s.name}`}>
+                    {re.dropTarget === s.id && <span className="small drop-hint">Drop to move here</span>}
+                    <button className="btn on-wallpaper small" onClick={() => setSpaceEdit(s)} aria-label={`Edit space ${s.name}`}>
                       Edit
                     </button>
                   </div>
                   {ts.length ? (
                     <ul className="icons" aria-label={`Apps in ${s.name}`}>
                       {ts.map((i) => (
-                        <AppIconTile key={i.id} inst={i} op={c.activeFor(i.id)} all={data.instances} onDetails={() => onOpenApp(i)} />
+                        <AppIconTile key={i.id} inst={i} op={c.activeFor(i.id)} all={data.instances} onDetails={() => onOpenApp(i)} reorder={re} />
                       ))}
                     </ul>
                   ) : (
-                    <p className="muted small">No apps here yet. Edit the space to add some.</p>
+                    <p className="muted small space-empty">No apps here yet. Drag one here, or edit the space.</p>
                   )}
                 </section>
               );
@@ -280,6 +322,17 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
         )}
       </section>
       {spaceEdit && <SpaceDialog c={c} space={spaceEdit === 'new' ? null : spaceEdit} onClose={() => setSpaceEdit(null)} />}
+      {pendingMove && (
+        <SharedMoveDialog
+          app={byIdAll.get(pendingMove.id)?.name ?? pendingMove.id}
+          space={spaces.find((s) => s.id === pendingMove.to)!}
+          onCancel={() => setPendingMove(null)}
+          onConfirm={() => {
+            applyMove(pendingMove);
+            setPendingMove(null);
+          }}
+        />
+      )}
       {picture && (
         <p className="wallpaper-credit small">
           <span aria-hidden="true">◐ </span>
@@ -294,6 +347,35 @@ export function Home({ c, onOpenApp, onGoStore, onPick }: { c: Console; onOpenAp
         </p>
       )}
     </>
+  );
+}
+
+// Decision 210: dropping an app into a shared space puts it on that network, so the drop asks first, in the same words
+// the space dialog uses when sharing is turned on.
+function SharedMoveDialog({ app, space, onCancel, onConfirm }: { app: string; space: SpaceDto; onCancel: () => void; onConfirm: () => void }) {
+  if (!space) return null;
+  const others = space.apps.filter((a) => a.name !== app).map((a) => a.name);
+  return (
+    <Dialog title={`Move ${app} into ${space.name}?`} onClose={onCancel}>
+      <div className="stack">
+        <p>
+          {space.name} shares a network{others.length ? ` with ${others.join(', ')}` : ''}. {app} joins it now, without a restart.
+        </p>
+        <div className="card warn-box" role="note">
+          <p className="small">
+            <strong>Not isolated.</strong> {SHARED_WARNING}
+          </p>
+        </div>
+        <div className="row end">
+          <button type="button" className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="button" className="btn primary" onClick={onConfirm}>
+            Move into {space.name}
+          </button>
+        </div>
+      </div>
+    </Dialog>
   );
 }
 

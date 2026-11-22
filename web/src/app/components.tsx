@@ -19,7 +19,7 @@ export function AppIcon({ packageId, icon, name, size = 44, custom = null }: { p
         {custom.glyph}
       </span>
     );
-  if (src && broken !== src) return <img className={cls} src={src} alt="" width={size} height={size} onError={() => setBroken(src)} />;
+  if (src && broken !== src) return <img className={cls} src={src} alt="" width={size} height={size} draggable={false} onError={() => setBroken(src)} />;
   return (
     <span className={`${cls} monogram`} aria-hidden="true">
       {monogram(name)}
