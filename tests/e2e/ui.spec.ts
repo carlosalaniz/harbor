@@ -2491,3 +2491,47 @@ test('decision 207: Allowed addresses — add one, a bad one is refused with a r
   await top.getByRole('radio', { name: 'Everyone', exact: true }).click();
   await expect(top.getByRole('radio', { name: 'Everyone', exact: true })).toHaveAttribute('aria-checked', 'true');
 });
+
+test('decision 211: a private repository — the sign-in refusal, a wrong token refused, the right one added; the token is replaced and removed', async ({ page }) => {
+  // the fake-mode daemon's demo repository (src/daemon.ts demoGit)
+  const repo = 'https://github.com/example/private-notes';
+  const token = 'tok-FIXTURE-demo-private-notes';
+  await login(page);
+  await page.getByRole('link', { name: 'App Store' }).click();
+  await page.getByRole('button', { name: 'Add your own app' }).click();
+  const dlg = page.getByRole('dialog', { name: 'Your own app' });
+  await dlg.getByRole('radio', { name: 'Git repository' }).click();
+  await dlg.getByLabel('Repository URL', { exact: true }).fill(repo);
+  const add = dlg.getByRole('button', { name: 'Add from the repository', exact: true });
+  await add.click();
+  await expect(dlg.getByRole('alert')).toContainText('the repository asked for a sign-in');
+  await expect(dlg.getByLabel('Access token', { exact: true })).toHaveAttribute('type', 'password');
+  await dlg.getByLabel('Access token', { exact: true }).fill('tok-FIXTURE-wrong-0000');
+  await add.click();
+  await expect(dlg.getByRole('alert')).toContainText('the repository refused the token');
+  await expect(dlg.getByRole('alert')).toContainText('Contents: read-only');
+  await dlg.getByLabel('Access token', { exact: true }).fill(token);
+  await add.click();
+  await expect(dlg).toContainText('Private Notes is in your App Store');
+  await dlg.getByRole('button', { name: 'Done' }).click();
+  // Your repositories: marked private, the token never shown
+  await page.getByRole('group', { name: 'Store sections' }).getByRole('button', { name: 'Your repositories' }).click();
+  const row = page.locator('.git-sources li').filter({ hasText: 'private-notes' });
+  await expect(row).toContainText('private (token stored)');
+  await expect(page.locator('body')).not.toContainText(token);
+  // replace: a wrong one is refused and kept out, the right one is accepted
+  await row.getByRole('button', { name: 'Access token for private-notes', exact: true }).click();
+  await row.getByLabel('New access token for private-notes', { exact: true }).fill('tok-FIXTURE-wrong-1111');
+  await row.getByRole('button', { name: 'Save token', exact: true }).click();
+  await expect(page.locator('.git-sources [role="alert"]')).toContainText('the repository refused the token');
+  await row.getByLabel('New access token for private-notes', { exact: true }).fill(token);
+  await row.getByRole('button', { name: 'Save token', exact: true }).click();
+  await expect(row.getByRole('button', { name: 'Save token', exact: true })).toBeHidden();
+  await expect(page.locator('.git-sources [role="alert"]')).toHaveCount(0);
+  // remove the token: the row is no longer private; then forget the source
+  await row.getByRole('button', { name: 'Access token for private-notes', exact: true }).click();
+  await row.getByRole('button', { name: 'Remove token', exact: true }).click();
+  await expect(row).not.toContainText('private (token stored)');
+  await row.getByRole('button', { name: 'Forget', exact: true }).click();
+  await expect(page.locator('.git-sources li').filter({ hasText: 'private-notes' })).toHaveCount(0);
+});

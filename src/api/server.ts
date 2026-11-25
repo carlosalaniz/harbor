@@ -480,11 +480,30 @@ export async function buildApi(deps: ApiDeps): Promise<FastifyInstance> {
             ref: { type: 'string', minLength: 1, maxLength: 120 },
             subpath: { type: 'string', minLength: 1, maxLength: 200 },
             autoRedeploy: { type: 'boolean' },
+            // decision 211: a private repository's access token; stored wrapped under the machine key, never returned
+            token: { type: 'string', minLength: 8, maxLength: 1024 },
           },
         },
       },
     },
-    async (req, reply) => reply.status(201).send(await service.addPackageSource(req.body as { url: string; ref?: string; subpath?: string; autoRedeploy?: boolean }, req.actor!)),
+    async (req, reply) => reply.status(201).send(await service.addPackageSource(req.body as { url: string; ref?: string; subpath?: string; autoRedeploy?: boolean; token?: string }, req.actor!)),
+  );
+  app.put(
+    '/v1/package-sources/:id/token',
+    {
+      preHandler: requireAuth,
+      schema: {
+        description: 'Replace the access token of a private repository source (decision 211). The new token is tried against the branch first; a refused one is not stored.',
+        params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] },
+        body: { type: 'object', additionalProperties: false, required: ['token'], properties: { token: { type: 'string', minLength: 8, maxLength: 1024 } } },
+      },
+    },
+    async (req) => service.setSourceToken((req.params as { id: string }).id, (req.body as { token: string }).token, req.actor!),
+  );
+  app.delete(
+    '/v1/package-sources/:id/token',
+    { preHandler: requireAuth, schema: { description: 'Remove the stored access token of a source (decision 211); later checks go without one.', params: { type: 'object', properties: { id: { type: 'string', pattern: UUID_PATTERN } }, required: ['id'] } } },
+    async (req) => service.setSourceToken((req.params as { id: string }).id, null, req.actor!),
   );
   app.post(
     '/v1/package-sources/:id/check',

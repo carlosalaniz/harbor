@@ -177,7 +177,7 @@ export async function startDaemon(config: DaemonConfig, overrides: DaemonOverrid
     const selfUpdate = new SelfUpdateService(version, feed, unitStarter, config.stateDir, clock, log);
     const notifyTransport = overrides.notifyTransport ?? (fakeMode ? new FakeTransport() : realTransport());
     const notifier = new Notifier(repo, ids, log, notifyTransport, () => repo.setting<string>('device.name') ?? hostname());
-    const git = overrides.git ?? (fakeMode ? new FakeGit() : new GitCli());
+    const git = overrides.git ?? (fakeMode ? demoGit() : new GitCli());
     const machineKey = new MachineKeyHolder(log);
     const gpu = overrides.gpu ?? (fakeMode ? new FakeGpu() : new HostGpuObserver({ root: '/', runtimes: async () => (await docker.info()).runtimes }));
     // The service needs the ctx and the ctx needs the service (runner secret
@@ -395,6 +395,17 @@ export function demoFetcher(): FakeFetcher {
   });
   f.on('https://i.redd.it/', { status: 200, contentType: 'image/jpeg', body: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00]) });
   return f;
+}
+
+// Fake mode (decision 211): one private repository, so adding a source with an access token can be exercised
+// in `pnpm dev` and e2e. Without the token it answers like GitHub (sign-in wanted); a wrong one is refused.
+export const DEMO_PRIVATE_REPO = 'https://github.com/example/private-notes';
+export const DEMO_PRIVATE_TOKEN = 'tok-FIXTURE-demo-private-notes';
+export function demoGit(): FakeGit {
+  const g = new FakeGit();
+  const manifest = ['apiVersion: harbor/v1alpha1', 'kind: Application', 'metadata:', '  id: private-notes', '  name: Private Notes', '  description: A demo app from a private repository', 'release:', '  revision: "1"', '  version: "0.1.0"', 'deployment:', '  compose: compose.yaml', '  multiInstance: false', '  services:', '    web: application', 'endpoints:', '  web:', '    service: web', '    containerPort: 3000', '    scheme: http', '    exposure: direct', '    browserContext: ordinary', 'health:', '  endpoint: web', '  path: /', '  expectedStatus: [200]', '  timeoutSeconds: 5', '  deadlineSeconds: 30', 'ui:', '  primaryEndpoint: web', 'presentation:', '  tagline: Notes from a private repository', '  category: developer', ''].join('\n');
+  g.setRepo(DEMO_PRIVATE_REPO, 'main', [{ commit: '7'.repeat(40), committerDateUnix: 1_760_000_000, files: { 'harbor/manifest.yaml': manifest, 'harbor/compose.yaml': 'services:\n  web:\n    build:\n      context: ../app\n', 'app/Dockerfile': 'FROM scratch\n' } }], { token: DEMO_PRIVATE_TOKEN });
+  return g;
 }
 
 // Fake mode: "a newer Harbor exists" so the update flow can be exercised without GitHub.

@@ -484,6 +484,8 @@ export interface PackageSourceDto {
   note: string | null;
   // a newer commit exists on the branch than the imported one
   updateAvailable: boolean;
+  // decision 211: a private repository read with a stored access token (the token itself never leaves the daemon)
+  hasToken: boolean;
 }
 export interface AddSourceResult {
   source: PackageSourceDto;

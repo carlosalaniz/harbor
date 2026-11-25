@@ -2432,6 +2432,18 @@ button.vital:hover {
   gap: 6px;
   align-items: center;
 }
+/* decision 211: the token form opens under its source, full width */
+.git-sources .source-token {
+  flex-basis: 100%;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 0 4px;
+}
+.git-sources .source-token label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 
 /* ---- the official catalog line at the bottom of the Store (decision 158) ---- */
 .catalog-line {

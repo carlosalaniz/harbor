@@ -1047,6 +1047,18 @@ packagesCmd
     out({ removed: id }, () => `Removed uploaded package ${id}.`);
   });
 
+// Decision 211: an access token comes from stdin only (never argv: shell history, process lists). One line, trimmed.
+async function readTokenStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    const t = (await promptHidden('Access token: ')).trim();
+    if (!t) throw new HarborError('INVALID_REQUEST', 'no token was given; nothing was done');
+    return t;
+  }
+  const t = (await readStdinAll()).trim();
+  if (!t) throw new HarborError('INVALID_REQUEST', 'stdin was empty; nothing was done', { nextAction: 'Pipe the token in: harbor sources add <url> --token-stdin < token.txt' });
+  return t;
+}
+
 // Git app sources (decision 80): point Harbor at a repository, pin to a branch, optionally redeploy on commit.
 const sourcesCmd = program.command('sources').description('git app sources: add a repository, check for commits, toggle redeploy-on-commit');
 sourcesCmd.action(async () => {
@@ -1054,8 +1066,8 @@ sourcesCmd.action(async () => {
   out(items, () =>
     items.length
       ? table([
-          ['APP', 'REPOSITORY', 'BRANCH', 'COMMIT', 'REDEPLOY', 'STATE'],
-          ...items.map((s) => [s.packageId, s.url.replace(/^https:\/\//, ''), s.ref + (s.subpath ? ` (${s.subpath})` : ''), s.pinnedCommit?.slice(0, 12) ?? '-', s.autoRedeploy ? 'on commit' : 'manual', s.note ? `⚠ ${s.note}` : s.updateAvailable ? 'new commit seen' : 'up to date']),
+          ['APP', 'REPOSITORY', 'BRANCH', 'COMMIT', 'TOKEN', 'REDEPLOY', 'STATE'],
+          ...items.map((s) => [s.packageId, s.url.replace(/^https:\/\//, ''), s.ref + (s.subpath ? ` (${s.subpath})` : ''), s.pinnedCommit?.slice(0, 12) ?? '-', s.hasToken ? 'stored' : '-', s.autoRedeploy ? 'on commit' : 'manual', s.note ? `⚠ ${s.note}` : s.updateAvailable ? 'new commit seen' : 'up to date']),
         ])
       : 'No git sources. Add one with: harbor sources add https://github.com/you/your-app',
   );
@@ -1066,8 +1078,10 @@ sourcesCmd
   .option('--branch <ref>', 'branch to follow', 'main')
   .option('--path <subpath>', 'folder inside the repository that holds the app')
   .option('--auto-redeploy', 'deploy new commits automatically (failed deployments roll back)', false)
-  .action(async (url: string, opts: { branch: string; path?: string; autoRedeploy: boolean }) => {
-    const r = await client().post<AddSourceResult>('/v1/package-sources', { url, ref: opts.branch, ...(opts.path ? { subpath: opts.path } : {}), autoRedeploy: opts.autoRedeploy });
+  .option('--token-stdin', 'private repository: read an access token from stdin (GitHub: a fine-grained token for this repository, Contents: read-only)', false)
+  .action(async (url: string, opts: { branch: string; path?: string; autoRedeploy: boolean; tokenStdin: boolean }) => {
+    const token = opts.tokenStdin ? await readTokenStdin() : undefined;
+    const r = await client().post<AddSourceResult>('/v1/package-sources', { url, ref: opts.branch, ...(opts.path ? { subpath: opts.path } : {}), autoRedeploy: opts.autoRedeploy, ...(token ? { token } : {}) });
     out(r, () =>
       [
         `${r.import.item.name} (${r.import.item.id}) revision ${r.import.item.revision} imported from ${r.source.url}@${r.source.pinnedCommit?.slice(0, 12)}.`,
@@ -1099,15 +1113,33 @@ sourcesCmd
     const r = await client().post<PackageSourceDto>(`/v1/package-sources/${s.id}/auto-redeploy`, { enabled: mode === 'on' }, {}, 'PUT');
     out(r, () => `Redeploy-on-commit is ${r.autoRedeploy ? 'on' : 'off'} for ${appId}.`);
   });
+// Decision 211: replace an expired/rotated token (tried against the branch before it is stored) or remove it.
+sourcesCmd
+  .command('token <app-id>')
+  .description('replace (--token-stdin) or remove (--clear) the access token of a private repository source')
+  .option('--token-stdin', 'read the new access token from stdin', false)
+  .option('--clear', 'remove the stored token (later checks go without one)', false)
+  .action(async (appId: string, opts: { tokenStdin: boolean; clear: boolean }) => {
+    if (opts.tokenStdin === opts.clear) throw new HarborError('INVALID_REQUEST', 'use exactly one of --token-stdin or --clear', { nextAction: `For example: ${PRODUCT.cliName} sources token ${appId} --token-stdin < token.txt` });
+    const { items } = await client().get<{ items: PackageSourceDto[] }>('/v1/package-sources');
+    const s = items.find((x) => x.packageId === appId);
+    if (!s) throw new HarborError('NOT_FOUND', `no source for app ${appId}`);
+    if (opts.clear) {
+      await client().delete(`/v1/package-sources/${s.id}/token`);
+      return out({ packageId: appId, hasToken: false }, () => `Removed the access token of ${appId}; later checks go without one.`);
+    }
+    const r = await client().post<PackageSourceDto>(`/v1/package-sources/${s.id}/token`, { token: await readTokenStdin() }, {}, 'PUT');
+    out(r, () => `The repository accepted the new token; ${appId} is checked with it from now on.`);
+  });
 sourcesCmd
   .command('remove <app-id>')
-  .description('forget the repository link (the package and installed apps stay)')
+  .description('forget the repository link and its access token (the package and installed apps stay)')
   .action(async (appId: string) => {
     const { items } = await client().get<{ items: PackageSourceDto[] }>('/v1/package-sources');
     const s = items.find((x) => x.packageId === appId);
     if (!s) throw new HarborError('NOT_FOUND', `no source for app ${appId}`);
     await client().delete(`/v1/package-sources/${s.id}`);
-    out({ removed: appId }, () => `Removed the source of ${appId}; the package and installed apps stay.`);
+    out({ removed: appId }, () => `Removed the source of ${appId}${s.hasToken ? ' and its access token' : ''}; the package and installed apps stay.`);
   });
 
 program

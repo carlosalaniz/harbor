@@ -727,6 +727,12 @@ export const mockApi = {
   setSourceAutoRedeploy: async () => {
     throw new Error('Design mode: git sources are read-only here.');
   },
+  setSourceToken: async () => {
+    throw new Error('Design mode: git sources are read-only here.');
+  },
+  clearSourceToken: async () => {
+    throw new Error('Design mode: git sources are read-only here.');
+  },
   removePackageSource: async (): Promise<void> => {
     await beat(150);
   },

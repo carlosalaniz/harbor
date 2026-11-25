@@ -44,7 +44,8 @@ import type { ResourceRow } from '../state/repo.js';
 import { listMounts } from '../system/host-storage.js';
 import { FINAL_OPERATION_STATES, type EndpointAllocation, type FinalOperationState, type InstanceRow, type OperationRow, type PackageSourceRow, type PlanProposal, type PlanRow } from '../state/repo.js';
 import { addSeconds, rfc3339 } from '../util.js';
-import { validateGitSourceInput } from '../packages/git.js';
+import { sourceRefused, validateGitSourceInput, validateGitToken, type GitAuth, type GitHead } from '../packages/git.js';
+import { unwrapSecretForMachine, wrapSecretForMachine } from '../storage/app-home.js';
 import { ComposeError } from '../docker/adapter.js';
 import type { Ctx } from './context.js';
 import { exposureDto, instanceSummary, operationDto, operationInstanceName, planDto, protectedReason } from './dto.js';
@@ -124,20 +125,88 @@ export class ApplicationService {
       checkedAt: s.checkedAt,
       note: s.note,
       updateAvailable: Boolean(s.lastSeenCommit && s.pinnedCommit && s.lastSeenCommit !== s.pinnedCommit),
+      hasToken: s.id in this.sourceTokens(),
     };
   }
+
+  // Decision 211: a private repository's access token, wrapped under the machine key (AES-256-GCM, like the backup
+  // key) in the `sources.tokens` setting, keyed by source id. Only this process ever holds it in clear, for one git
+  // command at a time; it is never in the source row, a DTO, a log line, an event or an error.
+  private static readonly SOURCE_TOKENS = 'sources.tokens';
+  private sourceTokens(): Record<string, MachineWrappedKey> {
+    return this.ctx.repo.setting<Record<string, MachineWrappedKey>>(ApplicationService.SOURCE_TOKENS) ?? {};
+  }
+  private sourceKeyLocked(): HarborError {
+    return new HarborError('MACHINE_KEY_LOCKED', 'Harbor restarted since your last login, so it cannot reach this repository\'s access token', { nextAction: 'Type your password to unlock this machine\'s key (log in again, or run harbor account unlock); checks of private repositories resume on their own.' });
+  }
+  private storeSourceToken(id: string, token: string | null): void {
+    const all = this.sourceTokens();
+    if (token === null) {
+      if (!(id in all)) return;
+      delete all[id];
+    } else {
+      const mk = this.ctx.machineKey.take();
+      if (!mk) throw this.sourceKeyLocked();
+      try {
+        all[id] = wrapSecretForMachine(Buffer.from(token, 'utf8'), mk);
+      } finally {
+        zeroMachineKey(mk);
+      }
+    }
+    if (Object.keys(all).length) this.ctx.repo.setSetting(ApplicationService.SOURCE_TOKENS, all);
+    else this.ctx.repo.deleteSetting(ApplicationService.SOURCE_TOKENS);
+  }
+  // The token for one git command (undefined = public source). Throws MACHINE_KEY_LOCKED before a login.
+  private sourceAuth(id: string): GitAuth | undefined {
+    const wrapped = this.sourceTokens()[id];
+    if (!wrapped) return undefined;
+    const mk = this.ctx.machineKey.take();
+    if (!mk) throw this.sourceKeyLocked();
+    try {
+      const b = unwrapSecretForMachine(wrapped, mk);
+      try {
+        return { token: b.toString('utf8') };
+      } finally {
+        b.fill(0);
+      }
+    } finally {
+      zeroMachineKey(mk);
+    }
+  }
+  // A refusal ("sign-in wanted" / "token refused") is recorded on the source and raised once in the bell; the next
+  // successful contact clears both.
+  private static isRefusalNote(note: string | null): boolean {
+    return note === sourceRefused(true).message || note === sourceRefused(false).message;
+  }
+  private recordSourceRefused(s: PackageSourceRow, e: HarborError): void {
+    this.ctx.repo.updatePackageSource(s.id, { note: e.message, checkedAt: rfc3339(this.ctx.clock.now()) });
+    // only on the way into the refused state: the bell re-creates a dismissed row, and channels would get it every poll
+    if (ApplicationService.isRefusalNote(s.note)) return;
+    this.ctx.notifier.notify({ kind: 'source-refused', severity: 'warning', title: `Harbor cannot read the repository of ${s.packageId}`, body: `${e.message}. ${e.nextAction.replace('<app>', s.packageId)}`, dedupeKey: `source-refused:${s.id}` });
+  }
+  private clearSourceRefused(s: PackageSourceRow): void {
+    if (ApplicationService.isRefusalNote(s.note)) this.ctx.repo.updatePackageSource(s.id, { note: null });
+    this.ctx.notifier.resolve(`source-refused:${s.id}`);
+  }
+
   packageSources(): PackageSourceDto[] {
     return this.ctx.repo.packageSources().map((s) => this.sourceDto(s));
   }
-  async addPackageSource(req: { url: string; ref?: string; subpath?: string | null; autoRedeploy?: boolean }, actor: string): Promise<AddSourceResult> {
+  async addPackageSource(req: { url: string; ref?: string; subpath?: string | null; autoRedeploy?: boolean; token?: string }, actor: string): Promise<AddSourceResult> {
     const url = req.url.trim().replace(/\.git$/, '');
     const ref = req.ref?.trim() || 'main';
     const subpath = req.subpath?.trim() || null;
     validateGitSourceInput(url, ref, subpath);
+    const token = req.token?.trim() || null;
+    if (token) {
+      validateGitToken(token);
+      // before any fetch: a locked key must not leave an imported package behind with no token to update it
+      if (!this.ctx.machineKey.unlocked) throw this.sourceKeyLocked();
+    }
     if (this.ctx.repo.packageSources().some((s) => s.url === url && s.ref === ref && (s.subpath ?? null) === subpath)) {
       throw new HarborError('NAME_CONFLICT', 'this repository, branch and path are already a source', { nextAction: 'Use "check now" on the existing source, or remove it first.' });
     }
-    const tree = await this.ctx.git.fetch(url, ref);
+    const tree = await this.ctx.git.fetch(url, ref, token ? { auth: { token } } : {});
     try {
       const r = await this.ctx.packages.importGitTree(tree, { url, ref, subpath, permit: (m) => this.refuseUntrusted(m, 'local', m.metadata.name, {}) });
       const source: Omit<PackageSourceRow, 'createdAt' | 'checkedAt'> = {
@@ -153,7 +222,8 @@ export class ApplicationService {
         note: null,
       };
       this.ctx.repo.insertPackageSource(source);
-      this.ctx.log.info('git source added', { url, ref, commit: tree.commit, packageId: r.item.id, actor });
+      if (token) this.storeSourceToken(source.id, token);
+      this.ctx.log.info('git source added', { url, ref, commit: tree.commit, packageId: r.item.id, private: Boolean(token), actor });
       const row = this.ctx.repo.packageSource(source.id)!;
       return { source: this.sourceDto(row), import: { item: r.item, pinned: r.pinned, notes: r.notes, replacedRevision: r.replacedRevision, updatable: [] } };
     } finally {
@@ -163,8 +233,10 @@ export class ApplicationService {
   removePackageSource(id: string): void {
     const s = this.ctx.repo.packageSource(id);
     if (!s) throw new HarborError('NOT_FOUND', `unknown source ${id}`);
-    // The package (and installed apps) stay; only the link to the repository goes.
+    // The package (and installed apps) stay; only the link to the repository (and its token) goes.
     this.ctx.repo.deletePackageSource(id);
+    this.storeSourceToken(id, null);
+    this.ctx.notifier.resolve(`source-refused:${id}`);
   }
   setSourceAutoRedeploy(id: string, on: boolean): PackageSourceDto {
     const s = this.ctx.repo.packageSource(id);
@@ -172,15 +244,41 @@ export class ApplicationService {
     this.ctx.repo.updatePackageSource(id, { autoRedeploy: on });
     return this.sourceDto(this.ctx.repo.packageSource(id)!);
   }
+  // Decision 211: replace (a new token is tried against the branch first; a refused one is never stored) or remove the token.
+  async setSourceToken(id: string, token: string | null, actor: string): Promise<PackageSourceDto> {
+    const s = this.ctx.repo.packageSource(id);
+    if (!s) throw new HarborError('NOT_FOUND', `unknown source ${id}`);
+    if (token === null) {
+      this.storeSourceToken(id, null);
+      this.ctx.log.info('git source token removed', { url: s.url, packageId: s.packageId, actor });
+      return this.sourceDto(this.ctx.repo.packageSource(id)!);
+    }
+    validateGitToken(token);
+    if (!this.ctx.machineKey.unlocked) throw this.sourceKeyLocked();
+    const head = await this.ctx.git.head(s.url, s.ref, { token });
+    this.storeSourceToken(id, token);
+    this.ctx.repo.updatePackageSource(id, { lastSeenCommit: head.commit, checkedAt: rfc3339(this.ctx.clock.now()) });
+    this.clearSourceRefused(s);
+    this.ctx.log.info('git source token replaced', { url: s.url, packageId: s.packageId, actor });
+    return this.sourceDto(this.ctx.repo.packageSource(id)!);
+  }
   // Fetch the branch head; import a newer commit as a new revision. Returns the refreshed source.
   // Import + notify only — the update plan flows through the normal update machinery afterwards.
   async checkPackageSource(id: string, actor: string): Promise<PackageSourceDto> {
     const s = this.ctx.repo.packageSource(id);
     if (!s) throw new HarborError('NOT_FOUND', `unknown source ${id}`);
-    const head = await this.ctx.git.head(s.url, s.ref);
+    const auth = this.sourceAuth(id);
+    let head: GitHead;
+    try {
+      head = await this.ctx.git.head(s.url, s.ref, auth);
+    } catch (e) {
+      if (e instanceof HarborError && e.code === 'SOURCE_REFUSED') this.recordSourceRefused(s, e);
+      throw e;
+    }
+    this.clearSourceRefused(s);
     this.ctx.repo.updatePackageSource(id, { lastSeenCommit: head.commit, checkedAt: rfc3339(this.ctx.clock.now()) });
     if (head.commit !== s.pinnedCommit) {
-      const tree = await this.ctx.git.fetch(s.url, s.ref, { commit: head.commit });
+      const tree = await this.ctx.git.fetch(s.url, s.ref, { commit: head.commit, ...(auth ? { auth } : {}) });
       try {
         await this.ctx.packages.importGitTree(tree, { url: s.url, ref: s.ref, subpath: s.subpath, expectedId: s.packageId, permit: (m) => this.refuseUntrusted(m, 'local', m.metadata.name, {}) });
         this.ctx.repo.updatePackageSource(id, { pinnedCommit: head.commit, note: null });
@@ -199,11 +297,19 @@ export class ApplicationService {
   }
   // Called by the observer on its own cadence: check every source; auto-redeploy rides runAutoUpdates
   // (an imported newer revision makes updateFor() fire; sources with autoRedeploy get the plan below).
+  private sourceWaitingForKey = new Set<string>();
   async checkAllSources(): Promise<void> {
     for (const s of this.ctx.repo.packageSources()) {
       try {
         await this.checkPackageSource(s.id, 'git-source');
+        this.sourceWaitingForKey.delete(s.id);
       } catch (e) {
+        // decision 211: a private source waits for the first login after a restart (said once per boot, not every pass)
+        if (e instanceof HarborError && e.code === 'MACHINE_KEY_LOCKED') {
+          if (!this.sourceWaitingForKey.has(s.id)) this.ctx.log.info(`source check ${s.url}@${s.ref} waits for a login: its access token is wrapped under the machine key`);
+          this.sourceWaitingForKey.add(s.id);
+          continue;
+        }
         this.ctx.log.warn(`source check ${s.url}@${s.ref} failed: ${(e as Error).message}`);
       }
     }

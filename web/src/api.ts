@@ -227,7 +227,10 @@ const realApi = {
   adoptDrive: (instanceId: string, storageId: string) => call<InstanceSummary>('POST', `/v1/instances/${instanceId}/adopt-drive`, { storageId }),
   applyAllUpdates: () => call<{ started: { instanceId: string; name: string; operationId: string }[]; skipped: { instanceId: string; name: string; reason: string }[] }>('POST', '/v1/updates/apply-all', {}),
   packageSources: () => call<{ items: PackageSourceDto[] }>('GET', '/v1/package-sources').then((r) => r.items),
-  addPackageSource: (req: { url: string; ref?: string; subpath?: string; autoRedeploy?: boolean }) => call<AddSourceResult>('POST', '/v1/package-sources', req),
+  addPackageSource: (req: { url: string; ref?: string; subpath?: string; autoRedeploy?: boolean; token?: string }) => call<AddSourceResult>('POST', '/v1/package-sources', req),
+  // decision 211: replace (tried against the branch first) or remove a private repository's access token
+  setSourceToken: (id: string, token: string) => call<PackageSourceDto>('PUT', `/v1/package-sources/${id}/token`, { token }),
+  clearSourceToken: (id: string) => call<PackageSourceDto>('DELETE', `/v1/package-sources/${id}/token`),
   checkPackageSource: (id: string) => call<PackageSourceDto>('POST', `/v1/package-sources/${id}/check`, {}),
   setSourceAutoRedeploy: (id: string, enabled: boolean) => call<PackageSourceDto>('PUT', `/v1/package-sources/${id}/auto-redeploy`, { enabled }),
   removePackageSource: (id: string) => call<void>('DELETE', `/v1/package-sources/${id}`),

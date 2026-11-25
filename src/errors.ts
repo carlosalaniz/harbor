@@ -14,6 +14,7 @@ export type ErrorCode =
   | 'SECRET_MISSING'
   | 'PERMISSION_REQUIRED'
   | 'UNTRUSTED_SOURCE'
+  | 'SOURCE_REFUSED'
   | 'KERNEL_MODULE_MISSING'
   | 'SETTING_INVALID'
   | 'READINESS_TIMEOUT'
@@ -57,6 +58,8 @@ const HTTP_STATUS: Record<ErrorCode, number> = {
   SECRET_MISSING: 409,
   PERMISSION_REQUIRED: 409,
   UNTRUSTED_SOURCE: 403,
+  // 422, not 401/403: the console logs out on 401, and this is the repository refusing, not Harbor
+  SOURCE_REFUSED: 422,
   KERNEL_MODULE_MISSING: 409,
   SETTING_INVALID: 400,
   PLAN_EXPIRED: 410,
@@ -97,6 +100,7 @@ const EXIT_CODE: Record<ErrorCode, number> = {
   SECRET_MISSING: 3,
   PERMISSION_REQUIRED: 3,
   UNTRUSTED_SOURCE: 3,
+  SOURCE_REFUSED: 5,
   KERNEL_MODULE_MISSING: 4,
   SETTING_INVALID: 2,
   PLAN_EXPIRED: 3,
@@ -166,6 +170,7 @@ function defaultNextAction(code: ErrorCode): string {
     case 'SECRET_MISSING': return 'A retained secret file is missing; restore it from your own backup. Nothing was regenerated.';
     case 'PERMISSION_REQUIRED': return 'Review the permissions the plan lists and approve with them accepted.';
     case 'UNTRUSTED_SOURCE': return 'Install it from the official app catalog, or turn on developer mode (Settings → Advanced access) if you trust where this package comes from.';
+    case 'SOURCE_REFUSED': return 'Give Harbor an access token that can read this repository (harbor sources token <app> --token-stdin), then check again.';
     case 'KERNEL_MODULE_MISSING': return 'Install the kernel module package for the running kernel (sudo apt install linux-modules-extra-$(uname -r)), then try again.';
     case 'SETTING_INVALID': return 'Choose a value the setting allows (the app page and `harbor settings <app>` list each one).';
     case 'READINESS_TIMEOUT': return 'Inspect the instance; resources were kept. Use remove to clean up.';

@@ -2097,11 +2097,14 @@ export function UploadPackageDialog({ onClose, onDone }: { onClose: () => void; 
   const [gitRef, setGitRef] = useState('main');
   const [gitPath, setGitPath] = useState('');
   const [gitAuto, setGitAuto] = useState(false);
+  // decision 211: a private repository's access token; sent once, never shown again
+  const [gitToken, setGitToken] = useState('');
   const addGit = async () => {
     setError(null);
     setBusy(true);
     try {
-      const r = await api.addPackageSource({ url: gitUrl.trim(), ref: gitRef.trim() || 'main', ...(gitPath.trim() ? { subpath: gitPath.trim() } : {}), autoRedeploy: gitAuto });
+      const r = await api.addPackageSource({ url: gitUrl.trim(), ref: gitRef.trim() || 'main', ...(gitPath.trim() ? { subpath: gitPath.trim() } : {}), autoRedeploy: gitAuto, ...(gitToken.trim() ? { token: gitToken.trim() } : {}) });
+      setGitToken('');
       setResult(r.import);
       onDone(r.import);
     } catch (e) {
@@ -2182,6 +2185,11 @@ export function UploadPackageDialog({ onClose, onDone }: { onClose: () => void; 
                     Folder (optional) <input value={gitPath} onChange={(e) => setGitPath(e.target.value)} placeholder="apps/notes" aria-label="Folder inside the repository" />
                   </label>
                 </div>
+                <label>
+                  Access token (private repositories only)
+                  <input type="password" value={gitToken} onChange={(e) => setGitToken(e.target.value)} autoComplete="off" spellCheck={false} aria-label="Access token" />
+                  <span className="muted small">For GitHub: a fine-grained token for this one repository with Contents: read-only. Harbor keeps it encrypted and never shows it again.</span>
+                </label>
                 <label className="row">
                   <input type="checkbox" checked={gitAuto} onChange={(e) => setGitAuto(e.target.checked)} aria-label="Redeploy on commit" />
                   <span className="muted small">Redeploy on commit: new pushes to the branch deploy themselves (a failed deployment rolls back)</span>

@@ -454,7 +454,30 @@ Redeploy on commit: Harbor polls the branch (`git ls-remote`, default every 15 m
 webhooks needed, which matters behind NAT). With the toggle on, a new commit is imported and the
 update plan submitted automatically (actor `git-source`); off, you get a notification and update
 manually. A commit that does not validate is recorded on the source and skipped — the running app
-is never touched. `harbor sources add/check/redeploy/remove` mirror the console's Store section.
+is never touched. `harbor sources add/check/redeploy/token/remove` mirror the console's Store section.
+
+### Private repositories (Harbor 0.50.0)
+
+A private repository needs an access token that can read it, given once when the source is added (App Store →
+*+ Your own app* → *Git repository* → *Access token*, or `harbor sources add <url> --token-stdin < token.txt`).
+
+- **GitHub**: a *fine-grained personal access token*, *Repository access: Only select repositories* → the one
+  repository, *Permissions → Contents: Read-only* (Metadata: read-only comes with it). Nothing else. Give it an
+  expiry you will remember; Harbor tells you when it stops working.
+- **GitLab / Gitea / Forgejo**: a personal or project access token with read access to the repository
+  (`read_repository`). Harbor sends it as the password of HTTP Basic auth with the user name `x-access-token`,
+  which these hosts accept for tokens.
+
+How it is used: every git command for that source (`ls-remote` for the checks, the shallow `clone` for each new
+commit) gets an `Authorization` header through git's `GIT_CONFIG_COUNT` environment entries, scoped to the
+repository's origin. The token is never in the URL, a command line, a git config file, the source list, logs,
+events or errors (refused with *the repository refused the token*). Do not put it in the URL
+(`https://user:token@…` is refused). It is stored wrapped under the machine key, so after a Harbor restart
+private sources wait for the first login. Rotate with `harbor sources token <app> --token-stdin` (tried against
+the branch before it is kept) or remove it with `--clear`; `harbor sources remove <app>` deletes it.
+
+Build contexts are snapshotted into the package at import, so installs and redeploys never fetch from the
+repository again: only checks and new commits need the token.
 
 ## 8. Values from the operator, and links to other apps
 

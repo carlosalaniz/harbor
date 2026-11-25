@@ -18,7 +18,7 @@ is also a `harbor` CLI command against the same local API. Owner/user: Carlos (o
 | Need | Look at |
 |---|---|
 | Requirements and original scope | `docs/spec/TDD.md` (spec), `docs/spec/plan.md` (build order). Several exclusions in TDD were later lifted at Carlos's explicit request; each lift is a numbered decision. |
-| Every design decision, numbered (1–210 so far; 207–209 = Access Guard, requireVpn, provides.ipLookup; 210 = drag apps into spaces) | `docs/DECISIONS.md` — **next number is 211**. Add a row for every non-obvious choice. |
+| Every design decision, numbered (1–211 so far; 207–209 = Access Guard, requireVpn, provides.ipLookup; 210 = drag apps into spaces; 211 = private git sources with a token) | `docs/DECISIONS.md` — **next number is 212**. Add a row for every non-obvious choice. |
 | Phase-by-phase progress, test counts, blockers, exact next step | `docs/dev/PROGRESS.md` (build changelog) |
 | What blocks the beta tag (audit 2026-09-21) | `docs/dev/BETA_TODO.md` — tick items as they ship; no LICENSE until 1.0.0 (decision 100) |
 | Agent rules of engagement (what/where/why/HOW) | `AGENTS.md` — read it before writing code or packages. |
@@ -81,6 +81,8 @@ Umbrel-style login hero + console craft pass (one Harbor mark, flat icons, logou
 0.11 `harbor uninstall`, apt-lock retry, keep-existing-admin, removable-media phase 1 (lsblk devices in Places); 0.12 removable media (mount/unmount at `/mnt/<label>`, drive guard with app-generated identity, auto-mount/auto-start, adopt-drive); 0.13 install-location + adopt (whole encrypted apps on drives: location picker + passphrase, volumes rooted in `<dir>/<name>/{manifest.json, vault/}`, found-apps + adopt on any machine, portable via passphrase); 0.14 format-as-ext4 in place (typed confirm, refused while an app uses the drive).
 
 ## 5. Latest decision and the last three actions (read this first when resuming)
+
+**Latest (0.50.0, 2026-11-24, decision 211, issue #9):** git sources from private repositories. Optional access token on `POST /v1/package-sources`, `PUT|DELETE /v1/package-sources/:id/token`, `harbor sources add --token-stdin`, `harbor sources token <app> --token-stdin|--clear`, console *Access token* field + per-source *Token* form. Token wrapped under the machine key in setting `sources.tokens`; DTO `hasToken` only. git gets it as `http.<origin>/.extraHeader` via `GIT_CONFIG_*` env; refusals are `SOURCE_REFUSED` (422, exit 5). Checked live against private carlosalaniz/dritmo from the Mac (GitCli only, `gh` OAuth token); no droplet run.
 
 **Latest (0.43.0, 2026-11-08, decision 199):** `secrets[].revealable: true` (needs `showOnce`): the app page's Settings tab lists the generated value under Saved passwords, `POST /v1/instances/:id/secrets/reveal` returns it after the Harbor password.
 
@@ -231,6 +233,7 @@ validated live against Caddy v2.11.4.
 - browser-sandbox (decision 201): the profile is a FILE in the release folder (`seccomp/browser-sandbox.json`, `BROWSER_SANDBOX_PROFILE`), referenced by absolute path; never inline it and never add `apparmor=unconfined` (on Ubuntu 24.04 that breaks user namespaces, see the decision). Regenerate it only with `node scripts/seccomp-profile.mjs` and copy the printed hash into `src/planner/seccomp.ts`.
 - `compose.pull` before `buildImages` must name its services: `--policy missing` still asks a registry for a git source's `harbor-src/<app>-<service>:<sha>` tag that is not built yet, and Docker answers "pull access denied" (0.44.2: the app-login gate's early pull). The fake refuses that pull too.
 - Spaces (decision 202): the shared network `hb_space_<id>` is attached by the runner (`syncSpaceMembers`), never by Compose, with only `<app>` / `<app>-<service>` aliases; `upAndRecord` takes the create→attach→start path when the app is in a shared space. Docker's network LIST API leaves `Containers` empty (only inspect fills it), so `pruneSpaceNetworks` inspects before deleting. During a remove the app is still `installed`, so prune is told which app is leaving. `space` items are planned at their turn (`queueAction` accepts kind `space` only with actor `space-policy`) so a busy app never makes them stale.
+- Private git sources (decision 211): never pass a token to git in argv (`-c http.extraHeader=…` shows in `/proc/<pid>/cmdline`) or in the URL; `gitEnv()` sets it through `GIT_CONFIG_COUNT/KEY_n/VALUE_n` (git ≥ 2.31). Node's `execFile` error message contains the whole command line, so anything git or Node prints goes through `redactGitText`. GitHub answers 401 (→ `could not read Username … terminal prompts disabled`) to an anonymous request for ANY repository it will not show, and `Repository not found` (404) to an authenticated one: both mean "refused" when a token was sent. Fake mode's `demoGit()` has `https://github.com/example/private-notes` with token `tok-FIXTURE-demo-private-notes`.
 - Never test on .192 (production `harbor`): live tests go to harbor-old (.146) or the droplet.
 - xterm.js needs `style-src 'unsafe-inline'`; the WebSocket terminal authenticates by first message, never URL.
 - macOS has no `timeout`; use `curl --max-time` or `gtimeout`.
